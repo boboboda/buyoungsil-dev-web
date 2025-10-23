@@ -38,7 +38,8 @@ COPY . .
 
 RUN sed -i '/DATABASE_URL/d' .env || true
 
-RUN npm run build
+# ✅ 핵심 수정: NEXT_DISABLE_LIGHTNINGCSS=true 를 빌드 시점에도 명시적으로 전달
+RUN NEXT_DISABLE_LIGHTNINGCSS=true npm run build
 
 EXPOSE 5000
 CMD ["sh", "-c", "npx prisma migrate deploy && npm run start"]
