@@ -1,6 +1,6 @@
 FROM node:18-bullseye
 
-RUN apk add --no-cache tzdata
+RUN apt-get update && apt-get install -y tzdata
 ENV TZ=Asia/Seoul
 
 WORKDIR /app
