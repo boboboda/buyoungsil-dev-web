@@ -65,13 +65,13 @@ export default function NavBar() {
       {/* 데스크톱: 한 줄, 모바일: 두 줄 */}
       <div className="w-full">
         {/* 첫 번째 줄: 브랜드 + 네비게이션 메뉴 */}
-        <div className="flex flex-row items-center justify-between w-full mb-2 md:mb-0">
+        <div className="flex flex-row items-center justify-between w-full mb-2 md:mb-0 pr-4">
           {/* 브랜드 로고 + PC에서 네비게이션 메뉴 */}
           <div className="flex flex-row items-center gap-6">
             <NextLink className="flex justify-start items-start" href="/">
               <Image
                 alt="Branding Image"
-                className="object-contain h-[50px] w-[180px] ms-[10px]"
+                className="object-contain h-[50px] md:w-[180px] ms-[10px] w-[120px]"
                 fallbackSrc="https://via.placeholder.com/300x200"
                 height="50%"
                 src="/brand.png"
@@ -254,7 +254,7 @@ export default function NavBar() {
         </div>
 
         {/* 두 번째 줄: 모바일에서만 표시되는 로그인 + 아이콘 영역 */}
-        <div className="flex md:hidden flex-row items-center justify-between w-full pt-2 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex md:hidden flex-row items-center justify-between w-full pt-2 border-t border-gray-200 dark:border-gray-700 pr-4">
           {/* 🔥 모바일 로그인 영역 */}
           <div className="flex flex-row gap-2">
             {shouldShowLoading ? (

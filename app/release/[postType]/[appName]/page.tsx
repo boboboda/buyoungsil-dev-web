@@ -17,7 +17,7 @@ export default async function noticeBoardPage({
 
   return (
     <>
-      <div className="container flex w-full pl-5 py-5 flex-col items-center justify-center gap-y-3">
+      <div className="container flex w-full pl-5 py-5 flex-col items-center justify-center gap-y-3 pr-4">
         <h1 className={title()}>{postTitle}</h1>
         <PostTable
           appName={appName}
