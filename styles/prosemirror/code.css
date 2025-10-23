@@ -1,0 +1,163 @@
+/* 인라인 코드 스타일 */
+.ProseMirror code:not(pre code) {
+  caret-color: rgb(15 23 42);
+  color: black;
+  background-color: rgb(243 244 246);
+  border-radius: 0.125rem;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+}
+
+.dark .ProseMirror code:not(pre code) {
+  caret-color: white;
+  color: white;
+  background-color: rgb(23 23 23);
+}
+
+.ProseMirror code:not(pre code)::selection {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+.dark .ProseMirror code:not(pre code)::selection {
+  background-color: rgba(255, 255, 255, 0.3);
+}
+
+/* 코드 블록 스타일 */
+.ProseMirror .code-block {
+  position: relative;
+}
+
+.ProseMirror .code-block select {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  padding-left: 10px;
+  background-color: transparent;
+  border-radius: 5px;
+  color: #cccccc;
+  width: fit-content;
+  max-width: 7rem;
+  height: 30px;
+  font-size: 0.9rem;
+  display: none;
+  line-height: 2rem;
+  text-align: center;
+  padding: 0;
+  padding-bottom: 0.3rem;
+}
+
+.ProseMirror .code-block select:hover {
+  background-color: #505050;
+}
+
+.ProseMirror .code-block:hover select {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ProseMirror .code-block select::-ms-expand {
+  display: none;
+}
+
+.ProseMirror .code-block option {
+  color: rgb(156 163 175);
+}
+
+.ProseMirror .code-block pre {
+  background: #474747 !important;
+  color: #e2dede !important;
+  border-radius: 8px;
+  margin: 1.5rem 0;
+  padding: 1rem;
+  padding-top: 2.25rem;
+  overflow-x: auto;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  border: 1px solid #555555;
+}
+
+.ProseMirror .code-block pre code {
+  background: transparent !important;
+  color: inherit !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  font-size: inherit !important;
+}
+
+/* VS Code 문법 강조 */
+.ProseMirror .code-block pre .hljs-comment,
+.ProseMirror .code-block pre .hljs-quote {
+  color: #6a9955 !important;
+  font-style: italic;
+}
+
+.ProseMirror .code-block pre .hljs-keyword,
+.ProseMirror .code-block pre .hljs-selector-tag,
+.ProseMirror .code-block pre .hljs-literal {
+  color: #569cd6 !important;
+}
+
+.ProseMirror .code-block pre .hljs-variable,
+.ProseMirror .code-block pre .hljs-template-variable,
+.ProseMirror .code-block pre .hljs-attribute {
+  color: #9cdcfe !important;
+}
+
+.ProseMirror .code-block pre .hljs-tag,
+.ProseMirror .code-block pre .hljs-name,
+.ProseMirror .code-block pre .hljs-selector-id,
+.ProseMirror .code-block pre .hljs-selector-class {
+  color: #4ec9b0 !important;
+}
+
+.ProseMirror .code-block pre .hljs-number,
+.ProseMirror .code-block pre .hljs-meta,
+.ProseMirror .code-block pre .hljs-built_in,
+.ProseMirror .code-block pre .hljs-builtin-name,
+.ProseMirror .code-block pre .hljs-params {
+  color: #b5cea8 !important;
+}
+
+.ProseMirror .code-block pre .hljs-string,
+.ProseMirror .code-block pre .hljs-symbol,
+.ProseMirror .code-block pre .hljs-bullet {
+  color: #ce9178 !important;
+}
+
+.ProseMirror .code-block pre .hljs-title,
+.ProseMirror .code-block pre .hljs-function {
+  color: #dcdcaa !important;
+}
+
+.ProseMirror .code-block pre .hljs-class .hljs-title {
+  color: #4ec9b0 !important;
+}
+
+.ProseMirror .code-block pre .hljs-type {
+  color: #4ec9b0 !important;
+}
+
+.ProseMirror .code-block pre .hljs-regexp {
+  color: #d16969 !important;
+}
+
+.ProseMirror .code-block pre .hljs-link,
+.ProseMirror .code-block pre .hljs-section {
+  color: #569cd6 !important;
+}
+
+.ProseMirror .code-block pre .hljs-emphasis {
+  font-style: italic;
+}
+
+.ProseMirror .code-block pre .hljs-strong {
+  font-weight: bold;
+}
+
+.ProseMirror .code-block pre *::selection {
+  background: #264f78 !important;
+}

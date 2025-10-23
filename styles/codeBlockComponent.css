@@ -1,0 +1,139 @@
+.tiptap code {
+  /* 라이트모드 */
+  caret-color: rgb(15 23 42);
+  color: black;
+  background-color: rgb(243 244 246);
+  border-radius: 0.125rem;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.dark .tiptap code {
+  caret-color: white;
+  color: white;
+  background-color: rgb(23 23 23);
+}
+
+.tiptap code::selection {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+.dark .tiptap code::selection {
+  background-color: rgba(255, 255, 255, 0.3);
+}
+
+.tiptap .code-block {
+  position: relative;
+}
+
+.tiptap .code-block select {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  padding-left: 10px;
+  background-color: transparent;
+  border-radius: 5px;
+  color: rgb(185, 185, 185);
+  width: fit-content;
+  max-width: 7rem;
+  height: 30px;
+  font-size: 0.9rem;
+  display: none;
+  line-height: 2rem;
+  text-align: center;
+  padding: 0;
+  padding-bottom: 0.3rem;
+}
+
+.tiptap .code-block select:hover {
+  background-color: rgb(85, 85, 85);
+}
+
+.tiptap .code-block:hover select {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tiptap .code-block select::-ms-expand {
+  display: none;
+}
+
+.tiptap .code-block option {
+  color: rgb(156 163 175);
+}
+
+/* 코드 블록 pre 요소는 항상 다크 테마 유지 */
+.tiptap .code-block pre {
+  caret-color: white;
+  background-color: rgba(229 231 235 / 0.2);
+  color: white;
+  border-radius: 0.25rem;
+  margin-top: 3rem;
+  margin-bottom: 3rem;
+  padding: 1rem;
+  padding-top: 2.25rem;
+}
+
+.tiptap .code-block pre *::selection {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.tiptap .code-block pre code {
+  background-color: inherit;
+  color: inherit;
+  padding: 0;
+  box-shadow: none;
+}
+
+/* Syntax highlighting */
+.tiptap .code-block pre .hljs-comment,
+.tiptap .code-block pre .hljs-quote {
+  color: rgb(163 163 163);
+}
+
+.tiptap .code-block pre .hljs-variable,
+.tiptap .code-block pre .hljs-template-variable,
+.tiptap .code-block pre .hljs-attribute,
+.tiptap .code-block pre .hljs-tag,
+.tiptap .code-block pre .hljs-name,
+.tiptap .code-block pre .hljs-regexp,
+.tiptap .code-block pre .hljs-link,
+.tiptap .code-block pre .hljs-selector-id,
+.tiptap .code-block pre .hljs-selector-class {
+  color: rgb(252 165 165);
+}
+
+.tiptap .code-block pre .hljs-number,
+.tiptap .code-block pre .hljs-meta,
+.tiptap .code-block pre .hljs-built_in,
+.tiptap .code-block pre .hljs-builtin-name,
+.tiptap .code-block pre .hljs-literal,
+.tiptap .code-block pre .hljs-type,
+.tiptap .code-block pre .hljs-params {
+  color: rgb(253 186 116);
+}
+
+.tiptap .code-block pre .hljs-string,
+.tiptap .code-block pre .hljs-symbol,
+.tiptap .code-block pre .hljs-bullet {
+  color: rgb(190 242 100);
+}
+
+.tiptap .code-block pre .hljs-title,
+.tiptap .code-block pre .hljs-section {
+  color: rgb(253 224 71);
+}
+
+.tiptap .code-block pre .hljs-keyword,
+.tiptap .code-block pre .hljs-selector-tag {
+  color: rgb(94 234 212);
+}
+
+.tiptap .code-block pre .hljs-emphasis {
+  font-style: italic;
+}
+
+.tiptap .code-block pre .hljs-strong {
+  font-weight: 700;
+}

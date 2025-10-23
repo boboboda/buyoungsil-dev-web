@@ -1,0 +1,9 @@
+# *
+User-agent: *
+Allow: /
+
+# Host
+Host: https://www.buyoungsilcoding.com
+
+# Sitemaps
+Sitemap: https://www.buyoungsilcoding.com/sitemap.xml
