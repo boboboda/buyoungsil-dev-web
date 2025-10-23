@@ -4,51 +4,49 @@ import { CountUp } from "countup.js";
 import { useEffect } from "react";
 
 interface CountUpProps {
-  id: string;
   end: number;
   start?: number;
   duration?: number;
   prefix?: string;
   suffix?: string;
   separator?: string;
-  mounted?: boolean;
-  color: string;
 }
 
 const CountUpComponent: React.FC<CountUpProps> = ({
-  id,
   end,
   start = 0,
   duration = 2,
   prefix = "",
   suffix = "",
   separator = ",",
-  color,
-  mounted = false,
 }) => {
   useEffect(() => {
-    if (mounted) {
-      if (id) {
-        const countUp = new CountUp(id, end, {
-          startVal: start,
-          duration: duration,
-          prefix: prefix,
-          suffix: suffix,
-          separator: separator,
-        });
+    // 고유한 ID 생성
+    const uniqueId = `countup-${Math.random().toString(36).substr(2, 9)}`;
+    const element = document.getElementById(uniqueId);
 
-        if (!countUp.error) {
-          countUp.start();
-          console.log("작동함");
-        } else {
-          console.error(countUp.error);
-        }
+    if (element) {
+      const countUp = new CountUp(uniqueId, end, {
+        startVal: start,
+        duration: duration,
+        prefix: prefix,
+        suffix: suffix,
+        separator: separator,
+      });
+
+      if (!countUp.error) {
+        countUp.start();
+      } else {
+        console.error("CountUp error:", countUp.error);
       }
     }
-  }, [id, mounted, end, start, duration, prefix, suffix, separator]);
+  }, [end, start, duration, prefix, suffix, separator]);
+
+  // 고유한 ID를 미리 생성하여 일관성 유지
+  const countId = `countup-${end}-${start}`;
 
   return (
-    <span className="text-white" id={id} style={{ color }}>
+    <span id={countId}>
       {start}
     </span>
   );

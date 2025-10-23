@@ -5,11 +5,11 @@ import React, { useState, useEffect, useRef } from "react";
 import CircularProgress from "./CircularProgress";
 import { operateingCounts } from "./visitCounter";
 
-import { useVisitorStore } from "@/store/visitorStore"; // Zustand 스토어 임포트
+import { useVisitorStore } from "@/store/visitorStore";
 import {
   getTodayVisitorCount,
   getTotalVisitorCount,
-} from "@/serverActions/visitor"; // Server Actions 임포트
+} from "@/serverActions/visitor";
 import { fetchTotalUserCount } from "@/serverActions/fetchUser";
 
 interface HeroProps {
@@ -33,10 +33,8 @@ const VisitCalculateView = ({
     useVisitorStore();
 
   useEffect(() => {
-    // 서버에서 받은 초기값으로 Zustand 스토어를 설정합니다.
     setCounts(initialTodayCount, initialTotalCount, initialUserTotalCount);
 
-    // 1분(60초)마다 방문자 수를 다시 가져오는 Server Action을 호출합니다.
     const fetchLatestCounts = async () => {
       const today = await getTodayVisitorCount();
       const total = await getTotalVisitorCount();
@@ -47,9 +45,8 @@ const VisitCalculateView = ({
 
     const intervalId = setInterval(fetchLatestCounts, 60 * 1000);
 
-    // 컴포넌트가 언마운트되면 인터벌을 정리합니다.
     return () => clearInterval(intervalId);
-  }, [initialTodayCount, initialTotalCount, setCounts]); // 의존성 배열에 props와 액션을 추가
+  }, [initialTodayCount, initialTotalCount, initialUserTotalCount, setCounts]);
 
   const animationTriggeredRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -80,7 +77,6 @@ const VisitCalculateView = ({
   }, []);
 
   useEffect(() => {
-    // Check if component is in viewport without requiring significant scrolling
     const checkVisibility = () => {
       if (animationTriggeredRef.current) return;
 
@@ -91,7 +87,6 @@ const VisitCalculateView = ({
       const rect = containerElement.getBoundingClientRect();
       const windowHeight = window.innerHeight;
 
-      // Element is in viewport or page is too short to scroll much
       const isShortPage = document.body.scrollHeight < windowHeight + 300;
       const isInViewport = rect.top < windowHeight;
 
@@ -112,7 +107,6 @@ const VisitCalculateView = ({
 
     checkVisibility();
 
-    // Set up an intersection observer as a fallback method
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && !animationTriggeredRef.current) {
@@ -138,7 +132,7 @@ const VisitCalculateView = ({
   return (
     <div
       ref={containerRef}
-      className="w-full grid grid-cols-2 dark:bg-slate-900 md:grid-cols-2 gap-y-5 gap-x-2 justify-items-center"
+      className="w-full grid grid-cols-2 gap-y-6 gap-x-3 sm:gap-y-8 sm:gap-x-4 justify-items-center"
       style={{
         opacity: isVisible ? 1 : 0,
         transform: `translateY(${isVisible ? 0 : "50px"})`,
@@ -151,7 +145,7 @@ const VisitCalculateView = ({
         label={"오늘 방문자 수"}
         mounted={isMounted}
         progress={progress}
-        size={window.innerWidth < 640 ? 150 : 200}
+        size={window.innerWidth < 640 ? 130 : 200}
         strokeWidth={window.innerWidth < 640 ? 10 : 15}
         trackColor="#d9d9d9"
         type={"명"}
@@ -163,7 +157,7 @@ const VisitCalculateView = ({
         label={"총 방문자 수"}
         mounted={isMounted}
         progress={progress}
-        size={window.innerWidth < 640 ? 150 : 200}
+        size={window.innerWidth < 640 ? 130 : 200}
         strokeWidth={window.innerWidth < 640 ? 10 : 15}
         trackColor="#d9d9d9"
         type={"명"}
@@ -172,10 +166,10 @@ const VisitCalculateView = ({
       <CircularProgress
         color="#FF885B"
         id="operating-days"
-        label={"홈페이지 운영중"}
+        label={"운영 중"}
         mounted={isMounted}
         progress={progress}
-        size={window.innerWidth < 640 ? 150 : 200}
+        size={window.innerWidth < 640 ? 130 : 200}
         strokeWidth={window.innerWidth < 640 ? 10 : 15}
         trackColor="#d9d9d9"
         type={"일째"}
@@ -187,7 +181,7 @@ const VisitCalculateView = ({
         label={"총 가입자 수"}
         mounted={isMounted}
         progress={progress}
-        size={window.innerWidth < 640 ? 150 : 200}
+        size={window.innerWidth < 640 ? 130 : 200}
         strokeWidth={window.innerWidth < 640 ? 10 : 15}
         trackColor="#d9d9d9"
         type={"명"}

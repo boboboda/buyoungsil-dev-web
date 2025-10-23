@@ -14,7 +14,6 @@ interface CircularProgressProps {
   type: string;
   mounted: boolean;
   id: string;
-  // icon: React.ReactNode;
 }
 
 const CircularProgress: React.FC<CircularProgressProps> = ({
@@ -40,8 +39,6 @@ const CircularProgress: React.FC<CircularProgressProps> = ({
     };
 
     window.addEventListener("resize", handleResize);
-
-    // 초기값 설정
     setWindowWidth(window.innerWidth);
 
     return () => {
@@ -61,79 +58,62 @@ const CircularProgress: React.FC<CircularProgressProps> = ({
   const circumference = radius * 2 * Math.PI;
   const offset = circumference - (animatedProgress / 100) * circumference;
 
-  // 반응형 텍스트 크기 조정
-  const textSizeClass = windowWidth < 640 ? "text-xl" : "text-3xl";
+  // 🔥 반응형 텍스트 크기
+  const textSizeClass = windowWidth < 640 ? "text-lg" : "text-3xl";
   const labelSizeClass = windowWidth < 640 ? "text-xs" : "text-sm";
+  const typeSizeClass = windowWidth < 640 ? "text-xs" : "text-sm";
 
   return (
-    <div
-      className="relative flex items-center justify-center"
-      style={{ width: size, height: size }}
-    >
+    <div className="relative inline-flex items-center justify-center">
       <svg
         className="circular-progress-svg"
         height={size}
-        style={{
-          transform: "rotate(-90deg)",
-          transformOrigin: "50% 50%",
-        }}
+        id={id}
         width={size}
       >
-        <defs>
-          <linearGradient
-            id={`gradient-${id}`}
-            x1="0%"
-            x2="100%"
-            y1="0%"
-            y2="0%"
-          >
-            <stop offset="0%" stopColor={color} stopOpacity="0.5" />
-            <stop offset="100%" stopColor={color} stopOpacity="1" />
-          </linearGradient>
-        </defs>
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          fill="#000000"
-          r={radius}
-          stroke={trackColor}
-          strokeWidth={strokeWidth}
-        />
-
+        {/* 배경 트랙 */}
         <circle
           cx={size / 2}
           cy={size / 2}
           fill="transparent"
           r={radius}
-          stroke={`url(#gradient-${id})`}
+          stroke={trackColor}
+          strokeWidth={strokeWidth}
+        />
+        {/* 진행 상태 */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          fill="transparent"
+          r={radius}
+          stroke={color}
           strokeDasharray={circumference}
           strokeDashoffset={offset}
-          strokeLinecap="butt"
+          strokeLinecap="round"
           strokeWidth={strokeWidth}
           style={{
-            transition:
-              "stroke-dashoffset 0.75s ease-in-out, filter 0.75s ease",
-            filter: "drop-shadow(0px 0px 4px rgba(255, 255, 255, 0.5))",
+            transition: "stroke-dashoffset 1s ease-in-out",
+            transform: "rotate(-90deg)",
+            transformOrigin: "50% 50%",
           }}
         />
       </svg>
-      <div className="absolute top-0 left-0 w-full h-full flex flex-col items-center justify-center">
-        <div className="flex flex-col items-center justify-center gap-1">
-          <div
-            className={`flex flex-row gap-1 ${textSizeClass} font-bold text-gray-500`}
-          >
-            <CountUpComponent
-              color={color}
-              duration={3}
-              end={visitors}
-              id={id}
-              mounted={mounted}
-              start={0}
-            />
-            <span>{type}</span>
-          </div>
-          <span className={`${labelSizeClass} text-white`}>{label}</span>
-        </div>
+      
+      {/* 중앙 텍스트 */}
+      <div className="absolute flex flex-col items-center justify-center">
+        <p className={`${labelSizeClass} font-medium text-gray-600 dark:text-gray-300 mb-1 text-center px-2`}>
+          {label}
+        </p>
+        <p className={`${textSizeClass} font-bold flex items-baseline gap-1`}>
+          {mounted ? (
+            <CountUpComponent end={visitors} separator="," />
+          ) : (
+            <span>0</span>
+          )}
+          <span className={`${typeSizeClass} font-normal text-gray-500`}>
+            {type}
+          </span>
+        </p>
       </div>
     </div>
   );

@@ -27,17 +27,38 @@ body, html, #__next {
   padding: 0;
   font-antialiased: true;
   font-size: 16px;
+  overflow-x: hidden;
 }
 
 body.loading {
   cursor: wait;
 }
 
+/* 🔥 모바일 전역 좌우 여백 - body의 모든 직계 자식에 적용 */
+body > * {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+/* 🔥 광고 footer는 전체 너비로 (예외 처리) */
+body > *:has(footer) {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* 🔥 태블릿 이상에서는 여백 제거 */
+@media (min-width: 768px) {
+  body > * {
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
 /* 유틸리티 클래스 확장 */
 @utility btn-project {
   display: inline-flex;
   color: white;
-  background-color: rgb(99 102 241); /* indigo-500 */
+  background-color: rgb(99 102 241);
   font-weight: 600;
   border: 0;
   padding: 0.5rem 1.5rem;
@@ -49,7 +70,7 @@ body.loading {
   }
   
   &:hover {
-    background-color: rgb(79 70 229); /* indigo-600 */
+    background-color: rgb(79 70 229);
   }
 }
 
