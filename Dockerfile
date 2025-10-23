@@ -1,11 +1,12 @@
-FROM node:18-bullseye
+FROM node:18-alpine
 
-RUN apt-get update && apt-get install -y tzdata
+# 타임존 설정
+RUN apk add --no-cache tzdata
 ENV TZ=Asia/Seoul
 
 WORKDIR /app
 
-# ARG로 빌드 타임 환경변수 받기
+# ARG (빌드 타임 환경 변수)
 ARG DATABASE_URL
 ARG GOOGLE_CLIENT_ID
 ARG GOOGLE_CLIENT_SECRET
@@ -16,7 +17,7 @@ ARG NEXTAUTH_SECRET
 ARG JWT_SECRET
 ARG NOTION_TOKEN
 
-# ENV로 설정
+# ENV (실행 시 환경 변수)
 ENV DATABASE_URL=$DATABASE_URL
 ENV GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 ENV GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
@@ -28,18 +29,16 @@ ENV JWT_SECRET=$JWT_SECRET
 ENV NOTION_TOKEN=$NOTION_TOKEN
 ENV NEXT_DISABLE_LIGHTNINGCSS=true
 
+# 패키지 설치
 COPY package.json package-lock.json ./
 COPY prisma ./prisma/
-
 RUN npm install
 RUN npx prisma generate
 
+# 앱 복사 및 빌드
 COPY . .
-
 RUN sed -i '/DATABASE_URL/d' .env || true
-
-# ✅ 핵심 수정: NEXT_DISABLE_LIGHTNINGCSS=true 를 빌드 시점에도 명시적으로 전달
-RUN NEXT_DISABLE_LIGHTNINGCSS=true npm run build
+RUN npm run build
 
 EXPOSE 5000
 CMD ["sh", "-c", "npx prisma migrate deploy && npm run start"]
