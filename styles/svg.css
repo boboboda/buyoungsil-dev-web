@@ -1,0 +1,28 @@
+.circular-progress-svg {
+    transition: transform 1s ease-in-out;
+    transform-origin: 50% 50%; /* SVG의 정 중앙을 중심점으로 설정 */
+    animation: rotate-backward 1s ease-in-out forwards;
+}
+
+
+@keyframes rotate-animation {
+    from {
+      transform: rotate(-90deg);
+    }
+    to {
+      transform: rotate(270deg);
+    }
+  }
+
+  @keyframes rotate-backward {
+    from {
+      transform: rotate(270deg);
+    }
+    to {
+      transform: rotate(-90deg);
+    }
+  }
+  
+  .relative:hover .circular-progress-svg {
+    animation: rotate-animation 1s ease-in-out;
+  }
