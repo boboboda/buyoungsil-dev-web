@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:18-bullseye
 
 RUN apk add --no-cache tzdata
 ENV TZ=Asia/Seoul
