@@ -4,7 +4,6 @@ import React, { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { Skeleton } from "@heroui/react";
 
-// Dynamic import with no SSR
 const Lottie = dynamic(() => import("react-lottie-player"), {
   ssr: false,
 });
@@ -21,9 +20,8 @@ export default function Animation() {
   }, []);
 
   return (
-    // <img src="/antAnimation.gif" alt="Example GIF"/>
-    <Skeleton className="rounded-lg m-5" isLoaded={isMounted}>
-      <div className="max-w-[200px] lg:max-w-[600px] h-full">
+    <Skeleton className="rounded-lg" isLoaded={isMounted}>
+      <div className="w-full h-full">
         <Lottie loop play animationData={lottieJson} />
       </div>
     </Skeleton>

@@ -1,53 +1,75 @@
 "use client";
 
 import { CountUp } from "countup.js";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 interface CountUpProps {
+  id: string;
   end: number;
   start?: number;
   duration?: number;
   prefix?: string;
   suffix?: string;
   separator?: string;
+  mounted?: boolean;
+  color: string;
 }
 
 const CountUpComponent: React.FC<CountUpProps> = ({
+  id,
   end,
   start = 0,
   duration = 2,
   prefix = "",
   suffix = "",
   separator = ",",
+  color,
+  mounted = false,
 }) => {
+  const countUpRef = useRef<CountUp | null>(null);
+  const hasAnimated = useRef(false);
+
   useEffect(() => {
-    // 고유한 ID 생성
-    const uniqueId = `countup-${Math.random().toString(36).substr(2, 9)}`;
-    const element = document.getElementById(uniqueId);
+    // mounted가 true이고 아직 애니메이션을 실행하지 않았을 때만 실행
+    if (mounted && !hasAnimated.current && end !== undefined && end !== null) {
+      const element = document.getElementById(id);
+      
+      if (element) {
+        // 먼저 실제 값을 표시
+        element.textContent = `${prefix}${end.toLocaleString()}${suffix}`;
+        
+        // 그 다음 애니메이션 실행
+        const countUp = new CountUp(id, end, {
+          startVal: start,
+          duration: duration,
+          prefix: prefix,
+          suffix: suffix,
+          separator: separator,
+        });
 
-    if (element) {
-      const countUp = new CountUp(uniqueId, end, {
-        startVal: start,
-        duration: duration,
-        prefix: prefix,
-        suffix: suffix,
-        separator: separator,
-      });
-
-      if (!countUp.error) {
-        countUp.start();
-      } else {
-        console.error("CountUp error:", countUp.error);
+        if (!countUp.error) {
+          countUp.start();
+          countUpRef.current = countUp;
+          hasAnimated.current = true;
+          console.log(`✅ CountUp started for ${id}:`, { start, end });
+        } else {
+          console.error(`❌ CountUp error for ${id}:`, countUp.error);
+        }
       }
     }
-  }, [end, start, duration, prefix, suffix, separator]);
+  }, [id, mounted, end, start, duration, prefix, suffix, separator]);
 
-  // 고유한 ID를 미리 생성하여 일관성 유지
-  const countId = `countup-${end}-${start}`;
+  // end 값이 변경되었을 때 CountUp 업데이트
+  useEffect(() => {
+    if (countUpRef.current && hasAnimated.current && end !== undefined) {
+      countUpRef.current.update(end);
+      console.log(`🔄 CountUp updated for ${id}:`, end);
+    }
+  }, [end, id]);
 
   return (
-    <span id={countId}>
-      {start}
+    <span className="text-white" id={id} style={{ color }}>
+      {end?.toLocaleString() || 0}
     </span>
   );
 };
