@@ -1,19 +1,10 @@
 version: '3'
-
 services:
   developweb:
-    build: 
+    build:
       context: .
       args:
-        - DATABASE_URL=${DATABASE_URL}
-        - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-        - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-        - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
-        - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
-        - NEXTAUTH_URL=${NEXTAUTH_URL}
-        - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-        - JWT_SECRET=${JWT_SECRET}
-        - NOTION_TOKEN=${NOTION_TOKEN}
+        - ENV_FILE=.env.temp
     container_name: developWeb
     restart: always
     env_file:
