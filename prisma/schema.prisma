@@ -53,44 +53,160 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-// schema.prisma
+// ========================================
+// 개발노트 (🔥 isPublished 추가)
+// ========================================
 model DevelopNote {
-  id            String   @id @default(cuid())
-  noteId        Int      @unique
-  title         String?
-  mainCategory  String?
-  subCategory   Json?    // 객체(SubCategory)를 저장하기 위해 Json 타입 사용
-  content       Json?    // JSONContent 배열을 저장
-  level         String   @default("BEGINNER") // 새로 추가된 필드
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id              String   @id @default(cuid())
+  noteId          Int      @unique
+  title           String?
+  mainCategory    String?
+  subCategory     Json?
+  content         Json?
+  level           String   @default("BEGINNER")
+  
+  // 🔥 신규 필드
+  isPublished     Boolean  @default(false)
+  metaTitle       String?
+  metaDescription String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@map("developNote")
+  @@index([isPublished])
+  @@index([mainCategory])
 }
 
+// ========================================
+// 프로젝트 (🔥 신규 - App 대체)
+// ========================================
+model Project {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  title       String
+  description String       @db.Text
+  coverImage  String?
+  appLink     String?
+  
+  status      String       @default("in-progress")
+  progress    Int          @default(0)
+  type        String
+  databaseId  String?
+  
+  tags        ProjectTag[]
+  logs        ProjectLog[]
+  revenues    Revenue[]
+  
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
-// 게시글 모델
+  @@map("projects")
+  @@index([status])
+  @@index([type])
+}
+
+model ProjectTag {
+  id        String  @id @default(cuid())
+  name      String
+  color     String
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_tags")
+}
+
+model ProjectLog {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  title     String
+  content   String   @db.Text
+  logType   String
+  noteId    Int?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("project_logs")
+  @@index([projectId])
+  @@index([noteId])
+}
+
+model Revenue {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  month     String
+  adsense   Int      @default(0)
+  inapp     Int      @default(0)
+  total     Int      @default(0)
+  
+  dau       Int?
+  mau       Int?
+  downloads Int?
+  retention Float?
+  notes     String?  @db.Text
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("revenues")
+  @@unique([projectId, month])
+  @@index([month])
+}
+
+// ========================================
+// 비개발자 이야기 (🔥 신규)
+// ========================================
+model Story {
+  id              String   @id @default(cuid())
+  slug            String   @unique
+  title           String
+  content         String   @db.Text
+  excerpt         String?
+  
+  category        String
+  tags            String[]
+  isPublished     Boolean  @default(true)
+  
+  metaTitle       String?
+  metaDescription String?
+  viewCount       Int      @default(0)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("stories")
+  @@index([category])
+  @@index([isPublished])
+}
+
+// ========================================
+// 기존 모델 (유지)
+// ========================================
 model Post {
   id         String    @id @default(uuid())
   listNumber Int
   writer     String
-  email     String 
+  email      String
   title      String
   content    String
   createdAt  DateTime  @default(now()) @map("created_at")
-  appName    String    // 앱 이름 (예: main, sub 등)
-  postType   String    // 게시글 타입 (notice, post)
+  appName    String
+  postType   String
   comments   Comment[]
 
   @@map("posts")
-  @@index([appName, postType]) // 검색 성능 향상을 위한 인덱스
+  @@index([appName, postType])
 }
 
-// 댓글 모델
 model Comment {
   id        String   @id @default(uuid())
   writer    String
-  email     String 
+  email     String
   content   String
   createdAt DateTime @default(now()) @map("created_at")
   postId    String   @map("post_id")
@@ -100,7 +216,6 @@ model Comment {
   @@map("comments")
 }
 
-// 답글 모델
 model Reply {
   id        String   @id @default(uuid())
   writer    String
@@ -108,14 +223,11 @@ model Reply {
   content   String
   createdAt DateTime @default(now()) @map("created_at")
   commentId String   @map("comment_id")
-  mentionTo String?  // 멘션 대상 (단순 문자열)
+  mentionTo String?
   comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
   @@map("replies")
 }
-
-
-// 앱 등록
 
 model App {
   id          String   @id @default(cuid())
@@ -140,21 +252,17 @@ model Tag {
   @@unique([appId, name])
 }
 
-
-
-// 방문자수
 model DailyVisitorCount {
-  id        String @id @default(cuid()) // 고유 ID (Prisma가 자동으로 생성)
-  date      String @unique @map("visit_date") // 'YYYY-MM-DD' 형식의 날짜, 이 날짜가 고유키 역할
-  count     Int    @default(0) // 해당 날짜의 방문자수 (기본값 0)
+  id    String @id @default(cuid())
+  date  String @unique @map("visit_date")
+  count Int    @default(0)
 
-  @@map("daily_visitor_counts") // 데이터베이스의 실제 테이블 이름
+  @@map("daily_visitor_counts")
 }
 
-
 model TotalVisitorCount {
-  id        String @id @default("singleton") // 고정된 ID. 이 테이블은 이 ID를 가진 레코드 하나만 가집니다.
-  totalCount Int   @default(0) @map("total_count") // 누적 총 방문자수 (기본값 0)
+  id         String @id @default("singleton")
+  totalCount Int    @default(0) @map("total_count")
 
-  @@map("total_visitor_counts") // 데이터베이스의 실제 테이블 이름
+  @@map("total_visitor_counts")
 }
