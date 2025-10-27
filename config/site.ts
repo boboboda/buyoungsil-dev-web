@@ -11,12 +11,12 @@ export const siteConfig = {
       href: "/",
     },
     {
-      label: "개발노트",
+      label: "📚 개발노트",
       href: "/note",
     },
     {
-      label: "출시어플",
-      href: "/release",
+      label: "💼 프로젝트",  // 🔥 변경
+      href: "/project",      // 🔥 변경
     },
     {
       label: "연락하기",

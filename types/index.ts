@@ -1,3 +1,4 @@
+import { NoteLevel } from "@/components/developmentNote/EditorHeader";
 import { SVGProps } from "react";
 
 export type IconSvgProps = SVGProps<SVGSVGElement> & {
@@ -141,4 +142,105 @@ export interface AppInput {
   coverImage?: string;
   tags: { name: string; color: string }[];
   databaseId?: string;
+}
+
+// ========================================
+// 프로젝트 타입 (🔥 신규)
+// ========================================
+export type ProjectStatus = "released" | "in-progress" | "backend";
+export type ProjectType = "mobile" | "web" | "backend";
+export type LogType = "progress" | "issue" | "solution" | "milestone";
+
+export interface Project {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  coverImage?: string | null;
+  appLink?: string | null;
+  status: ProjectStatus;
+  progress: number;
+  type: ProjectType;
+  databaseId?: string | null;
+  tags: ProjectTag[];
+  logCount?: number;      // 계산 필드
+  revenue?: number;       // 최근 월 수익
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectTag {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface ProjectLog {
+  id: string;
+  projectId: string;
+  title: string;
+  content: string;
+  logType: LogType;
+  noteId?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Revenue {
+  id: string;
+  projectId: string;
+  month: string;
+  adsense: number;
+  inapp: number;
+  total: number;
+  dau?: number | null;
+  mau?: number | null;
+  downloads?: number | null;
+  retention?: number | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ========================================
+// 스토리 타입 (🔥 신규)
+// ========================================
+export type StoryCategory = "삽질기" | "꿀팁" | "일상";
+
+export interface Story {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  excerpt?: string | null;
+  category: StoryCategory;
+  tags: string[];
+  isPublished: boolean;
+  metaTitle?: string | null;
+  metaDescription?: string | null;
+  viewCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ========================================
+// 개발노트 타입 업데이트 (🔥 필드 추가)
+// ========================================
+export interface Note {
+  noteId?: number | null;
+  title?: string | null;
+  mainCategory?: NoteCategory | null;
+  subCategory?: SubCategory | null;
+  level?: NoteLevel;
+  content?: any;
+  isPublished?: boolean;  // 🔥 신규
+  metaTitle?: string | null;  // 🔥 신규
+  metaDescription?: string | null;  // 🔥 신규
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SubCategory {
+  id: number;
+  name: string;
 }
