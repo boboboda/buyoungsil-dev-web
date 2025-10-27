@@ -2,6 +2,7 @@
 
 import prisma from "@/lib/prisma"
 import { Note } from "@/store/editorSotre"
+import moment from "moment";
 import { cache } from 'react';
 
 export async function addEdtiorServer(reqData: string) {
@@ -128,4 +129,47 @@ export async function deleteOneEditorServer(noteId: string) {
     console.error('db 에러', error)
     return { success: false }
   }
+}
+
+// 기존 함수들...
+
+// 🔥 추가: 모든 개발노트 가져오기 (공개된 것만)
+export async function fetchAllDevelopNotes() {
+  const notes = await prisma.developNote.findMany({
+    where: {
+      isPublished: true
+    },
+    orderBy: {
+      createdAt: 'desc'
+    }
+  });
+
+  return notes.map(note => {
+    // Json 타입을 파싱
+    let subCategory = null;
+    if (note.subCategory) {
+      try {
+        const parsed = typeof note.subCategory === 'string' 
+          ? JSON.parse(note.subCategory) 
+          : note.subCategory;
+        subCategory = parsed;
+      } catch (e) {
+        subCategory = null;
+      }
+    }
+
+    return {
+      noteId: note.noteId,
+      title: note.title,
+      mainCategory: note.mainCategory,
+      subCategory: subCategory,  // 파싱된 객체 또는 null
+      level: note.level,
+      content: note.content,
+      isPublished: note.isPublished,
+      metaTitle: note.metaTitle,
+      metaDescription: note.metaDescription,
+      createdAt: moment(note.createdAt).format("YYYY-MM-DD"),
+      updatedAt: moment(note.updatedAt).format("YYYY-MM-DD")
+    };
+  });
 }
