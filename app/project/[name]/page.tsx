@@ -4,13 +4,14 @@ import { fetchProjectByName } from "@/serverActions/projects";
 import Link from "next/link";
 
 interface ProjectDetailPageProps {
-  params: {
+  params: Promise<{  // 🔥 Promise 추가
     name: string;
-  };
+  }>;
 }
 
 export async function generateMetadata({ params }: ProjectDetailPageProps): Promise<Metadata> {
-  const project = await fetchProjectByName(params.name);
+  const { name } = await params;  // 🔥 await 추가
+  const project = await fetchProjectByName(name);
   
   if (!project) {
     return {
@@ -25,7 +26,8 @@ export async function generateMetadata({ params }: ProjectDetailPageProps): Prom
 }
 
 export default async function ProjectDetailPage({ params }: ProjectDetailPageProps) {
-  const project = await fetchProjectByName(params.name);
+  const { name } = await params;  // 🔥 await 추가
+  const project = await fetchProjectByName(name);
 
   if (!project) {
     notFound();
