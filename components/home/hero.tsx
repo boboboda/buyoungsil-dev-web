@@ -1,111 +1,158 @@
-"use client";
+import Link from "next/link";
+import Animation from "./animation"; // 🔥 기존 애니메이션 import
 
-import { useEffect, useState } from "react";
+interface HeroProps {
+  todayVisitors: number;
+  totalVisitors: number;
+  totalProjects: number;
+  totalNotes: number;
+  totalUsers: number;
+  daysRunning: number;
+}
 
-import VisitCalcurateView from "./visitCalcurateView";
-import CustomTyped from "./customTyped";
-import Animation from "./animation";
-import TypedComponent from "./heroTyped";
-import SocialLoginDetector from "./SocialLoginDetector";
-
-import { title } from "@/components/primitives";
-import { useVisitor } from "@/app/hooks/main/useVisitor";
-
-export default function Hero() {
-  const [startFirst, setStartFirst] = useState(false);
-  const [startSecond, setStartSecond] = useState(false);
-  const [startThird, setStartThird] = useState(false);
-  const [startFour, setStartFour] = useState(false);
-  const [startFive, setStartFive] = useState(false);
-
-  const { todayCount, totalCount, userCount, loading, error } = useVisitor();
-
-  useEffect(() => {
-    const timer1 = setTimeout(() => setStartFirst(true), 300);
-    const timer2 = setTimeout(() => setStartSecond(true), 1000);
-    const timer3 = setTimeout(() => setStartThird(true), 2500);
-    const timer4 = setTimeout(() => setStartFour(true), 4500);
-    const timer5 = setTimeout(() => setStartFive(true), 7000);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
-      clearTimeout(timer4);
-      clearTimeout(timer5);
-    };
-  }, []);
+export default function Hero({ 
+  todayVisitors, 
+  totalVisitors, 
+  totalProjects, 
+  totalNotes,
+  totalUsers,
+  daysRunning
+}: HeroProps) {
+  const stats = [
+    {
+      icon: "📅",
+      value: daysRunning,
+      label: "홈페이지 운영",
+      suffix: "일째",
+      color: "from-blue-500 to-cyan-500"
+    },
+    {
+      icon: "👥",
+      value: totalUsers,
+      label: "가입자",
+      suffix: "명",
+      color: "from-purple-500 to-pink-500"
+    },
+    {
+      icon: "👋",
+      value: todayVisitors,
+      label: "오늘 방문자",
+      suffix: "명",
+      color: "from-green-500 to-emerald-500"
+    },
+    {
+      icon: "🌟",
+      value: totalVisitors,
+      label: "총 방문자",
+      suffix: "명",
+      color: "from-orange-500 to-red-500"
+    },
+    {
+      icon: "💼",
+      value: totalProjects,
+      label: "프로젝트",
+      suffix: "개",
+      color: "from-blue-600 to-purple-600"
+    },
+    {
+      icon: "📚",
+      value: totalNotes,
+      label: "개발노트",
+      suffix: "개",
+      color: "from-indigo-500 to-blue-500"
+    }
+  ];
 
   return (
-    <>
-      <SocialLoginDetector />
-      <div className="flex flex-col w-full lg:h-[1500px] justify-start items-center">
-        {/* 상단 섹션: 모바일(세로), 데스크톱(가로) */}
-        <div className="flex flex-col lg:flex-row w-full max-w-[1400px] lg:h-[600px] justify-center lg:justify-start items-center lg:items-start px-4 lg:px-0 lg:pt-8">
+    <section className="relative w-full py-12 md:py-20 overflow-hidden">
+      {/* 배경 그라데이션 + 애니메이션 */}
+      <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
+        <div className="absolute top-1/4 left-1/4 w-72 h-72 bg-blue-200 dark:bg-blue-900 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl opacity-70 animate-blob" />
+        <div className="absolute top-1/3 right-1/4 w-72 h-72 bg-purple-200 dark:bg-purple-900 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl opacity-70 animate-blob animation-delay-2000" />
+        <div className="absolute bottom-1/4 left-1/3 w-72 h-72 bg-pink-200 dark:bg-pink-900 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl opacity-70 animate-blob animation-delay-4000" />
+      </div>
+      
+      {/* 컨텐츠 */}
+      <div className="relative container mx-auto px-4 max-w-7xl">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
           
-          {/* 애니메이션 섹션 */}
-          <div className="w-full lg:w-1/2 flex justify-center lg:justify-start lg:pl-15">
-            <div className="w-[280px] sm:w-[320px] md:w-[380px] lg:w-[450px] xl:w-[500px]">
+          {/* 왼쪽: 텍스트 & 통계 */}
+          <div className="space-y-6 text-center lg:text-left order-2 lg:order-1">
+            {/* 뱃지 */}
+            <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-100 dark:bg-blue-900 rounded-full text-sm font-medium text-blue-800 dark:text-blue-200 animate-fade-in">
+              <span className="animate-pulse">🤖</span>
+              AI로 앱 만들기
+            </div>
+
+            {/* 메인 타이틀 */}
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight animate-fade-in-up">
+              <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                코딩천재 부영실
+              </span>
+            </h1>
+
+            {/* 서브 타이틀 */}
+            <p className="text-lg md:text-xl text-gray-600 dark:text-gray-300 leading-relaxed animate-fade-in-up animation-delay-200">
+              비개발자 출신 개발자가{" "}
+              <span className="font-bold text-blue-600 dark:text-blue-400">AI</span>를 활용해
+              <br />
+              실제 서비스를 만들고 운영하는 과정을 공유합니다
+            </p>
+
+            {/* 실시간 통계 카드 */}
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 pt-4 animate-fade-in-up animation-delay-400">
+              {stats.map((stat, index) => (
+                <div
+                  key={index}
+                  className="relative p-4 rounded-xl bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 group cursor-pointer"
+                >
+                  {/* 호버 그라데이션 */}
+                  <div className={`absolute inset-0 rounded-xl bg-gradient-to-r ${stat.color} opacity-0 group-hover:opacity-20 transition-opacity duration-300`} />
+                  
+                  <div className="relative">
+                    <div className="text-2xl mb-1">{stat.icon}</div>
+                    <div className={`text-2xl md:text-3xl font-bold bg-gradient-to-r ${stat.color} bg-clip-text text-transparent`}>
+                      {stat.value.toLocaleString()}
+                      <span className="text-sm ml-1">{stat.suffix}</span>
+                    </div>
+                    <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 font-medium">
+                      {stat.label}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* CTA 버튼 */}
+            <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start pt-6 animate-fade-in-up animation-delay-600">
+              <Link
+                href="/project"
+                className="group relative px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl overflow-hidden font-semibold text-lg shadow-lg hover:shadow-2xl transition-all duration-300"
+              >
+                <span className="relative z-10 flex items-center justify-center gap-2">
+                  프로젝트 둘러보기
+                  <span className="group-hover:translate-x-1 transition-transform">→</span>
+                </span>
+                <div className="absolute inset-0 bg-gradient-to-r from-purple-600 to-blue-600 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              </Link>
+              <Link
+                href="/note"
+                className="px-8 py-4 border-2 border-gray-300 dark:border-gray-600 rounded-xl hover:border-blue-600 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-gray-800 transition-all duration-300 font-semibold text-lg"
+              >
+                개발 노트 읽기
+              </Link>
+            </div>
+          </div>
+
+          {/* 오른쪽: 브랜드 캐릭터 애니메이션 🔥 */}
+          <div className="flex justify-center lg:justify-end order-1 lg:order-2 animate-fade-in-up animation-delay-800">
+            <div className="relative w-full max-w-md lg:max-w-lg">
               <Animation />
             </div>
           </div>
 
-          {/* 프로필 텍스트 섹션 */}
-          <div className="w-full h-full lg:w-1/2 flex flex-col items-center lg:items-start justify-start lg:pt-[140px] lg:pl-5 lg:pr-[120px] space-y-3 lg:space-y-4 mt-6 lg:mt-0">
-            <TypedComponent
-              className="text-3xl sm:text-4xl lg:text-[3rem] font-bold text-center lg:text-left"
-              showEndCursor="none"
-              start={startFirst}
-              text="프로필"
-            />
-            <TypedComponent
-              className="text-xl sm:text-2xl lg:text-[1.5rem] text-center lg:text-left"
-              showEndCursor="none"
-              start={startSecond}
-              text="이름: 부영실"
-            />
-            <TypedComponent
-              className="text-xl sm:text-2xl lg:text-[1.5rem] text-center lg:text-left"
-              showEndCursor="none"
-              start={startThird}
-              text="취미: 코딩, 게임 등"
-            />
-            <TypedComponent
-              className="text-xl sm:text-2xl lg:text-[1.5rem] text-center lg:text-left"
-              showEndCursor="none"
-              start={startFour}
-              text="관심사: 재테크, 개발, 1인기업"
-            />
-            <TypedComponent
-              className="text-xl sm:text-2xl lg:text-[1.5rem] text-center lg:text-left"
-              start={startFive}
-              text="할줄 아는 것: 안드로이드 개발, IOS 개발, 웹 개발"
-            />
-          </div>
-        </div>
-
-        {/* 하단 섹션: 방문자 카운터와 소개글 */}
-        <div className="w-full bg-slate-300 dark:bg-slate-900 flex justify-center mt-8 lg:mt-0">
-          <div className="w-full max-w-[1400px] flex flex-col lg:flex-row bg-slate-300 dark:bg-slate-900 py-8 lg:py-[80px] px-4 lg:px-0">
-            {/* 방문자 계산 뷰 섹션 */}
-            <div className="w-full lg:w-1/2 flex justify-center mb-10 lg:mb-0">
-              <VisitCalcurateView
-                initialTodayCount={todayCount}
-                initialTotalCount={totalCount}
-                initialUserTotalCount={userCount}
-              />
-            </div>
-
-            {/* 소개글 섹션 */}
-            <div className="flex flex-col w-full lg:w-1/2 lg:pl-[50px] space-y-6 lg:space-y-10 text-center lg:text-left items-center lg:items-start px-4 lg:px-0">
-              <h1 className={title({ size: "sm" })}>안녕하세요!!</h1>
-              <li className={title({ size: "sm" })}>코딩천재 부영실입니다.</li>
-              <li className={title({ size: "sm" })}>여러분은 꿈을 꾸십니까?</li>
-              <CustomTyped />
-            </div>
-          </div>
         </div>
       </div>
-    </>
+    </section>
   );
 }

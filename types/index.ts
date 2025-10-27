@@ -229,13 +229,13 @@ export interface Story {
 export interface Note {
   noteId?: number | null;
   title?: string | null;
-  mainCategory?: NoteCategory | null;
+  mainCategory?: string | null; // 🔥 NoteCategory 대신 string
   subCategory?: SubCategory | null;
-  level?: NoteLevel;
+  level?: string | null; // 🔥 NoteLevel 대신 string
   content?: any;
-  isPublished?: boolean;  // 🔥 신규
-  metaTitle?: string | null;  // 🔥 신규
-  metaDescription?: string | null;  // 🔥 신규
+  isPublished?: boolean;
+  metaTitle?: string | null;
+  metaDescription?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
