@@ -2,6 +2,8 @@ import { Metadata } from "next";
 import { fetchAllProjects } from "@/serverActions/projects";
 import ProjectCard from "@/components/project/ProjectCard";
 
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: "프로젝트 | 코딩천재 부영실",
   description: "AI로 만든 모바일/웹 프로젝트 모음. 출시된 앱부터 개발 중인 프로젝트까지 모두 공개합니다.",
