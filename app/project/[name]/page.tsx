@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { fetchProjectByName } from "@/serverActions/projects";
 import Link from "next/link";
 
+export const dynamic = 'force-dynamic';
+
 interface ProjectDetailPageProps {
   params: Promise<{  // 🔥 Promise 추가
     name: string;
