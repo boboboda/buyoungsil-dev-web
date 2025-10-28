@@ -12,8 +12,7 @@ import {
 } from "@heroui/react";
 import { toast } from "react-toastify";
 import { createProjectLog } from "@/serverActions/projects";
-import { categoryToPlatform } from "@/types";
-import type { NoteCategory } from "@/types";
+import { TECH_STACK_OPTIONS } from "@/types";
 
 interface ProjectTag {
   id: string;
@@ -25,6 +24,7 @@ interface Project {
   id: string;
   title: string;
   platform: string;
+    techStack: string[];
   tags: ProjectTag[];
 }
 
@@ -59,24 +59,33 @@ export default function ProjectLogForm({ projects, notes }: ProjectLogFormProps)
     { value: "milestone", label: "🎉 마일스톤" }
   ];
 
-  // 🔥 선택된 프로젝트의 플랫폼과 같은 카테고리의 노트만 필터링
-  const filteredNotes = useMemo(() => {
-    if (!formData.projectId) return notes;
+ 
+  // 🔥 수정: techStack 기반 필터링
+const filteredNotes = useMemo(() => {
+  if (!formData.projectId) return notes;
 
-    const selectedProject = projects.find(p => p.id === formData.projectId);
-    if (!selectedProject) return notes;
+  const selectedProject = projects.find(p => p.id === formData.projectId);
+  if (!selectedProject || !selectedProject.techStack) return notes;
 
-    // 플랫폼 기반 필터링
-    return notes.filter(note => {
-      if (!note.mainCategory) return false;
-      
-      const notePlatform = categoryToPlatform[note.mainCategory as NoteCategory];
-      
-      // 같은 플랫폼 또는 basics 카테고리
-      return notePlatform === selectedProject.platform || 
-             note.mainCategory === "basics";
+  console.log("🔍 프로젝트 기술 스택:", selectedProject.techStack);
+
+  return notes.filter(note => {
+    if (!note.mainCategory) return false;
+    
+    // 1. basics는 항상 표시
+    if (note.mainCategory === "basics") return true;
+    
+    // 2. 프로젝트의 techStack에 해당하는 노트만 표시
+    const isMatch = selectedProject.techStack.some(tech => {
+      const option = TECH_STACK_OPTIONS.find(o => o.value === tech);
+      return option?.category === note.mainCategory;
     });
-  }, [formData.projectId, projects, notes]);
+
+    console.log(`  📝 ${note.mainCategory} → ${isMatch ? '✅' : '❌'}`);
+    
+    return isMatch;
+  });
+}, [formData.projectId, projects, notes]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

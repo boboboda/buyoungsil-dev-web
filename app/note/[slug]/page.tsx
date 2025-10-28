@@ -9,6 +9,8 @@ import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { fetchPublishedCategories } from "@/serverActions/noteCategoryActions";
 
+
+
 // 카테고리별 메타데이터
 function getCategoryMetadata(slug: string) {
   const categoryMap: Record<string, { title: string; description: string; keywords: string[] }> = {

@@ -29,6 +29,7 @@ export async function fetchAllProjects() {
     coverImage: p.coverImage,
     appLink: p.appLink,
     platform: p.platform,
+    techStack: p.techStack,
     status: p.status,
     progress: p.progress,
     databaseId: p.databaseId,
@@ -80,8 +81,9 @@ export async function createProject(data: {
   platform: string;
   status: string;
   progress: number;
-  databaseId?: string;
+  techStack: string[];  // 🔥 추가
   tags: { name: string; color: string }[];
+  databaseId?: string;
 }) {
   const project = await prisma.project.create({
     data: {
@@ -93,6 +95,7 @@ export async function createProject(data: {
       platform: data.platform,
       status: data.status,
       progress: data.progress,
+      techStack: data.techStack,  // 🔥 추가
       databaseId: data.databaseId,
       tags: {
         create: data.tags
