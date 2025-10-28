@@ -95,7 +95,7 @@ export default function ProjectListTable({ projects }: { projects: Project[] }) 
               </TableCell>
               <TableCell>
                 <Chip size="sm" variant="flat">
-                  {project.type}
+                  {project.platform}
                 </Chip>
               </TableCell>
               <TableCell>
