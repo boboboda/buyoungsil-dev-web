@@ -35,7 +35,7 @@ export default async function EditProjectPage({ params }: EditProjectPageProps) 
     appLink: project.appLink,
     status: project.status as any,
     progress: project.progress,
-    type: project.type as any,
+    platform: project.platform as any,
     databaseId: project.databaseId,
     tags: project.tags,
     createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
