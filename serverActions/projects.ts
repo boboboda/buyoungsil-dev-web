@@ -80,42 +80,6 @@ export async function fetchProjectByName(name: string): Promise<Project | null> 
   };
 }
 
-export async function createProject(data: {
-  name: string;
-  title: string;
-  description: string;
-  coverImage?: string;
-  appLink?: string;
-  status: string;
-  progress: number;
-  type: string;
-  tags: { name: string; color: string }[];
-}) {
-  const project = await prisma.project.create({
-    data: {
-      ...data,
-      tags: { create: data.tags }
-    }
-  });
-
-  revalidatePath('/project');
-  return project;
-}
-
-export async function updateProject(id: string, data: any) {
-  const project = await prisma.project.update({
-    where: { id },
-    data
-  });
-
-  revalidatePath('/project');
-  return project;
-}
-
-export async function deleteProject(id: string) {
-  await prisma.project.delete({ where: { id } });
-  revalidatePath('/project');
-}
 
 // ========================================
 // 프로젝트 로그 CRUD
@@ -209,4 +173,84 @@ export async function fetchProjectRevenues(projectId: string) {
     createdAt: moment(r.createdAt).format("YYYY-MM-DD"),
     updatedAt: moment(r.updatedAt).format("YYYY-MM-DD")
   }));
+}
+
+export async function deleteProject(id: string) {
+  await prisma.project.delete({
+    where: { id }
+  });
+  
+  revalidatePath('/admin/projects');
+  revalidatePath('/project');
+}
+
+// 기존 함수들...
+
+// 🔥 프로젝트 생성
+export async function createProject(data: {
+  name: string;
+  title: string;
+  description: string;
+  coverImage?: string;
+  appLink?: string;
+  status: string;
+  progress: number;
+  type: string;
+  databaseId?: string;
+  tags: { name: string; color: string }[];
+}) {
+  const project = await prisma.project.create({
+    data: {
+      name: data.name,
+      title: data.title,
+      description: data.description,
+      coverImage: data.coverImage,
+      appLink: data.appLink,
+      status: data.status,
+      progress: data.progress,
+      type: data.type,
+      databaseId: data.databaseId,
+      tags: {
+        create: data.tags
+      }
+    },
+    include: { tags: true }
+  });
+
+  revalidatePath('/admin/projects');
+  revalidatePath('/project');
+  return project;
+}
+
+// 🔥 프로젝트 수정
+export async function updateProject(id: string, data: any) {
+  // 기존 태그 삭제
+  await prisma.projectTag.deleteMany({
+    where: { projectId: id }
+  });
+
+  // 프로젝트 업데이트
+  const project = await prisma.project.update({
+    where: { id },
+    data: {
+      name: data.name,
+      title: data.title,
+      description: data.description,
+      coverImage: data.coverImage,
+      appLink: data.appLink,
+      status: data.status,
+      progress: data.progress,
+      type: data.type,
+      databaseId: data.databaseId,
+      tags: {
+        create: data.tags
+      }
+    },
+    include: { tags: true }
+  });
+
+  revalidatePath('/admin/projects');
+  revalidatePath('/project');
+  revalidatePath(`/project/${project.name}`);
+  return project;
 }
