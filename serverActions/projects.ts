@@ -3,13 +3,12 @@
 import { revalidatePath } from "next/cache";
 import moment from "moment";
 import prisma from "@/lib/prisma";
-import type { Project, ProjectLog, ProjectStatus, ProjectType, Revenue } from "@/types";
 
 // ========================================
 // 프로젝트 CRUD
 // ========================================
 
-export async function fetchAllProjects(): Promise<Project[]> {
+export async function fetchAllProjects() {
   const projects = await prisma.project.findMany({
     include: {
       tags: true,
@@ -29,15 +28,11 @@ export async function fetchAllProjects(): Promise<Project[]> {
     description: p.description,
     coverImage: p.coverImage,
     appLink: p.appLink,
-    status: p.status as ProjectStatus,  // 🔥 타입 캐스팅
+    platform: p.platform,
+    status: p.status,
     progress: p.progress,
-    type: p.type as ProjectType,  // 🔥 타입 캐스팅
     databaseId: p.databaseId,
-    tags: p.tags.map(t => ({
-      id: t.id,
-      name: t.name,
-      color: t.color
-    })),
+    tags: p.tags,
     logCount: p.logs.length,
     revenue: p.revenues[0]?.total || 0,
     createdAt: moment(p.createdAt).format("YYYY-MM-DD"),
@@ -45,7 +40,7 @@ export async function fetchAllProjects(): Promise<Project[]> {
   }));
 }
 
-export async function fetchProjectByName(name: string): Promise<Project | null> {
+export async function fetchProjectByName(name: string) {
   const project = await prisma.project.findUnique({
     where: { name },
     include: {
@@ -64,15 +59,11 @@ export async function fetchProjectByName(name: string): Promise<Project | null> 
     description: project.description,
     coverImage: project.coverImage,
     appLink: project.appLink,
-    status: project.status as ProjectStatus,  // 🔥 타입 캐스팅
+    platform: project.platform,
+    status: project.status,
     progress: project.progress,
-    type: project.type as ProjectType,  // 🔥 타입 캐스팅
     databaseId: project.databaseId,
-    tags: project.tags.map(t => ({
-      id: t.id,
-      name: t.name,
-      color: t.color
-    })),
+    tags: project.tags,
     logCount: project.logs.length,
     revenue: project.revenues[0]?.total || 0,
     createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
@@ -80,6 +71,81 @@ export async function fetchProjectByName(name: string): Promise<Project | null> 
   };
 }
 
+export async function createProject(data: {
+  name: string;
+  title: string;
+  description: string;
+  coverImage?: string;
+  appLink?: string;
+  platform: string;
+  status: string;
+  progress: number;
+  databaseId?: string;
+  tags: { name: string; color: string }[];
+}) {
+  const project = await prisma.project.create({
+    data: {
+      name: data.name,
+      title: data.title,
+      description: data.description,
+      coverImage: data.coverImage,
+      appLink: data.appLink,
+      platform: data.platform,
+      status: data.status,
+      progress: data.progress,
+      databaseId: data.databaseId,
+      tags: {
+        create: data.tags
+      }
+    },
+    include: { tags: true }
+  });
+
+  revalidatePath('/admin/projects');
+  revalidatePath('/project');
+  return project;
+}
+
+export async function updateProject(id: string, data: any) {
+  // 기존 태그 삭제
+  await prisma.projectTag.deleteMany({
+    where: { projectId: id }
+  });
+
+  // 프로젝트 업데이트
+  const project = await prisma.project.update({
+    where: { id },
+    data: {
+      name: data.name,
+      title: data.title,
+      description: data.description,
+      coverImage: data.coverImage,
+      appLink: data.appLink,
+      platform: data.platform,
+      status: data.status,
+      progress: data.progress,
+      databaseId: data.databaseId,
+      tags: {
+        create: data.tags
+      }
+    },
+    include: { tags: true }
+  });
+
+  revalidatePath('/admin/projects');
+  revalidatePath('/project');
+  revalidatePath(`/project/${project.name}`);
+  return project;
+}
+
+export async function deleteProject(id: string) {
+  await prisma.project.delete({
+    where: { id }
+  });
+  
+  revalidatePath('/admin/projects');
+  revalidatePath('/project');
+}
 
 // ========================================
 // 프로젝트 로그 CRUD
@@ -96,7 +162,8 @@ export async function createProjectLog(data: {
     data
   });
 
-  revalidatePath('/project');
+  revalidatePath('/admin/projects');
+  revalidatePath(`/project`);
   return log;
 }
 
@@ -107,7 +174,12 @@ export async function fetchProjectLogs(projectId: string) {
   });
 
   return logs.map(log => ({
-    ...log,
+    id: log.id,
+    projectId: log.projectId,
+    title: log.title,
+    content: log.content,
+    logType: log.logType,
+    noteId: log.noteId,
     createdAt: moment(log.createdAt).format("YYYY-MM-DD HH:mm"),
     updatedAt: moment(log.updatedAt).format("YYYY-MM-DD HH:mm")
   }));
@@ -158,7 +230,8 @@ export async function createOrUpdateRevenue(data: {
     }
   });
 
-  revalidatePath('/project');
+  revalidatePath('/admin/projects');
+  revalidatePath(`/project`);
   return revenue;
 }
 
@@ -169,88 +242,18 @@ export async function fetchProjectRevenues(projectId: string) {
   });
 
   return revenues.map(r => ({
-    ...r,
+    id: r.id,
+    projectId: r.projectId,
+    month: r.month,
+    adsense: r.adsense,
+    inapp: r.inapp,
+    total: r.total,
+    dau: r.dau,
+    mau: r.mau,
+    downloads: r.downloads,
+    retention: r.retention,
+    notes: r.notes,
     createdAt: moment(r.createdAt).format("YYYY-MM-DD"),
     updatedAt: moment(r.updatedAt).format("YYYY-MM-DD")
   }));
-}
-
-export async function deleteProject(id: string) {
-  await prisma.project.delete({
-    where: { id }
-  });
-  
-  revalidatePath('/admin/projects');
-  revalidatePath('/project');
-}
-
-// 기존 함수들...
-
-// 🔥 프로젝트 생성
-export async function createProject(data: {
-  name: string;
-  title: string;
-  description: string;
-  coverImage?: string;
-  appLink?: string;
-  status: string;
-  progress: number;
-  type: string;
-  databaseId?: string;
-  tags: { name: string; color: string }[];
-}) {
-  const project = await prisma.project.create({
-    data: {
-      name: data.name,
-      title: data.title,
-      description: data.description,
-      coverImage: data.coverImage,
-      appLink: data.appLink,
-      status: data.status,
-      progress: data.progress,
-      type: data.type,
-      databaseId: data.databaseId,
-      tags: {
-        create: data.tags
-      }
-    },
-    include: { tags: true }
-  });
-
-  revalidatePath('/admin/projects');
-  revalidatePath('/project');
-  return project;
-}
-
-// 🔥 프로젝트 수정
-export async function updateProject(id: string, data: any) {
-  // 기존 태그 삭제
-  await prisma.projectTag.deleteMany({
-    where: { projectId: id }
-  });
-
-  // 프로젝트 업데이트
-  const project = await prisma.project.update({
-    where: { id },
-    data: {
-      name: data.name,
-      title: data.title,
-      description: data.description,
-      coverImage: data.coverImage,
-      appLink: data.appLink,
-      status: data.status,
-      progress: data.progress,
-      type: data.type,
-      databaseId: data.databaseId,
-      tags: {
-        create: data.tags
-      }
-    },
-    include: { tags: true }
-  });
-
-  revalidatePath('/admin/projects');
-  revalidatePath('/project');
-  revalidatePath(`/project/${project.name}`);
-  return project;
 }
