@@ -3,6 +3,8 @@
 import { fetchAllCategories } from "@/serverActions/noteCategoryActions";
 import CategoryManageTable from "@/components/admin/categories/CategoryManageTable";
 
+export const dynamic = 'force-dynamic';
+
 export default async function AdminCategoriesPage() {
 
   
