@@ -5,6 +5,8 @@ import prisma from "@/lib/prisma";
 import Link from "next/link";
 import { noteCategoryInfo } from "@/types";
 
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: "개발노트 | 코딩천재 부영실",
   description: "실전 개발 경험과 노하우를 기술 스택별로 정리한 개발노트입니다",
