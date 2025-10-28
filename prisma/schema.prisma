@@ -238,6 +238,10 @@ model Project {
   // 🔥 상태 관리
   status      String       @default("in-progress")
   // "released" | "in-progress" | "backend"
+
+    // 🔥 기술 스택 (노트 연결용) - 배열로 저장
+  techStack   String[]     @default([])
+
   
   progress    Int          @default(0)
   databaseId  String?
@@ -274,3 +278,8 @@ model NoteCategory {
   @@index([platform])
   @@index([isPublished])
 }
+
+
+
+
+

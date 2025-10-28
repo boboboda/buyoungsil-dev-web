@@ -42,18 +42,6 @@ export async function addEdtiorServer(reqData: string) {
   }
 }
 
-export async function allFetchEdtiorServer() {
-  const notes = await prisma.developNote.findMany({
-    where: {
-      isPublished: true  // 🔥 추가: 공개된 것만
-    },
-    orderBy: {
-      noteId: "asc"
-    }
-  });
-  
-  return JSON.stringify(notes);
-}
 
 export async function findOneEditorServer(noteId: string) {
   try {
@@ -176,12 +164,19 @@ export async function fetchPublishedNotes(): Promise<string> {
   return JSON.stringify(notes);
 }
 
-// 노트 ID로 단일 노트 가져오기
-export async function fetchNoteById(noteId: number) {
-  const note = await prisma.developNote.findUnique({
-    where: { noteId }
+export async function getMaxNoteId() {
+  "use server";
+  
+  const maxNote = await prisma.developNote.findFirst({
+    orderBy: {
+      noteId: 'desc'  // 내림차순으로 정렬
+    },
+    select: {
+      noteId: true
+    }
   });
-  return note;
+  
+  return maxNote?.noteId || 0;
 }
 
 
@@ -216,4 +211,31 @@ export async function toggleNotePublish(noteId: number) {
     console.error("Toggle note publish error:", error);
     throw error;
   }
+
+  
+}
+
+// 🔥 새로 추가: 관리자용 (모든 노트 가져오기)
+export async function allFetchEditorServerAdmin() {
+  const notes = await prisma.developNote.findMany({
+    orderBy: {
+      noteId: "desc"  // 최신순으로 정렬
+    }
+  });
+  
+  return JSON.stringify(notes);
+}
+
+// 기존 함수 유지 (일반 사용자용)
+export async function allFetchEdtiorServer() {
+  const notes = await prisma.developNote.findMany({
+    where: {
+      isPublished: true
+    },
+    orderBy: {
+      noteId: "asc"
+    }
+  });
+  
+  return JSON.stringify(notes);
 }

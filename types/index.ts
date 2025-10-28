@@ -121,6 +121,9 @@ export interface Project {
   platform: string;  // 🔥 type 제거하고 platform만 사용
   status: string;
   progress: number;
+
+  techStack: string[];
+
   databaseId?: string | null;
   tags: ProjectTag[];
   logCount?: number;
@@ -450,3 +453,15 @@ export const noteCategoryInfo: Record<NoteCategory, {
     tags: ["Programming", "Basics", "Tutorial"]
   }
 };
+
+// 🔥 기술 스택 옵션 (노트 카테고리와 매핑)
+export const TECH_STACK_OPTIONS = [
+  { value: "flutter", label: "Flutter", category: "flutter" },
+  { value: "kotlin", label: "Kotlin + Compose", category: "kotlin-compose" },
+  { value: "swift", label: "Swift + SwiftUI", category: "swift-swiftui" },
+  { value: "nextjs", label: "Next.js", category: "nextjs-heroui" },
+  { value: "react", label: "React", category: "react" },
+  { value: "nestjs", label: "NestJS", category: "nestjs-typescript" },
+  { value: "nodejs", label: "Node.js", category: "nodejs" },
+  { value: "python", label: "Python", category: "python-crawling" },
+] as const;

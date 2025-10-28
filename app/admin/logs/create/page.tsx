@@ -2,8 +2,9 @@ import { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { fetchAllProjects } from "@/serverActions/projects";
-import { allFetchEdtiorServer } from "@/serverActions/editorServerAction";
+import { allFetchEditorServerAdmin } from "@/serverActions/editorServerAction";
 import ProjectLogForm from "@/components/admin/projects/ProjectLogForm";
+import { all } from "lowlight";
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,7 @@ export default async function CreateLogPage() {
   const projects = await fetchAllProjects();
   
   // 🔥 개발노트 목록 가져오기 (연결용)
-  const notesData = await allFetchEdtiorServer();
+  const notesData = await allFetchEditorServerAdmin();
   const notes = JSON.parse(notesData);
 
   return (

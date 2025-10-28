@@ -6,6 +6,7 @@ import { NoteCategory } from "./../types/index";
 
 import {
   addEdtiorServer,
+  allFetchEditorServerAdmin,
   deleteOneEditorServer,
   findOneAndUpdateEditorServer,
 } from "@/serverActions/editorServerAction";
@@ -102,56 +103,49 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
         }
       },
       saveToServer: async () => {
-        try {
-          console.log("실행됨 2");
-          let note = get();
+  try {
+    console.log("실행됨 2");
+    let note = get();
 
-          const jsonData = await allFetchEdtiorServer();
+     const jsonData = await allFetchEditorServerAdmin();
+    const allFetchData: Note[] = JSON.parse(jsonData);
 
-          const allFetchData: Note[] = JSON.parse(jsonData);
+    if (allFetchData && allFetchData.length > 0) {
+      const lastData = allFetchData[allFetchData.length - 1];
+      
+      // 🔥 수정: 괄호 추가!
+      note.noteId = (lastData.noteId ?? 0) + 1;
+      console.log("마지막 노트 ID:", lastData.noteId, "→ 새 ID:", note.noteId);
+    } else {
+      console.log("데이터가 없습니다.");
+      note.noteId = 1;  // 첫 노트는 1번
+    }
 
-          if (allFetchData && allFetchData.length > 0) {
-            const lastData = allFetchData[allFetchData.length - 1];
+    const newData = {
+      noteId: note.noteId,
+      title: note.title,
+      mainCategory: note.mainCategory,
+      subCategory: note.subCategory,
+      content: note.content,
+      level: note.level,
+    };
 
-            note.noteId = lastData.noteId ?? 0 + 1;
-            console.log("널이 아니고 데이터가 있습니다.");
-          } else {
-            // 배열이 비어있거나 null인 경우
-            console.log("데이터가 없습니다.");
-            note.noteId = (note.noteId ?? 0) + 1; // note.noteId를 안전하게 증가시키려면 초기값 확인 필요
-          }
+    console.log("저장할 노트 ID:", newData.noteId);
 
-          const newData = {
-            noteId: note.noteId,
-            title: note.title,
-            mainCategory: note.mainCategory,
-            subCategory: note.subCategory,
-            content: note.content,
-            level: note.level,
-          };
+    const noteData = await addEdtiorServer(JSON.stringify(newData));
 
-          if (newData) {
-            console.log("에디터 서버 실행");
-            const noteData = await addEdtiorServer(JSON.stringify(newData));
-
-            if (noteData.success) {
-              localStorage.removeItem("editorAutoSave");
-
-              set({ defaultInitContent });
-
-              return true;
-            } else {
-              return false;
-            }
-          } else {
-            return false;
-          }
-        } catch (error) {
-          console.log(error);
-
-          return false;
-        }
-      },
+    if (noteData.success) {
+      localStorage.removeItem("editorAutoSave");
+      set({ ...defaultInitContent });
+      return true;
+    } else {
+      return false;
+    }
+  } catch (error) {
+    console.log("saveToServer 에러:", error);
+    return false;
+  }
+},
       updateToServer: async () => {
         try {
           let note = get();
