@@ -186,30 +186,79 @@ export default function NavBar() {
                         </DropdownItem>
                         {/* 🔥 role 체크 개선 */}
                         {user?.role === "admin" ? (
-                          <>
-                            <DropdownItem
-                              key="resister"
-                              textValue="resister"
-                              onClick={() => router.push("/admin/register")}
-                            >
-                              <p>앱 등록</p>
-                            </DropdownItem>
-                            <DropdownItem
-                              key="adminWrite"
-                              textValue="adminWrite"
-                              onClick={() => router.push("/admin/write")}
-                            >
-                              <p>개발노트 쓰기</p>
-                            </DropdownItem>
-                            <DropdownItem
-                              key="adminNoteList"
-                              textValue="adminNoteList"
-                              onClick={() => router.push("/admin/list")}
-                            >
-                              <p>개발노트 리스트 관리</p>
-                            </DropdownItem>
-                          </>
-                        ) : null}
+  <>
+    <DropdownItem
+      key="adminDashboard"
+      textValue="adminDashboard"
+      onClick={() => router.push("/admin")}
+    >
+      <p>📊 관리자 대시보드</p>
+    </DropdownItem>
+    
+    {/* 🔥 프로젝트 관리 */}
+    <DropdownItem
+      key="adminProjects"
+      textValue="adminProjects"
+      onClick={() => router.push("/admin/projects")}
+    >
+      <p>💼 프로젝트 관리</p>
+    </DropdownItem>
+    
+    {/* 🔥 개발노트 관리 */}
+    <DropdownItem
+      key="adminNotes"
+      textValue="adminNotes"
+      onClick={() => router.push("/admin/notes")}
+    >
+      <p>📚 개발노트 관리</p>
+    </DropdownItem>
+    
+    {/* 기존 개발노트 쓰기 */}
+    <DropdownItem
+      key="adminWrite"
+      textValue="adminWrite"
+      onClick={() => router.push("/admin/write")}
+    >
+      <p>✍️ 개발노트 쓰기</p>
+    </DropdownItem>
+    
+    {/* 🔥 스토리 관리 */}
+    <DropdownItem
+      key="adminStories"
+      textValue="adminStories"
+      onClick={() => router.push("/admin/stories")}
+    >
+      <p>😅 스토리 관리</p>
+    </DropdownItem>
+    
+    {/* 🔥 개발 로그 작성 */}
+    <DropdownItem
+      key="adminLogs"
+      textValue="adminLogs"
+      onClick={() => router.push("/admin/logs/create")}
+    >
+      <p>📋 개발 로그 작성</p>
+    </DropdownItem>
+    
+    {/* 🔥 수익 데이터 입력 */}
+    <DropdownItem
+      key="adminRevenues"
+      textValue="adminRevenues"
+      onClick={() => router.push("/admin/revenues/create")}
+    >
+      <p>💰 수익 데이터 입력</p>
+    </DropdownItem>
+    
+    {/* 기존 앱 등록 (삭제 또는 유지) */}
+    <DropdownItem
+      key="resister"
+      textValue="resister"
+      onClick={() => router.push("/admin/register")}
+    >
+      <p>🚀 앱 등록</p>
+    </DropdownItem>
+  </>
+) : null}
                         <DropdownItem
                           key="logout"
                           color="danger"
