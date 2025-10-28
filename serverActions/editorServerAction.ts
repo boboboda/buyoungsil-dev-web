@@ -1,8 +1,11 @@
 "use server"
 
+import { NoteLevel } from "@/components/developmentNote/EditorHeader";
 import prisma from "@/lib/prisma"
 import { Note } from "@/store/editorSotre"
+import { NoteCategory } from "@/types";
 import moment from "moment";
+import { revalidatePath } from "next/cache";
 import { cache } from 'react';
 
 export async function addEdtiorServer(reqData: string) {
@@ -39,27 +42,18 @@ export async function addEdtiorServer(reqData: string) {
   }
 }
 
-export const allFetchEdtiorServer = cache(async () => {
-  console.log("에디터서버 db 로드 실행")
-
-  try {
-    console.time('서버')
-    
-    // 모든 노트 조회
-    const notes = await prisma.developNote.findMany({
-      orderBy: {
-        noteId: 'asc'
-      }
-    })
-
-    console.timeEnd('서버')
-    
-    return JSON.stringify(notes)
-  } catch (error) {
-    console.error('db 에러', error)
-    throw error
-  }
-})
+export async function allFetchEdtiorServer() {
+  const notes = await prisma.developNote.findMany({
+    where: {
+      isPublished: true  // 🔥 추가: 공개된 것만
+    },
+    orderBy: {
+      noteId: "asc"
+    }
+  });
+  
+  return JSON.stringify(notes);
+}
 
 export async function findOneEditorServer(noteId: string) {
   try {
@@ -131,10 +125,9 @@ export async function deleteOneEditorServer(noteId: string) {
   }
 }
 
-// 기존 함수들...
 
 // 🔥 추가: 모든 개발노트 가져오기 (공개된 것만)
-export async function fetchAllDevelopNotes() {
+export async function fetchAllDevelopNotes(): Promise<Note[]> {
   const notes = await prisma.developNote.findMany({
     where: {
       isPublished: true
@@ -160,16 +153,51 @@ export async function fetchAllDevelopNotes() {
 
     return {
       noteId: note.noteId,
-      title: note.title,
-      mainCategory: note.mainCategory,
-      subCategory: subCategory,  // 파싱된 객체 또는 null
-      level: note.level,
-      content: note.content,
+      title: note.title || null,
+      mainCategory: note.mainCategory as NoteCategory, // 🔥 타입 캐스팅
+      subCategory: subCategory,
+      level: note.level as NoteLevel, // 🔥 타입 캐스팅
+      content: note.content as any, // 🔥 타입 캐스팅
       isPublished: note.isPublished,
-      metaTitle: note.metaTitle,
-      metaDescription: note.metaDescription,
+      metaTitle: note.metaTitle || null,
+      metaDescription: note.metaDescription || null,
       createdAt: moment(note.createdAt).format("YYYY-MM-DD"),
       updatedAt: moment(note.updatedAt).format("YYYY-MM-DD")
     };
   });
 }
+
+// 공개된 노트만 가져오기 (일반 사용자용)
+export async function fetchPublishedNotes(): Promise<string> {
+  const notes = await prisma.developNote.findMany({
+    where: { isPublished: true },
+    orderBy: { noteId: "asc" }
+  });
+  return JSON.stringify(notes);
+}
+
+// 노트 ID로 단일 노트 가져오기
+export async function fetchNoteById(noteId: number) {
+  const note = await prisma.developNote.findUnique({
+    where: { noteId }
+  });
+  return note;
+}
+
+// 노트 공개/비공개 토글
+export async function toggleNotePublish(noteId: number) {
+  const note = await prisma.developNote.findUnique({
+    where: { noteId },
+    select: { isPublished: true }
+  });
+
+  const updated = await prisma.developNote.update({
+    where: { noteId },
+    data: { isPublished: !note?.isPublished }
+  });
+
+  revalidatePath('/note');
+  revalidatePath('/admin/notes');
+  return updated;
+}
+
