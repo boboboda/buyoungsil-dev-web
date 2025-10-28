@@ -72,27 +72,6 @@ model DevelopNote {
   @@map("developNote")
 }
 
-model Project {
-  id          String       @id @default(cuid())
-  name        String       @unique
-  title       String
-  description String
-  coverImage  String?
-  appLink     String?
-  status      String       @default("in-progress")
-  progress    Int          @default(0)
-  type        String
-  databaseId  String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  logs        ProjectLog[]
-  tags        ProjectTag[]
-  revenues    Revenue[]
-
-  @@index([status])
-  @@index([type])
-  @@map("projects")
-}
 
 model ProjectTag {
   id        String  @id @default(cuid())
@@ -241,17 +220,57 @@ model TotalVisitorCount {
   @@map("total_visitor_counts")
 }
 
+
+
+
+
+model Project {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  title       String
+  description String       @db.Text
+  coverImage  String?
+  appLink     String?
+  
+  // 🔥 플랫폼 (상위 분류)
+  platform    String       // "mobile" | "web" | "backend"
+  
+  // 🔥 상태 관리
+  status      String       @default("in-progress")
+  // "released" | "in-progress" | "backend"
+  
+  progress    Int          @default(0)
+  databaseId  String?
+  
+  tags        ProjectTag[]
+  logs        ProjectLog[]
+  revenues    Revenue[]
+  
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("projects")
+  @@index([platform])
+  @@index([status])
+}
+
 model NoteCategory {
   id          String   @id @default(cuid())
   slug        String   @unique
   name        String
-  description String?
-  icon        String?
+  description String
+  icon        String
+  
+  // 🔥 플랫폼 (상위 분류)
+  platform    String?  // "mobile" | "web" | "backend" | null (basics)
+  
   order       Int      @default(0)
   isPublished Boolean  @default(false)
+  
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@index([isPublished, order])
   @@map("note_categories")
+  @@index([platform])
+  @@index([isPublished])
 }

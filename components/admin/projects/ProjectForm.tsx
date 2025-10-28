@@ -13,7 +13,26 @@ import {
 } from "@heroui/react";
 import { toast } from "react-toastify";
 import { createProject, updateProject } from "@/serverActions/projects";
-import type { Project, ProjectStatus, ProjectType } from "@/types";
+
+interface ProjectTag {
+  id: string;
+  name: string;
+  color: string;
+}
+
+interface Project {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  coverImage?: string | null;
+  appLink?: string | null;
+  platform: string;
+  status: string;
+  progress: number;
+  databaseId?: string | null;
+  tags: ProjectTag[];
+}
 
 interface ProjectFormProps {
   project?: Project;
@@ -30,23 +49,22 @@ export default function ProjectForm({ project }: ProjectFormProps) {
     description: project?.description || "",
     coverImage: project?.coverImage || "",
     appLink: project?.appLink || "",
-    status: project?.status || ("in-progress" as ProjectStatus),
+    platform: project?.platform || "mobile",
+    status: project?.status || "in-progress",
     progress: project?.progress || 0,
-    type: project?.type || ("mobile" as ProjectType),
     databaseId: project?.databaseId || "",
     tags: project?.tags || []
   });
 
-  const statusOptions = [
-    { value: "released", label: "🟢 출시됨" },
-    { value: "in-progress", label: "🟡 개발중" },
-    { value: "backend", label: "⚙️ 백엔드" }
-  ];
-
-  const typeOptions = [
+  const platformOptions = [
     { value: "mobile", label: "📱 모바일" },
     { value: "web", label: "🌐 웹" },
     { value: "backend", label: "⚙️ 백엔드" }
+  ];
+
+  const statusOptions = [
+    { value: "released", label: "🟢 출시됨" },
+    { value: "in-progress", label: "🟡 개발중" },
   ];
 
   const handleAddTag = () => {
@@ -77,7 +95,9 @@ export default function ProjectForm({ project }: ProjectFormProps) {
     return title
       .toLowerCase()
       .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9가-힣-]/g, '');
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -157,29 +177,46 @@ export default function ProjectForm({ project }: ProjectFormProps) {
 
         <Input
           label="커버 이미지 URL"
-          placeholder="https://..."
-          value={formData.coverImage}
+          placeholder="https://example.com/image.jpg"
+          value={formData.coverImage || ""}
           onValueChange={(value) => setFormData(prev => ({ ...prev, coverImage: value }))}
         />
 
         <Input
-          label="앱 링크"
-          placeholder="https://apps.apple.com/..."
-          value={formData.appLink}
+          label="앱/웹사이트 링크"
+          placeholder="https://..."
+          value={formData.appLink || ""}
           onValueChange={(value) => setFormData(prev => ({ ...prev, appLink: value }))}
         />
       </div>
 
-      {/* 프로젝트 상태 */}
-      <div className="space-y-4 border-t pt-6">
-        <h3 className="text-lg font-bold">상태 및 진행률</h3>
+      {/* 플랫폼 & 상태 */}
+      <div className="space-y-4">
+        <h3 className="text-lg font-bold">분류</h3>
 
         <Select
-          label="프로젝트 상태"
-          placeholder="상태 선택"
+          label="플랫폼"
+          placeholder="플랫폼 선택"
+          selectedKeys={[formData.platform]}
+          onSelectionChange={(keys) => {
+            const value = Array.from(keys)[0] as string;
+            setFormData(prev => ({ ...prev, platform: value }));
+          }}
+          isRequired
+        >
+          {platformOptions.map((option) => (
+            <SelectItem key={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </Select>
+
+        <Select
+          label="상태"
+          placeholder="프로젝트 상태"
           selectedKeys={[formData.status]}
           onSelectionChange={(keys) => {
-            const value = Array.from(keys)[0] as ProjectStatus;
+            const value = Array.from(keys)[0] as string;
             setFormData(prev => ({ ...prev, status: value }));
           }}
           isRequired
@@ -191,104 +228,88 @@ export default function ProjectForm({ project }: ProjectFormProps) {
           ))}
         </Select>
 
-        <Select
-          label="프로젝트 타입"
-          placeholder="타입 선택"
-          selectedKeys={[formData.type]}
-          onSelectionChange={(keys) => {
-            const value = Array.from(keys)[0] as ProjectType;
-            setFormData(prev => ({ ...prev, type: value }));
-          }}
-          isRequired
-        >
-          {typeOptions.map((option) => (
-            <SelectItem key={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </Select>
-
-        <div>
-          <label className="block text-sm font-medium mb-2">
-            진행률: {formData.progress}%
-          </label>
-          <Slider
-            value={formData.progress}
-            onChange={(value) => setFormData(prev => ({ ...prev, progress: value as number }))}
-            minValue={0}
-            maxValue={100}
-            step={5}
-            color="primary"
-          />
-        </div>
+        {formData.status === "in-progress" && (
+          <div>
+            <label className="text-sm font-medium mb-2 block">
+              진행률: {formData.progress}%
+            </label>
+            <Slider
+              value={formData.progress}
+              onChange={(value) => setFormData(prev => ({ ...prev, progress: value as number }))}
+              minValue={0}
+              maxValue={100}
+              step={5}
+              color="primary"
+            />
+          </div>
+        )}
       </div>
 
       {/* 태그 */}
-      <div className="space-y-4 border-t pt-6">
-        <h3 className="text-lg font-bold">태그</h3>
+      <div className="space-y-4">
+        <h3 className="text-lg font-bold">기술 스택 태그</h3>
         
         <div className="flex gap-2">
           <Input
-            placeholder="태그 이름"
+            placeholder="태그 이름 (예: Flutter)"
             value={tagInput.name}
             onValueChange={(value) => setTagInput(prev => ({ ...prev, name: value }))}
+            className="flex-1"
           />
-          <input
+          <Input
             type="color"
             value={tagInput.color}
-            onChange={(e) => setTagInput(prev => ({ ...prev, color: e.target.value }))}
-            className="w-16 h-10 rounded cursor-pointer"
+            onValueChange={(value) => setTagInput(prev => ({ ...prev, color: value }))}
+            className="w-20"
           />
-          <Button onPress={handleAddTag} color="primary">
+          <Button
+            type="button"
+            onClick={handleAddTag}
+            color="primary"
+            variant="flat"
+          >
             추가
           </Button>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {formData.tags.map((tag) => (
-            <Chip
-              key={tag.id}
-              onClose={() => handleRemoveTag(tag.id)}
-              style={{ backgroundColor: tag.color }}
-              className="text-white"
-            >
-              {tag.name}
-            </Chip>
-          ))}
-        </div>
+        {formData.tags.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {formData.tags.map((tag) => (
+              <Chip
+                key={tag.id}
+                onClose={() => handleRemoveTag(tag.id)}
+                style={{ backgroundColor: tag.color + "20", color: tag.color }}
+              >
+                {tag.name}
+              </Chip>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Database ID (선택) */}
-      <div className="border-t pt-6">
+      {/* 기타 */}
+      <div className="space-y-4">
+        <h3 className="text-lg font-bold">기타</h3>
+        
         <Input
-          label="Database ID (선택)"
-          placeholder="Notion Database ID"
-          value={formData.databaseId}
+          label="Database ID (선택사항)"
+          placeholder="기존 Post/Notice ID"
+          value={formData.databaseId || ""}
           onValueChange={(value) => setFormData(prev => ({ ...prev, databaseId: value }))}
-          description="Notion 등 외부 데이터베이스 연동 시 사용"
+          description="기존 MongoDB Post/Notice와 연결할 경우"
         />
       </div>
 
       {/* 제출 버튼 */}
-      <div className="flex gap-4 pt-6">
-        <Button
-          type="submit"
-          color="primary"
-          size="lg"
-          isLoading={loading}
-          className="flex-1"
-        >
-          {project ? "수정하기" : "생성하기"}
-        </Button>
-        <Button
-          type="button"
-          variant="flat"
-          size="lg"
-          onPress={() => router.back()}
-        >
-          취소
-        </Button>
-      </div>
+      <Button
+        type="submit"
+        color="primary"
+        size="lg"
+        isLoading={loading}
+        className="w-full"
+      >
+        {project ? "수정" : "생성"}
+      </Button>
     </form>
   );
 }

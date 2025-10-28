@@ -118,13 +118,13 @@ export interface Project {
   description: string;
   coverImage?: string | null;
   appLink?: string | null;
-  status: ProjectStatus;
+  platform: string;  // 🔥 type 제거하고 platform만 사용
+  status: string;
   progress: number;
-  type: ProjectType;
   databaseId?: string | null;
   tags: ProjectTag[];
-  logCount?: number;      // 계산 필드
-  revenue?: number;       // 최근 월 수익
+  logCount?: number;
+  revenue?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -201,8 +201,10 @@ export interface SubCategory {
 // ========================================
 // 프로젝트 타입 (이미 추가했다면 skip)
 // ========================================
+// ========================================
+// 프로젝트 타입
+// ========================================
 export type ProjectStatus = "released" | "in-progress" | "backend";
-export type ProjectType = "mobile" | "web" | "backend";
 export type LogType = "progress" | "issue" | "solution" | "milestone";
 
 export interface Project {
@@ -212,13 +214,47 @@ export interface Project {
   description: string;
   coverImage?: string | null;
   appLink?: string | null;
-  status: ProjectStatus;
+  platform: string;  // 🔥 type 제거하고 platform만 사용
+  status: string;
   progress: number;
-  type: ProjectType;
   databaseId?: string | null;
   tags: ProjectTag[];
   logCount?: number;
   revenue?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectTag {
+  id: string;
+  name: string;
+  color: string;
+  projectId?: string;  // 🔥 추가 (Prisma에서 반환됨)
+}
+
+export interface ProjectLog {
+  id: string;
+  projectId: string;
+  title: string;
+  content: string;
+  logType: LogType;
+  noteId?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Revenue {
+  id: string;
+  projectId: string;
+  month: string;
+  adsense: number;
+  inapp: number;
+  total: number;
+  dau?: number | null;
+  mau?: number | null;
+  downloads?: number | null;
+  retention?: number | null;
+  notes?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -280,24 +316,6 @@ export interface Story {
 
 // types/index.ts
 
-export type NoteCategory =
-  // 모바일 (언어 + UI)
-  | "kotlin-compose"      // Kotlin + Jetpack Compose
-  | "swift-swiftui"       // Swift + SwiftUI
-  | "flutter"             // Flutter + Dart
-  
-  // 웹 (프레임워크 + UI)
-  | "nextjs-heroui"       // Next.js + HeroUI
-  | "react"               // React
-  
-  // 백엔드 (프레임워크 + 언어)
-  | "nestjs-typescript"   // NestJS + TypeScript
-  | "nodejs"              // Node.js
-  
-  // 기타
-  | "python-crawling"     // Python + 크롤링
-  | "basics";             // 개발 기초
-
 export const noteCategories: NoteCategory[] = [
   "kotlin-compose",
   "swift-swiftui",
@@ -310,65 +328,125 @@ export const noteCategories: NoteCategory[] = [
   "basics",
 ];
 
-// 카테고리 표시 정보
+
+// ========================================
+// 플랫폼 & 카테고리 타입
+// ========================================
+
+export type Platform = "mobile" | "web" | "backend";
+
+export type NoteCategory = 
+  // Mobile
+  | "kotlin-compose"
+  | "swift-swiftui"
+  | "flutter"
+  // Web
+  | "nextjs-heroui"
+  | "react"
+  // Backend
+  | "nestjs-typescript"
+  | "nodejs"
+  | "python-crawling"
+  // Basics
+  | "basics";
+
+// 🔥 카테고리 → 플랫폼 매핑
+export const categoryToPlatform: Record<NoteCategory, Platform | null> = {
+  // Mobile
+  "kotlin-compose": "mobile",
+  "swift-swiftui": "mobile",
+  "flutter": "mobile",
+  // Web
+  "nextjs-heroui": "web",
+  "react": "web",
+  // Backend
+  "nestjs-typescript": "backend",
+  "nodejs": "backend",
+  "python-crawling": "backend",
+  // Basics (플랫폼 무관)
+  "basics": null
+};
+
+// 🔥 플랫폼 → 카테고리 목록
+export const platformToCategories: Record<Platform, NoteCategory[]> = {
+  mobile: ["kotlin-compose", "swift-swiftui", "flutter"],
+  web: ["nextjs-heroui", "react"],
+  backend: ["nestjs-typescript", "nodejs", "python-crawling"]
+};
+
+// 🔥 카테고리 메타데이터
 export const noteCategoryInfo: Record<NoteCategory, {
   name: string;
   description: string;
   icon: string;
+  platform: Platform | null;
   tags: string[];
 }> = {
+  // Mobile
   "kotlin-compose": {
     name: "Kotlin + Compose",
     description: "Jetpack Compose를 활용한 안드로이드 앱 개발",
     icon: "🤖",
-    tags: ["Android", "Kotlin", "Jetpack Compose"]
+    platform: "mobile",
+    tags: ["Kotlin", "Android", "Jetpack Compose", "Mobile"]
   },
   "swift-swiftui": {
     name: "Swift + SwiftUI",
     description: "SwiftUI를 활용한 iOS 앱 개발",
     icon: "🍎",
-    tags: ["iOS", "Swift", "SwiftUI"]
+    platform: "mobile",
+    tags: ["Swift", "iOS", "SwiftUI", "Mobile"]
   },
   "flutter": {
     name: "Flutter",
     description: "Flutter로 크로스플랫폼 모바일 앱 개발",
     icon: "🦋",
-    tags: ["Flutter", "Dart", "Cross-Platform"]
+    platform: "mobile",
+    tags: ["Flutter", "Dart", "Cross-platform", "Mobile"]
   },
+  // Web
   "nextjs-heroui": {
     name: "Next.js + HeroUI",
     description: "Next.js와 HeroUI로 웹 애플리케이션 개발",
     icon: "▲",
-    tags: ["Next.js", "HeroUI", "React", "TypeScript"]
+    platform: "web",
+    tags: ["Next.js", "React", "HeroUI", "Web"]
   },
   "react": {
     name: "React",
     description: "React를 활용한 프론트엔드 개발",
     icon: "⚛️",
-    tags: ["React", "JavaScript", "Frontend"]
+    platform: "web",
+    tags: ["React", "JavaScript", "Frontend", "Web"]
   },
+  // Backend
   "nestjs-typescript": {
     name: "NestJS + TypeScript",
     description: "NestJS와 TypeScript로 백엔드 개발",
     icon: "🐈",
-    tags: ["NestJS", "TypeScript", "Backend"]
+    platform: "backend",
+    tags: ["NestJS", "TypeScript", "Node.js", "Backend"]
   },
   "nodejs": {
     name: "Node.js",
     description: "Node.js를 활용한 백엔드 개발",
     icon: "💚",
-    tags: ["Node.js", "JavaScript", "Backend"]
+    platform: "backend",
+    tags: ["Node.js", "JavaScript", "Backend", "API"]
   },
   "python-crawling": {
     name: "Python 크롤링",
     description: "Python을 활용한 웹 크롤링 및 데이터 수집",
     icon: "🐍",
-    tags: ["Python", "Crawling", "Data"]
+    platform: "backend",
+    tags: ["Python", "Crawling", "Data", "Automation"]
   },
+  // Basics
   "basics": {
     name: "개발 기초",
     description: "프로그래밍 입문과 기본 개념",
     icon: "📚",
-    tags: ["기초", "입문"]
+    platform: null,
+    tags: ["Programming", "Basics", "Tutorial"]
   }
 };
