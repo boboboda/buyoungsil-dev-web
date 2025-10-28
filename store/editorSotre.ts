@@ -42,7 +42,7 @@ export interface EditorActions {
 export const defaultInitContent: Note = {
   noteId: null,
   title: "",
-  mainCategory: "android",
+  mainCategory: "basics",
   subCategory: null,
   level: "BEGINNER",
   content: [
@@ -209,24 +209,30 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
           return false;
         }
       },
-      loadFromLocal: () => {
-        const saved = localStorage.getItem("editorAutoSave");
-        const subCatSaved = localStorage.getItem("subCategories");
+      // 🔥 수정: loadFromLocal 함수에 타입 가드 추가
+loadFromLocal: () => {
+  try {
+    const savedData = localStorage.getItem("editorAutoSave");
+    
+    // 🔥 추가: null 체크
+    if (!savedData) {
+      return null;
+    }
 
-        if (saved) {
-          const loadedNote: Note = JSON.parse(saved);
+    const parsedData: Note = JSON.parse(savedData);
+    
+    // 🔥 추가: 파싱된 데이터 검증
+    if (!parsedData || typeof parsedData !== 'object') {
+      return null;
+    }
 
-          set({ ...loadedNote, hasLocalChanges: true });
-
-          return loadedNote;
-        }
-
-        if (subCatSaved) {
-          const loadedSubCate: SubCategory[] = JSON.parse(subCatSaved);
-
-          set({ subCategories: loadedSubCate });
-        }
-      },
+    console.log("local 불러오기", parsedData);
+    return parsedData;
+  } catch (error) {
+    console.error("Error loading from local:", error);
+    return null; // 🔥 에러 시 null 반환
+  }
+},
       setHasLocalChanges: (value) => set({ hasLocalChanges: value }),
       deleteSubCategory: (id) =>
         set((state) => ({

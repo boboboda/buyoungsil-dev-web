@@ -134,72 +134,67 @@ export const EditorHeader = ({
     console.log("🔥 현재 스토어 level 상태:", level);
   }, [level]);
 
-  useEffect(() => {
-    switch (editType) {
-      case "add":
-        const serverSubCategories = notes
-          .map((note) => note.subCategory)
-          .filter(
-            (subCat): subCat is SubCategory =>
-              subCat !== null && subCat !== undefined,
-          );
+ 
+  // 🔥 수정: useEffect에서 note 체크 강화
+useEffect(() => {
+  // 🔥 추가: note가 없으면 기본값 설정
+   if (!note) {
+    setViewMainCategory(new Set(["basics"] as NoteCategory[])); // ✅ 타입 캐스팅
+    setViewLevel(new Set(["BEGINNER"] as NoteLevel[])); // ✅ 타입 캐스팅
+    return;
+  }
 
-        if (
-          serverSubCategories.length !== 0 &&
-          serverSubCategories[0] !== null
-        ) {
-          setSubCategories(removeDuplicates(serverSubCategories));
-        }
-        if (mainCategory) {
-          setViewMainCategory(new Set([mainCategory]));
-        }
-        // 🔥 기본 등급 설정 수정
-        console.log("🔥 ADD 모드: 기본 레벨 설정");
-        setViewLevel(new Set(["BEGINNER"]));
-        setContent({ level: "BEGINNER" });
-        break;
+  switch (editType) {
+    case "add":
+      setContent({ level: "BEGINNER" });
+      setViewLevel(new Set(["BEGINNER"]));
+      break;
 
-      case "edit":
-        const editSubCat: SubCategory = note.subCategory ?? { id: 0, name: "" };
-        const editMainCat: NoteCategory = note.mainCategory ?? "basics";
-        const editLevel: NoteLevel = note.level || "BEGINNER";
+    case "edit":
+      // 🔥 추가: 각 필드에 대한 null 체크
+      const editSubCat: SubCategory = note.subCategory ?? { id: 0, name: "" };
+      const editMainCat: NoteCategory = note.mainCategory ?? "basics";
+      const editLevel: NoteLevel = note.level ?? "BEGINNER";
 
-        console.log("🔥 EDIT 모드: 기존 레벨 로드:", editLevel);
+      console.log("🔥 EDIT 모드: 기존 레벨 로드:", editLevel);
 
-        setSubCategories([editSubCat]);
-        setContent({ mainCategory: editMainCat });
-        setContent({ subCategory: editSubCat });
-        setContent({ noteId: note.noteId });
-        setContent({ level: editLevel });
+      setSubCategories([editSubCat]);
+      setContent({ mainCategory: editMainCat });
+      setContent({ subCategory: editSubCat });
+      setContent({ noteId: note.noteId ?? null });
+      setContent({ level: editLevel });
 
-        setViewSubCategory(editSubCat);
-        setViewMainCategory(new Set([editMainCat]));
-        setViewLevel(new Set([editLevel]));
-        break;
+      setViewSubCategory(editSubCat);
+      setViewMainCategory(new Set([editMainCat]));
+      setViewLevel(new Set([editLevel]));
+      break;
 
-      case "read":
-        const readSubCat: SubCategory = note.subCategory ?? { id: 0, name: "" };
-        const readMainCat: NoteCategory = note.mainCategory ?? "basics";
-        const readLevel: NoteLevel = note.level || "BEGINNER";
+    case "read":
+      // 🔥 추가: 각 필드에 대한 null 체크
+      const readSubCat: SubCategory = note.subCategory ?? { id: 0, name: "" };
+      const readMainCat: NoteCategory = note.mainCategory ?? "basics";
+      const readLevel: NoteLevel = note.level ?? "BEGINNER";
 
-        console.log("🔥 READ 모드: 레벨 로드:", readLevel);
+      console.log("🔥 READ 모드: 레벨 로드:", readLevel);
 
-        setSubCategories([readSubCat]);
-        setContent({ mainCategory: readMainCat });
-        setContent({ subCategory: readSubCat });
-        setContent({ noteId: note.noteId });
-        setContent({ level: readLevel });
+      setSubCategories([readSubCat]);
+      setContent({ mainCategory: readMainCat });
+      setContent({ subCategory: readSubCat });
+      setContent({ noteId: note.noteId ?? null });
+      setContent({ level: readLevel });
 
-        setViewSubCategory(readSubCat);
-        setViewMainCategory(new Set([readMainCat]));
-        setViewLevel(new Set([readLevel]));
-        break;
+      setViewSubCategory(readSubCat);
+      setViewMainCategory(new Set([readMainCat]));
+      setViewLevel(new Set([readLevel]));
+      break;
 
-      default:
-        console.log("Unknown edit type");
-        break;
-    }
-  }, [editType, note, notes, mainCategory, setContent, setSubCategories]); // 🔥 의존성 배열 추가
+    default:
+      console.log("Unknown edit type");
+      break;
+  }
+}, [editType, note]); // 🔥 의존성 배열 최소화
+
+
 
   useEffect(() => {
     if (subCategory && subCategories.length !== 0) {

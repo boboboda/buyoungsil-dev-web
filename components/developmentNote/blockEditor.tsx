@@ -51,31 +51,40 @@ export const BlockEditor = ({
 
   const { editor } = useBlockEditor({ clientID: "kim", readState: readState });
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const localNote: Note = await loadFromLocal();
+  
+  // 🔥 수정 1: 첫 번째 useEffect (로컬 스토리지 체크)
+useEffect(() => {
+  const fetchData = async () => {
+    try {
+      const localNote: Note = await loadFromLocal();
 
-        if (localNote.title !== "") {
-          console.log("로컬데이터 있어요", localNote);
-
-          onOpen();
-        }
-      } catch (error) {
-        console.error("Error loading data:", error);
+      // 🔥 수정: null 체크 강화
+      if (localNote && localNote.title && localNote.title !== "") {
+        console.log("로컬데이터 있어요", localNote);
+        onOpen();
       }
-    };
-
-    if (editorType !== "read") {
-      fetchData();
+    } catch (error) {
+      console.error("Error loading data:", error);
     }
-  }, []);
+  };
 
-  useEffect(() => {
-    switch (editorType) {
-      case "add":
-        break;
-      case "edit":
+  if (editorType !== "read") {
+    fetchData();
+  }
+}, []);
+
+// 🔥 수정 2: 두 번째 useEffect (에디터 타입별 처리)
+useEffect(() => {
+  // 🔥 추가: note와 editor가 없으면 실행하지 않음
+  if (!editor || !note) return;
+
+  switch (editorType) {
+    case "add":
+      break;
+      
+    case "edit":
+      // 🔥 추가: content가 있는지 확인
+      if (note.content) {
         editor.commands.clearContent();
         editor.commands.setContent(note.content);
         setContent({
@@ -83,21 +92,32 @@ export const BlockEditor = ({
           title: note.title,
           content: note.content,
         });
-        break;
+      }
+      break;
 
-      case "read":
+    case "read":
+      // 🔥 추가: content가 있는지 확인
+      if (note.content) {
         editor.commands.clearContent();
         editor.commands.setContent(note.content);
-        setContent({ title: note.title, content: note.content });
-
+        setContent({ 
+          title: note.title, 
+          content: note.content 
+        });
         setReadState(false);
-        break;
-    }
-  }, [note]);
-
-  if (!editor) {
-    return null;
+      }
+      break;
   }
+}, [note, editor, editorType]); // 🔥 의존성 배열에 editorType 추가
+
+// 🔥 수정 3: editor가 없을 때 로딩 표시
+if (!editor) {
+  return (
+    <div className="flex h-full w-full items-center justify-center">
+      <div className="text-gray-500">에디터를 불러오는 중...</div>
+    </div>
+  );
+}
 
   return (
     <div ref={menuContainerRef} className="flex h-full w-full">
