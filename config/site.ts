@@ -6,7 +6,7 @@ export const siteConfig = {
     "코딩천재 부영실의 개발한 앱 소개, 개발노트 정보 교환, 제작의뢰 등 정보 교환을 위한 홈페이지 입니다.",
   url: "https://www.buyoungsilcoding.com",
   navItems: [
-    {
+     {
       label: "홈",
       href: "/",
     },
@@ -15,8 +15,12 @@ export const siteConfig = {
       href: "/note",
     },
     {
-      label: "💼 프로젝트",  // 🔥 변경
-      href: "/project",      // 🔥 변경
+      label: "💼 프로젝트",
+      href: "/project",
+    },
+    {
+      label: "😅 비개발자 이야기", // 🔥 추가
+      href: "/stories",
     },
     {
       label: "연락하기",

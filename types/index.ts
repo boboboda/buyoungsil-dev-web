@@ -144,12 +144,7 @@ export interface AppInput {
   databaseId?: string;
 }
 
-// ========================================
-// 프로젝트 타입 (🔥 신규)
-// ========================================
-export type ProjectStatus = "released" | "in-progress" | "backend";
-export type ProjectType = "mobile" | "web" | "backend";
-export type LogType = "progress" | "issue" | "solution" | "milestone";
+
 
 export interface Project {
   id: string;
@@ -202,8 +197,102 @@ export interface Revenue {
   updatedAt: string;
 }
 
+export interface Story {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  excerpt?: string | null;
+  category: StoryCategory;
+  tags: string[];
+  isPublished: boolean;
+  metaTitle?: string | null;
+  metaDescription?: string | null;
+  viewCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+
+export interface Note {
+  noteId?: number | null;
+  title?: string | null;
+  mainCategory?: NoteCategory | null;
+  subCategory?: SubCategory | null;
+  level?: NoteLevel;
+  content?: any;  // 🔥 any로 유연하게
+  isPublished?: boolean;
+  metaTitle?: string | null;
+  metaDescription?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SubCategory {
+  id: number;
+  name: string;
+}
+
 // ========================================
-// 스토리 타입 (🔥 신규)
+// 프로젝트 타입 (이미 추가했다면 skip)
+// ========================================
+export type ProjectStatus = "released" | "in-progress" | "backend";
+export type ProjectType = "mobile" | "web" | "backend";
+export type LogType = "progress" | "issue" | "solution" | "milestone";
+
+export interface Project {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  coverImage?: string | null;
+  appLink?: string | null;
+  status: ProjectStatus;
+  progress: number;
+  type: ProjectType;
+  databaseId?: string | null;
+  tags: ProjectTag[];
+  logCount?: number;
+  revenue?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectTag {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface ProjectLog {
+  id: string;
+  projectId: string;
+  title: string;
+  content: string;
+  logType: LogType;
+  noteId?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Revenue {
+  id: string;
+  projectId: string;
+  month: string;
+  adsense: number;
+  inapp: number;
+  total: number;
+  dau?: number | null;
+  mau?: number | null;
+  downloads?: number | null;
+  retention?: number | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ========================================
+// 스토리 타입
 // ========================================
 export type StoryCategory = "삽질기" | "꿀팁" | "일상";
 
@@ -221,26 +310,4 @@ export interface Story {
   viewCount: number;
   createdAt: string;
   updatedAt: string;
-}
-
-// ========================================
-// 개발노트 타입 업데이트 (🔥 필드 추가)
-// ========================================
-export interface Note {
-  noteId?: number | null;
-  title?: string | null;
-  mainCategory?: string | null; // 🔥 NoteCategory 대신 string
-  subCategory?: SubCategory | null;
-  level?: string | null; // 🔥 NoteLevel 대신 string
-  content?: any;
-  isPublished?: boolean;
-  metaTitle?: string | null;
-  metaDescription?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-export interface SubCategory {
-  id: number;
-  name: string;
 }
