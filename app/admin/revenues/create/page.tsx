@@ -4,6 +4,8 @@ import { getServerSession } from "next-auth";
 import { fetchAllProjects } from "@/serverActions/projects";
 import RevenueForm from "@/components/admin/projects/RevenueForm";
 
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: "수익 데이터 입력 | 관리자",
 };
