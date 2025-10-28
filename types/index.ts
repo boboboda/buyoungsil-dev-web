@@ -75,42 +75,7 @@ export type FocusedPostType = {
   appName?: string;
 };
 
-export type NoteCategory =
-  | "basics"
-  | "android"
-  | "Ios"
-  | "react"
-  | "python"
-  | "javascript"
-  | "typescript"
-  | "nestjs"
-  | "nextjs"
-  | "nodejs"
-  | "express"
-  | "mongodb"
-  | "firebase"
-  | "graphql"
-  | "docker"
-  | "kubernetes";
 
-export const noteCategories: NoteCategory[] = [
-  "basics",
-  "android",
-  "Ios",
-  "react",
-  "python",
-  "javascript",
-  "typescript",
-  "nestjs",
-  "nextjs",
-  "nodejs",
-  "express",
-  "mongodb",
-  "firebase",
-  "graphql",
-  "docker",
-  "kubernetes",
-];
 
 export type NoteEditorType = "add" | "edit" | "read";
 
@@ -311,3 +276,99 @@ export interface Story {
   createdAt: string;
   updatedAt: string;
 }
+
+
+// types/index.ts
+
+export type NoteCategory =
+  // 모바일 (언어 + UI)
+  | "kotlin-compose"      // Kotlin + Jetpack Compose
+  | "swift-swiftui"       // Swift + SwiftUI
+  | "flutter"             // Flutter + Dart
+  
+  // 웹 (프레임워크 + UI)
+  | "nextjs-heroui"       // Next.js + HeroUI
+  | "react"               // React
+  
+  // 백엔드 (프레임워크 + 언어)
+  | "nestjs-typescript"   // NestJS + TypeScript
+  | "nodejs"              // Node.js
+  
+  // 기타
+  | "python-crawling"     // Python + 크롤링
+  | "basics";             // 개발 기초
+
+export const noteCategories: NoteCategory[] = [
+  "kotlin-compose",
+  "swift-swiftui",
+  "flutter",
+  "nextjs-heroui",
+  "react",
+  "nestjs-typescript",
+  "nodejs",
+  "python-crawling",
+  "basics",
+];
+
+// 카테고리 표시 정보
+export const noteCategoryInfo: Record<NoteCategory, {
+  name: string;
+  description: string;
+  icon: string;
+  tags: string[];
+}> = {
+  "kotlin-compose": {
+    name: "Kotlin + Compose",
+    description: "Jetpack Compose를 활용한 안드로이드 앱 개발",
+    icon: "🤖",
+    tags: ["Android", "Kotlin", "Jetpack Compose"]
+  },
+  "swift-swiftui": {
+    name: "Swift + SwiftUI",
+    description: "SwiftUI를 활용한 iOS 앱 개발",
+    icon: "🍎",
+    tags: ["iOS", "Swift", "SwiftUI"]
+  },
+  "flutter": {
+    name: "Flutter",
+    description: "Flutter로 크로스플랫폼 모바일 앱 개발",
+    icon: "🦋",
+    tags: ["Flutter", "Dart", "Cross-Platform"]
+  },
+  "nextjs-heroui": {
+    name: "Next.js + HeroUI",
+    description: "Next.js와 HeroUI로 웹 애플리케이션 개발",
+    icon: "▲",
+    tags: ["Next.js", "HeroUI", "React", "TypeScript"]
+  },
+  "react": {
+    name: "React",
+    description: "React를 활용한 프론트엔드 개발",
+    icon: "⚛️",
+    tags: ["React", "JavaScript", "Frontend"]
+  },
+  "nestjs-typescript": {
+    name: "NestJS + TypeScript",
+    description: "NestJS와 TypeScript로 백엔드 개발",
+    icon: "🐈",
+    tags: ["NestJS", "TypeScript", "Backend"]
+  },
+  "nodejs": {
+    name: "Node.js",
+    description: "Node.js를 활용한 백엔드 개발",
+    icon: "💚",
+    tags: ["Node.js", "JavaScript", "Backend"]
+  },
+  "python-crawling": {
+    name: "Python 크롤링",
+    description: "Python을 활용한 웹 크롤링 및 데이터 수집",
+    icon: "🐍",
+    tags: ["Python", "Crawling", "Data"]
+  },
+  "basics": {
+    name: "개발 기초",
+    description: "프로그래밍 입문과 기본 개념",
+    icon: "📚",
+    tags: ["기초", "입문"]
+  }
+};

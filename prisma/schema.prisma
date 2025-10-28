@@ -53,57 +53,45 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-// ========================================
-// 개발노트 (🔥 isPublished 추가)
-// ========================================
 model DevelopNote {
   id              String   @id @default(cuid())
   noteId          Int      @unique
   title           String?
-  mainCategory    String?
-  subCategory     Json?
   content         Json?
-  level           String   @default("BEGINNER")
-  
-  // 🔥 신규 필드
-  isPublished     Boolean  @default(false)
-  metaTitle       String?
-  metaDescription String?
-  
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  mainCategory    String?
+  subCategory     Json?
+  level           String   @default("BEGINNER")
+  isPublished     Boolean  @default(false)
+  metaDescription String?
+  metaTitle       String?
 
-  @@map("developNote")
   @@index([isPublished])
   @@index([mainCategory])
+  @@map("developNote")
 }
 
-// ========================================
-// 프로젝트 (🔥 신규 - App 대체)
-// ========================================
 model Project {
   id          String       @id @default(cuid())
   name        String       @unique
   title       String
-  description String       @db.Text
+  description String
   coverImage  String?
   appLink     String?
-  
   status      String       @default("in-progress")
   progress    Int          @default(0)
   type        String
   databaseId  String?
-  
-  tags        ProjectTag[]
-  logs        ProjectLog[]
-  revenues    Revenue[]
-  
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+  logs        ProjectLog[]
+  tags        ProjectTag[]
+  revenues    Revenue[]
 
-  @@map("projects")
   @@index([status])
   @@index([type])
+  @@map("projects")
 }
 
 model ProjectTag {
@@ -119,97 +107,83 @@ model ProjectTag {
 model ProjectLog {
   id        String   @id @default(cuid())
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  
   title     String
-  content   String   @db.Text
+  content   String
   logType   String
   noteId    Int?
-  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@map("project_logs")
   @@index([projectId])
   @@index([noteId])
+  @@map("project_logs")
 }
 
 model Revenue {
   id        String   @id @default(cuid())
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  
   month     String
   adsense   Int      @default(0)
   inapp     Int      @default(0)
   total     Int      @default(0)
-  
   dau       Int?
   mau       Int?
   downloads Int?
   retention Float?
-  notes     String?  @db.Text
-  
+  notes     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@map("revenues")
   @@unique([projectId, month])
   @@index([month])
+  @@map("revenues")
 }
 
-// ========================================
-// 비개발자 이야기 (🔥 신규)
-// ========================================
 model Story {
   id              String   @id @default(cuid())
   slug            String   @unique
   title           String
-  content         String   @db.Text
+  content         String
   excerpt         String?
-  
   category        String
   tags            String[]
   isPublished     Boolean  @default(true)
-  
   metaTitle       String?
   metaDescription String?
   viewCount       Int      @default(0)
-  
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  @@map("stories")
   @@index([category])
   @@index([isPublished])
+  @@map("stories")
 }
 
-// ========================================
-// 기존 모델 (유지)
-// ========================================
 model Post {
   id         String    @id @default(uuid())
   listNumber Int
   writer     String
-  email      String
   title      String
   content    String
   createdAt  DateTime  @default(now()) @map("created_at")
   appName    String
   postType   String
+  email      String
   comments   Comment[]
 
-  @@map("posts")
   @@index([appName, postType])
+  @@map("posts")
 }
 
 model Comment {
   id        String   @id @default(uuid())
   writer    String
-  email     String
   content   String
   createdAt DateTime @default(now()) @map("created_at")
   postId    String   @map("post_id")
+  email     String
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
   replies   Reply[]
 
@@ -219,10 +193,10 @@ model Comment {
 model Reply {
   id        String   @id @default(uuid())
   writer    String
-  email     String
   content   String
   createdAt DateTime @default(now()) @map("created_at")
   commentId String   @map("comment_id")
+  email     String
   mentionTo String?
   comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
@@ -233,21 +207,21 @@ model App {
   id          String   @id @default(cuid())
   name        String   @unique
   title       String
-  description String   @db.Text
+  description String
   appLink     String
   coverImage  String?
-  tags        Tag[]
   databaseId  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  tags        Tag[]
 }
 
 model Tag {
-  id      String  @id @default(cuid())
-  name    String
-  color   String
-  appId   String
-  app     App     @relation(fields: [appId], references: [id], onDelete: Cascade)
+  id    String @id @default(cuid())
+  name  String
+  color String
+  appId String
+  app   App    @relation(fields: [appId], references: [id], onDelete: Cascade)
 
   @@unique([appId, name])
 }
@@ -265,4 +239,19 @@ model TotalVisitorCount {
   totalCount Int    @default(0) @map("total_count")
 
   @@map("total_visitor_counts")
+}
+
+model NoteCategory {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  icon        String?
+  order       Int      @default(0)
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isPublished, order])
+  @@map("note_categories")
 }

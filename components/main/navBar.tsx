@@ -203,6 +203,14 @@ export default function NavBar() {
     >
       <p>💼 프로젝트 관리</p>
     </DropdownItem>
+{/* 🔥 카테고리 관리 */}
+    <DropdownItem
+  key="adminCategories"
+  textValue="adminCategories"
+  onClick={() => router.push("/admin/categories")}
+>
+  <p>🏷️ 노트 카테고리 관리</p>
+</DropdownItem>
     
     {/* 🔥 개발노트 관리 */}
     <DropdownItem
@@ -247,15 +255,6 @@ export default function NavBar() {
       onClick={() => router.push("/admin/revenues/create")}
     >
       <p>💰 수익 데이터 입력</p>
-    </DropdownItem>
-    
-    {/* 기존 앱 등록 (삭제 또는 유지) */}
-    <DropdownItem
-      key="resister"
-      textValue="resister"
-      onClick={() => router.push("/admin/register")}
-    >
-      <p>🚀 앱 등록</p>
     </DropdownItem>
   </>
 ) : null}

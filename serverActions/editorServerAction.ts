@@ -184,20 +184,36 @@ export async function fetchNoteById(noteId: number) {
   return note;
 }
 
-// 노트 공개/비공개 토글
+
+// serverActions/editorServerAction.ts
+
+// ... 기존 코드 ...
+
+// 🔥 노트 공개/비공개 토글
 export async function toggleNotePublish(noteId: number) {
-  const note = await prisma.developNote.findUnique({
-    where: { noteId },
-    select: { isPublished: true }
-  });
+  "use server";
+  
+  try {
+    const note = await prisma.developNote.findUnique({
+      where: { noteId },
+      select: { isPublished: true }
+    });
 
-  const updated = await prisma.developNote.update({
-    where: { noteId },
-    data: { isPublished: !note?.isPublished }
-  });
+    if (!note) {
+      throw new Error("노트를 찾을 수 없습니다");
+    }
 
-  revalidatePath('/note');
-  revalidatePath('/admin/notes');
-  return updated;
+    const updated = await prisma.developNote.update({
+      where: { noteId },
+      data: { isPublished: !note.isPublished }
+    });
+
+    revalidatePath("/note");
+    revalidatePath("/admin/notes");
+
+    return updated;
+  } catch (error) {
+    console.error("Toggle note publish error:", error);
+    throw error;
+  }
 }
-
