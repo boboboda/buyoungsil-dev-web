@@ -5,6 +5,8 @@ import { fetchAllProjects } from "@/serverActions/projects";
 import { allFetchEdtiorServer } from "@/serverActions/editorServerAction";
 import ProjectLogForm from "@/components/admin/projects/ProjectLogForm";
 
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: "개발 일지 작성 | 관리자",
 };
