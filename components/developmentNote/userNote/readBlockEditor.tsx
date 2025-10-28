@@ -11,8 +11,8 @@ export const ReadBlockEditor = ({ note }: { note?: Note }) => {
   const { editor } = useBlockEditor({ clientID: "kim", readState: false });
 
   useEffect(() => {
-    if (editor && note) {
-      // startTransition으로 우선순위가 낮은 업데이트로 처리
+    // 🔥 수정: editor와 note 모두 확인
+    if (editor && note && note.content) {
       startTransition(() => {
         editor.commands.clearContent();
         editor.commands.setContent(note.content!);
@@ -20,8 +20,21 @@ export const ReadBlockEditor = ({ note }: { note?: Note }) => {
     }
   }, [editor, note]);
 
+  // 🔥 수정: 에디터나 노트가 없을 때 로딩 표시
   if (!editor) {
-    return null; // 또는 원하는 로딩 인디케이터를 여기에 넣으세요
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="text-gray-500">에디터를 불러오는 중...</div>
+      </div>
+    );
+  }
+
+  if (!note) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="text-gray-500">노트를 불러오는 중...</div>
+      </div>
+    );
   }
 
   return (
