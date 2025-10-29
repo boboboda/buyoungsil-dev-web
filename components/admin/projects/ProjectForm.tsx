@@ -10,7 +10,8 @@ import {
   Chip,
   Button,
   Checkbox,
-  CheckboxGroup
+  CheckboxGroup,
+  Progress
 } from "@heroui/react";
 import { toast } from "react-toastify";
 import { createProject, updateProject } from "@/serverActions/projects";
@@ -29,14 +30,13 @@ export default function ProjectForm({ project }: { project?: any }) {
     platform: project?.platform || "mobile",
     status: project?.status || "in-progress",
     progress: project?.progress || 0,
-    techStack: project?.techStack || [],  // 🔥 기술 스택
-    tags: project?.tags || [],             // SEO 태그
+    techStack: project?.techStack || [],
+    tags: project?.tags || [],
     databaseId: project?.databaseId || ""
   });
 
   const [tagInput, setTagInput] = useState({ name: "", color: "#3B82F6" });
 
-  // SEO 태그 추가
   const handleAddTag = () => {
     if (!tagInput.name.trim()) return;
     
@@ -123,7 +123,7 @@ export default function ProjectForm({ project }: { project?: any }) {
         <SelectItem key="backend">⚙️ 백엔드</SelectItem>
       </Select>
 
-      {/* 🔥 기술 스택 (노트 연결용) */}
+      {/* 기술 스택 */}
       <div className="space-y-2">
         <label className="text-sm font-medium">🔧 기술 스택 (개발노트 연결용)</label>
         <CheckboxGroup
@@ -156,7 +156,7 @@ export default function ProjectForm({ project }: { project?: any }) {
         </p>
       </div>
 
-      {/* SEO 태그 (자유 입력) */}
+      {/* SEO 태그 */}
       <div className="space-y-4">
         <label className="text-sm font-medium">🏷️ SEO 태그 (자유 입력)</label>
         
@@ -216,16 +216,54 @@ export default function ProjectForm({ project }: { project?: any }) {
         <SelectItem key="backend">⚙️ 백엔드</SelectItem>
       </Select>
 
-      {/* 진행률 */}
+      {/* 🔥 진행률 with Progress Bar */}
       {formData.status === "in-progress" && (
-        <Input
-          type="number"
-          label="진행률 (%)"
-          value={String(formData.progress)}
-          onValueChange={(value) => setFormData(prev => ({ ...prev, progress: Number(value) }))}
-          min="0"
-          max="100"
-        />
+        <div className="space-y-3">
+          <label className="text-sm font-medium">개발 진행률</label>
+          
+          {/* 🔥 Progress Bar (HeroUI) */}
+          <Progress 
+            size="md"
+            value={formData.progress} 
+            color={
+              formData.progress < 30 ? "danger" :
+              formData.progress < 70 ? "warning" : "success"
+            }
+            className="max-w-full"
+            showValueLabel={true}
+          />
+          
+          {/* 슬라이더 */}
+          <div className="flex items-center gap-4 pt-2">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={formData.progress}
+              onChange={(e) => setFormData(prev => ({ ...prev, progress: Number(e.target.value) }))}
+              className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer 
+                        [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 
+                        [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full 
+                        [&::-webkit-slider-thumb]:bg-blue-600 [&::-webkit-slider-thumb]:cursor-pointer
+                        [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 
+                        [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-blue-600 
+                        [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
+            />
+            <Input
+              type="number"
+              value={String(formData.progress)}
+              onValueChange={(value) => setFormData(prev => ({ ...prev, progress: Number(value) }))}
+              min="0"
+              max="100"
+              className="w-24"
+              endContent={<span className="text-sm text-gray-500">%</span>}
+            />
+          </div>
+          
+          <p className="text-xs text-gray-500">
+            💡 슬라이더를 움직이거나 직접 숫자를 입력하세요
+          </p>
+        </div>
       )}
 
       {/* 커버 이미지, 앱 링크 */}

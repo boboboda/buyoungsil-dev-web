@@ -22,4 +22,4 @@ COPY ${ENV_FILE} .env
 RUN npm run build
 
 EXPOSE 5000
-CMD ["sh", "-c", "npx prisma migrate deploy && npm run start"]
+CMD ["sh", "-c", "npm run start"]

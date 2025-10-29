@@ -186,9 +186,9 @@ export default function NavBar() {
                         </DropdownItem>
                         {/* 🔥 role 체크 개선 */}
                         {user?.role === "admin" ? (
-  <>
-    <DropdownItem
-      key="adminDashboard"
+                          <>
+                            <DropdownItem
+                              key="adminDashboard"
       textValue="adminDashboard"
       onClick={() => router.push("/admin")}
     >
@@ -203,16 +203,8 @@ export default function NavBar() {
     >
       <p>💼 프로젝트 관리</p>
     </DropdownItem>
-{/* 🔥 카테고리 관리 */}
-    <DropdownItem
-  key="adminCategories"
-  textValue="adminCategories"
-  onClick={() => router.push("/admin/categories")}
->
-  <p>🏷️ 노트 카테고리 관리</p>
-</DropdownItem>
-    
-    {/* 🔥 개발노트 관리 */}
+
+    {/* 🔥 개발노트 관리 (쓰기 + 리스트 통합) */}
     <DropdownItem
       key="adminNotes"
       textValue="adminNotes"
@@ -221,13 +213,13 @@ export default function NavBar() {
       <p>📚 개발노트 관리</p>
     </DropdownItem>
     
-    {/* 기존 개발노트 쓰기 */}
+    {/* 🔥 카테고리 관리 */}
     <DropdownItem
-      key="adminWrite"
-      textValue="adminWrite"
-      onClick={() => router.push("/admin/write")}
+      key="adminCategories"
+      textValue="adminCategories"
+      onClick={() => router.push("/admin/categories")}
     >
-      <p>✍️ 개발노트 쓰기</p>
+      <p>🏷️ 카테고리 관리</p>
     </DropdownItem>
     
     {/* 🔥 스토리 관리 */}

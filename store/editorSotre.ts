@@ -9,6 +9,7 @@ import {
   allFetchEditorServerAdmin,
   deleteOneEditorServer,
   findOneAndUpdateEditorServer,
+  getMaxNoteId,
 } from "@/serverActions/editorServerAction";
 import { allFetchEdtiorServer } from "@/serverActions/editorServerAction";
 
@@ -107,19 +108,11 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
     console.log("실행됨 2");
     let note = get();
 
-     const jsonData = await allFetchEditorServerAdmin();
-    const allFetchData: Note[] = JSON.parse(jsonData);
-
-    if (allFetchData && allFetchData.length > 0) {
-      const lastData = allFetchData[allFetchData.length - 1];
-      
-      // 🔥 수정: 괄호 추가!
-      note.noteId = (lastData.noteId ?? 0) + 1;
-      console.log("마지막 노트 ID:", lastData.noteId, "→ 새 ID:", note.noteId);
-    } else {
-      console.log("데이터가 없습니다.");
-      note.noteId = 1;  // 첫 노트는 1번
-    }
+    // 🔥 수정: getMaxNoteId 사용
+    const maxNoteId = await getMaxNoteId();
+    note.noteId = maxNoteId + 1;
+    
+    console.log("새 노트 ID:", note.noteId);
 
     const newData = {
       noteId: note.noteId,
@@ -129,8 +122,6 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
       content: note.content,
       level: note.level,
     };
-
-    console.log("저장할 노트 ID:", newData.noteId);
 
     const noteData = await addEdtiorServer(JSON.stringify(newData));
 

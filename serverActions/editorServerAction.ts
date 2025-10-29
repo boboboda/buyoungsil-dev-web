@@ -164,19 +164,12 @@ export async function fetchPublishedNotes(): Promise<string> {
   return JSON.stringify(notes);
 }
 
-export async function getMaxNoteId() {
-  "use server";
-  
-  const maxNote = await prisma.developNote.findFirst({
-    orderBy: {
-      noteId: 'desc'  // 내림차순으로 정렬
-    },
-    select: {
-      noteId: true
-    }
+// 노트 ID로 단일 노트 가져오기
+export async function fetchNoteById(noteId: number) {
+  const note = await prisma.developNote.findUnique({
+    where: { noteId }
   });
-  
-  return maxNote?.noteId || 0;
+  return note;
 }
 
 
@@ -238,4 +231,19 @@ export async function allFetchEdtiorServer() {
   });
   
   return JSON.stringify(notes);
+}
+
+export async function getMaxNoteId() {
+  "use server";
+  
+  const maxNote = await prisma.developNote.findFirst({
+    orderBy: {
+      noteId: 'desc'  // 내림차순으로 정렬
+    },
+    select: {
+      noteId: true
+    }
+  });
+  
+  return maxNote?.noteId || 0;
 }
