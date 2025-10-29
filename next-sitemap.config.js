@@ -45,6 +45,13 @@ const config = {
       priority: 0.8,
       lastmod: new Date().toISOString(),
     },
+    // 🔥 외주 신청 페이지 추가
+    {
+      loc: '/work-request',
+      changefreq: 'monthly',
+      priority: 0.8,
+      lastmod: new Date().toISOString(),
+    },
   ],
   transform: async (config, path) => {
     // 홈페이지는 최우선

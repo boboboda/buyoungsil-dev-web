@@ -19,8 +19,12 @@ export const siteConfig = {
       href: "/project",
     },
     {
-      label: "😅 비개발자 이야기", // 🔥 추가
+      label: "😅 비개발자 이야기",
       href: "/stories",
+    },
+    {
+      label: "💻 외주 신청", // 🔥 새로 추가
+      href: "/work-request",
     },
     {
       label: "연락하기",

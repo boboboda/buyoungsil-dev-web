@@ -8,8 +8,8 @@ import { NoteStoreProvider } from "@/components/providers/editor-provider";
 import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { fetchPublishedCategories } from "@/serverActions/noteCategoryActions";
-
-
+// 🔥 새로 추가
+import { PageHero } from "@/components/common/PageHero";
 
 // 카테고리별 메타데이터
 function getCategoryMetadata(slug: string) {
@@ -86,6 +86,7 @@ const EmptyNoteMessage = () => (
       <h1 className="text-gray-500 text-3xl font-bold mb-2">
         아직 작성된 노트가 없습니다.
       </h1>
+      <p className="text-gray-400">곧 새로운 개발노트가 추가될 예정입니다.</p>
     </div>
   </div>
 );
@@ -111,13 +112,34 @@ export default async function NoteContentItemPage({
   const filterNotes = notes.filter((note) => note.mainCategory === slug);
 
   if (!filterNotes || filterNotes.length === 0) {
-    return <EmptyNoteMessage />;
+    // 🔥 Hero 추가 (빈 페이지에도)
+    const meta = getCategoryMetadata(slug);
+    return (
+      <>
+        <PageHero
+          icon="📚"
+          title={meta.title}
+          description={meta.description}
+          gradient="from-blue-600 to-purple-600"
+        />
+        <EmptyNoteMessage />
+      </>
+    );
   }
 
   const initialNote = filterNotes[0];
+  const meta = getCategoryMetadata(slug);
 
   return (
     <NoteStoreProvider>
+      {/* 🔥 Hero 섹션 추가 */}
+      <PageHero
+        icon="📚"
+        title={meta.title}
+        description={meta.description}
+        gradient="from-blue-600 to-purple-600"
+      />
+      
       <div className="w-full">
         <NoteItemView fetchNotes={filterNotes} initialNote={initialNote} />
       </div>

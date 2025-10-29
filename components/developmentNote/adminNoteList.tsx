@@ -1,9 +1,10 @@
+"use client";
+
 import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
-
 import AdminNoteTable from "./table/noteTable";
-
 import { Note } from "@/store/editorSotre";
+import { GradientButton } from "@/components/common/GradientButton";
 
 export default function AdminNoteList({ fetchNotes }: { fetchNotes: Note[] }) {
   noStore();
@@ -13,9 +14,9 @@ export default function AdminNoteList({ fetchNotes }: { fetchNotes: Note[] }) {
       <div className="w-full flex justify-between items-center px-4 mb-6">
         <h1 className="text-[40px] font-bold">관리자 노트 리스트</h1>
         <Link href="/admin/write">
-          <button className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">
+          <GradientButton size="lg" gradient="from-blue-600 to-purple-600">
             ✍️ 새 노트 작성
-          </button>
+          </GradientButton>
         </Link>
       </div>
       <AdminNoteTable notes={fetchNotes} />
