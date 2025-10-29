@@ -36,7 +36,7 @@ export async function generateMetadata({ params }: ProjectDetailPageProps): Prom
 export default async function ProjectDetailPage({ params }: ProjectDetailPageProps) {
   const { name } = await params;
   
-  // 프로젝트와 로그 가져오기
+  // 프로젝트와 로그, 수익 데이터 가져오기
   const project = await prisma.project.findUnique({
     where: { name },
     include: { 
@@ -44,6 +44,11 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
       logs: {
         orderBy: {
           createdAt: 'desc'
+        }
+      },
+      revenues: {  // 🔥 수익 데이터 추가
+        orderBy: {
+          month: 'desc'
         }
       }
     }
@@ -92,6 +97,18 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
       noteId: log.noteId,
       createdAt: log.createdAt.toISOString(),
       note: log.note
+    })),
+    revenues: project.revenues.map(rev => ({  // 🔥 revenues 포맷팅 추가
+      id: rev.id,
+      month: rev.month,
+      adsense: rev.adsense,
+      inapp: rev.inapp,
+      total: rev.total,
+      dau: rev.dau,
+      mau: rev.mau,
+      downloads: rev.downloads,
+      retention: rev.retention,
+      notes: rev.notes
     }))
   };
 

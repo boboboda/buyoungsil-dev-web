@@ -129,8 +129,12 @@ export async function updateProject(id: string, data: any) {
       progress: data.progress,
       databaseId: data.databaseId,
       tags: {
-        create: data.tags
-      }
+  create: data.tags.map((tag: any) => ({
+    name: tag.name,
+    color: tag.color
+    // projectId는 제거! relation으로 자동 연결됨
+  }))
+}
     },
     include: { tags: true }
   });
