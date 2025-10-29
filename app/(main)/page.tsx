@@ -38,13 +38,11 @@ export default async function Home() {
   // 가입자 수
   const totalUsers = await prisma.user.count();
 
-  // 홈페이지 운영 일수 🔥 수정
-  const firstVisitor = await prisma.dailyVisitorCount.findFirst({
-    orderBy: { date: 'asc' }
-  });
-  const startDate = firstVisitor?.date ? new Date(firstVisitor.date) : new Date();
-  const daysRunning = Math.floor((Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-
+  // 🔥 고정 날짜로 운영일수 계산
+  const SITE_START_DATE = "2024-01-01"; // 실제 홈페이지 오픈일로 수정하세요!
+  const startDate = new Date(SITE_START_DATE + 'T00:00:00');
+  const todayDate = new Date(today + 'T00:00:00');
+const daysRunning = Math.floor((todayDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
   return (
     <div className="flex flex-col">
       <Hero 
