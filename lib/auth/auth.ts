@@ -1,5 +1,5 @@
 // lib/auth/auth.ts
-import NextAuth from "next-auth";
+import NextAuth, { NextAuthOptions } from "next-auth";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import GoogleProvider from "next-auth/providers/google";
 import GitHubProvider from "next-auth/providers/github";
@@ -15,7 +15,8 @@ const cookieName = isProduction
   ? "__Secure-authjs.session-token"
   : "next-auth.session-token";
 
-export default NextAuth({
+// 🔥 authOptions를 별도로 export
+export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
     GoogleProvider({
@@ -97,49 +98,29 @@ export default NextAuth({
           };
         }
 
-        throw new Error("잘못된 요청입니다.");
+        throw new Error("잘못된 액션입니다.");
       },
     }),
   ],
-  session: {
-    strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60,
+  session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
+  pages: {
+    signIn: "/signin",
+    signOut: "/",
+    error: "/signin",
   },
-  // lib/auth/auth.ts의 callbacks 부분만
   callbacks: {
-    async redirect({ url, baseUrl }) {
-      console.log("Redirect callback:", { url, baseUrl });
-
-      // callbackUrl에 파라미터가 있으면 그대로 사용
-      if (url.includes("login=success&provider=")) {
-        console.log("파라미터 포함된 URL 그대로 리다이렉트:", url);
-
-        return url;
-      }
-
-      // 기본 처리
-      return url.startsWith(baseUrl) ? url : baseUrl;
-    },
-
-    jwt: async ({ token, account, user, trigger, session }) => {
-      console.log("🔥 JWT 콜백 시작 ===================");
-      console.log("JWT 콜백 입력값:", {
-        hasToken: !!token,
-        hasAccount: !!account,
-        hasUser: !!user,
-        trigger,
-        tokenContent: token,
-        accountProvider: account?.provider,
-        userInfo: user,
-      });
+    jwt: async ({ token, user, account, trigger, session }) => {
+      console.log("\n=================== JWT 콜백 시작");
+      console.log("🔥 JWT 콜백 - trigger:", trigger);
+      console.log("🔥 JWT 콜백 - user:", user);
+      console.log("🔥 JWT 콜백 - account:", account);
+      console.log("🔥 JWT 콜백 - existing token:", token);
 
       if (user && account) {
-        console.log("🎯 새로운 로그인 감지");
+        console.log("🆕 새로운 로그인 또는 회원가입");
 
-        // OAuth 로그인인 경우 DB에서 최신 사용자 정보 조회
         if (account.provider === "google" || account.provider === "github") {
-          console.log(`📱 ${account.provider} OAuth 로그인`);
-          console.log("DB 조회 시작 - 이메일:", user.email);
+          console.log("🔑 OAuth 로그인:", account.provider);
 
           const dbUser = await prisma.user.findUnique({
             where: { email: user.email! },
@@ -167,7 +148,6 @@ export default NextAuth({
           });
         }
 
-        // 기본 정보 설정
         token.name = user.name;
         token.email = user.email;
         token.picture = user.image;
@@ -231,4 +211,7 @@ export default NextAuth({
       },
     },
   },
-});
+};
+
+// 🔥 default export는 NextAuth handler
+export default NextAuth(authOptions);

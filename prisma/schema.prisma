@@ -283,3 +283,37 @@ model NoteCategory {
 
 
 
+model WorkRequest {
+  id          String   @id @default(cuid())
+  
+  // 신청자 정보
+  name        String
+  email       String
+  company     String?
+  phone       String?
+  
+  // 프로젝트 정보
+  projectType String   // "mobile" | "web" | "backend" | "consulting"
+  budget      String   // "1000만원 이하" | "1000-3000만원" | "3000-5000만원" | "5000만원 이상"
+  timeline    String   // "1개월" | "2-3개월" | "3-6개월" | "6개월 이상"
+  
+  // 상세 내용
+  title       String
+  description String   @db.Text
+  requirements String?  @db.Text
+  reference   String?  // 참고 URL
+  
+  // 상태 관리
+  status      String   @default("pending") 
+  // "pending" | "reviewing" | "accepted" | "rejected" | "completed"
+  
+  // 관리자 메모
+  adminNote   String?  @db.Text
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("work_requests")
+  @@index([status])
+  @@index([createdAt])
+}

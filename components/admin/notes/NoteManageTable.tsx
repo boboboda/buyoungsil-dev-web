@@ -1,22 +1,12 @@
 "use client";
 
-import {
-  Table,
-  TableHeader,
-  TableColumn,
-  TableBody,
-  TableRow,
-  TableCell,
-  Button,
-  Chip,
-  Switch
-} from "@heroui/react";
-import { useRouter } from "next/navigation";
-import { toast } from "react-toastify";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { noteCategoryInfo } from "@/types";
+import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Switch, Button } from "@heroui/react";
+import { toast } from "react-toastify";
 import { toggleNotePublish } from "@/serverActions/editorServerAction";
+import { GradientButton } from "@/components/common/GradientButton";
 
 interface Note {
   noteId: number;
@@ -38,10 +28,9 @@ export default function NoteManageTable({ notes }: NoteManageTableProps) {
 
   const handleTogglePublish = async (noteId: number, currentStatus: boolean) => {
     setLoadingIds(prev => new Set(prev).add(noteId));
-
+    
     try {
       await toggleNotePublish(noteId);
-      
       toast.success(
         `노트가 ${!currentStatus ? "공개" : "비공개"}되었습니다.`
       );
@@ -64,9 +53,9 @@ export default function NoteManageTable({ notes }: NoteManageTableProps) {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">📚 개발노트 관리</h1>
         <Link href="/admin/write">
-          <Button color="primary" size="lg">
+          <GradientButton size="lg" gradient="from-blue-600 to-purple-600">
             ✍️ 새 노트 작성
-          </Button>
+          </GradientButton>
         </Link>
       </div>
 
@@ -114,45 +103,44 @@ export default function NoteManageTable({ notes }: NoteManageTableProps) {
         <TableBody>
           {notes.map((note) => {
             const categoryInfo = note.mainCategory 
-              ? noteCategoryInfo[note.mainCategory as keyof typeof noteCategoryInfo]
-              : null;
+              ? note.mainCategory.charAt(0).toUpperCase() + note.mainCategory.slice(1)
+              : "미분류";
 
             return (
               <TableRow key={note.noteId}>
                 <TableCell>
-                  <span className="font-mono text-sm">{note.noteId}</span>
+                  <span className="text-sm font-mono">#{note.noteId}</span>
                 </TableCell>
                 
                 <TableCell>
-                  <span className="font-semibold">
+                  <span className="font-medium">
                     {note.title || "제목 없음"}
                   </span>
                 </TableCell>
                 
                 <TableCell>
-                  {categoryInfo ? (
-                    <Chip size="sm" variant="flat">
-                      {categoryInfo.icon} {categoryInfo.name}
-                    </Chip>
-                  ) : (
-                    <Chip size="sm" variant="flat">
-                      ❓ {note.mainCategory || "없음"}
-                    </Chip>
-                  )}
+                  <Chip size="sm" variant="flat" color="primary">
+                    {categoryInfo}
+                  </Chip>
                 </TableCell>
                 
                 <TableCell>
-                  <Chip 
+                  <Chip
                     size="sm"
+                    variant="flat"
                     color={
-                      note.level === "BEGINNER" ? "success" :
-                      note.level === "INTERMEDIATE" ? "warning" :
-                      "danger"
+                      note.level === "BEGINNER"
+                        ? "success"
+                        : note.level === "INTERMEDIATE"
+                          ? "warning"
+                          : "danger"
                     }
                   >
-                    {note.level === "BEGINNER" ? "🟢 초급" :
-                     note.level === "INTERMEDIATE" ? "🟡 중급" :
-                     "🔴 고급"}
+                    {note.level === "BEGINNER"
+                      ? "🟢 초급"
+                      : note.level === "INTERMEDIATE"
+                        ? "🟡 중급"
+                        : "🔴 고급"}
                   </Chip>
                 </TableCell>
                 

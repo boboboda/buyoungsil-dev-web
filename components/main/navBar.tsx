@@ -24,7 +24,6 @@ import { useModalStore } from "@/store/sponsorStore";
 import { useCachedSession } from "@/app/hooks/user/useCachedSession";
 
 export default function NavBar() {
-  // 🔥 캐시된 세션 사용
   const { session, isLoading, isAuthenticated, user, isSessionComplete } =
     useCachedSession();
 
@@ -42,7 +41,6 @@ export default function NavBar() {
   const notifySuccessEvent = (msg: string) => toast.success(msg);
   const notifyFailedEvent = (msg: string) => toast.error(msg);
 
-  // 🔥 role이 로드되지 않았으면 로딩 표시
   const shouldShowLoading =
     isLoading || (isAuthenticated && !isSessionComplete);
 
@@ -62,11 +60,8 @@ export default function NavBar() {
 
   return (
     <div className="w-full max-w-[1400px] flex flex-col mt-[20px] md:items-center justify-end md:justify-center">
-      {/* 데스크톱: 한 줄, 모바일: 두 줄 */}
       <div className="w-full">
-        {/* 첫 번째 줄: 브랜드 + 네비게이션 메뉴 */}
         <div className="flex flex-row items-center justify-between w-full mb-2 md:mb-0 pr-4">
-          {/* 브랜드 로고 + PC에서 네비게이션 메뉴 */}
           <div className="flex flex-row items-center gap-6">
             <NextLink className="flex justify-start items-start" href="/">
               <Image
@@ -79,7 +74,7 @@ export default function NavBar() {
               />
             </NextLink>
 
-            {/* PC에서만 브랜드 옆에 네비게이션 메뉴 표시 */}
+            {/* PC 네비게이션 */}
             <ul className="hidden md:flex gap-6 justify-start items-center">
               {siteConfig.navItems.map((item, index) => (
                 <li
@@ -102,19 +97,19 @@ export default function NavBar() {
               ))}
 
               <button
-  className="relative inline-flex items-center tap-highlight-transparent outline-none 
-      text-xl text-slate-500 font-semibold
-      hover:opacity-80 hover:text-slate-100
-      active:opacity-disabled transition-opacity cursor-pointer
-      bg-transparent border-none p-0 font-inherit"
-  onClick={openSponsorModal}
->
-  후원
-</button>
+                className="relative inline-flex items-center tap-highlight-transparent outline-none 
+                  text-xl text-slate-500 font-semibold
+                  hover:opacity-80 hover:text-slate-100
+                  active:opacity-disabled transition-opacity cursor-pointer
+                  bg-transparent border-none p-0 font-inherit"
+                onClick={openSponsorModal}
+              >
+                후원
+              </button>
             </ul>
           </div>
 
-          {/* 모바일에서만 네비게이션 메뉴 표시 */}
+          {/* 모바일 네비게이션 */}
           <div className="md:hidden">
             <ul className="flex gap-4 justify-start items-center">
               {siteConfig.navItems.map((item, index) => (
@@ -139,10 +134,9 @@ export default function NavBar() {
             </ul>
           </div>
 
-          {/* 데스크톱: 로그인 + 아이콘 영역 */}
+          {/* 데스크톱 로그인 영역 */}
           <div className="hidden md:flex md:items-center md:gap-8 md:flex-row">
             <div className="hidden md:flex md:items-center md:gap-5">
-              {/* 🔥 수정된 로그인 영역 */}
               <div className="flex flex-row gap-3">
                 {shouldShowLoading ? (
                   <div>
@@ -184,72 +178,76 @@ export default function NavBar() {
                           <p>로그인 정보</p>
                           <p>{user?.email}</p>
                         </DropdownItem>
-                        {/* 🔥 role 체크 개선 */}
+                        
                         {user?.role === "admin" ? (
                           <>
                             <DropdownItem
                               key="adminDashboard"
-      textValue="adminDashboard"
-      onClick={() => router.push("/admin")}
-    >
-      <p>📊 관리자 대시보드</p>
-    </DropdownItem>
-    
-    {/* 🔥 프로젝트 관리 */}
-    <DropdownItem
-      key="adminProjects"
-      textValue="adminProjects"
-      onClick={() => router.push("/admin/projects")}
-    >
-      <p>💼 프로젝트 관리</p>
-    </DropdownItem>
+                              textValue="adminDashboard"
+                              onClick={() => router.push("/admin")}
+                            >
+                              <p>📊 관리자 대시보드</p>
+                            </DropdownItem>
+                            
+                            <DropdownItem
+                              key="adminProjects"
+                              textValue="adminProjects"
+                              onClick={() => router.push("/admin/projects")}
+                            >
+                              <p>💼 프로젝트 관리</p>
+                            </DropdownItem>
 
-    {/* 🔥 개발노트 관리 (쓰기 + 리스트 통합) */}
-    <DropdownItem
-      key="adminNotes"
-      textValue="adminNotes"
-      onClick={() => router.push("/admin/notes")}
-    >
-      <p>📚 개발노트 관리</p>
-    </DropdownItem>
-    
-    {/* 🔥 카테고리 관리 */}
-    <DropdownItem
-      key="adminCategories"
-      textValue="adminCategories"
-      onClick={() => router.push("/admin/categories")}
-    >
-      <p>🏷️ 카테고리 관리</p>
-    </DropdownItem>
-    
-    {/* 🔥 스토리 관리 */}
-    <DropdownItem
-      key="adminStories"
-      textValue="adminStories"
-      onClick={() => router.push("/admin/stories")}
-    >
-      <p>😅 스토리 관리</p>
-    </DropdownItem>
-    
-    {/* 🔥 개발 로그 작성 */}
-    <DropdownItem
-      key="adminLogs"
-      textValue="adminLogs"
-      onClick={() => router.push("/admin/logs/create")}
-    >
-      <p>📋 개발 로그 작성</p>
-    </DropdownItem>
-    
-    {/* 🔥 수익 데이터 입력 */}
-    <DropdownItem
-      key="adminRevenues"
-      textValue="adminRevenues"
-      onClick={() => router.push("/admin/revenues/create")}
-    >
-      <p>💰 수익 데이터 입력</p>
-    </DropdownItem>
-  </>
-) : null}
+                            <DropdownItem
+                              key="adminNotes"
+                              textValue="adminNotes"
+                              onClick={() => router.push("/admin/notes")}
+                            >
+                              <p>📚 개발노트 관리</p>
+                            </DropdownItem>
+                            
+                            <DropdownItem
+                              key="adminCategories"
+                              textValue="adminCategories"
+                              onClick={() => router.push("/admin/categories")}
+                            >
+                              <p>🏷️ 카테고리 관리</p>
+                            </DropdownItem>
+                            
+                            <DropdownItem
+                              key="adminStories"
+                              textValue="adminStories"
+                              onClick={() => router.push("/admin/stories")}
+                            >
+                              <p>😅 스토리 관리</p>
+                            </DropdownItem>
+
+                            {/* 🔥 외주 관리 추가 */}
+                            <DropdownItem
+                              key="adminWorks"
+                              textValue="adminWorks"
+                              onClick={() => router.push("/admin/works")}
+                            >
+                              <p>💻 외주 신청 관리</p>
+                            </DropdownItem>
+                            
+                            <DropdownItem
+                              key="adminLogs"
+                              textValue="adminLogs"
+                              onClick={() => router.push("/admin/logs/create")}
+                            >
+                              <p>📋 개발 로그 작성</p>
+                            </DropdownItem>
+                            
+                            <DropdownItem
+                              key="adminRevenues"
+                              textValue="adminRevenues"
+                              onClick={() => router.push("/admin/revenues/create")}
+                            >
+                              <p>💰 수익 데이터 입력</p>
+                            </DropdownItem>
+                          </>
+                        ) : null}
+                        
                         <DropdownItem
                           key="logout"
                           color="danger"
@@ -293,90 +291,93 @@ export default function NavBar() {
           </div>
         </div>
 
-        {/* 두 번째 줄: 모바일에서만 표시되는 로그인 + 아이콘 영역 */}
+        {/* 모바일 로그인 영역 */}
         <div className="flex md:hidden flex-row items-center justify-between w-full pt-2 border-t border-gray-200 dark:border-gray-700 pr-4">
-          {/* 🔥 모바일 로그인 영역 */}
           <div className="flex flex-row gap-2">
             {shouldShowLoading ? (
               <div>
                 <Skeleton className="flex rounded-[5px] w-[80px] h-8" />
               </div>
             ) : !isAuthenticated ? (
-              <div className="flex flex-row gap-2 pl-3">
+              <div className="flex flex-row gap-2">
                 {path !== "/signup" && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onPress={() => router.push("/signup")}
+                  <Link
+                    className="text-white no-underline font-sans"
+                    href="/signup"
                   >
-                    Sign Up
-                  </Button>
+                    <Button size="sm" variant="ghost">
+                      Sign Up
+                    </Button>
+                  </Link>
                 )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onPress={() => router.push("/signin")}
+                <Link
+                  className="text-white no-underline font-sans"
+                  href="/signin"
                 >
-                  Sign In
-                </Button>
+                  <Button size="sm" variant="ghost">
+                    Sign In
+                  </Button>
+                </Link>
               </div>
             ) : (
-              <div>
-                <Dropdown placement="bottom-end">
-                  <DropdownTrigger>
-                    <div className="flex w-[120px] items-center justify-center bg-transparent cursor-pointer">
-                      <UserCircleIcon className="w-5 h-5" />
-                      <p className="inline-block max-w-[80px] px-1 py-1 text-black dark:text-white bg-transparent truncate text-sm">
-                        {user?.name}
-                      </p>
-                    </div>
-                  </DropdownTrigger>
-                  <DropdownMenu aria-label="Profile Actions" variant="flat">
-                    <DropdownItem key="profile" textValue={`${user?.email}`}>
-                      <p>로그인 정보</p>
-                      <p>{user?.email}</p>
-                    </DropdownItem>
-                    {/* 🔥 role 체크 개선 */}
-                    {user?.role === "admin" ? (
-                      <>
-                        <DropdownItem
-                          key="resister"
-                          textValue="resister"
-                          onClick={() => router.push("/admin/register")}
-                        >
-                          <p>앱 등록</p>
-                        </DropdownItem>
-                        <DropdownItem
-                          key="adminWrite"
-                          textValue="adminWrite"
-                          onClick={() => router.push("/admin/write")}
-                        >
-                          <p>개발노트 쓰기</p>
-                        </DropdownItem>
-                        <DropdownItem
-                          key="adminNoteList"
-                          textValue="adminNoteList"
-                          onClick={() => router.push("/admin/list")}
-                        >
-                          <p>개발노트 리스트 관리</p>
-                        </DropdownItem>
-                      </>
-                    ) : null}
-                    <DropdownItem
-                      key="logout"
-                      color="danger"
-                      textValue="Log Out"
-                      onClick={handleLogOut}
-                    >
-                      Log Out
-                    </DropdownItem>
-                  </DropdownMenu>
-                </Dropdown>
-              </div>
+              <Dropdown placement="bottom-start">
+                <DropdownTrigger>
+                  <div className="flex items-center gap-2 bg-transparent cursor-pointer">
+                    <UserCircleIcon className="w-5 h-5" />
+                    <p className="text-sm truncate max-w-[80px]">
+                      {user?.name}
+                    </p>
+                  </div>
+                </DropdownTrigger>
+                <DropdownMenu aria-label="Profile Actions" variant="flat">
+                  <DropdownItem key="profile" textValue={`${user?.email}`}>
+                    <p>로그인 정보</p>
+                    <p className="text-xs">{user?.email}</p>
+                  </DropdownItem>
+                  
+                  {user?.role === "admin" ? (
+                    <>
+                      <DropdownItem
+                        key="adminDashboard"
+                        textValue="adminDashboard"
+                        onClick={() => router.push("/admin")}
+                      >
+                        <p>📊 대시보드</p>
+                      </DropdownItem>
+                      
+                      {/* 🔥 외주 관리 추가 */}
+                      <DropdownItem
+                        key="adminWorks"
+                        textValue="adminWorks"
+                        onClick={() => router.push("/admin/works")}
+                      >
+                        <p>💻 외주 관리</p>
+                      </DropdownItem>
+                      
+                      <DropdownItem
+                        key="adminWrite"
+                        textValue="adminWrite"
+                        onClick={() => router.push("/admin/write")}
+                      >
+                        <p>개발노트 쓰기</p>
+                      </DropdownItem>
+                    </>
+                  ) : null}
+                  
+                  <DropdownItem
+                    key="logout"
+                    color="danger"
+                    textValue="Log Out"
+                    onClick={handleLogOut}
+                  >
+                    Log Out
+                  </DropdownItem>
+                </DropdownMenu>
+              </Dropdown>
             )}
           </div>
 
-          {/* 소셜 아이콘들 */}
+          {/* 모바일 소셜 아이콘 */}
           <div className="flex flex-row gap-3">
             <Link
               href={siteConfig.links.github}

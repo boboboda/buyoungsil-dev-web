@@ -111,7 +111,7 @@ export default async function RootLayout({
               </NavbarVisibilityWrapper>
             </div>
 
-            <main className="flex-grow w-full flex items-start justify-center min-h-screen">
+             <main className="flex-grow w-full min-h-screen">
               {children}
             </main>
             <SponsorModal />
