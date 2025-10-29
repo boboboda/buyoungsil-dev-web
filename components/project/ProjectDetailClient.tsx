@@ -1,5 +1,22 @@
-// components/project/ProjectDetailClient.tsx
 "use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import moment from "moment";
+
+// ==================== 타입 정의 ====================
+interface Revenue {
+  id: string;
+  month: string;
+  adsense: number;
+  inapp: number;
+  total: number;
+  dau?: number | null;
+  mau?: number | null;
+  downloads?: number | null;
+  retention?: number | null;
+  notes?: string | null;
+}
 
 interface DevelopNote {
   noteId: number;
@@ -14,7 +31,7 @@ interface ProjectLog {
   logType: string;
   noteId?: number | null;
   createdAt: string;
-  note?: DevelopNote | null; // 🔥 개발노트 정보 추가
+  note?: DevelopNote | null;
 }
 
 interface Project {
@@ -26,8 +43,11 @@ interface Project {
   appLink?: string | null;
   status: string;
   progress: number;
+  platform: string;
+  techStack: string[];
   tags: Array<{ id: string; name: string; color: string }>;
   logs?: ProjectLog[];
+  revenues?: Revenue[];
   logCount?: number;
   revenue?: number;
   createdAt: string;
@@ -38,7 +58,10 @@ interface ProjectDetailClientProps {
   project: Project;
 }
 
+// ==================== 메인 컴포넌트 ====================
 export default function ProjectDetailClient({ project }: ProjectDetailClientProps) {
+  const [activeTab, setActiveTab] = useState<"overview" | "logs" | "revenues">("overview");
+
   const statusEmoji = {
     released: "🚀",
     "in-progress": "🔨",
@@ -51,170 +74,396 @@ export default function ProjectDetailClient({ project }: ProjectDetailClientProp
     backend: "백엔드"
   };
 
+  const logTypeEmoji = {
+    progress: "📈",
+    issue: "🐛",
+    solution: "✅",
+    milestone: "🎉"
+  };
+
+  const logTypeLabel = {
+    progress: "진행",
+    issue: "이슈",
+    solution: "해결",
+    milestone: "마일스톤"
+  };
+
   return (
-    <>
+    <div>
       {/* 헤더 */}
       <div className="mb-8">
         <div className="flex items-center gap-3 mb-4">
-          <span className="text-3xl">{statusEmoji[project.status]}</span>
+          <span className="text-3xl">{statusEmoji[project.status as keyof typeof statusEmoji]}</span>
           <span className="px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-            {statusLabel[project.status]}
+            {statusLabel[project.status as keyof typeof statusLabel]}
           </span>
         </div>
+
         <h1 className="text-4xl font-bold mb-4">{project.title}</h1>
-        <p className="text-xl text-gray-600 dark:text-gray-400">
+        <p className="text-lg text-gray-600 dark:text-gray-400 mb-6">
           {project.description}
         </p>
-      </div>
 
-      {/* 커버 이미지 */}
-      {project.coverImage && (
-        <div className="mb-8 rounded-lg overflow-hidden">
-          <img
-            src={project.coverImage}
-            alt={project.title}
-            className="w-full h-auto object-cover"
-          />
-        </div>
-      )}
-
-      {/* 진행률 (개발중인 경우) */}
-      {project.status === "in-progress" && (
-        <div className="mb-8 p-6 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <div className="flex justify-between text-lg mb-2">
-            <span className="font-medium">진행률</span>
-            <span className="font-bold text-blue-600">{project.progress}%</span>
+        {/* 태그 */}
+        {project.tags && project.tags.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-6">
+            {project.tags.map((tag) => (
+              <span
+                key={tag.id}
+                className="px-3 py-1 rounded-full text-sm"
+                style={{
+                  backgroundColor: `${tag.color}20`,
+                  color: tag.color
+                }}
+              >
+                {tag.name}
+              </span>
+            ))}
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-3 dark:bg-gray-700">
-            <div
-              className="bg-blue-600 h-3 rounded-full transition-all"
-              style={{ width: `${project.progress}%` }}
-            />
-          </div>
-        </div>
-      )}
+        )}
 
-      {/* 태그 */}
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold mb-4">🏷️ 기술 스택</h2>
-        <div className="flex flex-wrap gap-3">
-          {project.tags.map((tag) => (
-            <span
-              key={tag.id}
-              className="px-4 py-2 rounded-lg font-medium"
-              style={{ backgroundColor: tag.color + "20", color: tag.color }}
-            >
-              {tag.name}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* 앱 링크 */}
-      {project.appLink && (
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">🔗 링크</h2>
+        {/* 앱 링크 */}
+        {project.appLink && (
           <a
             href={project.appLink}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
           >
-            앱 다운로드 / 웹사이트 방문 →
+            📱 앱 다운로드
           </a>
-        </div>
+        )}
+      </div>
+
+      {/* 탭 네비게이션 */}
+      <div className="border-b border-gray-200 dark:border-gray-700 mb-8">
+        <nav className="flex gap-8">
+          <button
+            onClick={() => setActiveTab("overview")}
+            className={`pb-4 px-2 font-medium transition-colors ${
+              activeTab === "overview"
+                ? "text-blue-600 border-b-2 border-blue-600"
+                : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+            }`}
+          >
+            📋 개요
+          </button>
+          <button
+            onClick={() => setActiveTab("logs")}
+            className={`pb-4 px-2 font-medium transition-colors ${
+              activeTab === "logs"
+                ? "text-blue-600 border-b-2 border-blue-600"
+                : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+            }`}
+          >
+            📝 개발 로그 ({project.logs?.length || 0})
+          </button>
+          <button
+            onClick={() => setActiveTab("revenues")}
+            className={`pb-4 px-2 font-medium transition-colors ${
+              activeTab === "revenues"
+                ? "text-blue-600 border-b-2 border-blue-600"
+                : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+            }`}
+          >
+            💰 수익 현황 ({project.revenues?.length || 0})
+          </button>
+        </nav>
+      </div>
+
+      {/* 탭 컨텐츠 */}
+      {activeTab === "overview" && (
+        <OverviewTab project={project} />
       )}
 
-      {/* 🔥 개발 로그 (클릭하면 개발노트 페이지로 이동) */}
-      {project.logs && project.logs.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">📝 개발 로그 ({project.logs.length})</h2>
-          <div className="space-y-4">
-            {project.logs.map((log) => {
-              const logTypeConfig = {
-                progress: { icon: "📈", label: "진행", color: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200" },
-                issue: { icon: "🐛", label: "이슈", color: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" },
-                solution: { icon: "✅", label: "해결", color: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" },
-                milestone: { icon: "🎉", label: "마일스톤", color: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" }
-              };
-              
-              const config = logTypeConfig[log.logType] || { icon: "📝", label: "기타", color: "bg-gray-100 text-gray-800" };
-              
-              return (
-                <div key={log.id} className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow hover:shadow-lg transition-shadow border border-gray-200 dark:border-gray-700">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${config.color}`}>
-                        {config.icon} {config.label}
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        {new Date(log.createdAt).toLocaleDateString('ko-KR', { 
-                          year: 'numeric', 
-                          month: 'long', 
-                          day: 'numeric' 
-                        })}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  <h3 className="text-lg font-semibold mb-2">{log.title}</h3>
-                  <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap text-sm mb-4">
-                    {log.content}
-                  </p>
-
-                  {/* 🔥 연결된 개발노트 정보 표시 */}
-                  {log.note && (
-                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">📚 관련 개발 가이드</p>
-                          <p className="font-semibold text-blue-600 dark:text-blue-400">
-                            {log.note.title || `노트 #${log.note.noteId}`}
-                          </p>
-                          {log.note.mainCategory && (
-                            <p className="text-xs text-gray-500 mt-1">
-                              카테고리: {log.note.mainCategory}
-                            </p>
-                          )}
-                        </div>
-                        <a
-                          href={`/note/${log.note.mainCategory}`}
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium whitespace-nowrap"
-                        >
-                          가이드 보기 →
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      {activeTab === "logs" && (
+        <LogsTab logs={project.logs || []} logTypeEmoji={logTypeEmoji} logTypeLabel={logTypeLabel} />
       )}
 
-      {/* 수익 정보 */}
-      {project.revenue && project.revenue > 0 && (
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">💰 최근 수익</h2>
-          <div className="bg-green-50 dark:bg-green-900 rounded-lg p-6">
-            <p className="text-3xl font-bold text-green-600 dark:text-green-400">
-              {project.revenue.toLocaleString()}원
-            </p>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-              최근 월 수익
-            </p>
-          </div>
-        </div>
+      {activeTab === "revenues" && (
+        <RevenuesTab revenues={project.revenues || []} />
       )}
+    </div>
+  );
+}
 
-      {/* 메타 정보 */}
-      <div className="border-t pt-6 text-sm text-gray-500">
-        <div className="flex justify-between">
-          <span>생성일: {project.createdAt}</span>
-          <span>최종 업데이트: {project.updatedAt}</span>
+// ==================== 개요 탭 ====================
+function OverviewTab({ project }: { project: Project }) {
+  return (
+    <div className="space-y-8">
+      {/* 프로젝트 정보 */}
+      <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+        <h2 className="text-2xl font-bold mb-4">📌 프로젝트 정보</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <InfoItem label="플랫폼" value={project.platform} />
+          <InfoItem label="진행률" value={`${project.progress}%`} />
+          <InfoItem 
+            label="개발 로그" 
+            value={`${project.logCount || 0}개`} 
+          />
+          <InfoItem 
+            label="최근 월 수익" 
+            value={project.revenue ? `${project.revenue.toLocaleString()}원` : "데이터 없음"} 
+          />
         </div>
       </div>
-    </>
+
+      {/* 기술 스택 */}
+      {project.techStack && project.techStack.length > 0 && (
+        <div>
+          <h2 className="text-2xl font-bold mb-4">🛠️ 기술 스택</h2>
+          <div className="flex flex-wrap gap-2">
+            {project.techStack.map((tech, index) => (
+              <span
+                key={index}
+                className="px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm font-medium"
+              >
+                {tech}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 커버 이미지 */}
+      {project.coverImage && (
+        <div>
+          <h2 className="text-2xl font-bold mb-4">🖼️ 프로젝트 이미지</h2>
+          <img
+            src={project.coverImage}
+            alt={project.title}
+            className="w-full rounded-lg shadow-lg"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==================== 개발 로그 탭 ====================
+function LogsTab({ 
+  logs, 
+  logTypeEmoji, 
+  logTypeLabel 
+}: { 
+  logs: ProjectLog[];
+  logTypeEmoji: Record<string, string>;
+  logTypeLabel: Record<string, string>;
+}) {
+  if (logs.length === 0) {
+    return (
+      <div className="text-center py-12 text-gray-500">
+        아직 개발 로그가 없습니다.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {logs.map((log) => (
+        <div
+          key={log.id}
+          className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm border border-gray-200 dark:border-gray-700"
+        >
+          {/* 로그 헤더 */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">
+                {logTypeEmoji[log.logType as keyof typeof logTypeEmoji]}
+              </span>
+              <h3 className="text-xl font-bold">{log.title}</h3>
+            </div>
+            <span className="text-sm text-gray-500">
+              {moment(log.createdAt).format("YYYY-MM-DD")}
+            </span>
+          </div>
+
+          {/* 로그 타입 */}
+          <div className="mb-3">
+            <span className="px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+              {logTypeLabel[log.logType as keyof typeof logTypeLabel]}
+            </span>
+          </div>
+
+          {/* 로그 내용 */}
+          <p className="text-gray-700 dark:text-gray-300 mb-3 whitespace-pre-wrap">
+            {log.content}
+          </p>
+
+          {/* 연결된 개발노트 */}
+          {log.note && (
+            <Link
+              href={`/note/detail/${log.note.noteId}`}
+              className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              📚 연결된 개발노트: {log.note.title}
+            </Link>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ==================== 수익 탭 ====================
+function RevenuesTab({ revenues }: { revenues: Revenue[] }) {
+  if (revenues.length === 0) {
+    return (
+      <div className="text-center py-12 text-gray-500">
+        아직 수익 데이터가 없습니다.
+      </div>
+    );
+  }
+
+  // 최신순 정렬
+  const sortedRevenues = [...revenues].sort((a, b) => 
+    new Date(b.month).getTime() - new Date(a.month).getTime()
+  );
+
+  // 총 수익 계산
+  const totalRevenue = revenues.reduce((sum, r) => sum + r.total, 0);
+  const totalAdsense = revenues.reduce((sum, r) => sum + r.adsense, 0);
+  const totalInapp = revenues.reduce((sum, r) => sum + r.inapp, 0);
+
+  return (
+    <div className="space-y-8">
+      {/* 수익 요약 */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <SummaryCard
+          title="총 수익"
+          value={`${totalRevenue.toLocaleString()}원`}
+          icon="💰"
+          color="blue"
+        />
+        <SummaryCard
+          title="애드센스 수익"
+          value={`${totalAdsense.toLocaleString()}원`}
+          icon="📊"
+          color="green"
+        />
+        <SummaryCard
+          title="인앱 수익"
+          value={`${totalInapp.toLocaleString()}원`}
+          icon="💳"
+          color="purple"
+        />
+      </div>
+
+      {/* 월별 수익 상세 */}
+      <div>
+        <h2 className="text-2xl font-bold mb-4">📅 월별 수익 상세</h2>
+        <div className="space-y-4">
+          {sortedRevenues.map((revenue) => (
+            <RevenueCard key={revenue.id} revenue={revenue} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== 유틸 컴포넌트 ====================
+function InfoItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">{label}</p>
+      <p className="text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function SummaryCard({ 
+  title, 
+  value, 
+  icon, 
+  color 
+}: { 
+  title: string; 
+  value: string; 
+  icon: string; 
+  color: "blue" | "green" | "purple";
+}) {
+  const colorClasses = {
+    blue: "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400",
+    green: "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400",
+    purple: "bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400"
+  };
+
+  return (
+    <div className={`${colorClasses[color]} rounded-lg p-6`}>
+      <div className="flex items-center gap-3 mb-2">
+        <span className="text-3xl">{icon}</span>
+        <h3 className="font-semibold">{title}</h3>
+      </div>
+      <p className="text-2xl font-bold">{value}</p>
+    </div>
+  );
+}
+
+function RevenueCard({ revenue }: { revenue: Revenue }) {
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-xl font-bold">
+          {moment(revenue.month).format("YYYY년 MM월")}
+        </h3>
+        <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+          {revenue.total.toLocaleString()}원
+        </span>
+      </div>
+
+      {/* 수익 상세 */}
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <div>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">애드센스</p>
+          <p className="text-lg font-semibold text-green-600 dark:text-green-400">
+            {revenue.adsense.toLocaleString()}원
+          </p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">인앱 결제</p>
+          <p className="text-lg font-semibold text-purple-600 dark:text-purple-400">
+            {revenue.inapp.toLocaleString()}원
+          </p>
+        </div>
+      </div>
+
+      {/* 지표 */}
+      {(revenue.dau || revenue.mau || revenue.downloads || revenue.retention) && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+          {revenue.dau && (
+            <MetricItem label="DAU" value={revenue.dau.toLocaleString()} />
+          )}
+          {revenue.mau && (
+            <MetricItem label="MAU" value={revenue.mau.toLocaleString()} />
+          )}
+          {revenue.downloads && (
+            <MetricItem label="다운로드" value={revenue.downloads.toLocaleString()} />
+          )}
+          {revenue.retention && (
+            <MetricItem label="재방문율" value={`${revenue.retention}%`} />
+          )}
+        </div>
+      )}
+
+      {/* 메모 */}
+      {revenue.notes && (
+        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            📝 {revenue.notes}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetricItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">{label}</p>
+      <p className="text-sm font-semibold">{value}</p>
+    </div>
   );
 }

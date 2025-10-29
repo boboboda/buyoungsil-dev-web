@@ -1,55 +1,19 @@
-# version: '3'
-# services:
-#   developweb:
-#     build:
-#       context: .
-#       args:
-#         - ENV_FILE=.env.temp
-#     container_name: developWeb
-#     restart: always
-#     env_file:
-#       - .env.local
-#     ports:
-#       - "5000:5000"
-
-# networks:
-#   default:
-#     external:
-#       name: dockerdb_default
-
-
-version: '3.8'
-
+version: '3'
 services:
-  app:
+  developweb:
     build:
       context: .
-      dockerfile: Dockerfile
+      args:
+        - ENV_FILE=.env.temp
+    container_name: developWeb
+    restart: always
+    env_file:
+      - .env.local
     ports:
       - "5000:5000"
-    environment:
-      DATABASE_URL: postgresql://user:password@db-postgres:5432/webdb
-      NODE_ENV: production
-    # 마이그레이션 포함된 커맨드
-    command: sh -c "npx prisma migrate deploy && npx prisma generate && npm start"
-    depends_on:
-      db-postgres:
-        condition: service_healthy
-    restart: unless-stopped
 
-  db-postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: webdb
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+networks:
+  default:
+    external:
+      name: dockerdb_default
 
-volumes:
-  postgres_data:
