@@ -11,22 +11,6 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminWorksPage() {
-  // 세션 확인
-  const session = await auth();
-  
-  if (!session || !session.user?.email) {
-    redirect("/signin");
-  }
-
-  // DB에서 role 확인
-  const dbUser = await prisma.user.findUnique({
-    where: { email: session.user.email },
-    select: { role: true }
-  });
-
-  if (!dbUser || dbUser.role !== "admin") {
-    redirect("/");
-  }
 
   // 모든 외주 신청 가져오기
   const workRequests = await prisma.workRequest.findMany({

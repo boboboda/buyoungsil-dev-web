@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import moment from "moment";
+import { Button } from "@heroui/react";
 
 // ==================== 타입 정의 ====================
 interface Revenue {
@@ -60,7 +62,8 @@ interface ProjectDetailClientProps {
 
 // ==================== 메인 컴포넌트 ====================
 export default function ProjectDetailClient({ project }: ProjectDetailClientProps) {
-  const [activeTab, setActiveTab] = useState<"overview" | "logs" | "revenues">("overview");
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<"overview" | "logs" | "revenues" | "community">("overview");
 
   const statusEmoji = {
     released: "🚀",
@@ -168,6 +171,16 @@ export default function ProjectDetailClient({ project }: ProjectDetailClientProp
           >
             💰 수익 현황 ({project.revenues?.length || 0})
           </button>
+          <button
+            onClick={() => setActiveTab("community")}
+            className={`pb-4 px-2 font-medium transition-colors ${
+              activeTab === "community"
+                ? "text-blue-600 border-b-2 border-blue-600"
+                : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+            }`}
+          >
+            💬 커뮤니티
+          </button>
         </nav>
       </div>
 
@@ -183,6 +196,84 @@ export default function ProjectDetailClient({ project }: ProjectDetailClientProp
       {activeTab === "revenues" && (
         <RevenuesTab revenues={project.revenues || []} />
       )}
+
+      {activeTab === "community" && (
+        <CommunityTab projectName={project.name} />
+      )}
+    </div>
+  );
+}
+
+// ==================== 커뮤니티 탭 (새로 추가) ====================
+function CommunityTab({ projectName }: { projectName: string }) {
+  const router = useRouter();
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-gray-800 dark:to-gray-700 rounded-xl p-8">
+        <h2 className="text-2xl font-bold mb-4">💬 프로젝트 커뮤니티</h2>
+        <p className="text-gray-600 dark:text-gray-400 mb-6">
+          이 프로젝트에 대한 공지사항을 확인하고, 궁금한 점을 문의해보세요.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* 공지사항 카드 */}
+          <div 
+            onClick={() => router.push(`/project/notice/${projectName}`)}
+            className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg hover:shadow-xl transition-all cursor-pointer group"
+          >
+            <div className="flex items-center gap-3 mb-3">
+              <span className="text-4xl">📢</span>
+              <h3 className="text-xl font-bold group-hover:text-blue-600 transition-colors">
+                공지사항
+              </h3>
+            </div>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              프로젝트 업데이트, 중요 공지사항을 확인하세요
+            </p>
+            <Button 
+              color="primary" 
+              variant="flat"
+              className="w-full"
+            >
+              공지사항 보기 →
+            </Button>
+          </div>
+
+          {/* 문의게시판 카드 */}
+          <div 
+            onClick={() => router.push(`/project/post/${projectName}`)}
+            className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg hover:shadow-xl transition-all cursor-pointer group"
+          >
+            <div className="flex items-center gap-3 mb-3">
+              <span className="text-4xl">💬</span>
+              <h3 className="text-xl font-bold group-hover:text-blue-600 transition-colors">
+                문의게시판
+              </h3>
+            </div>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              궁금한 점을 자유롭게 문의하세요
+            </p>
+            <Button 
+              color="secondary" 
+              variant="flat"
+              className="w-full"
+            >
+              문의하기 →
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* 추가 안내 */}
+      <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-6">
+        <h3 className="font-bold mb-2">💡 이용 안내</h3>
+        <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+          <li>• 공지사항: 프로젝트 관련 중요 소식과 업데이트를 확인할 수 있습니다</li>
+          <li>• 문의게시판: 버그 리포트, 기능 제안, 일반 문의 등을 남길 수 있습니다</li>
+          <li>• 답변은 영업일 기준 1-2일 내에 드립니다</li>
+        </ul>
+      </div>
     </div>
   );
 }

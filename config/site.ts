@@ -23,17 +23,14 @@ export const siteConfig = {
       href: "/stories",
     },
     {
-      label: "💻 외주 신청", // 🔥 새로 추가
+      label: "💻 외주 신청",
       href: "/work-request",
-    },
-    {
-      label: "연락하기",
-      href: "https://open.kakao.com/o/ss0BBmVb",
     },
   ],
   links: {
     github: "https://github.com/boboboda",
     youtube: "https://www.youtube.com/channel/UCRBQ2NAcJPVx2YMbhMywNKw",
     discord: "https://discord.gg/hFA8TMng",
+    kakao: "https://open.kakao.com/o/ss0BBmVb", // 🔥 카카오톡 링크 추가
   },
 };
