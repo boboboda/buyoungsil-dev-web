@@ -2,6 +2,7 @@ import { Metadata } from "next";
 import { fetchAllProjects } from "@/serverActions/projects";
 import ProjectCard from "@/components/project/ProjectCard";
 import { PageHero } from "@/components/common/PageHero";
+import moment from "moment";
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +13,14 @@ export const metadata: Metadata = {
 };
 
 export default async function ProjectPage() {
-  const projects = await fetchAllProjects();
+  const rawProjects = await fetchAllProjects();
+
+  // 🔥 Date를 string으로 변환
+  const projects = rawProjects.map(project => ({
+    ...project,
+    createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
+    updatedAt: moment(project.updatedAt).format("YYYY-MM-DD")
+  }));
 
   // 상태별로 그룹화
   const releasedProjects = projects.filter(p => p.status === 'released');
@@ -40,7 +48,7 @@ export default async function ProjectPage() {
                 ({releasedProjects.length})
               </span>
             </h2>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {releasedProjects.map((project) => (
                 <ProjectCard key={project.id} project={project} />
               ))}
@@ -57,7 +65,7 @@ export default async function ProjectPage() {
                 ({inProgressProjects.length})
               </span>
             </h2>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {inProgressProjects.map((project) => (
                 <ProjectCard key={project.id} project={project} />
               ))}
@@ -74,7 +82,7 @@ export default async function ProjectPage() {
                 ({backendProjects.length})
               </span>
             </h2>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {backendProjects.map((project) => (
                 <ProjectCard key={project.id} project={project} />
               ))}

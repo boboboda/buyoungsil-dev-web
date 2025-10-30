@@ -8,6 +8,7 @@ interface GradientCardProps {
   isPressable?: boolean;
   isHoverable?: boolean;
   shadow?: "none" | "sm" | "md" | "lg";
+  fullHeight?: boolean;  // ⭐ 새로 추가!
 }
 
 export function GradientCard({ 
@@ -16,21 +17,22 @@ export function GradientCard({
   className = "",
   isPressable = false,
   isHoverable = true,
-  shadow = "lg"
+  shadow = "lg",
+  fullHeight = false  // ⭐ 기본값은 false
 }: GradientCardProps) {
   return (
     <Card 
       isPressable={isPressable}
       isHoverable={isHoverable}
       shadow={shadow}
-      className={`group relative ${className}`}
+      className={`group relative ${fullHeight ? 'h-full' : ''} ${className}`}  // ⭐ 조건부 적용
     >
       {/* Hover gradient border effect */}
       {isHoverable && (
         <div className={`absolute inset-0 rounded-xl bg-gradient-to-r ${gradient} opacity-0 group-hover:opacity-20 transition-opacity`} />
       )}
       
-      <CardBody className="relative">
+      <CardBody className={`relative ${fullHeight ? 'h-full' : ''}`}>  {/* ⭐ 조건부 적용 */}
         {children}
       </CardBody>
     </Card>

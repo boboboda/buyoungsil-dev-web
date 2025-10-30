@@ -16,12 +16,26 @@ const categoryEmoji: Record<string, string> = {
 };
 
 export default function StoryCard({ story, gradient = "from-blue-500 to-purple-500" }: StoryCardProps) {
+  // 🔥 날짜 포맷 수정 (02025 문제 해결)
+  const formatDate = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('ko-KR', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch {
+      return dateString;
+    }
+  };
+
   return (
-    <Link href={`/stories/${story.slug}`} className="block">
+    <Link href={`/stories/${story.slug}`} className="block w-full">  {/* ⭐ w-full 추가 */}
       <GradientCard
         isPressable
         gradient={gradient}
-        className="hover:-translate-y-2 transition-transform h-[420px] flex flex-col"
+        className="hover:-translate-y-2 transition-transform h-[420px] flex flex-col w-full" 
       >
         {/* 카테고리 뱃지 */}
         <div className="mb-4 flex-shrink-0">
@@ -73,11 +87,7 @@ export default function StoryCard({ story, gradient = "from-blue-500 to-purple-5
         {/* 메타 정보 - 맨 아래 고정 */}
         <div className="flex justify-between items-center text-sm text-gray-500 border-t border-gray-200 dark:border-gray-700 pt-3 mt-auto flex-shrink-0">
           <span>👁️ {story.viewCount.toLocaleString()}</span>
-          <span>{new Date(story.createdAt).toLocaleDateString('ko-KR', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric'
-          })}</span>
+          <span>{formatDate(story.createdAt)}</span>  {/* ⭐ 날짜 포맷 수정 */}
         </div>
       </GradientCard>
     </Link>

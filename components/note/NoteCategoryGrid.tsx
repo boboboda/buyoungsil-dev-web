@@ -42,6 +42,7 @@ export default function NoteCategoryGrid({
   };
 
   return (
+    // ⭐ grid-cols를 명확히 지정하면 각 열의 폭이 동일해집니다!
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
       {categories.map((category) => {
         const info = categoryInfo[category.slug];
@@ -50,12 +51,12 @@ export default function NoteCategoryGrid({
           <Link
             key={category.id}
             href={`/note/${category.slug}`}
-            className="block"
+            className="block w-full"  // ⭐ w-full로 그리드 셀 전체 폭 사용
           >
             <GradientCard
               isPressable
               gradient={getCategoryGradient(category.slug)}
-              className="h-full hover:-translate-y-2 transition-transform"
+              className="hover:-translate-y-2 transition-transform w-full"  // ⭐ w-full 추가
             >
               {/* 아이콘 */}
               <div className="text-6xl mb-6">{category.icon}</div>

@@ -14,6 +14,7 @@ import {
 import { toast } from "react-toastify";
 import { createStory, updateStory } from "@/serverActions/stories";
 import type { Story, StoryCategory } from "@/types";
+import { generateTempSlug } from "@/lib/utils/slugify";  // ⭐ 추가
 
 interface StoryFormProps {
   story?: Story;
@@ -29,7 +30,7 @@ export default function StoryForm({ story }: StoryFormProps) {
     title: story?.title || "",
     content: story?.content || "",
     excerpt: story?.excerpt || "",
-    category: story?.category || ("삽질기" as StoryCategory), // 🔥 타입 캐스팅
+    category: story?.category || ("삽질기" as StoryCategory),
     tags: story?.tags || [],
     isPublished: story?.isPublished || false,
     metaTitle: story?.metaTitle || "",
@@ -62,13 +63,6 @@ export default function StoryForm({ story }: StoryFormProps) {
     }));
   };
 
-  const generateSlug = (title: string) => {
-    return title
-      .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9가-힣-]/g, '');
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -77,24 +71,18 @@ export default function StoryForm({ story }: StoryFormProps) {
       return;
     }
 
-    if (!formData.slug) {
-      setFormData(prev => ({
-        ...prev,
-        slug: generateSlug(prev.title)
-      }));
-    }
-
     setLoading(true);
 
     try {
       if (story) {
+        // 수정 시: slug 유지
         await updateStory(story.id, formData);
         toast.success("스토리가 수정되었습니다");
       } else {
-        await createStory({
-          ...formData,
-          slug: formData.slug || generateSlug(formData.title)
-        });
+        // ⭐ 생성 시: slug는 서버에서 생성
+        // slug 필드를 제거하고 전송
+        const { slug, ...dataWithoutSlug } = formData;
+        await createStory(dataWithoutSlug);
         toast.success("스토리가 작성되었습니다");
       }
       router.push("/admin/stories");
@@ -117,34 +105,40 @@ export default function StoryForm({ story }: StoryFormProps) {
           setFormData(prev => ({
             ...prev,
             title: value,
-            slug: generateSlug(value)
+            // ⭐ 실시간 미리보기용 (실제 slug는 서버에서 생성)
+            slug: generateTempSlug(value)
           }));
         }}
         isRequired
       />
 
-      {/* Slug */}
+      {/* Slug 미리보기 (읽기 전용) */}
       <Input
-        label="URL Slug"
-        placeholder="my-story-title"
+        label="URL Slug (미리보기)"
         value={formData.slug}
-        onValueChange={(value) => setFormData(prev => ({ ...prev, slug: value }))}
-        description="URL에 사용될 고유 식별자 (자동 생성됨)"
+        isReadOnly
+        description={story 
+          ? "수정 시에는 slug가 변경되지 않습니다" 
+          : "저장 시 ID와 함께 생성됩니다 (예: 123-peuronteuendeu-gaebal)"
+        }
+        classNames={{
+          input: "bg-gray-50 dark:bg-gray-800"
+        }}
       />
 
-      {/* 카테고리 🔥 수정 */}
+      {/* 카테고리 */}
       <Select
         label="카테고리"
         placeholder="카테고리 선택"
         selectedKeys={[formData.category]}
         onSelectionChange={(keys) => {
-          const value = Array.from(keys)[0] as StoryCategory; // 🔥 타입 캐스팅
+          const value = Array.from(keys)[0] as StoryCategory;
           setFormData(prev => ({ ...prev, category: value }));
         }}
         isRequired
       >
         {categories.map((cat) => (
-          <SelectItem key={cat.value}> {/* 🔥 value 제거 */}
+          <SelectItem key={cat.value}>
             {cat.label}
           </SelectItem>
         ))}
@@ -168,12 +162,11 @@ export default function StoryForm({ story }: StoryFormProps) {
         onValueChange={(value) => setFormData(prev => ({ ...prev, content: value }))}
         minRows={10}
         isRequired
-        description="HTML 태그를 사용할 수 있습니다"
       />
 
       {/* 태그 */}
       <div>
-        <label className="block text-sm font-medium mb-2">태그</label>
+        <label className="text-sm font-medium mb-2 block">태그</label>
         <div className="flex gap-2 mb-2">
           <Input
             placeholder="태그 입력 후 Enter"
@@ -186,43 +179,41 @@ export default function StoryForm({ story }: StoryFormProps) {
               }
             }}
           />
-          <Button onPress={handleAddTag} color="primary">
+          <Button onClick={handleAddTag} color="primary">
             추가
           </Button>
         </div>
         <div className="flex flex-wrap gap-2">
-          {formData.tags.map((tag) => (
+          {formData.tags.map((tag, index) => (
             <Chip
-              key={tag}
+              key={index}
               onClose={() => handleRemoveTag(tag)}
               variant="flat"
             >
-              #{tag}
+              {tag}
             </Chip>
           ))}
         </div>
       </div>
 
-      {/* SEO 메타데이터 */}
-      <div className="border-t pt-6">
-        <h3 className="text-lg font-bold mb-4">SEO 설정</h3>
+      {/* SEO */}
+      <div className="space-y-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+        <h3 className="font-bold">SEO 설정 (선택사항)</h3>
         
-        <div className="space-y-4">
-          <Input
-            label="메타 제목"
-            placeholder="SEO용 제목 (비워두면 기본 제목 사용)"
-            value={formData.metaTitle}
-            onValueChange={(value) => setFormData(prev => ({ ...prev, metaTitle: value }))}
-          />
+        <Input
+          label="Meta Title"
+          placeholder="검색 결과에 표시될 제목"
+          value={formData.metaTitle}
+          onValueChange={(value) => setFormData(prev => ({ ...prev, metaTitle: value }))}
+        />
 
-          <Textarea
-            label="메타 설명"
-            placeholder="SEO용 설명"
-            value={formData.metaDescription}
-            onValueChange={(value) => setFormData(prev => ({ ...prev, metaDescription: value }))}
-            minRows={2}
-          />
-        </div>
+        <Textarea
+          label="Meta Description"
+          placeholder="검색 결과에 표시될 설명"
+          value={formData.metaDescription}
+          onValueChange={(value) => setFormData(prev => ({ ...prev, metaDescription: value }))}
+          minRows={2}
+        />
       </div>
 
       {/* 공개 여부 */}
@@ -230,10 +221,10 @@ export default function StoryForm({ story }: StoryFormProps) {
         isSelected={formData.isPublished}
         onValueChange={(checked) => setFormData(prev => ({ ...prev, isPublished: checked }))}
       >
-        {formData.isPublished ? "🟢 공개" : "🔴 비공개"}
+        공개
       </Switch>
 
-      {/* 제출 버튼 */}
+      {/* 버튼 */}
       <div className="flex gap-4">
         <Button
           type="submit"
@@ -248,7 +239,7 @@ export default function StoryForm({ story }: StoryFormProps) {
           type="button"
           variant="flat"
           size="lg"
-          onPress={() => router.back()}
+          onClick={() => router.back()}
         >
           취소
         </Button>
