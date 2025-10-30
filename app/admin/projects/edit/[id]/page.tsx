@@ -27,20 +27,21 @@ export default async function EditProjectPage({ params }: EditProjectPageProps) 
   }
 
   const formattedProject = {
-    id: project.id,
-    name: project.name,
-    title: project.title,
-    description: project.description,
-    coverImage: project.coverImage,
-    appLink: project.appLink,
-    status: project.status as any,
-    progress: project.progress,
-    platform: project.platform as any,
-    databaseId: project.databaseId,
-    tags: project.tags,
-    createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
-    updatedAt: moment(project.updatedAt).format("YYYY-MM-DD")
-  };
+  id: project.id,
+  name: project.name,
+  title: project.title,
+  description: project.description,
+  coverImage: project.coverImage,
+  appLink: project.appLink,
+  status: project.status as any,
+  progress: project.progress,
+  platform: project.platform as any,
+  techStack: project.techStack, // 🔥 이 줄 추가!
+  databaseId: project.databaseId,
+  tags: project.tags,
+  createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
+  updatedAt: moment(project.updatedAt).format("YYYY-MM-DD")
+};
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
