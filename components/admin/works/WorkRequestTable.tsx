@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { WorkRequest } from "@prisma/client";
 import {
   Table,
   TableHeader,
@@ -18,176 +19,151 @@ import {
   useDisclosure,
   Select,
   SelectItem,
-  Textarea,
 } from "@heroui/react";
 import { toast } from "react-toastify";
-import moment from "moment";
-import { updateWorkRequestStatus, deleteWorkRequest } from "@/serverActions/workRequests";
-
-interface WorkRequest {
-  id: string;
-  name: string;
-  email: string;
-  company: string | null;
-  phone: string | null;
-  projectType: string;
-  budget: string;
-  timeline: string;
-  title: string;
-  description: string;
-  requirements: string | null;
-  reference: string | null;
-  status: string;
-  adminNote: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
+import { updateWorkRequestStatus } from "@/serverActions/workRequests";
 
 interface WorkRequestTableProps {
   workRequests: WorkRequest[];
 }
 
+const statusConfig = {
+  pending: { label: "대기중", color: "warning" as const },
+  reviewing: { label: "검토중", color: "primary" as const },
+  accepted: { label: "수락됨", color: "success" as const },
+  rejected: { label: "거절됨", color: "danger" as const },
+  completed: { label: "완료됨", color: "default" as const },
+};
+
+const projectTypeLabels = {
+  mobile: "모바일 앱",
+  web: "웹사이트/웹앱",
+  backend: "백엔드/API",
+  consulting: "컨설팅",
+};
+
 export default function WorkRequestTable({ workRequests: initialRequests }: WorkRequestTableProps) {
-  const [workRequests, setWorkRequests] = useState(initialRequests);
+  const [requests, setRequests] = useState(initialRequests);
   const [selectedRequest, setSelectedRequest] = useState<WorkRequest | null>(null);
-  const [newStatus, setNewStatus] = useState("");
-  const [adminNote, setAdminNote] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [loading, setLoading] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
 
-  const statusConfig = {
-    pending: { label: "대기중", color: "warning" as const },
-    reviewing: { label: "검토중", color: "primary" as const },
-    accepted: { label: "수락", color: "success" as const },
-    rejected: { label: "거절", color: "danger" as const },
-    completed: { label: "완료", color: "default" as const },
-  };
+  const filteredRequests = statusFilter === "all" 
+    ? requests 
+    : requests.filter(req => req.status === statusFilter);
 
-  const projectTypeLabels: Record<string, string> = {
-    mobile: "📱 모바일",
-    web: "🌐 웹",
-    backend: "⚙️ 백엔드",
-    consulting: "💡 컨설팅",
-  };
-
-  const handleOpenDetail = (request: WorkRequest) => {
+  const handleViewDetail = (request: WorkRequest) => {
     setSelectedRequest(request);
-    setNewStatus(request.status);
-    setAdminNote(request.adminNote || "");
     onOpen();
   };
 
-  const handleUpdateStatus = async () => {
-    if (!selectedRequest) return;
-
-    const result = await updateWorkRequestStatus(
-      selectedRequest.id,
-      newStatus,
-      adminNote
-    );
-
-    if (result.success) {
-      toast.success("상태가 업데이트되었습니다.");
+  const handleStatusChange = async (id: string, newStatus: string, adminNote?: string) => {
+    setLoading(true);
+    try {
+      const result = await updateWorkRequestStatus(id, newStatus, adminNote);
       
-      // 로컬 상태 업데이트
-      setWorkRequests(prev =>
-        prev.map(req =>
-          req.id === selectedRequest.id
-            ? { ...req, status: newStatus, adminNote }
-            : req
-        )
-      );
-      
-      onClose();
-    } else {
-      toast.error(result.error || "업데이트 실패");
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm("정말 삭제하시겠습니까?")) return;
-
-    const result = await deleteWorkRequest(id);
-
-    if (result.success) {
-      toast.success("삭제되었습니다.");
-      setWorkRequests(prev => prev.filter(req => req.id !== id));
-    } else {
-      toast.error(result.error || "삭제 실패");
+      if (result.success) {
+        // 로컬 상태 업데이트
+        setRequests(prev => 
+          prev.map(req => req.id === id ? { ...req, status: newStatus, adminNote: adminNote || req.adminNote } : req)
+        );
+        
+        if (selectedRequest?.id === id) {
+          setSelectedRequest(prev => prev ? { ...prev, status: newStatus, adminNote: adminNote || prev.adminNote } : null);
+        }
+        
+        toast.success("상태가 변경되었습니다");
+      } else {
+        toast.error(result.error || "상태 변경에 실패했습니다");
+      }
+    } catch (error) {
+      toast.error("상태 변경에 실패했습니다");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <>
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg overflow-hidden">
-        <Table aria-label="외주 신청 목록">
-          <TableHeader>
-            <TableColumn>접수일</TableColumn>
-            <TableColumn>신청자</TableColumn>
-            <TableColumn>프로젝트 제목</TableColumn>
-            <TableColumn>유형</TableColumn>
-            <TableColumn>예산</TableColumn>
-            <TableColumn>상태</TableColumn>
-            <TableColumn>액션</TableColumn>
-          </TableHeader>
-          <TableBody>
-            {workRequests.map((request) => (
-              <TableRow key={request.id}>
-                <TableCell>
-                  {moment(request.createdAt).format("YYYY-MM-DD")}
-                </TableCell>
-                <TableCell>
-                  <div>
-                    <p className="font-medium">{request.name}</p>
-                    <p className="text-xs text-gray-500">{request.email}</p>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <p className="line-clamp-2">{request.title}</p>
-                </TableCell>
-                <TableCell>
-                  {projectTypeLabels[request.projectType] || request.projectType}
-                </TableCell>
-                <TableCell>
-                  <span className="text-sm">{request.budget}</span>
-                </TableCell>
-                <TableCell>
-                  <Chip
-                    color={statusConfig[request.status as keyof typeof statusConfig]?.color}
-                    size="sm"
-                    variant="flat"
-                  >
-                    {statusConfig[request.status as keyof typeof statusConfig]?.label || request.status}
-                  </Chip>
-                </TableCell>
-                <TableCell>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      color="primary"
-                      variant="flat"
-                      onPress={() => handleOpenDetail(request)}
-                    >
-                      상세
-                    </Button>
-                    <Button
-                      size="sm"
-                      color="danger"
-                      variant="flat"
-                      onPress={() => handleDelete(request.id)}
-                    >
-                      삭제
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+    <div className="space-y-4">
+      {/* 필터 */}
+      <div className="flex gap-4 items-center">
+        <Select
+          label="상태 필터"
+          selectedKeys={[statusFilter]}
+          onSelectionChange={(keys) => setStatusFilter(Array.from(keys)[0] as string)}
+          className="max-w-xs"
+        >
+          <SelectItem key="all">전체</SelectItem>
+          <SelectItem key="pending">대기중</SelectItem>
+          <SelectItem key="reviewing">검토중</SelectItem>
+          <SelectItem key="accepted">수락됨</SelectItem>
+          <SelectItem key="rejected">거절됨</SelectItem>
+          <SelectItem key="completed">완료됨</SelectItem>
+        </Select>
+        
+        <div className="text-sm text-gray-600 dark:text-gray-400">
+          총 {filteredRequests.length}건
+        </div>
+      </div>
 
-        {workRequests.length === 0 && (
-          <div className="text-center py-12 text-gray-500">
-            접수된 외주 신청이 없습니다.
+      {/* 테이블 */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg overflow-hidden">
+        {filteredRequests.length === 0 ? (
+          <div className="p-12 text-center text-gray-500">
+            <p className="text-lg mb-2">📭</p>
+            <p>외주 신청이 없습니다</p>
           </div>
+        ) : (
+          <Table aria-label="외주 신청 목록">
+            <TableHeader>
+              <TableColumn>신청일</TableColumn>
+              <TableColumn>이름</TableColumn>
+              <TableColumn>회사</TableColumn>
+              <TableColumn>프로젝트 제목</TableColumn>
+              <TableColumn>유형</TableColumn>
+              <TableColumn>예산</TableColumn>
+              <TableColumn>상태</TableColumn>
+              <TableColumn>작업</TableColumn>
+            </TableHeader>
+            <TableBody>
+              {filteredRequests.map((request) => (
+                <TableRow key={request.id}>
+                  <TableCell>
+                    {new Date(request.createdAt).toLocaleDateString('ko-KR')}
+                  </TableCell>
+                  <TableCell className="font-medium">{request.name}</TableCell>
+                  <TableCell>{request.company || '-'}</TableCell>
+                  <TableCell className="max-w-xs truncate">{request.title}</TableCell>
+                  <TableCell>
+                    <Chip size="sm" variant="flat">
+                      {projectTypeLabels[request.projectType as keyof typeof projectTypeLabels]}
+                    </Chip>
+                  </TableCell>
+                  <TableCell className="text-sm">{request.budget}</TableCell>
+                  <TableCell>
+                    <Chip
+                      size="sm"
+                      color={statusConfig[request.status as keyof typeof statusConfig].color}
+                      variant="flat"
+                    >
+                      {statusConfig[request.status as keyof typeof statusConfig].label}
+                    </Chip>
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      color="primary"
+                      onClick={() => handleViewDetail(request)}
+                    >
+                      상세보기
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </div>
 
@@ -234,98 +210,104 @@ export default function WorkRequestTable({ workRequests: initialRequests }: Work
                       <h3 className="text-lg font-bold mb-3">💼 프로젝트 정보</h3>
                       <div className="space-y-2 text-sm">
                         <div>
-                          <span className="text-gray-500">유형:</span>
-                          <span className="ml-2 font-medium">
-                            {projectTypeLabels[selectedRequest.projectType]}
-                          </span>
+                          <span className="text-gray-500">제목:</span>
+                          <p className="mt-1 font-medium">{selectedRequest.title}</p>
                         </div>
                         <div>
-                          <span className="text-gray-500">예산:</span>
-                          <span className="ml-2 font-medium">{selectedRequest.budget}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">희망 기간:</span>
-                          <span className="ml-2 font-medium">{selectedRequest.timeline}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 프로젝트 상세 */}
-                    <div>
-                      <h3 className="text-lg font-bold mb-3">📝 프로젝트 상세</h3>
-                      <div className="space-y-3">
-                        <div>
-                          <p className="text-sm text-gray-500 mb-1">제목</p>
-                          <p className="font-medium">{selectedRequest.title}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-500 mb-1">설명</p>
-                          <p className="text-sm whitespace-pre-wrap">{selectedRequest.description}</p>
+                          <span className="text-gray-500">설명:</span>
+                          <p className="mt-1 text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                            {selectedRequest.description}
+                          </p>
                         </div>
                         {selectedRequest.requirements && (
                           <div>
-                            <p className="text-sm text-gray-500 mb-1">요구사항</p>
-                            <p className="text-sm whitespace-pre-wrap">{selectedRequest.requirements}</p>
+                            <span className="text-gray-500">주요 기능/요구사항:</span>
+                            <p className="mt-1 text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                              {selectedRequest.requirements}
+                            </p>
                           </div>
                         )}
                         {selectedRequest.reference && (
                           <div>
-                            <p className="text-sm text-gray-500 mb-1">참고 URL</p>
-                            <a
-                              href={selectedRequest.reference}
-                              target="_blank"
+                            <span className="text-gray-500">참고 URL:</span>
+                            <a 
+                              href={selectedRequest.reference} 
+                              target="_blank" 
                               rel="noopener noreferrer"
-                              className="text-sm text-blue-600 hover:underline"
+                              className="ml-2 text-blue-600 hover:underline"
                             >
                               {selectedRequest.reference}
                             </a>
                           </div>
                         )}
+                        <div className="grid grid-cols-3 gap-3 pt-2">
+                          <div>
+                            <span className="text-gray-500">유형:</span>
+                            <p className="mt-1 font-medium">
+                              {projectTypeLabels[selectedRequest.projectType as keyof typeof projectTypeLabels]}
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">예산:</span>
+                            <p className="mt-1 font-medium">{selectedRequest.budget}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">기간:</span>
+                            <p className="mt-1 font-medium">{selectedRequest.timeline}</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
-                    {/* 상태 관리 */}
+                    {/* 상태 변경 */}
                     <div>
-                      <h3 className="text-lg font-bold mb-3">⚙️ 상태 관리</h3>
-                      <Select
-                        label="상태"
-                        selectedKeys={[newStatus]}
-                        onSelectionChange={(keys) => {
-                          const value = Array.from(keys)[0] as string;
-                          setNewStatus(value);
-                        }}
-                        className="mb-3"
-                      >
-                        {Object.entries(statusConfig).map(([key, config]) => (
-                          <SelectItem key={key}>
-                            {config.label}
-                          </SelectItem>
-                        ))}
-                      </Select>
+                      <h3 className="text-lg font-bold mb-3">⚙️ 관리</h3>
+                      <div className="space-y-3">
+                        <Select
+                          label="상태 변경"
+                          selectedKeys={[selectedRequest.status]}
+                          onSelectionChange={(keys) => {
+                            const newStatus = Array.from(keys)[0] as string;
+                            handleStatusChange(selectedRequest.id, newStatus);
+                          }}
+                          isDisabled={loading}
+                        >
+                          <SelectItem key="pending">대기중</SelectItem>
+                          <SelectItem key="reviewing">검토중</SelectItem>
+                          <SelectItem key="accepted">수락됨</SelectItem>
+                          <SelectItem key="rejected">거절됨</SelectItem>
+                          <SelectItem key="completed">완료됨</SelectItem>
+                        </Select>
 
-                      <Textarea
-                        label="관리자 메모"
-                        placeholder="내부 메모를 작성하세요"
-                        value={adminNote}
-                        onValueChange={setAdminNote}
-                        minRows={3}
-                      />
+                        {selectedRequest.adminNote && (
+                          <div>
+                            <span className="text-sm text-gray-500">관리자 메모:</span>
+                            <p className="mt-1 p-3 bg-gray-100 dark:bg-gray-700 rounded text-sm">
+                              {selectedRequest.adminNote}
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
               </ModalBody>
               <ModalFooter>
-                <Button color="danger" variant="light" onPress={onClose}>
+                <Button color="default" variant="flat" onPress={onClose}>
                   닫기
                 </Button>
-                <Button color="primary" onPress={handleUpdateStatus}>
-                  저장
+                <Button
+                  color="primary"
+                  as="a"
+                  href={`mailto:${selectedRequest?.email}`}
+                >
+                  이메일 보내기
                 </Button>
               </ModalFooter>
             </>
           )}
         </ModalContent>
       </Modal>
-    </>
+    </div>
   );
 }

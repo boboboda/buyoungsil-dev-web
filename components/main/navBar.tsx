@@ -17,7 +17,7 @@ import { signOut } from "next-auth/react";
 import { toast } from "react-toastify";
 import { UserCircleIcon } from "@heroicons/react/24/solid";
 
-import { YouTubeIcon, DiscordIcon, GithubIcon } from "@/components/icons";
+import { YouTubeIcon, DiscordIcon, GithubIcon, KakaoIcon } from "@/components/icons";
 import { siteConfig } from "@/config/site";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { useModalStore } from "@/store/sponsorStore";
@@ -262,7 +262,7 @@ export default function NavBar() {
                 )}
               </div>
 
-              {/* 소셜 아이콘들 */}
+              {/* 소셜 아이콘들 - 카카오톡 추가 */}
               <div className="flex flex-row gap-3">
                 <Link
                   href={siteConfig.links.github}
@@ -284,6 +284,14 @@ export default function NavBar() {
                   target="_blank"
                 >
                   <DiscordIcon className="w-6 h-6" />
+                </Link>
+                {/* 🔥 카카오톡 아이콘 추가 */}
+                <Link
+                  href={siteConfig.links.kakao}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  <KakaoIcon className="w-6 h-6 text-yellow-500" />
                 </Link>
                 <ThemeSwitch />
               </div>
@@ -377,7 +385,7 @@ export default function NavBar() {
             )}
           </div>
 
-          {/* 모바일 소셜 아이콘 */}
+          {/* 모바일 소셜 아이콘 - 카카오톡 추가 */}
           <div className="flex flex-row gap-3">
             <Link
               href={siteConfig.links.github}
@@ -399,6 +407,14 @@ export default function NavBar() {
               target="_blank"
             >
               <DiscordIcon className="w-5 h-5" />
+            </Link>
+            {/* 🔥 카카오톡 아이콘 추가 */}
+            <Link
+              href={siteConfig.links.kakao}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              <KakaoIcon className="w-5 h-5 text-yellow-500" />
             </Link>
             <ThemeSwitch />
           </div>

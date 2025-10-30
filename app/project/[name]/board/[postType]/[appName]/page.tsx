@@ -1,5 +1,5 @@
 import { title } from "@/components/primitives";
-import PostTable from "@/components/release/postComponent/PostTable";
+import PostTable from "@/components/project/postComponent/PostTable";
 import { fetchPosts } from "@/serverActions/posts";
 
 export default async function noticeBoardPage({
