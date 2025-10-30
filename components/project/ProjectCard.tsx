@@ -31,14 +31,14 @@ export default function ProjectCard({ project }: ProjectCardProps) {
   const config = statusConfig[project.status];
 
   return (
-    <Link href={`/project/${project.name}`} className="block w-full">
+    <Link href={`/project/${project.name}`} className="block w-full h-full">
       <GradientCard
         isPressable
         gradient={config.gradient}
-        className="hover:-translate-y-2 transition-transform h-[520px] w-full flex flex-col"
+        className="hover:-translate-y-2 transition-transform h-full w-full flex flex-col"
       >
-        {/* 커버 이미지 영역 - 고정 높이 200px */}
-        <div className="mb-4 rounded-lg overflow-hidden -mx-6 -mt-6 h-[200px] bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 flex-shrink-0">
+        {/* 커버 이미지 영역 */}
+        <div className="mb-4 rounded-lg overflow-hidden -mx-6 -mt-6 h-48 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 flex-shrink-0">
           {project.coverImage ? (
             <img
               src={project.coverImage}
@@ -59,31 +59,31 @@ export default function ProjectCard({ project }: ProjectCardProps) {
           </span>
         </div>
 
-        {/* 제목 - 고정 높이 */}
-        <h3 className="text-xl font-bold mb-3 group-hover:bg-gradient-to-r group-hover:from-blue-600 group-hover:to-purple-600 group-hover:bg-clip-text group-hover:text-transparent transition-all line-clamp-2 h-[56px] flex-shrink-0">
+        {/* 제목 - 2줄 제한 */}
+        <h3 className="text-xl font-bold mb-3 group-hover:bg-gradient-to-r group-hover:from-blue-600 group-hover:to-purple-600 group-hover:bg-clip-text group-hover:text-transparent transition-all line-clamp-2 flex-shrink-0">
           {project.title}
         </h3>
 
-        {/* 설명 - 고정 높이 3줄 */}
-        <p className="text-gray-600 dark:text-gray-400 mb-4 line-clamp-3 h-[72px] flex-shrink-0">
+        {/* 설명 - 3줄 제한 */}
+        <p className="text-gray-600 dark:text-gray-400 mb-4 line-clamp-3 flex-shrink-0">
           {project.description}
         </p>
 
-        {/* 태그 영역 - 고정 높이 */}
-        <div className="flex flex-wrap gap-2 mb-4 h-[32px] overflow-hidden flex-shrink-0">
+        {/* 태그 영역 - 자동 높이 */}
+        <div className="flex flex-wrap gap-2 mb-4 flex-shrink-0">
           {project.tags && project.tags.length > 0 ? (
             <>
               {project.tags.slice(0, 3).map((tag) => (
                 <span
                   key={tag.id}
-                  className="px-2 py-1 rounded text-xs font-medium h-fit"
+                  className="px-2 py-1 rounded text-xs font-medium"
                   style={{ backgroundColor: tag.color + "20", color: tag.color }}
                 >
                   {tag.name}
                 </span>
               ))}
               {project.tags.length > 3 && (
-                <span className="px-2 py-1 rounded text-xs text-gray-500 h-fit">
+                <span className="px-2 py-1 rounded text-xs text-gray-500">
                   +{project.tags.length - 3}
                 </span>
               )}
@@ -93,27 +93,21 @@ export default function ProjectCard({ project }: ProjectCardProps) {
           )}
         </div>
 
-        {/* 진행률 영역 - 고정 높이 */}
-        <div className="mb-4 h-[52px] flex-shrink-0">
-          {project.status === "in-progress" ? (
-            <>
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-gray-600 dark:text-gray-400">진행률</span>
-                <span className="font-bold">{project.progress}%</span>
-              </div>
-              <Progress 
-                value={project.progress}
-                color="warning"
-                size="sm"
-                className="max-w-full"
-              />
-            </>
-          ) : (
-            <div className="text-sm text-gray-400">
-              {project.status === "released" ? "출시 완료" : "백엔드 프로젝트"}
+        {/* 진행률 영역 */}
+        {project.status === "in-progress" && (
+          <div className="mb-4 flex-shrink-0">
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-gray-600 dark:text-gray-400">진행률</span>
+              <span className="font-bold">{project.progress}%</span>
             </div>
-          )}
-        </div>
+            <Progress 
+              value={project.progress}
+              color="warning"
+              size="sm"
+              className="max-w-full"
+            />
+          </div>
+        )}
 
         {/* 하단 정보 - 맨 아래 고정 */}
         <div className="flex justify-between items-center text-sm text-gray-500 border-t border-gray-200 dark:border-gray-700 pt-3 mt-auto flex-shrink-0">
