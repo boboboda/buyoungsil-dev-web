@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import moment from "moment";
 import Hero from "@/components/home/hero";
 import AboutSection from "@/components/home/AboutSection";
 import FeaturedProjects from "@/components/home/FeaturedProjects";
@@ -22,13 +23,20 @@ export const metadata: Metadata = {
 
 export default async function Home() {
   // 프로젝트 & 노트
-  const projects = await fetchAllProjects();
+  const rawProjects = await fetchAllProjects();
   const notes = await fetchAllDevelopNotes();
+  
+  // 🔥 Date를 string으로 변환
+  const projects = rawProjects.map(project => ({
+    ...project,
+    createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
+    updatedAt: moment(project.updatedAt).format("YYYY-MM-DD")
+  }));
   
   const featuredProjects = projects.filter(p => p.status === 'released').slice(0, 3);
   const recentNotes = notes.slice(0, 6);
 
-  // 방문자 통계 🔥 수정
+  // 방문자 통계
   const today = new Date().toISOString().split('T')[0];
   const todayVisitor = await prisma.dailyVisitorCount.findUnique({
     where: { date: today }
@@ -38,11 +46,12 @@ export default async function Home() {
   // 가입자 수
   const totalUsers = await prisma.user.count();
 
-  // 🔥 고정 날짜로 운영일수 계산
+  // 운영일수 계산
   const SITE_START_DATE = "2024-01-01"; // 실제 홈페이지 오픈일로 수정하세요!
   const startDate = new Date(SITE_START_DATE + 'T00:00:00');
   const todayDate = new Date(today + 'T00:00:00');
-const daysRunning = Math.floor((todayDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  const daysRunning = Math.floor((todayDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
   return (
     <div className="flex flex-col">
       <Hero 
