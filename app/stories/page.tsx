@@ -72,7 +72,8 @@ export default async function StoriesPage() {
                 아직 작성된 이야기가 없습니다.
               </div>
             ) : (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-8">
+              // ⭐ 그리드 수정: 균등 분배
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                 {categoryStories.map((story) => (
                   <StoryCard 
                     key={story.id} 

@@ -1,266 +1,151 @@
+// serverActions/projects.ts (추가 또는 수정)
 "use server";
 
 import { revalidatePath } from "next/cache";
-import moment from "moment";
 import prisma from "@/lib/prisma";
+import { generateSlug } from "@/lib/utils/slugify";  // ⭐ 추가
 
-// ========================================
-// 프로젝트 CRUD
-// ========================================
-
-export async function fetchAllProjects() {
-  const projects = await prisma.project.findMany({
-    include: {
-      tags: true,
-      logs: { select: { id: true } },
-      revenues: {
-        orderBy: { month: 'desc' },
-        take: 1
-      }
-    },
-    orderBy: { updatedAt: 'desc' }
-  });
-
-  return projects.map(p => ({
-    id: p.id,
-    name: p.name,
-    title: p.title,
-    description: p.description,
-    coverImage: p.coverImage,
-    appLink: p.appLink,
-    platform: p.platform,
-    techStack: p.techStack,
-    status: p.status,
-    progress: p.progress,
-    databaseId: p.databaseId,
-    tags: p.tags,
-    logCount: p.logs.length,
-    revenue: p.revenues[0]?.total || 0,
-    createdAt: moment(p.createdAt).format("YYYY-MM-DD"),
-    updatedAt: moment(p.updatedAt).format("YYYY-MM-DD")
-  }));
-}
-
-export async function fetchProjectByName(name: string) {
-  const project = await prisma.project.findUnique({
-    where: { name },
-    include: {
-      tags: true,
-      logs: { orderBy: { createdAt: 'desc' } },
-      revenues: { orderBy: { month: 'desc' } }
-    }
-  });
-
-  if (!project) return null;
-
-  return {
-    id: project.id,
-    name: project.name,
-    title: project.title,
-    description: project.description,
-    coverImage: project.coverImage,
-    appLink: project.appLink,
-    platform: project.platform,
-    status: project.status,
-    progress: project.progress,
-    databaseId: project.databaseId,
-    tags: project.tags,
-    logCount: project.logs.length,
-    revenue: project.revenues[0]?.total || 0,
-    createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
-    updatedAt: moment(project.updatedAt).format("YYYY-MM-DD")
-  };
-}
-
-export async function createProject(data: {
-  name: string;
+interface CreateProjectData {
   title: string;
   description: string;
+  status: "released" | "in-progress" | "backend";
+  platform?: string;
   coverImage?: string;
   appLink?: string;
-  platform: string;
-  status: string;
-  progress: number;
-  techStack: string[];  // 🔥 추가
-  tags: { name: string; color: string }[];
-  databaseId?: string;
-}) {
-  const project = await prisma.project.create({
-    data: {
-      name: data.name,
-      title: data.title,
-      description: data.description,
-      coverImage: data.coverImage,
-      appLink: data.appLink,
-      platform: data.platform,
-      status: data.status,
-      progress: data.progress,
-      techStack: data.techStack,  // 🔥 추가
-      databaseId: data.databaseId,
-      tags: {
-        create: data.tags
+  githubLink?: string;
+  progress?: number;
+  tags?: Array<{ name: string; color: string }>;
+}
+
+// Project 생성
+export async function createProject(data: CreateProjectData) {
+  try {
+    // ⭐ 1단계: slug 없이 먼저 생성
+    const project = await prisma.project.create({
+      data: {
+        name: 'temp', // 임시 name
+        title: data.title,
+        description: data.description,
+        status: data.status,
+        platform: data.platform,
+        coverImage: data.coverImage,
+        appLink: data.appLink,
+        progress: data.progress || 0,
+        tags: {
+          create: data.tags || []
+        }
+      },
+      include: {
+        tags: true
       }
-    },
-    include: { tags: true }
-  });
+    });
 
-  revalidatePath('/admin/projects');
-  revalidatePath('/project');
-  return project;
+    // ⭐ 2단계: ID로 실제 name(slug) 생성
+    const finalName = generateSlug(data.title, project.id);
+
+    // ⭐ 3단계: name 업데이트
+    const updatedProject = await prisma.project.update({
+      where: { id: project.id },
+      data: { name: finalName },
+      include: {
+        tags: true
+      }
+    });
+
+    revalidatePath("/project");
+    revalidatePath("/admin/projects");
+
+    return {
+      success: true,
+      data: updatedProject
+    };
+  } catch (error) {
+    console.error("Project 생성 실패:", error);
+    throw new Error("프로젝트 생성 중 오류가 발생했습니다.");
+  }
 }
 
-export async function updateProject(id: string, data: any) {
-  // 기존 태그 삭제
-  await prisma.projectTag.deleteMany({
-    where: { projectId: id }
-  });
+// Project 수정
+export async function updateProject(
+  id: string,
+  data: Partial<CreateProjectData>
+) {
+  try {
+    // tags 제외하고 업데이트
+    const { tags, ...updateData } = data;
 
-  // 프로젝트 업데이트
-  const project = await prisma.project.update({
-    where: { id },
-    data: {
-      name: data.name,
-      title: data.title,
-      description: data.description,
-      coverImage: data.coverImage,
-      appLink: data.appLink,
-      platform: data.platform,
-      status: data.status,
-      progress: data.progress,
-      databaseId: data.databaseId,
-      tags: {
-  create: data.tags.map((tag: any) => ({
-    name: tag.name,
-    color: tag.color
-    // projectId는 제거! relation으로 자동 연결됨
-  }))
-}
-    },
-    include: { tags: true }
-  });
+    const project = await prisma.project.update({
+      where: { id },
+      data: {
+        ...updateData,
+        updatedAt: new Date()
+      },
+      include: {
+        tags: true
+      }
+    });
 
-  revalidatePath('/admin/projects');
-  revalidatePath('/project');
-  revalidatePath(`/project/${project.name}`);
-  return project;
+    revalidatePath("/project");
+    revalidatePath(`/project/${project.name}`);
+    revalidatePath("/admin/projects");
+
+    return {
+      success: true,
+      data: project
+    };
+  } catch (error) {
+    console.error("Project 수정 실패:", error);
+    throw new Error("프로젝트 수정 중 오류가 발생했습니다.");
+  }
 }
 
+// Project 삭제
 export async function deleteProject(id: string) {
-  await prisma.project.delete({
-    where: { id }
-  });
-  
-  revalidatePath('/admin/projects');
-  revalidatePath('/project');
+  try {
+    await prisma.project.delete({
+      where: { id }
+    });
+
+    revalidatePath("/project");
+    revalidatePath("/admin/projects");
+
+    return { success: true };
+  } catch (error) {
+    console.error("Project 삭제 실패:", error);
+    throw new Error("프로젝트 삭제 중 오류가 발생했습니다.");
+  }
 }
 
-// ========================================
-// 프로젝트 로그 CRUD
-// ========================================
+// 모든 Project 가져오기
+export async function fetchAllProjects() {
+  try {
+    const projects = await prisma.project.findMany({
+      include: {
+        tags: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
 
-export async function createProjectLog(data: {
-  projectId: string;
-  title: string;
-  content: string;
-  logType: string;
-  noteId?: number;
-}) {
-  const log = await prisma.projectLog.create({
-    data
-  });
-
-  revalidatePath('/admin/projects');
-  revalidatePath(`/project`);
-  return log;
+    return projects;
+  } catch (error) {
+    console.error("Projects 조회 실패:", error);
+    return [];
+  }
 }
 
-export async function fetchProjectLogs(projectId: string) {
-  const logs = await prisma.projectLog.findMany({
-    where: { projectId },
-    orderBy: { createdAt: 'desc' }
-  });
-
-  return logs.map(log => ({
-    id: log.id,
-    projectId: log.projectId,
-    title: log.title,
-    content: log.content,
-    logType: log.logType,
-    noteId: log.noteId,
-    createdAt: moment(log.createdAt).format("YYYY-MM-DD HH:mm"),
-    updatedAt: moment(log.updatedAt).format("YYYY-MM-DD HH:mm")
-  }));
-}
-
-// ========================================
-// 수익 데이터 CRUD
-// ========================================
-
-export async function createOrUpdateRevenue(data: {
-  projectId: string;
-  month: string;
-  adsense: number;
-  inapp: number;
-  dau?: number;
-  mau?: number;
-  downloads?: number;
-  notes?: string;
-}) {
-  const total = data.adsense + data.inapp;
-
-  const revenue = await prisma.revenue.upsert({
-    where: {
-      projectId_month: {
-        projectId: data.projectId,
-        month: data.month
+// name(slug)으로 Project 가져오기
+export async function fetchProjectByName(name: string) {
+  try {
+    const project = await prisma.project.findUnique({
+      where: { name },
+      include: {
+        tags: true
       }
-    },
-    update: {
-      adsense: data.adsense,
-      inapp: data.inapp,
-      total,
-      dau: data.dau,
-      mau: data.mau,
-      downloads: data.downloads,
-      notes: data.notes
-    },
-    create: {
-      projectId: data.projectId,
-      month: data.month,
-      adsense: data.adsense,
-      inapp: data.inapp,
-      total,
-      dau: data.dau,
-      mau: data.mau,
-      downloads: data.downloads,
-      notes: data.notes
-    }
-  });
+    });
 
-  revalidatePath('/admin/projects');
-  revalidatePath(`/project`);
-  return revenue;
-}
-
-export async function fetchProjectRevenues(projectId: string) {
-  const revenues = await prisma.revenue.findMany({
-    where: { projectId },
-    orderBy: { month: 'desc' }
-  });
-
-  return revenues.map(r => ({
-    id: r.id,
-    projectId: r.projectId,
-    month: r.month,
-    adsense: r.adsense,
-    inapp: r.inapp,
-    total: r.total,
-    dau: r.dau,
-    mau: r.mau,
-    downloads: r.downloads,
-    retention: r.retention,
-    notes: r.notes,
-    createdAt: moment(r.createdAt).format("YYYY-MM-DD"),
-    updatedAt: moment(r.updatedAt).format("YYYY-MM-DD")
-  }));
+    return project;
+  } catch (error) {
+    console.error("Project 조회 실패:", error);
+    return null;
+  }
 }
