@@ -121,22 +121,6 @@ export async function deleteProject(id: string) {
   }
 }
 
-// 모든 Project 가져오기
-export async function fetchAllProjects() {
-  try {
-    const projects = await prisma.project.findMany({
-      include: {
-        tags: true
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    return projects;
-  } catch (error) {
-    console.error("Projects 조회 실패:", error);
-    return [];
-  }
-}
 
 // name(slug)으로 Project 가져오기
 export async function fetchProjectByName(name: string) {
@@ -157,23 +141,7 @@ export async function fetchProjectByName(name: string) {
   }
 }
 
-// 출시된 프로젝트만 가져오기
-export async function fetchReleasedProjects() {
-  try {
-    const projects = await prisma.project.findMany({
-      where: { status: 'released' },
-      include: {
-        tags: true
-      },
-      orderBy: { createdAt: 'desc' }
-    });
 
-    return projects;
-  } catch (error) {
-    console.error("Released Projects 조회 실패:", error);
-    return [];
-  }
-}
 
 // ========================================
 // 프로젝트 로그 CRUD
@@ -343,5 +311,77 @@ export async function deleteProjectTag(tagId: string) {
   } catch (error) {
     console.error("Tag 삭제 실패:", error);
     throw new Error("태그 삭제 중 오류가 발생했습니다.");
+  }
+}
+
+// serverActions/projects.ts - fetchAllProjects 함수 수정
+
+// 모든 Project 가져오기 (카드 뷰용 - revenue 합계 포함)
+export async function fetchAllProjects() {
+  try {
+    const projects = await prisma.project.findMany({
+      include: {
+        tags: true,
+        _count: {
+          select: {
+            logs: true  // 로그 개수
+          }
+        },
+        revenues: {  // ✅ 수익 데이터 포함
+          select: {
+            total: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // ✅ 수익 합계 계산하여 반환
+    return projects.map(project => ({
+      ...project,
+      logCount: project._count.logs,
+      revenue: project.revenues.reduce((sum, r) => sum + r.total, 0), // 총 수익 계산
+      // revenues 배열은 제거 (목록에서는 필요 없음)
+      revenues: undefined,
+      _count: undefined
+    }));
+  } catch (error) {
+    console.error("Projects 조회 실패:", error);
+    return [];
+  }
+}
+
+// 출시된 프로젝트만 가져오기 (revenue 포함)
+export async function fetchReleasedProjects() {
+  try {
+    const projects = await prisma.project.findMany({
+      where: { status: 'released' },
+      include: {
+        tags: true,
+        _count: {
+          select: {
+            logs: true
+          }
+        },
+        revenues: {  // ✅ 수익 데이터 포함
+          select: {
+            total: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // ✅ 수익 합계 계산하여 반환
+    return projects.map(project => ({
+      ...project,
+      logCount: project._count.logs,
+      revenue: project.revenues.reduce((sum, r) => sum + r.total, 0),
+      revenues: undefined,
+      _count: undefined
+    }));
+  } catch (error) {
+    console.error("Released Projects 조회 실패:", error);
+    return [];
   }
 }

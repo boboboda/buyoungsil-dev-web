@@ -91,6 +91,15 @@ export default function ProjectDetailClient({ project }: ProjectDetailClientProp
     milestone: "마일스톤"
   };
 
+  // ✅ 최근 월 수익 계산
+  const getLatestMonthRevenue = () => {
+    if (!project.revenues || project.revenues.length === 0) return 0;
+    const sorted = [...project.revenues].sort((a, b) => 
+      new Date(b.month).getTime() - new Date(a.month).getTime()
+    );
+    return sorted[0].total;
+  };
+
   return (
     <div>
       {/* 헤더 */}
@@ -186,7 +195,10 @@ export default function ProjectDetailClient({ project }: ProjectDetailClientProp
 
       {/* 탭 컨텐츠 */}
       {activeTab === "overview" && (
-        <OverviewTab project={project} />
+        <OverviewTab 
+          project={project} 
+          latestMonthRevenue={getLatestMonthRevenue()} 
+        />
       )}
 
       {activeTab === "logs" && (
@@ -232,6 +244,7 @@ function CommunityTab({ projectName }: { projectName: string }) {
               프로젝트 업데이트, 중요 공지사항을 확인하세요
             </p>
             <Button 
+              onPress={() => router.push(`/project/${projectName}/board/notice`)}
               color="primary" 
               variant="flat"
               className="w-full"
@@ -254,7 +267,8 @@ function CommunityTab({ projectName }: { projectName: string }) {
             <p className="text-gray-600 dark:text-gray-400 mb-4">
               궁금한 점을 자유롭게 문의하세요
             </p>
-            <Button 
+            <Button
+              onPress={() => router.push(`/project/${projectName}/board/post`)}
               color="secondary" 
               variant="flat"
               className="w-full"
@@ -279,7 +293,13 @@ function CommunityTab({ projectName }: { projectName: string }) {
 }
 
 // ==================== 개요 탭 ====================
-function OverviewTab({ project }: { project: Project }) {
+function OverviewTab({ 
+  project, 
+  latestMonthRevenue 
+}: { 
+  project: Project;
+  latestMonthRevenue: number;
+}) {
   return (
     <div className="space-y-8">
       {/* 프로젝트 정보 */}
@@ -290,11 +310,11 @@ function OverviewTab({ project }: { project: Project }) {
           <InfoItem label="진행률" value={`${project.progress}%`} />
           <InfoItem 
             label="개발 로그" 
-            value={`${project.logCount || 0}개`} 
+            value={`${project.logCount || project.logs?.length || 0}개`} 
           />
           <InfoItem 
             label="최근 월 수익" 
-            value={project.revenue ? `${project.revenue.toLocaleString()}원` : "데이터 없음"} 
+            value={latestMonthRevenue > 0 ? `${latestMonthRevenue.toLocaleString()}원` : "데이터 없음"} 
           />
         </div>
       </div>
@@ -398,10 +418,39 @@ function LogsTab({
 
 // ==================== 수익 탭 ====================
 function RevenuesTab({ revenues }: { revenues: Revenue[] }) {
+  console.log("RevenuesTab - revenues:", revenues); // ✅ 디버깅용
+
+  // null/undefined 체크
+  if (!revenues) {
+    return (
+      <div className="bg-yellow-50 dark:bg-yellow-900/20 border-2 border-yellow-500 rounded-xl p-8 text-center">
+        <span className="text-4xl mb-4 block">⚠️</span>
+        <p className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">
+          수익 데이터를 불러오는 중 오류가 발생했습니다.
+        </p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          페이지를 새로고침하거나 관리자에게 문의해주세요.
+        </p>
+      </div>
+    );
+  }
+
+  // 빈 배열 체크
   if (revenues.length === 0) {
     return (
-      <div className="text-center py-12 text-gray-500">
-        아직 수익 데이터가 없습니다.
+      <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-12 text-center">
+        <span className="text-6xl mb-4 block">📊</span>
+        <p className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-3">
+          아직 등록된 수익 데이터가 없습니다
+        </p>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+          관리자 페이지에서 월별 수익 데이터를 추가해주세요.
+        </p>
+        <div className="inline-block px-4 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+          <p className="text-sm text-blue-600 dark:text-blue-400">
+            💡 수익 데이터가 추가되면 이곳에 차트와 통계가 표시됩니다
+          </p>
+        </div>
       </div>
     );
   }
@@ -411,44 +460,221 @@ function RevenuesTab({ revenues }: { revenues: Revenue[] }) {
     new Date(b.month).getTime() - new Date(a.month).getTime()
   );
 
-  // 총 수익 계산
-  const totalRevenue = revenues.reduce((sum, r) => sum + r.total, 0);
-  const totalAdsense = revenues.reduce((sum, r) => sum + r.adsense, 0);
-  const totalInapp = revenues.reduce((sum, r) => sum + r.inapp, 0);
+  // ✅ 총 누적 수익 계산 (모든 월의 합계)
+  const totalRevenue = revenues.reduce((sum, r) => sum + (r.total || 0), 0);
+  const totalAdsense = revenues.reduce((sum, r) => sum + (r.adsense || 0), 0);
+  const totalInapp = revenues.reduce((sum, r) => sum + (r.inapp || 0), 0);
+
+  // ✅ 최근 월 수익
+  const latestRevenue = sortedRevenues[0];
+
+  // ✅ 월 평균 수익
+  const avgRevenue = Math.round(totalRevenue / revenues.length);
 
   return (
     <div className="space-y-8">
-      {/* 수익 요약 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* 수익 요약 카드 */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <SummaryCard
-          title="총 수익"
+          title="총 누적 수익"
           value={`${totalRevenue.toLocaleString()}원`}
+          subtitle={`${revenues.length}개월 누적`}
           icon="💰"
           color="blue"
         />
         <SummaryCard
-          title="애드센스 수익"
-          value={`${totalAdsense.toLocaleString()}원`}
-          icon="📊"
+          title="최근 월 수익"
+          value={`${latestRevenue.total.toLocaleString()}원`}
+          subtitle={new Date(latestRevenue.month).toLocaleDateString('ko-KR', { month: 'long' })}
+          icon="📈"
           color="green"
         />
         <SummaryCard
-          title="인앱 수익"
-          value={`${totalInapp.toLocaleString()}원`}
-          icon="💳"
+          title="월 평균 수익"
+          value={`${avgRevenue.toLocaleString()}원`}
+          subtitle="전체 기간 평균"
+          icon="📊"
           color="purple"
         />
+        <SummaryCard
+          title="수익 발생 기간"
+          value={`${revenues.length}개월`}
+          subtitle="데이터 집계 기간"
+          icon="📅"
+          color="orange"
+        />
+      </div>
+
+      {/* 수익 구성 카드 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-6 border border-green-200 dark:border-green-800">
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-3xl">📢</span>
+            <h3 className="font-semibold text-sm text-gray-600 dark:text-gray-400">총 애드센스 수익</h3>
+          </div>
+          <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+            {totalAdsense.toLocaleString()}원
+          </p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            전체의 {((totalAdsense / totalRevenue) * 100).toFixed(1)}%
+          </p>
+        </div>
+
+        <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-6 border border-purple-200 dark:border-purple-800">
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-3xl">💳</span>
+            <h3 className="font-semibold text-sm text-gray-600 dark:text-gray-400">총 인앱 결제 수익</h3>
+          </div>
+          <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+            {totalInapp.toLocaleString()}원
+          </p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            전체의 {((totalInapp / totalRevenue) * 100).toFixed(1)}%
+          </p>
+        </div>
       </div>
 
       {/* 월별 수익 상세 */}
       <div>
-        <h2 className="text-2xl font-bold mb-4">📅 월별 수익 상세</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-2xl font-bold">📅 월별 수익 상세</h2>
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            총 {revenues.length}개월 데이터
+          </span>
+        </div>
         <div className="space-y-4">
-          {sortedRevenues.map((revenue) => (
-            <RevenueCard key={revenue.id} revenue={revenue} />
+          {sortedRevenues.map((revenue, index) => (
+            <RevenueCard 
+              key={revenue.id} 
+              revenue={revenue} 
+              isLatest={index === 0}
+            />
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ==================== 수익 카드 컴포넌트 ====================
+function RevenueCard({ 
+  revenue, 
+  isLatest 
+}: { 
+  revenue: Revenue;
+  isLatest?: boolean;
+}) {
+  // 날짜 포맷팅
+  const formatMonth = (monthStr: string) => {
+    try {
+      const date = new Date(monthStr);
+      return date.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long' });
+    } catch {
+      return monthStr;
+    }
+  };
+
+  return (
+    <div className={`bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm border transition-shadow ${
+      isLatest 
+        ? 'border-blue-500 dark:border-blue-400 ring-2 ring-blue-100 dark:ring-blue-900' 
+        : 'border-gray-200 dark:border-gray-700 hover:shadow-md'
+    }`}>
+      {/* 헤더 */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <h3 className="text-xl font-bold text-gray-800 dark:text-gray-200">
+            {formatMonth(revenue.month)}
+          </h3>
+          {isLatest && (
+            <span className="px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+              최신
+            </span>
+          )}
+        </div>
+        <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+          {(revenue.total || 0).toLocaleString()}원
+        </span>
+      </div>
+
+      {/* 수익 상세 */}
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-3">
+          <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">애드센스</p>
+          <p className="text-lg font-semibold text-green-600 dark:text-green-400">
+            {(revenue.adsense || 0).toLocaleString()}원
+          </p>
+        </div>
+        <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-3">
+          <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">인앱 결제</p>
+          <p className="text-lg font-semibold text-purple-600 dark:text-purple-400">
+            {(revenue.inapp || 0).toLocaleString()}원
+          </p>
+        </div>
+      </div>
+
+      {/* 추가 지표 */}
+      {(revenue.dau || revenue.mau || revenue.downloads || revenue.retention) && (
+        <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {revenue.dau && (
+              <MetricItem label="DAU" value={revenue.dau.toLocaleString()} />
+            )}
+            {revenue.mau && (
+              <MetricItem label="MAU" value={revenue.mau.toLocaleString()} />
+            )}
+            {revenue.downloads && (
+              <MetricItem label="다운로드" value={revenue.downloads.toLocaleString()} />
+            )}
+            {revenue.retention && (
+              <MetricItem label="리텐션" value={`${revenue.retention}%`} />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 메모 */}
+      {revenue.notes && (
+        <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            📝 {revenue.notes}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SummaryCard({ 
+  title, 
+  value, 
+  subtitle,
+  icon, 
+  color 
+}: { 
+  title: string; 
+  value: string; 
+  subtitle?: string;
+  icon: string; 
+  color: "blue" | "green" | "purple" | "orange";
+}) {
+  const colorClasses = {
+    blue: "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400",
+    green: "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-600 dark:text-green-400",
+    purple: "bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800 text-purple-600 dark:text-purple-400",
+    orange: "bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800 text-orange-600 dark:text-orange-400"
+  };
+
+  return (
+    <div className={`${colorClasses[color]} border rounded-lg p-6`}>
+      <div className="flex items-center gap-3 mb-2">
+        <span className="text-3xl">{icon}</span>
+        <h3 className="font-semibold text-sm text-gray-600 dark:text-gray-400">{title}</h3>
+      </div>
+      <p className={`text-2xl font-bold ${colorClasses[color]}`}>{value}</p>
+      {subtitle && (
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{subtitle}</p>
+      )}
     </div>
   );
 }
@@ -463,98 +689,11 @@ function InfoItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SummaryCard({ 
-  title, 
-  value, 
-  icon, 
-  color 
-}: { 
-  title: string; 
-  value: string; 
-  icon: string; 
-  color: "blue" | "green" | "purple";
-}) {
-  const colorClasses = {
-    blue: "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400",
-    green: "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400",
-    purple: "bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400"
-  };
-
-  return (
-    <div className={`${colorClasses[color]} rounded-lg p-6`}>
-      <div className="flex items-center gap-3 mb-2">
-        <span className="text-3xl">{icon}</span>
-        <h3 className="font-semibold">{title}</h3>
-      </div>
-      <p className="text-2xl font-bold">{value}</p>
-    </div>
-  );
-}
-
-function RevenueCard({ revenue }: { revenue: Revenue }) {
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-xl font-bold">
-          {moment(revenue.month).format("YYYY년 MM월")}
-        </h3>
-        <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-          {revenue.total.toLocaleString()}원
-        </span>
-      </div>
-
-      {/* 수익 상세 */}
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <div>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">애드센스</p>
-          <p className="text-lg font-semibold text-green-600 dark:text-green-400">
-            {revenue.adsense.toLocaleString()}원
-          </p>
-        </div>
-        <div>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">인앱 결제</p>
-          <p className="text-lg font-semibold text-purple-600 dark:text-purple-400">
-            {revenue.inapp.toLocaleString()}원
-          </p>
-        </div>
-      </div>
-
-      {/* 지표 */}
-      {(revenue.dau || revenue.mau || revenue.downloads || revenue.retention) && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-          {revenue.dau && (
-            <MetricItem label="DAU" value={revenue.dau.toLocaleString()} />
-          )}
-          {revenue.mau && (
-            <MetricItem label="MAU" value={revenue.mau.toLocaleString()} />
-          )}
-          {revenue.downloads && (
-            <MetricItem label="다운로드" value={revenue.downloads.toLocaleString()} />
-          )}
-          {revenue.retention && (
-            <MetricItem label="재방문율" value={`${revenue.retention}%`} />
-          )}
-        </div>
-      )}
-
-      {/* 메모 */}
-      {revenue.notes && (
-        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            📝 {revenue.notes}
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function MetricItem({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">{label}</p>
-      <p className="text-sm font-semibold">{value}</p>
+      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">{value}</p>
     </div>
   );
 }
