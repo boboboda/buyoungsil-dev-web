@@ -71,20 +71,40 @@ export async function createProject(data: CreateProjectData) {
 }
 
 // Project 수정
+// serverActions/projects.ts - updateProject 함수 수정
+
+// Project 수정
 export async function updateProject(
   id: string,
   data: Partial<CreateProjectData>
 ) {
   try {
-    // tags 제외하고 업데이트
+    // ❌ 기존: tags를 제외하고 업데이트만 함
+    // const { tags, ...updateData } = data;
+
+    // ✅ 수정: tags 처리 추가
     const { tags, ...updateData } = data;
+
+    // 기본 필드 업데이트
+    const updateOperation: any = {
+      ...updateData,
+      updatedAt: new Date()
+    };
+
+    // ✅ 태그가 있으면 기존 태그 삭제 후 새로 생성
+    if (tags !== undefined) {
+      updateOperation.tags = {
+        deleteMany: {},  // 기존 태그 전부 삭제
+        create: tags.map(tag => ({
+          name: tag.name,
+          color: tag.color
+        }))
+      };
+    }
 
     const project = await prisma.project.update({
       where: { id },
-      data: {
-        ...updateData,
-        updatedAt: new Date()
-      },
+      data: updateOperation,
       include: {
         tags: true
       }
