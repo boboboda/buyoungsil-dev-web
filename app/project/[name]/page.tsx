@@ -36,7 +36,7 @@ export async function generateMetadata({ params }: ProjectDetailPageProps): Prom
 export default async function ProjectDetailPage({ params }: ProjectDetailPageProps) {
   const { name } = await params;
   
-  // 프로젝트와 로그 가져오기
+  // ✅ 프로젝트, 로그, 수익 데이터 모두 가져오기
   const project = await prisma.project.findUnique({
     where: { name },
     include: { 
@@ -45,6 +45,11 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
         orderBy: {
           createdAt: 'desc'
         }
+      },
+      revenues: {  // ✅✅✅ 이 부분이 빠져있었습니다!
+        orderBy: {
+          month: 'desc'
+        }
       }
     }
   });
@@ -52,6 +57,8 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
   if (!project) {
     notFound();
   }
+
+  console.log("🔍 revenues 데이터:", project.revenues); // ✅ 디버깅용
 
   // 🔥 로그에 noteId가 있으면 해당 노트 정보 조회
   const logsWithNotes = await Promise.all(
@@ -91,9 +98,28 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
       logType: log.logType,
       noteId: log.noteId,
       createdAt: log.createdAt.toISOString(),
+      updatedAt: log.updatedAt.toISOString(),
       note: log.note
+    })),
+    // ✅ 수익 데이터 포맷팅 추가
+    revenues: project.revenues.map(revenue => ({
+      id: revenue.id,
+      projectId: revenue.projectId,
+      month: revenue.month,
+      adsense: revenue.adsense,
+      inapp: revenue.inapp,
+      total: revenue.total,
+      dau: revenue.dau,
+      mau: revenue.mau,
+      downloads: revenue.downloads,
+      retention: revenue.retention,
+      notes: revenue.notes,
+      createdAt: revenue.createdAt.toISOString(),
+      updatedAt: revenue.updatedAt.toISOString()
     }))
   };
+
+  console.log("✅ formattedProject.revenues:", formattedProject.revenues); // ✅ 디버깅용
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">

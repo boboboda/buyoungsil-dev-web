@@ -1,26 +1,25 @@
+// app/project/[name]/board/[postType]/detail/[postId]/page.tsx
 import PostDetail from "@/components/release/postComponent/PostDetail";
 import { fetchAPost } from "@/serverActions/posts";
 
-// ✅ 수정: params를 Promise로 변경
 export default async function DetailPage({
   params,
 }: {
-  params: Promise<{ postType: string; appName: string; postId: string }>;
+  params: Promise<{ postType: string; name: string; postId: string }>;  // ✅ appName → name
 }) {
-  // ✅ 수정: await params 추가
-  const { appName, postId, postType } = await params;
+  const { name, postId, postType } = await params;  // ✅ appName → name
 
-  console.log("App Name:", appName);
+  console.log("Project Name:", name);
   console.log("Post ID:", postId);
 
-  const post = await fetchAPost(appName, postId, postType);
+  const post = await fetchAPost(name, postId, postType);  // ✅ appName → name
 
   console.log("Fetched Post:", post);
 
   return (
     <div className="flex flex-col w-full space-y-8">
       <PostDetail
-        appName={appName}
+        appName={name}  // ✅ PostDetail에는 appName prop으로 전달
         post={post}
         postId={postId}
         postType={postType}
