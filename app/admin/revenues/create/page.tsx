@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { fetchAllProjects } from "@/serverActions/projects";
 import RevenueForm from "@/components/admin/projects/RevenueForm";
+import moment from "moment";
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +14,11 @@ export const metadata: Metadata = {
 export default async function CreateRevenuePage() {
 
   const projects = await fetchAllProjects();
-  const releasedProjects = projects.filter(p => p.status === 'released');
+  const releasedProjects = projects.filter(p => p.status === 'released').map(project => ({
+          ...project,
+      createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
+      updatedAt: moment(project.updatedAt).format("YYYY-MM-DD")
+  }));
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
