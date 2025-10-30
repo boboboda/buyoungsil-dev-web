@@ -204,7 +204,7 @@ export default function ProjectDetailClient({ project }: ProjectDetailClientProp
   );
 }
 
-// ==================== 커뮤니티 탭 (새로 추가) ====================
+// ==================== 커뮤니티 탭 ====================
 function CommunityTab({ projectName }: { projectName: string }) {
   const router = useRouter();
 
@@ -219,7 +219,7 @@ function CommunityTab({ projectName }: { projectName: string }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* 공지사항 카드 */}
           <div 
-            onClick={() => router.push(`/project/notice/${projectName}`)}
+            onClick={() => router.push(`/project/${projectName}/board/notice`)}
             className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg hover:shadow-xl transition-all cursor-pointer group"
           >
             <div className="flex items-center gap-3 mb-3">
@@ -242,7 +242,7 @@ function CommunityTab({ projectName }: { projectName: string }) {
 
           {/* 문의게시판 카드 */}
           <div 
-            onClick={() => router.push(`/project/post/${projectName}`)}
+            onClick={() => router.push(`/project/${projectName}/board/post`)}
             className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg hover:shadow-xl transition-all cursor-pointer group"
           >
             <div className="flex items-center gap-3 mb-3">

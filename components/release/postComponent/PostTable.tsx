@@ -28,7 +28,6 @@ import { SearchIcon, ChevronDownIcon, PlusIcon } from "../../icons";
 import { columns } from "@/types";
 import { capitalize } from "@/lib/utils";
 import { Post, PostSummary } from "@/types";
-// import { useUserStore } from "@/components/providers/user-store-provider";
 
 const PostTable = ({
   posts,
@@ -39,8 +38,6 @@ const PostTable = ({
   appName: string;
   postType: string;
 }) => {
-  // const { user } = useUserStore((state) => state);
-
   const { data: session, status } = useSession();
 
   const isAdmin = session?.user.role === "admin";
@@ -71,13 +68,10 @@ const PostTable = ({
 
   const router = useRouter();
 
-  // 페이지
   const [page, setPage] = React.useState(1);
 
-  //검색
   const hasSearchFilter = Boolean(filterValue);
 
-  //해더 컬럼
   const headerColumns = React.useMemo(() => {
     if (visibleColumns === "all") return columns;
 
@@ -86,7 +80,6 @@ const PostTable = ({
     );
   }, [visibleColumns]);
 
-  //아이템 필터-검색용도
   const filteredItems = React.useMemo(() => {
     let filteredPosts = [...posts];
 
@@ -99,7 +92,6 @@ const PostTable = ({
     return filteredPosts;
   }, [posts, filterValue]);
 
-  //페이지 관련
   const pages = Math.ceil(filteredItems.length / rowsPerPage);
 
   const items = React.useMemo(() => {
@@ -109,7 +101,6 @@ const PostTable = ({
     return filteredItems.slice(start, end);
   }, [page, filteredItems, rowsPerPage]);
 
-  // 정렬관련- 날짜 관련 cmp 수정 필요
   const sortedItems = React.useMemo(() => {
     return [...items].sort((a: PostSummary, b: PostSummary) => {
       const first = a[sortDescriptor.column as keyof PostSummary] as string;
@@ -144,7 +135,7 @@ const PostTable = ({
               className="flex justify-center cursor-pointer"
               onClick={() => {
                 router.push(
-                  `/release/${postType}/${appName}/detail/${post.id}`,
+                  `/project/${appName}/board/${postType}/detail/${post.id}`,
                 );
               }}
             >
@@ -240,32 +231,6 @@ const PostTable = ({
                 ))}
               </DropdownMenu>
             </Dropdown>
-
-            {postType === "notice"
-              ? // 공지사항인 경우 - 관리자만 글쓰기 버튼 표시
-                isAdmin && (
-                  <Button
-                    color="primary"
-                    endContent={<PlusIcon />}
-                    onClick={() => {
-                      router.push(`/release/${postType}/${appName}/write`);
-                    }}
-                  >
-                    공지 쓰기
-                  </Button>
-                )
-              : postType === "post" && (
-                  // 일반 게시판인 경우 - 모든 사용자에게 글쓰기 버튼 표시
-                  <Button
-                    color="primary"
-                    endContent={<PlusIcon />}
-                    onClick={() => {
-                      router.push(`/release/${postType}/${appName}/write`);
-                    }}
-                  >
-                    글쓰기
-                  </Button>
-                )}
           </div>
         </div>
         <div className="flex justify-between items-center">
@@ -295,7 +260,6 @@ const PostTable = ({
     hasSearchFilter,
   ]);
 
-  //페이지 뷰
   const bottomContent = React.useMemo(() => {
     return (
       <div className="py-2 px-2 flex justify-between items-center">

@@ -7,7 +7,6 @@ import { toast } from "react-toastify";
 import { useSession } from "next-auth/react";
 
 import { addAPost } from "@/serverActions/posts";
-// import { useUserStore } from '@/components/providers/user-store-provider';
 
 interface ReceivedData {
   postType?: string;
@@ -34,8 +33,6 @@ export default function PostWrite({
   const notifySuccessEvent = (msg: string) => toast.success(msg);
   const notifyErrorEvent = (msg: string) => toast.error(msg);
 
-  // const { user } = useUserStore((state) => state);
-
   const { data: session, status } = useSession();
 
   const handleSubmit = async () => {
@@ -55,7 +52,7 @@ export default function PostWrite({
 
       setIsLoading(false);
 
-      router.push(`/release/${postType}/${appName}`);
+      router.push(`/project/${appName}/board/${postType}`);
 
       notifySuccessEvent(`성공적으로 작성되었습니다!`);
 
@@ -68,7 +65,6 @@ export default function PostWrite({
   };
 
   const handleCancel = () => {
-    // 취소 버튼 클릭 시 로직
     setTitle("");
     setContent("");
   };

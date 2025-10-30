@@ -1,4 +1,4 @@
-import PostDetail from "@/components/project/postComponent/PostDetail";
+import PostDetail from "@/components/release/postComponent/PostDetail";
 import { fetchAPost } from "@/serverActions/posts";
 
 // ✅ 수정: params를 Promise로 변경
