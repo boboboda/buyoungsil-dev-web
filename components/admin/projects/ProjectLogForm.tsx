@@ -13,6 +13,7 @@ import {
 import { toast } from "react-toastify";
 import { createProjectLog } from "@/serverActions/projects";
 import { TECH_STACK_OPTIONS } from "@/types";
+import type { LogType } from "@/types"; // 🔥 추가
 
 interface ProjectTag {
   id: string;
@@ -24,7 +25,7 @@ interface Project {
   id: string;
   title: string;
   platform: string;
-    techStack: string[];
+  techStack: string[];
   tags: ProjectTag[];
 }
 
@@ -48,7 +49,7 @@ export default function ProjectLogForm({ projects, notes }: ProjectLogFormProps)
     projectId: "",
     title: "",
     content: "",
-    logType: "progress",
+    logType: "progress" as LogType, // 🔥 타입 명시
     noteId: ""
   });
 
@@ -59,33 +60,32 @@ export default function ProjectLogForm({ projects, notes }: ProjectLogFormProps)
     { value: "milestone", label: "🎉 마일스톤" }
   ];
 
- 
   // 🔥 수정: techStack 기반 필터링
-const filteredNotes = useMemo(() => {
-  if (!formData.projectId) return notes;
+  const filteredNotes = useMemo(() => {
+    if (!formData.projectId) return notes;
 
-  const selectedProject = projects.find(p => p.id === formData.projectId);
-  if (!selectedProject || !selectedProject.techStack) return notes;
+    const selectedProject = projects.find(p => p.id === formData.projectId);
+    if (!selectedProject || !selectedProject.techStack) return notes;
 
-  console.log("🔍 프로젝트 기술 스택:", selectedProject.techStack);
+    console.log("🔍 프로젝트 기술 스택:", selectedProject.techStack);
 
-  return notes.filter(note => {
-    if (!note.mainCategory) return false;
-    
-    // 1. basics는 항상 표시
-    if (note.mainCategory === "basics") return true;
-    
-    // 2. 프로젝트의 techStack에 해당하는 노트만 표시
-    const isMatch = selectedProject.techStack.some(tech => {
-      const option = TECH_STACK_OPTIONS.find(o => o.value === tech);
-      return option?.category === note.mainCategory;
+    return notes.filter(note => {
+      if (!note.mainCategory) return false;
+      
+      // 1. basics는 항상 표시
+      if (note.mainCategory === "basics") return true;
+      
+      // 2. 프로젝트의 techStack에 해당하는 노트만 표시
+      const isMatch = selectedProject.techStack.some(tech => {
+        const option = TECH_STACK_OPTIONS.find(o => o.value === tech);
+        return option?.category === note.mainCategory;
+      });
+
+      console.log(`  📝 ${note.mainCategory} → ${isMatch ? '✅' : '❌'}`);
+      
+      return isMatch;
     });
-
-    console.log(`  📝 ${note.mainCategory} → ${isMatch ? '✅' : '❌'}`);
-    
-    return isMatch;
-  });
-}, [formData.projectId, projects, notes]);
+  }, [formData.projectId, projects, notes]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,7 +102,7 @@ const filteredNotes = useMemo(() => {
         projectId: formData.projectId,
         title: formData.title,
         content: formData.content,
-        logType: formData.logType,
+        logType: formData.logType, // 🔥 이미 LogType으로 타입 지정됨
         noteId: formData.noteId ? Number(formData.noteId) : undefined
       });
 
@@ -148,7 +148,7 @@ const filteredNotes = useMemo(() => {
         placeholder="로그 타입 선택"
         selectedKeys={[formData.logType]}
         onSelectionChange={(keys) => {
-          const value = Array.from(keys)[0] as string;
+          const value = Array.from(keys)[0] as LogType; // 🔥 타입 캐스팅
           setFormData(prev => ({ ...prev, logType: value }));
         }}
         isRequired
