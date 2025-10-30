@@ -724,3 +724,23 @@ export async function editReply({
     throw new Error("답글을 수정하는 중 오류가 발생했습니다.");
   }
 }
+
+// serverActions/posts.ts 파일에 추가
+
+export async function fetchPostsCount(
+  appName: string,
+  postType: string
+): Promise<number> {
+  try {
+    const count = await prisma.post.count({
+      where: {
+        appName,
+        postType,
+      },
+    });
+    return count;
+  } catch (error) {
+    console.error("게시글 개수 조회 실패:", error);
+    return 0;
+  }
+}

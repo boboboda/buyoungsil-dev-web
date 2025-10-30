@@ -1,4 +1,4 @@
-import PostWrite from "@/components/project/postComponent/PostWrite";
+import PostWrite from "@/components/release/postComponent/PostWrite";
 
 export default async function WritePage({
   params,
