@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import moment from "moment";
 import prisma from "@/lib/prisma";
 import type { Story, StoryCategory } from "@/types";
+import { generateSlug } from "@/lib/utils/slugify"; // ⭐ 추가
 
 // ========================================
 // Stories CRUD
@@ -21,7 +22,7 @@ export async function fetchAllStories(): Promise<Story[]> {
     title: story.title,
     content: story.content,
     excerpt: story.excerpt || "",
-    category: story.category as StoryCategory,  // 🔥 타입 캐스팅
+    category: story.category as StoryCategory,
     tags: story.tags as string[],
     isPublished: story.isPublished,
     metaTitle: story.metaTitle || "",
@@ -51,7 +52,7 @@ export async function fetchStoryBySlug(slug: string): Promise<Story | null> {
     title: story.title,
     content: story.content,
     excerpt: story.excerpt || "",
-    category: story.category as StoryCategory,  // 🔥 타입 캐스팅
+    category: story.category as StoryCategory,
     tags: story.tags as string[],
     isPublished: story.isPublished,
     metaTitle: story.metaTitle || "",
@@ -77,7 +78,7 @@ export async function fetchStoriesByCategory(category: StoryCategory): Promise<S
     title: story.title,
     content: story.content,
     excerpt: story.excerpt || "",
-    category: story.category as StoryCategory,  // 🔥 타입 캐스팅
+    category: story.category as StoryCategory,
     tags: story.tags as string[],
     isPublished: story.isPublished,
     metaTitle: story.metaTitle || "",
@@ -111,6 +112,7 @@ export async function fetchAllStoriesAdmin() {
   }));
 }
 
+// ✅ 수정된 createStory 함수 - ID 기반 고유 slug 생성
 export async function createStory(data: {
   title: string;
   content: string;
@@ -121,6 +123,7 @@ export async function createStory(data: {
   metaTitle?: string;
   metaDescription?: string;
 }) {
+  // 1단계: 임시 slug로 먼저 생성
   const story = await prisma.story.create({
     data: {
       slug: 'temp', // 임시 slug
@@ -136,8 +139,19 @@ export async function createStory(data: {
     }
   });
 
+  // 2단계: ID를 사용하여 실제 slug 생성
+  const finalSlug = generateSlug(data.title, story.id);
+
+  // 3단계: slug 업데이트
+  const updatedStory = await prisma.story.update({
+    where: { id: story.id },
+    data: { slug: finalSlug }
+  });
+
   revalidatePath('/stories');
-  return story;
+  revalidatePath('/admin/stories');
+  
+  return updatedStory;
 }
 
 export async function updateStory(id: string, data: Partial<{
@@ -161,12 +175,15 @@ export async function updateStory(id: string, data: Partial<{
 
   revalidatePath('/stories');
   revalidatePath(`/stories/${story.slug}`);
+  revalidatePath('/admin/stories');
+  
   return story;
 }
 
 export async function deleteStory(id: string) {
   await prisma.story.delete({ where: { id } });
   revalidatePath('/stories');
+  revalidatePath('/admin/stories');
 }
 
 export async function toggleStoryPublish(id: string) {
@@ -181,5 +198,7 @@ export async function toggleStoryPublish(id: string) {
   });
 
   revalidatePath('/stories');
+  revalidatePath('/admin/stories');
+  
   return updated;
 }

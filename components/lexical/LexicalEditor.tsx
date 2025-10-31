@@ -6,29 +6,40 @@ import { ContentEditable } from '@lexical/react/LexicalContentEditable';
 import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin';
 import { AutoFocusPlugin } from '@lexical/react/LexicalAutoFocusPlugin';
 import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary';
+import { ListPlugin } from '@lexical/react/LexicalListPlugin';
+import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
+import { ParagraphNode, TextNode } from 'lexical';
 import { HeadingNode, QuoteNode } from '@lexical/rich-text';
-import { TableCellNode, TableNode, TableRowNode } from '@lexical/table';
-import { ListItemNode, ListNode } from '@lexical/list';
-import { CodeHighlightNode, CodeNode } from '@lexical/code';
-import { AutoLinkNode, LinkNode } from '@lexical/link';
+import { ListNode, ListItemNode } from '@lexical/list';
+import { CodeNode, CodeHighlightNode } from '@lexical/code';
+import { LinkNode, AutoLinkNode } from '@lexical/link';
+import { useEffect } from 'react';
 
 import ToolbarPlugin from './plugins/ToolbarPlugin';
-import ImagePlugin from './plugins/ImagePlugin';
-import SlashCommandPlugin from './plugins/SlashCommandPlugin';
-import AutoSavePlugin from './plugins/AutoSavePlugin';
+import CodeHighlightPlugin from './plugins/CodeHighlightPlugin';
+import LinkPlugin from './plugins/LinkPlugin';
+import ImagesPlugin from './plugins/ImagePlugin';
+import HorizontalRulePlugin from './plugins/HorizontalRulePlugin';
+import { ImageNode } from './nodes/ImageNode';
+import { HorizontalRuleNode } from './nodes/HorizontalRuleNode';
 import editorTheme from './theme/EditorTheme';
-
+import { registerStyleState, $exportNodeStyle, constructStyleImportMap } from './styleState';
+import './editor.css';
 
 interface LexicalEditorProps {
-  initialContent?: string;
-  onSave?: (content: string) => void;
   placeholder?: string;
+  onSave?: (content: string) => void;
+}
+
+function StyleStatePlugin() {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => registerStyleState(editor), [editor]);
+  return null;
 }
 
 export default function LexicalEditor({
-  initialContent,
+  placeholder = 'Enter some rich text...',
   onSave,
-  placeholder = '내용을 입력하세요...',
 }: LexicalEditorProps) {
   const initialConfig = {
     namespace: 'MyEditor',
@@ -37,46 +48,49 @@ export default function LexicalEditor({
       console.error(error);
     },
     nodes: [
+      ParagraphNode, 
+      TextNode,
       HeadingNode,
+      QuoteNode,
       ListNode,
       ListItemNode,
-      QuoteNode,
       CodeNode,
       CodeHighlightNode,
-      TableNode,
-      TableCellNode,
-      TableRowNode,
-      AutoLinkNode,
       LinkNode,
+      AutoLinkNode,
+      ImageNode,
+      HorizontalRuleNode,
     ],
+    html: {
+      export: new Map([[TextNode, $exportNodeStyle]]),
+      import: constructStyleImportMap(),
+    },
   };
 
   return (
     <LexicalComposer initialConfig={initialConfig}>
-      <div className="relative bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800">
-        {/* 툴바 */}
-        <ToolbarPlugin />
-
-        {/* 에디터 영역 */}
-        <div className="relative">
-          <RichTextPlugin
-            contentEditable={
-              <ContentEditable className="min-h-[500px] max-w-4xl mx-auto px-8 py-6 outline-none prose dark:prose-invert" />
-            }
-            placeholder={
-              <div className="absolute top-6 left-8 text-neutral-400 pointer-events-none">
-                {placeholder}
-              </div>
-            }
-            ErrorBoundary={LexicalErrorBoundary}
-          />
-
-          {/* 플러그인들 */}
-          <HistoryPlugin />
-          <AutoFocusPlugin />
-          <ImagePlugin />
-          <SlashCommandPlugin />
-          {onSave && <AutoSavePlugin onSave={onSave} />}
+      <div className="lexical-editor-container">
+        <div className="editor-container">
+          <ToolbarPlugin />
+          <div className="editor-inner">
+            <RichTextPlugin
+              contentEditable={
+                <ContentEditable className="editor-input" />
+              }
+              placeholder={
+                <div className="editor-placeholder">{placeholder}</div>
+              }
+              ErrorBoundary={LexicalErrorBoundary}
+            />
+            <HistoryPlugin />
+            <AutoFocusPlugin />
+            <ListPlugin />
+            <CodeHighlightPlugin />
+            <LinkPlugin />
+            <ImagesPlugin />
+            <HorizontalRulePlugin />
+            <StyleStatePlugin />
+          </div>
         </div>
       </div>
     </LexicalComposer>
