@@ -173,7 +173,7 @@ const AdminNoteTable = ({ notes }: { notes: Note[] }) => {
           );
         case "title":
           return (
-            <h1 key={note.id} className="flex justify-center cursor-pointer">
+            <h1 key={note.noteId} className="flex justify-center cursor-pointer">
               {note.title}
             </h1>
           );
