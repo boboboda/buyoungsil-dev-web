@@ -121,7 +121,7 @@ export default async function RootLayout({
             <Footer />
           </div>
 
-          <AdFooter />
+          {/* <AdFooter /> */}
         </Providers>
       </body>
     </html>
