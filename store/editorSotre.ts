@@ -1,5 +1,5 @@
 import { createStore } from "zustand/vanilla";
-import { JSONContent } from "@tiptap/react";
+// import { JSONContent } from "@tiptap/react";
 import { subscribeWithSelector } from "zustand/middleware";
 
 import { NoteCategory } from "./../types/index";
@@ -13,13 +13,13 @@ import {
 } from "@/serverActions/editorServerAction";
 import { allFetchEdtiorServer } from "@/serverActions/editorServerAction";
 
-export interface Note extends JSONContent {
+export interface Note {
   noteId?: number | null;
   title?: string | null;
   mainCategory?: NoteCategory | null;
   subCategory?: SubCategory | null;
   level?: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
-  content?: JSONContent[];
+  content?: {} | string;
 }
 
 export interface SubCategory {
@@ -164,7 +164,7 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
             if (result.success) {
               localStorage.removeItem("editorAutoSave");
 
-              set({ defaultInitContent });
+              // set({ defaultInitContent });
 
               return true;
             } else {
