@@ -2,7 +2,6 @@
 
 import toast from "react-hot-toast";
 
-
 import { isChangeOrigin } from "@tiptap/extension-collaboration";
 
 import { ImageUpload } from "./ImageUpload";
@@ -113,92 +112,124 @@ export const ExtensionKit = ({ clientID }: { clientID: string }) => [
   }),
   ImageBlock,
 
-  // 기존 비디오 훅 사용하여 간단하게 처리
+  // 🔥 FileHandler 설정 수정 완료
   FileHandler.configure({
-  allowedMimeTypes: [
-    'image/png', 'image/jpeg', 'image/gif', 'image/webp',
-    'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-msvideo'
-  ],
-  
-  onDrop: (currentEditor, files, pos) => {
-    console.log('Files dropped:', files.length);
+    allowedMimeTypes: [
+      'image/png', 
+      'image/jpeg', 
+      'image/gif', 
+      'image/webp',
+      'video/mp4', 
+      'video/webm', 
+      'video/ogg', 
+      'video/quicktime', 
+      'video/x-msvideo'
+    ],
     
-    files.forEach(async (file) => {
-      console.log('Processing file:', file.name, file.type);
+    onDrop: (currentEditor, files, pos) => {
+      console.log('Files dropped:', files.length);
       
-      if (file.type.startsWith('image/')) {
-        try {
-          const result = await mediaUploader.uploadImage(file);
-          
-          if (result.success) {
-            currentEditor
-              .chain()
-              .insertContentAt(pos, {
-                type: 'imageBlock',
-                attrs: {
-                  src: result.url,
-                },
-              })
-              .focus()
-              .run();
+      files.forEach(async (file) => {
+        console.log('Processing file:', file.name, file.type);
+        
+        if (file.type.startsWith('image/')) {
+          try {
+            const result = await mediaUploader.uploadImage(file);
+            
+            if (result.success) {
+              currentEditor
+                .chain()
+                .insertContentAt(pos, {
+                  type: 'imageBlock',
+                  attrs: {
+                    src: result.url,
+                  },
+                })
+                .focus()
+                .run();
+            }
+          } catch (error) {
+            console.error('Image upload error:', error);
+            toast.error('이미지 업로드 실패');
           }
-        } catch (error) {
-          console.error('Image upload error:', error);
-        }
-      } else if (file.type.startsWith('video/')) {
-        try {
-          const result = await mediaUploader.uploadVideo(file);
-          
-          if (result.success) {
-            currentEditor
-              .chain()
-              .insertContentAt(pos, {
-                type: 'video',
-                attrs: {
-                  src: result.url,
-                  controls: true,
-                },
-              })
-              .focus()
-              .run();
+        } else if (file.type.startsWith('video/')) {
+          try {
+            const result = await mediaUploader.uploadVideo(file);
+            
+            if (result.success) {
+              currentEditor
+                .chain()
+                .insertContentAt(pos, {
+                  type: 'video',
+                  attrs: {
+                    src: result.url,
+                    controls: true,
+                  },
+                })
+                .focus()
+                .run();
+            }
+          } catch (error) {
+            console.error('Video upload error:', error);
+            toast.error('비디오 업로드 실패');
           }
-        } catch (error) {
-          console.error('Video upload error:', error);
         }
-      }
-    });
-  },
+      });
+    },
 
-  onPaste: (currentEditor, files, htmlContent) => {
-    if (htmlContent) {
-      console.log('HTML content pasted, letting other extensions handle');
-      return false;
-    }
-    
-    files.forEach(async (file) => {
-      if (file.type.startsWith('image/')) {
-        try {
-          const result = await mediaUploader.uploadImage(file);
-          
-          if (result.success) {
-            currentEditor
-              .chain()
-              .insertContentAt(currentEditor.state.selection.anchor, {
-                type: 'image',
-                attrs: {
-                  src: result.url,
-                },
-              })
-              .focus()
-              .run();
-          }
-        } catch (error) {
-          console.error('Image paste error:', error);
-        }
+    onPaste: (currentEditor, files, htmlContent) => {
+      if (htmlContent) {
+        console.log('HTML content pasted, letting other extensions handle');
+        return false;
       }
-    });
-  },
-}),
+      
+      files.forEach(async (file) => {
+        if (file.type.startsWith('image/')) {
+          try {
+            const result = await mediaUploader.uploadImage(file);
+            
+            if (result.success) {
+              currentEditor
+                .chain()
+                .insertContentAt(currentEditor.state.selection.anchor, {
+                  type: 'imageBlock',
+                  attrs: {
+                    src: result.url,
+                  },
+                })
+                .focus()
+                .run();
+            }
+          } catch (error) {
+            console.error('Image paste error:', error);
+            toast.error('이미지 붙여넣기 실패');
+          }
+        } else if (file.type.startsWith('video/')) {
+          try {
+            const result = await mediaUploader.uploadVideo(file);
+            
+            if (result.success) {
+              currentEditor
+                .chain()
+                .insertContentAt(currentEditor.state.selection.anchor, {
+                  type: 'video',
+                  attrs: {
+                    src: result.url,
+                    controls: true,
+                  },
+                })
+                .focus()
+                .run();
+            }
+          } catch (error) {
+            console.error('Video paste error:', error);
+            toast.error('비디오 붙여넣기 실패');
+          }
+        }
+      });
+    },
+  }),
+
   Emoji.configure({
     enableEmoticons: true,
     suggestion: emojiSuggestion,

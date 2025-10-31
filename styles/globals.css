@@ -2,16 +2,6 @@
 
 @config "../tailwind.config.js";
 
-/* ProseMirror 스타일들을 import */
-@import './prosemirror/base.css';
-@import './prosemirror/typography.css';
-@import './prosemirror/tables.css';
-@import './prosemirror/code.css';
-@import './prosemirror/blocks.css';
-@import './prosemirror/animations.css';
-@import './prosemirror/lists.css';
-@import './prosemirror/placeholder.css';
-
 /* v4에서는 @layer 대신 이런 방식으로 확장 */
 @theme {
   --color-custom-orange: #fb923c;
@@ -224,3 +214,5 @@ input[type='range'] {
     }
   }
 }
+
+/*  */

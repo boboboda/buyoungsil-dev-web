@@ -1,4 +1,7 @@
-import {heroui} from "@heroui/theme"
+// tailwind.config.js
+
+import { heroui } from "@heroui/theme";
+import typography from '@tailwindcss/typography';  // 🔥 이렇게 import
 
 /** @type {import('tailwindcss').Config} */
 const config = {
@@ -21,7 +24,10 @@ const config = {
     },
   },
   darkMode: "class",
-  plugins: [heroui()],
+  plugins: [
+    heroui(),
+    typography,  // 🔥 require 대신 이렇게
+  ],
 }
 
 export default config;
