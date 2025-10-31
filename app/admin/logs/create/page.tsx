@@ -4,7 +4,6 @@ import { getServerSession } from "next-auth";
 import { fetchAllProjects } from "@/serverActions/projects";
 import { allFetchEditorServerAdmin } from "@/serverActions/editorServerAction";
 import ProjectLogForm from "@/components/admin/projects/ProjectLogForm";
-import { all } from "lowlight";
 
 export const dynamic = 'force-dynamic';
 
