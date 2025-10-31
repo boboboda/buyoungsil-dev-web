@@ -8,30 +8,46 @@ export default function TestLexicalPage() {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-50 dark:bg-neutral-900 p-8">
-      <div className="max-w-5xl mx-auto">
-        <h1 className="text-3xl font-bold mb-2 text-neutral-900 dark:text-neutral-100">
-          Lexical 에디터 테스트
-        </h1>
-        <p className="text-neutral-600 dark:text-neutral-400 mb-8">
-          에디터가 정상 작동하는지 확인하세요
-        </p>
+    <div className="min-h-screen bg-gray-100 py-8">
+      <div className="container mx-auto px-4">
+        <div className="max-w-5xl mx-auto">
+          <h1 className="text-3xl font-bold mb-2 text-gray-900">
+            Lexical Playground 에디터
+          </h1>
+          <p className="text-gray-600 mb-8">
+            Rich Text Editor with Heading, Quote, List 기능
+          </p>
 
-        <LexicalEditor 
-          placeholder="여기에 글을 작성하세요..."
-          onSave={handleSave}
-        />
+          <LexicalEditor 
+            placeholder="여기에 글을 작성하세요..."
+            onSave={handleSave}
+          />
 
-        <div className="mt-8 p-4 bg-white dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700">
-          <h2 className="text-lg font-semibold mb-2">테스트 항목</h2>
-          <ul className="space-y-1 text-sm text-neutral-600 dark:text-neutral-400">
-            <li>✅ 에디터가 렌더링되는가?</li>
-            <li>✅ 텍스트를 입력할 수 있는가?</li>
-            <li>✅ Bold (Ctrl+B) 작동하는가?</li>
-            <li>✅ Italic (Ctrl+I) 작동하는가?</li>
-            <li>✅ 툴바 버튼들이 작동하는가?</li>
-            <li>✅ 자동 저장이 콘솔에 찍히는가? (F12 Console 확인)</li>
-          </ul>
+          <div className="mt-8 p-6 bg-white rounded-lg border border-gray-200">
+            <h2 className="text-lg font-semibold mb-3">✅ Phase 1 완료 - 테스트 항목</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
+              <div>
+                <h3 className="font-semibold mb-2">📝 텍스트 포맷</h3>
+                <ul className="space-y-1">
+                  <li>• Bold (Ctrl+B)</li>
+                  <li>• Italic (Ctrl+I)</li>
+                  <li>• Underline (Ctrl+U)</li>
+                  <li>• Strikethrough</li>
+                  <li>• ✨ Text Shadow</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="font-semibold mb-2">📋 블록 타입</h3>
+                <ul className="space-y-1">
+                  <li>• Normal 문단</li>
+                  <li>• H1, H2, H3 제목</li>
+                  <li>• Quote 인용구</li>
+                  <li>• Bullet List</li>
+                  <li>• Numbered List</li>
+                </ul>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

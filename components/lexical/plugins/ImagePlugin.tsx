@@ -1,37 +1,46 @@
 'use client';
 
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
+import { $wrapNodeInElement, mergeRegister } from '@lexical/utils';
+import {
+  $createParagraphNode,
+  $insertNodes,
+  $isRootOrShadowRoot,
+  COMMAND_PRIORITY_EDITOR,
+  createCommand,
+  LexicalCommand,
+} from 'lexical';
 import { useEffect } from 'react';
-import { COMMAND_PRIORITY_LOW } from 'lexical';
 
-export default function ImagePlugin() {
+import { $createImageNode, ImageNode, ImagePayload } from '../nodes/ImageNode';
+
+export const INSERT_IMAGE_COMMAND: LexicalCommand<ImagePayload> = createCommand(
+  'INSERT_IMAGE_COMMAND',
+);
+
+export default function ImagesPlugin(): JSX.Element | null {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    // 드래그앤드롭 처리
-    const removeDropListener = editor.registerCommand(
-      // @ts-ignore
-      'DROP',
-      (event: DragEvent) => {
-        event.preventDefault();
-        
-        const files = event.dataTransfer?.files;
-        if (!files || files.length === 0) return false;
+    if (!editor.hasNodes([ImageNode])) {
+      throw new Error('ImagesPlugin: ImageNode not registered on editor');
+    }
 
-        const file = files[0];
-        if (!file.type.startsWith('image/')) return false;
+    return mergeRegister(
+      editor.registerCommand(
+        INSERT_IMAGE_COMMAND,
+        (payload) => {
+          const imageNode = $createImageNode(payload);
+          $insertNodes([imageNode]);
+          if ($isRootOrShadowRoot(imageNode.getParentOrThrow())) {
+            $wrapNodeInElement(imageNode, $createParagraphNode).selectEnd();
+          }
 
-        // TODO: 이미지 업로드 로직
-        console.log('이미지 업로드:', file);
-
-        return true;
-      },
-      COMMAND_PRIORITY_LOW
+          return true;
+        },
+        COMMAND_PRIORITY_EDITOR,
+      ),
     );
-
-    return () => {
-      removeDropListener();
-    };
   }, [editor]);
 
   return null;

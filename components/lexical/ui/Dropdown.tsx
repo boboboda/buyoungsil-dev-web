@@ -1,6 +1,4 @@
-'use client';
-
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 interface DropdownProps {
   trigger: React.ReactNode;
@@ -12,24 +10,30 @@ export function Dropdown({ trigger, children }: DropdownProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
         setIsOpen(false);
       }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
     }
 
-    document.addEventListener('mousedown', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, []);
+  }, [isOpen]);
 
   return (
-    <div ref={dropdownRef} className="relative">
+    <div className="relative" ref={dropdownRef}>
       <div onClick={() => setIsOpen(!isOpen)}>{trigger}</div>
 
       {isOpen && (
-        <div className="absolute z-50 mt-2 min-w-[200px] bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg shadow-lg">
+        <div className="absolute top-full left-0 mt-1 bg-white dark:bg-neutral-800 rounded-lg shadow-lg border border-neutral-200 dark:border-neutral-700 py-1 min-w-[200px] z-50">
           {children}
         </div>
       )}
@@ -38,16 +42,16 @@ export function Dropdown({ trigger, children }: DropdownProps) {
 }
 
 interface DropdownItemProps {
+  onClick: () => void;
   children: React.ReactNode;
-  onClick?: () => void;
 }
 
-export function DropdownItem({ children, onClick }: DropdownItemProps) {
+export function DropdownItem({ onClick, children }: DropdownItemProps) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="w-full text-left px-4 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors"
+      className="w-full text-left px-4 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors text-neutral-900 dark:text-neutral-100"
     >
       {children}
     </button>
