@@ -1,10 +1,8 @@
-// app/note/[slug]/noteItemView.tsx
+// components/developmentNote/userNote/noteItemView.tsx
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/solid";
-
-import ReadBlockEditor from "./readBlockEditor";
 import { Button, useDisclosure } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { Note } from "@/store/editorSotre";
@@ -13,9 +11,9 @@ import { useCachedSession } from "@/app/hooks/user/useCachedSession";
 import {
   canAccessContent,
   getAccessMessage,
-  getRequiredRole,
 } from "@/lib/utils/access-control";
 import SimpleModal from "@/components/modal/simpleModal";
+import ReadLexicalEditor from "./ReadLexicalEditor";
 
 interface GroupedNotes {
   [key: string]: Note[];
@@ -23,39 +21,37 @@ interface GroupedNotes {
 
 type UserRole = "guest" | "user" | "supporter" | "admin";
 
-// 레벨 설정 및 아이콘 컴포넌트
+// 레벨 설정
 const LEVEL_CONFIG = {
   BEGINNER: {
     icon: "🟢",
     label: "초급",
-    bgColor: "bg-green-50",
-    borderColor: "border-green-200",
-    textColor: "text-green-800",
+    bgColor: "bg-green-50 dark:bg-green-900/20",
+    borderColor: "border-green-200 dark:border-green-800",
+    textColor: "text-green-800 dark:text-green-300",
   },
   INTERMEDIATE: {
     icon: "🟡",
     label: "중급",
-    bgColor: "bg-yellow-50",
-    borderColor: "border-yellow-200",
-    textColor: "text-yellow-800",
+    bgColor: "bg-yellow-50 dark:bg-yellow-900/20",
+    borderColor: "border-yellow-200 dark:border-yellow-800",
+    textColor: "text-yellow-800 dark:text-yellow-300",
   },
   ADVANCED: {
     icon: "🔴",
     label: "고급",
-    bgColor: "bg-red-50",
-    borderColor: "border-red-200",
-    textColor: "text-red-800",
+    bgColor: "bg-red-50 dark:bg-red-900/20",
+    borderColor: "border-red-200 dark:border-red-800",
+    textColor: "text-red-800 dark:text-red-300",
   },
 };
 
-// 레벨 순서 정의
 const LEVEL_ORDER: ("BEGINNER" | "INTERMEDIATE" | "ADVANCED")[] = [
   "BEGINNER",
   "INTERMEDIATE",
   "ADVANCED",
 ];
 
-// 권한 아이콘 컴포넌트
 const ContentLevelIcon = ({
   level,
 }: {
@@ -76,7 +72,7 @@ export default function NoteItemView({
   const { isOpen, onOpen, onOpenChange } = useDisclosure();
 
   const [note, setNote] = useState<Note | null>(initialNote);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // 🔥 기본값 false로 변경
   const [accessDeniedInfo, setAccessDeniedInfo] = useState<{
     contentLevel: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
     userRole: UserRole;
@@ -88,7 +84,7 @@ export default function NoteItemView({
     confirmColor: "primary" | "danger" | "success" | "warning";
   } | null>(null);
 
-  // 🔥 사용자 역할 결정 (게스트 기본값)
+  // 사용자 역할 결정
   const userRole: UserRole = useMemo(() => {
     if (!isAuthenticated || !session?.user) {
       return "guest";
@@ -106,7 +102,7 @@ export default function NoteItemView({
     }
   }, [isAuthenticated, session?.user]);
 
-  // 🔥 레벨 기반 그룹핑 (레벨 -> 서브카테고리 -> 노트)
+  // 레벨 기반 그룹핑
   const groupedNotesByLevel = useMemo(() => {
     if (!fetchNotes || fetchNotes.length === 0) {
       return {};
@@ -131,24 +127,6 @@ export default function NoteItemView({
     );
   }, [fetchNotes]);
 
-  // 🔥 서브카테고리 기반 그룹핑 (사이드바용)
-  const groupedNotes = useMemo(() => {
-    if (!fetchNotes || fetchNotes.length === 0) {
-      return {};
-    }
-
-    return fetchNotes.reduce((acc, note) => {
-      const subCategoryName = note.subCategory?.name || "Uncategorized";
-
-      if (!acc[subCategoryName]) {
-        acc[subCategoryName] = [];
-      }
-      acc[subCategoryName].push(note);
-
-      return acc;
-    }, {} as GroupedNotes);
-  }, [fetchNotes]);
-
   const { setContent } = useNoteStore((state) => state);
 
   useEffect(() => {
@@ -161,7 +139,7 @@ export default function NoteItemView({
     }
   }, [note, setContent]);
 
-  // 🔥 모달 설정 생성 함수
+  // 모달 설정 생성
   const createModalConfig = (
     contentLevel: "BEGINNER" | "INTERMEDIATE" | "ADVANCED",
     userRole: UserRole,
@@ -219,7 +197,7 @@ export default function NoteItemView({
     }
   };
 
-  // 🔥 노트 클릭 핸들러 (권한 체크 포함)
+  // 노트 클릭 핸들러
   const handleNoteClick = (selectedNote: Note) => {
     const hasAccess = canAccessContent(
       userRole,
@@ -228,8 +206,8 @@ export default function NoteItemView({
 
     if (hasAccess) {
       setNote(selectedNote);
+      setIsSidebarOpen(false); // 🔥 노트 선택 시 사이드바 자동 닫기
     } else {
-      // 권한 없을 시 모달 설정 후 표시
       const modalConfig = createModalConfig(
         selectedNote.level || "BEGINNER",
         userRole,
@@ -246,154 +224,201 @@ export default function NoteItemView({
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
   return (
-    <div className="flex relative w-full min-h-screen">
-      {/* Sidebar */}
-      <div
-        className={`fixed left-0 top-0 h-full bg-gray-100 transition-all duration-300 ease-in-out ${isSidebarOpen ? "w-64" : "w-0"} flex flex-col z-10`}
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-900 relative overflow-hidden">
+      
+      {/* 🔥 Overlay Background */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 transition-opacity duration-300"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* 🔥 사이드바 - Fixed Position with Overlay */}
+      <aside
+        className={`fixed left-0 top-0 h-full w-80 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col ${
+          isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
       >
-        {isSidebarOpen && (
-          <>
-            <div className="flex-grow overflow-y-auto">
-              <div className="p-4">
-                <h2 className="text-black font-bold text-[25px] mb-4">
-                  {note?.mainCategory}
-                </h2>
-                <h3 className="text-black font-bold text-[20px] mb-2">목차</h3>
-                {LEVEL_ORDER.map((level) => {
-                  const levelData = groupedNotesByLevel[level];
+        {/* 사이드바 헤더 */}
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
+              {note?.mainCategory || "카테고리"}
+            </h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              목차
+            </p>
+          </div>
+          
+          {/* 닫기 버튼 */}
+          <button
+            onClick={() => setIsSidebarOpen(false)}
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          >
+            <ChevronLeftIcon className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+          </button>
+        </div>
 
-                  if (!levelData) return null;
+        {/* 스크롤 영역 */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {LEVEL_ORDER.map((level) => {
+            const levelData = groupedNotesByLevel[level];
 
-                  return (
-                    <div key={level} className="mb-6">
-                      {/* 레벨 헤더 */}
-                      <div
-                        className={`flex items-center mb-3 p-2 rounded-lg ${LEVEL_CONFIG[level].bgColor} ${LEVEL_CONFIG[level].borderColor} border`}
-                      >
-                        <ContentLevelIcon level={level} />
-                        <h4
-                          className={`font-bold text-lg ${LEVEL_CONFIG[level].textColor}`}
-                        >
-                          {LEVEL_CONFIG[level].label}
-                        </h4>
-                      </div>
+            if (!levelData) return null;
 
-                      {/* 서브카테고리별 노트 */}
-                      {Object.entries(levelData).map(
-                        ([subCategoryName, notes]) => (
-                          <div
-                            key={`${level}-${subCategoryName}`}
-                            className="mb-4 ml-2"
-                          >
-                            <h5 className="text-black font-semibold mb-2 text-sm">
-                              {subCategoryName}
-                            </h5>
-                            <ul className="ml-3">
-                              {notes.map((noteItem, index) => {
-                                const hasAccess = canAccessContent(
-                                  userRole,
-                                  noteItem.level || "BEGINNER",
-                                );
-                                const isCurrentNote =
-                                  note?.noteId === noteItem.noteId;
-
-                                return (
-                                  <li
-                                    key={noteItem.noteId || index}
-                                    className={`mb-2 cursor-pointer flex items-center transition-colors text-sm
-    ${isCurrentNote
-                                        ? 'text-blue-600 font-semibold'
-                                        : hasAccess
-                                          ? 'text-black hover:text-gray-600'
-                                          : 'text-gray-400 hover:text-gray-500'
-                                      }
-    ${!hasAccess ? 'opacity-70' : ''}
-  `}
-                                    title={!hasAccess ? getAccessMessage(userRole, noteItem.level || 'BEGINNER') : ''}
-                                    onClick={() => handleNoteClick(noteItem)}
-                                  >
-                                    <span className={`${!hasAccess ? 'line-through' : ''}`}>
-                                      {noteItem.title}
-                                    </span>
-                                    {!hasAccess && (
-                                      <span className="ml-1 text-xs">🔒</span>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  );
-                })}
-
-                {/* 🔥 사용자 권한 정보 표시 */}
-                <div className="mt-6 p-3 bg-gray-50 rounded-lg border">
-                  <div className="text-xs text-gray-600 mb-2">현재 권한</div>
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`px-2 py-1 rounded text-xs font-medium ${userRole === "admin"
-                          ? "bg-purple-100 text-purple-800"
-                          : userRole === "supporter"
-                            ? "bg-yellow-100 text-yellow-800"
-                            : userRole === "user"
-                              ? "bg-blue-100 text-blue-800"
-                              : "bg-gray-100 text-gray-800"
-                        }`}
-                    >
-                      {userRole === "admin"
-                        ? "관리자"
-                        : userRole === "supporter"
-                          ? "후원자"
-                          : userRole === "user"
-                            ? "회원"
-                            : "게스트"}
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {userRole === "admin"
-                      ? "모든 콘텐츠 접근 가능"
-                      : userRole === "supporter"
-                        ? "🟢🟡🔴 모든 레벨 접근 가능"
-                        : userRole === "user"
-                          ? "🟢🟡 초급, 중급 접근 가능"
-                          : "🟢 초급만 접근 가능"}
-                  </div>
+            return (
+              <div key={level} className="mb-8">
+                {/* 레벨 헤더 */}
+                <div
+                  className={`flex items-center mb-4 p-3 rounded-lg ${LEVEL_CONFIG[level].bgColor} ${LEVEL_CONFIG[level].borderColor} border-2`}
+                >
+                  <ContentLevelIcon level={level} />
+                  <h4
+                    className={`font-bold text-base ${LEVEL_CONFIG[level].textColor}`}
+                  >
+                    {LEVEL_CONFIG[level].label}
+                  </h4>
                 </div>
+
+                {/* 서브카테고리별 노트 */}
+                {Object.entries(levelData).map(
+                  ([subCategoryName, notes]) => (
+                    <div
+                      key={`${level}-${subCategoryName}`}
+                      className="mb-6 ml-2"
+                    >
+                      <h5 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3">
+                        {subCategoryName}
+                      </h5>
+                      <ul className="space-y-2">
+                        {notes.map((noteItem, index) => {
+                          const hasAccess = canAccessContent(
+                            userRole,
+                            noteItem.level || "BEGINNER",
+                          );
+                          const isCurrentNote =
+                            note?.noteId === noteItem.noteId;
+
+                          return (
+                            <li
+                              key={noteItem.noteId || index}
+                              className={`
+                                cursor-pointer px-3 py-2 rounded-md transition-all duration-200
+                                ${
+                                  isCurrentNote
+                                    ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-semibold"
+                                    : hasAccess
+                                    ? "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                    : "text-gray-400 dark:text-gray-600 opacity-60"
+                                }
+                              `}
+                              title={
+                                !hasAccess
+                                  ? getAccessMessage(
+                                      userRole,
+                                      noteItem.level || "BEGINNER",
+                                    )
+                                  : ""
+                              }
+                              onClick={() => handleNoteClick(noteItem)}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span
+                                  className={`text-sm ${
+                                    !hasAccess ? "line-through" : ""
+                                  }`}
+                                >
+                                  {noteItem.title}
+                                </span>
+                                {!hasAccess && (
+                                  <span className="text-xs">🔒</span>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ),
+                )}
+              </div>
+            );
+          })}
+
+          {/* 사용자 권한 정보 */}
+          <div className="mt-8 p-4 bg-gray-100 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+            <div className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+              현재 권한
+            </div>
+            <div className="flex items-center gap-2 mb-2">
+              <div
+                className={`px-3 py-1 rounded-full text-xs font-bold ${
+                  userRole === "admin"
+                    ? "bg-purple-200 text-purple-900 dark:bg-purple-800 dark:text-purple-200"
+                    : userRole === "supporter"
+                    ? "bg-yellow-200 text-yellow-900 dark:bg-yellow-800 dark:text-yellow-200"
+                    : userRole === "user"
+                    ? "bg-blue-200 text-blue-900 dark:bg-blue-800 dark:text-blue-200"
+                    : "bg-gray-200 text-gray-900 dark:bg-gray-600 dark:text-gray-200"
+                }`}
+              >
+                {userRole === "admin"
+                  ? "👑 관리자"
+                  : userRole === "supporter"
+                  ? "💎 후원자"
+                  : userRole === "user"
+                  ? "👤 회원"
+                  : "👥 게스트"}
               </div>
             </div>
-            <div className="p-3 mb-[100px]">
-              <Button
-                className="w-full bg-slate-500"
-                onClick={() => router.back()}
-              >
-                뒤로가기
-              </Button>
+            <div className="text-xs text-gray-600 dark:text-gray-400">
+              {userRole === "admin"
+                ? "모든 콘텐츠 접근 가능"
+                : userRole === "supporter"
+                ? "🟢🟡🔴 모든 레벨 접근"
+                : userRole === "user"
+                ? "🟢🟡 초급, 중급 접근"
+                : "🟢 초급만 접근 가능"}
             </div>
-          </>
-        )}
-      </div>
+          </div>
+        </div>
 
-      {/* Main Content */}
-      <div
-        className={`w-full min-h-screen transition-all duration-300 ease-in-out ${isSidebarOpen ? "ml-64" : "ml-0"}`}
-      >
-        <button
-          className="m-2 bg-slate-700 hover:bg-slate-500 text-white p-2 rounded-[5px]"
-          onClick={toggleSidebar}
-        >
-          {isSidebarOpen ? (
-            <ChevronLeftIcon className="w-6 h-6" />
-          ) : (
-            <ChevronRightIcon className="w-6 h-6" />
-          )}
-        </button>
-        <ReadBlockEditor note={note!} />
-      </div>
+        {/* 하단 버튼 */}
+        <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+          <Button
+            className="w-full"
+            color="default"
+            variant="flat"
+            onClick={() => router.back()}
+          >
+            ← 뒤로가기
+          </Button>
+        </div>
+      </aside>
 
-      {/* 🔥 재사용 가능한 SimpleModal 사용 */}
+      {/* 🔥 메인 컨텐츠 영역 - Full Width */}
+      <main className="flex-1 flex flex-col overflow-hidden w-full">
+        {/* 토글 버튼 */}
+        <div className="sticky top-0 z-30 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
+          <button
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            onClick={toggleSidebar}
+          >
+            <ChevronRightIcon className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              목차 열기
+            </span>
+          </button>
+        </div>
+
+        {/* 에디터 영역 */}
+        <div className="flex-1 overflow-y-auto">
+          <ReadLexicalEditor note={note!} />
+        </div>
+      </main>
+
+      {/* 모달 */}
       {accessDeniedInfo && (
         <SimpleModal
           confirmColor={accessDeniedInfo.confirmColor}

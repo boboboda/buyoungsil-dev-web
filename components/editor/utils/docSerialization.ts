@@ -6,7 +6,7 @@
  *
  */
 
-import {SerializedDocument} from '@lexical/file';
+import {SerializedDocument} from '../file/src';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function* generateReader<T = any>(

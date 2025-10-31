@@ -52,7 +52,7 @@ header h1 {
 .editor-shell {
   margin: 20px auto;
   border-radius: 2px;
-  max-width: 1200px;
+  max-width: 1250px;
   color: #000;
   position: relative;
   line-height: 1.7;
@@ -1761,4 +1761,111 @@ button.item.dropdown-item-active i {
   text-overflow: ellipsis;
   white-space: nowrap;
   display: inline-block;
+}
+
+/* components/editor/editor.css 에 추가 */
+
+/* 읽기 모드 에디터 스타일 */
+.prose {
+  color: #374151;
+  line-height: 1.75;
+}
+
+.dark .prose {
+  color: #d1d5db;
+}
+
+.prose h1 {
+  font-size: 2.25em;
+  margin-top: 0;
+  margin-bottom: 0.8888889em;
+  line-height: 1.1111111;
+  font-weight: 800;
+}
+
+.prose h2 {
+  font-size: 1.5em;
+  margin-top: 2em;
+  margin-bottom: 1em;
+  line-height: 1.3333333;
+  font-weight: 700;
+}
+
+.prose h3 {
+  font-size: 1.25em;
+  margin-top: 1.6em;
+  margin-bottom: 0.6em;
+  line-height: 1.6;
+  font-weight: 600;
+}
+
+.prose p {
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
+}
+
+.prose code {
+  color: #ec4899;
+  font-weight: 600;
+  font-size: 0.875em;
+  background-color: #f3f4f6;
+  padding: 0.2em 0.4em;
+  border-radius: 0.25rem;
+}
+
+.dark .prose code {
+  color: #f472b6;
+  background-color: #374151;
+}
+
+.prose pre {
+  background-color: #1f2937;
+  overflow-x: auto;
+  padding: 1.25em 1.5em;
+  border-radius: 0.5rem;
+  margin-top: 1.7142857em;
+  margin-bottom: 1.7142857em;
+}
+
+.prose pre code {
+  background-color: transparent;
+  color: #e5e7eb;
+  font-size: 0.875em;
+  padding: 0;
+}
+
+.prose blockquote {
+  font-weight: 500;
+  font-style: italic;
+  color: #111827;
+  border-left-width: 0.25rem;
+  border-left-color: #e5e7eb;
+  quotes: "\201C""\201D""\2018""\2019";
+  margin-top: 1.6em;
+  margin-bottom: 1.6em;
+  padding-left: 1em;
+}
+
+.dark .prose blockquote {
+  color: #f9fafb;
+  border-left-color: #4b5563;
+}
+
+.prose ul {
+  list-style-type: disc;
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
+  padding-left: 1.625em;
+}
+
+.prose ol {
+  list-style-type: decimal;
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
+  padding-left: 1.625em;
+}
+
+.prose li {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
 }
