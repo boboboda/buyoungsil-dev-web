@@ -6,11 +6,16 @@
  *
  */
 
+// Extend HTMLElement interface for experimental attributes
+interface HTMLElementWithBeforeMatch extends HTMLElement {
+  onbeforematch?: () => void;
+}
+
 export function setDomHiddenUntilFound(dom: HTMLElement): void {
   // @ts-expect-error
   dom.hidden = 'until-found';
 }
 
 export function domOnBeforeMatch(dom: HTMLElement, callback: () => void): void {
-  dom.onbeforematch = callback;
+  (dom as HTMLElementWithBeforeMatch).onbeforematch = callback;
 }
