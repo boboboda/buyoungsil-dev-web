@@ -1,5 +1,5 @@
+// store/editorSotre.ts
 import { createStore } from "zustand/vanilla";
-// import { JSONContent } from "@tiptap/react";
 import { subscribeWithSelector } from "zustand/middleware";
 
 import { NoteCategory } from "./../types/index";
@@ -19,7 +19,7 @@ export interface Note {
   mainCategory?: NoteCategory | null;
   subCategory?: SubCategory | null;
   level?: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
-  content?: {} | string;
+  content?: any; // 🔥 Lexical JSON 또는 TipTap JSON
 }
 
 export interface SubCategory {
@@ -41,22 +41,42 @@ export interface EditorActions {
   deleteToServer: (noteID: string) => Promise<boolean>;
 }
 
+// 🔥 기본 Lexical 형식으로 변경
 export const defaultInitContent: Note = {
   noteId: null,
   title: "",
   mainCategory: "basics",
   subCategory: null,
   level: "BEGINNER",
-  content: [
-    {
-      type: "heading",
-      attrs: {
-        textAlign: "left",
-        level: 3,
-      },
-      content: [],
-    },
-  ],
+  content: {
+    root: {
+      children: [
+        {
+          children: [
+            {
+              detail: 0,
+              format: 0,
+              mode: "normal",
+              style: "",
+              text: "",
+              type: "text",
+              version: 1
+            }
+          ],
+          direction: "ltr",
+          format: "",
+          indent: 0,
+          type: "paragraph",
+          version: 1
+        }
+      ],
+      direction: "ltr",
+      format: "",
+      indent: 0,
+      type: "root",
+      version: 1
+    }
+  },
 };
 
 export interface EditorState {
@@ -74,6 +94,8 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
       hasLocalChanges: false,
       setEditorState: (values) => set((state) => ({ ...state, ...values })),
       setContent: (note) => set((state) => ({ ...state, ...note })),
+      
+      // 🔥 로컬 저장 - Lexical JSON 형식으로
       saveToLocal: () => {
         const newData = get();
         const newNote: Note = {
@@ -82,7 +104,7 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
           subCategory: newData.subCategory,
           mainCategory: newData.mainCategory,
           level: newData.level,
-          content: newData.content,
+          content: newData.content, // Lexical JSON 그대로 저장
         };
 
         if (newData) {
@@ -90,95 +112,100 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
           set({ hasLocalChanges: true });
         }
 
-        console.log("local저장", newNote);
+        console.log("✅ 로컬 저장 (Lexical 형식):", newNote);
       },
+      
       deleteLocal: async () => {
         try {
           localStorage.removeItem("editorAutoSave");
-
-          return true; // 성공적으로 삭제됨
+          return true;
         } catch (error) {
           console.error("Error deleting local data:", error);
-
-          return false; // 삭제 실패
+          return false;
         }
       },
+      
+      // 🔥 서버 저장 - Lexical JSON 형식으로
       saveToServer: async () => {
-  try {
-    console.log("실행됨 2");
-    let note = get();
-
-    // 🔥 수정: getMaxNoteId 사용
-    const maxNoteId = await getMaxNoteId();
-    note.noteId = maxNoteId + 1;
-    
-    console.log("새 노트 ID:", note.noteId);
-
-    const newData = {
-      noteId: note.noteId,
-      title: note.title,
-      mainCategory: note.mainCategory,
-      subCategory: note.subCategory,
-      content: note.content,
-      level: note.level,
-    };
-
-    const noteData = await addEdtiorServer(JSON.stringify(newData));
-
-    if (noteData.success) {
-      localStorage.removeItem("editorAutoSave");
-      set({ ...defaultInitContent });
-      return true;
-    } else {
-      return false;
-    }
-  } catch (error) {
-    console.log("saveToServer 에러:", error);
-    return false;
-  }
-},
-      updateToServer: async () => {
         try {
+          console.log("🚀 서버 저장 시작");
           let note = get();
 
-          console.log("수정 노트 정보", note);
+          const maxNoteId = await getMaxNoteId();
+          note.noteId = maxNoteId + 1;
+          
+          console.log("새 노트 ID:", note.noteId);
 
           const newData = {
             noteId: note.noteId,
             title: note.title,
             mainCategory: note.mainCategory,
             subCategory: note.subCategory,
-            content: note.content,
+            content: note.content, // 🔥 Lexical JSON 그대로 저장
+            level: note.level,
+          };
+
+          console.log("📤 저장할 데이터:", newData);
+
+          const noteData = await addEdtiorServer(JSON.stringify(newData));
+
+          if (noteData.success) {
+            localStorage.removeItem("editorAutoSave");
+            set({ ...defaultInitContent });
+            console.log("✅ 서버 저장 성공");
+            return true;
+          } else {
+            console.log("❌ 서버 저장 실패");
+            return false;
+          }
+        } catch (error) {
+          console.log("❌ saveToServer 에러:", error);
+          return false;
+        }
+      },
+      
+      // 🔥 서버 업데이트 - Lexical JSON 형식으로
+      updateToServer: async () => {
+        try {
+          let note = get();
+
+          console.log("🔄 수정 노트 정보:", note);
+
+          const newData = {
+            noteId: note.noteId,
+            title: note.title,
+            mainCategory: note.mainCategory,
+            subCategory: note.subCategory,
+            content: note.content, // 🔥 Lexical JSON 그대로 저장
             level: note.level,
           };
 
           if (newData) {
-            console.log("에디터 서버 실행");
+            console.log("📤 수정할 데이터:", newData);
             const result = await findOneAndUpdateEditorServer(
               note.noteId!.toString(),
               JSON.stringify(newData),
             );
 
-            console.log("성공여부", result.success);
+            console.log("결과:", result.success);
 
             if (result.success) {
               localStorage.removeItem("editorAutoSave");
-
-              // set({ defaultInitContent });
-
+              console.log("✅ 서버 업데이트 성공");
               return true;
             } else {
+              console.log("❌ 서버 업데이트 실패");
               return false;
             }
           } else {
             return false;
           }
         } catch (error) {
-          console.log(error);
-
+          console.log("❌ updateToServer 에러:", error);
           return false;
         }
       },
+      
       deleteToServer: async (noteId: string) => {
         try {
           const result = await deleteOneEditorServer(noteId);
@@ -190,42 +217,44 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
           }
         } catch (error) {
           console.log("delete err", error);
-
           return false;
         }
       },
-      // 🔥 수정: loadFromLocal 함수에 타입 가드 추가
-loadFromLocal: () => {
-  try {
-    const savedData = localStorage.getItem("editorAutoSave");
-    
-    // 🔥 추가: null 체크
-    if (!savedData) {
-      return null;
-    }
+      
+      // 🔥 로컬 불러오기 - Lexical JSON 형식
+      loadFromLocal: () => {
+        try {
+          const savedData = localStorage.getItem("editorAutoSave");
+          
+          if (!savedData) {
+            console.log("📭 로컬 저장 데이터 없음");
+            return null;
+          }
 
-    const parsedData: Note = JSON.parse(savedData);
-    
-    // 🔥 추가: 파싱된 데이터 검증
-    if (!parsedData || typeof parsedData !== 'object') {
-      return null;
-    }
+          const parsedData: Note = JSON.parse(savedData);
+          
+          if (!parsedData || typeof parsedData !== 'object') {
+            console.log("❌ 잘못된 데이터 형식");
+            return null;
+          }
 
-    console.log("local 불러오기", parsedData);
-    return parsedData;
-  } catch (error) {
-    console.error("Error loading from local:", error);
-    return null; // 🔥 에러 시 null 반환
-  }
-},
+          console.log("✅ 로컬 불러오기 (Lexical 형식):", parsedData);
+          return parsedData;
+        } catch (error) {
+          console.error("❌ 로컬 불러오기 에러:", error);
+          return null;
+        }
+      },
+      
       setHasLocalChanges: (value) => set({ hasLocalChanges: value }),
+      
       deleteSubCategory: (id) =>
         set((state) => ({
           subCategories: state.subCategories.filter((cat) => cat.id !== id),
         })),
+      
       setSubCategories: (subCategories) => {
         set({ subCategories });
-
         localStorage.setItem("subCategories", JSON.stringify(subCategories));
       },
     })),
