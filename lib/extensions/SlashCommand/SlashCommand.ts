@@ -85,7 +85,8 @@ export const SlashCommand = Extension.create({
           props.action(editor);
           view.focus();
         },
-        items: ({ query }: { query: string }) => {
+        // 🔥 수정: editor 파라미터 추가 (v3 호환)
+        items: ({ query, editor }: { query: string; editor: Editor }) => {
           // 그룹 타입에 이벤트 관련 타입이 지정되어 있음
           const withFilteredCommands = GROUPS.map((group) => ({
             ...group,
@@ -109,7 +110,7 @@ export const SlashCommand = Extension.create({
               })
               .filter((command) =>
                 command.shouldBeHidden
-                  ? !command.shouldBeHidden(this.editor)
+                  ? !command.shouldBeHidden(editor)  // 🔥 this.editor 대신 editor 사용
                   : true,
               ),
           }));
@@ -196,8 +197,7 @@ export const SlashCommand = Extension.create({
 
               popup?.[0].show();
             },
-
-            onUpdate(props: SuggestionProps) {
+            onUpdate: (props: SuggestionProps) => {
               component.updateProps(props);
 
               const { view } = props.editor;
@@ -216,16 +216,10 @@ export const SlashCommand = Extension.create({
                 }
 
                 // Account for when the editor is bound inside a container that doesn't go all the way to the edge of the screen
+                const editorXOffset = editorNode.getBoundingClientRect().x;
+
                 return new DOMRect(rect.x, rect.y, rect.width, rect.height);
               };
-
-              let scrollHandler = () => {
-                popup?.[0].setProps({
-                  getReferenceClientRect,
-                });
-              };
-
-              view.dom.parentElement?.addEventListener("scroll", scrollHandler);
 
               props.editor.storage[extensionName].rect = props.clientRect
                 ? getReferenceClientRect()
@@ -237,55 +231,36 @@ export const SlashCommand = Extension.create({
                     right: 0,
                     bottom: 0,
                   };
+
               popup?.[0].setProps({
                 getReferenceClientRect,
               });
             },
-
-            onKeyDown(props: SuggestionKeyDownProps) {
+            onKeyDown: (props: SuggestionKeyDownProps) => {
               if (props.event.key === "Escape") {
                 popup?.[0].hide();
 
                 return true;
               }
 
-              if (!popup?.[0].state.isShown) {
-                popup?.[0].show();
-              }
-
               return component.ref?.onKeyDown(props);
             },
-
-            onExit(props) {
+            onExit: (props: SuggestionProps) => {
               popup?.[0].hide();
-              if (scrollHandler) {
-                const { view } = props.editor;
+              // component.destroy();
 
+              const { view } = props.editor;
+
+              if (scrollHandler) {
                 view.dom.parentElement?.removeEventListener(
                   "scroll",
                   scrollHandler,
                 );
               }
-              component.destroy();
             },
           };
         },
       }),
     ];
   },
-
-  addStorage() {
-    return {
-      rect: {
-        width: 0,
-        height: 0,
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-      },
-    };
-  },
 });
-
-export default SlashCommand;

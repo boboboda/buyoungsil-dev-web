@@ -7,6 +7,7 @@ const nextConfig = {
     optimizeCss: false,
     useLightningcss: false,
   },
+  
 };
 
 export default nextConfig;
