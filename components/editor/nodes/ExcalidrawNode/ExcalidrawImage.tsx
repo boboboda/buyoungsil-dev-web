@@ -1,3 +1,5 @@
+// components/editor/nodes/ExcalidrawNode/ExcalidrawImage.tsx
+
 /**
  * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
@@ -123,10 +125,9 @@ export default function ExcalidrawImage({
   return (
     <div
       ref={(node) => {
-        if (node) {
-          if (imageContainerRef) {
-            imageContainerRef.current = node;
-          }
+        if (node && imageContainerRef) {
+          // 🔥 타입 단언을 사용하여 수정
+          (imageContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
         }
       }}
       className={rootClassName ?? ''}
