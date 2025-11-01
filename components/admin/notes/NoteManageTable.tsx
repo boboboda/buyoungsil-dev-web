@@ -237,7 +237,7 @@ export default function NoteManageTable({ notes }: NoteManageTableProps) {
                 <TableCell>
                   <div className="flex gap-2">
                     <Tooltip content="수정">
-                      <Link href={`/admin/write?id=${note.noteId}`}>
+                      <Link href={`/admin/write/${note.noteId}`}>
                         <Button
                           isIconOnly
                           size="sm"
