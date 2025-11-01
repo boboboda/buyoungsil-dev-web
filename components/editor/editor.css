@@ -1869,3 +1869,80 @@ button.item.dropdown-item-active i {
   margin-top: 0.5em;
   margin-bottom: 0.5em;
 }
+
+
+
+/* components/editor/editor.css 에서 수정 */
+
+/* 기본 리사이저 스타일 (변경 없음) */
+.editor-shell .editor-image .image-resizer {
+  display: block;
+  width: 7px;
+  height: 7px;
+  position: absolute;
+  background-color: rgb(60, 132, 244);
+  border: 1px solid #fff;
+  z-index: 10; /* 🔥 추가: 확실히 보이도록 */
+}
+
+/* 위쪽 (North) - 수정 */
+.editor-shell .editor-image .image-resizer.image-resizer-n {
+  top: -4px; /* 🔥 -6px → -4px (더 가까이) */
+  left: calc(50% - 3.5px); /* 🔥 정확한 중앙 */
+  cursor: n-resize;
+}
+
+/* 북동쪽 (NorthEast) - 수정 */
+.editor-shell .editor-image .image-resizer.image-resizer-ne {
+  top: -4px; /* 🔥 -6px → -4px */
+  right: -4px; /* 🔥 -6px → -4px */
+  cursor: ne-resize;
+}
+
+/* 동쪽 (East) - 수정 */
+.editor-shell .editor-image .image-resizer.image-resizer-e {
+  top: calc(50% - 3.5px); /* 🔥 bottom 대신 top 사용 */
+  right: -4px; /* 🔥 -6px → -4px */
+  cursor: e-resize;
+}
+
+/* 남동쪽 (SouthEast) */
+.editor-shell .editor-image .image-resizer.image-resizer-se {
+  bottom: -4px; /* 🔥 -2px → -4px (일관성) */
+  right: -4px; /* 🔥 -6px → -4px */
+  cursor: nwse-resize;
+}
+
+/* 남쪽 (South) */
+.editor-shell .editor-image .image-resizer.image-resizer-s {
+  bottom: -4px; /* 🔥 -2px → -4px */
+  left: calc(50% - 3.5px); /* 🔥 정확한 중앙 */
+  cursor: s-resize;
+}
+
+/* 남서쪽 (SouthWest) */
+.editor-shell .editor-image .image-resizer.image-resizer-sw {
+  bottom: -4px; /* 🔥 -2px → -4px */
+  left: -4px; /* 🔥 -6px → -4px */
+  cursor: sw-resize;
+}
+
+/* 서쪽 (West) - 수정 */
+.editor-shell .editor-image .image-resizer.image-resizer-w {
+  top: calc(50% - 3.5px); /* 🔥 bottom 대신 top 사용 */
+  left: -4px; /* 🔥 -6px → -4px */
+  cursor: w-resize;
+}
+
+/* 북서쪽 (NorthWest) - 수정 */
+.editor-shell .editor-image .image-resizer.image-resizer-nw {
+  top: -4px; /* 🔥 -6px → -4px */
+  left: -4px; /* 🔥 -6px → -4px */
+  cursor: nw-resize;
+}
+
+/* 🔥 이미지 컨테이너가 리사이저를 가리지 않도록 */
+.editor-shell span.editor-image {
+  position: relative;
+  overflow: visible; /* 🔥 hidden → visible로 변경 */
+}
