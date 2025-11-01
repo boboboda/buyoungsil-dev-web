@@ -1,4 +1,4 @@
-import { NoteLevel } from "@/components/developmentNote/EditorHeader";
+import { NoteLevel } from "@/components/developmentNote/NoteEditorHeader";
 import { SVGProps } from "react";
 
 export type IconSvgProps = SVGProps<SVGSVGElement> & {
