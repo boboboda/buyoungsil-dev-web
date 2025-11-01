@@ -6,9 +6,10 @@ import { defineExtension } from 'lexical';
 import { LexicalExtensionComposer } from '@lexical/react/LexicalExtensionComposer';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 
-import { useSettings } from '@/components/editor/context/SettingsContext';
+import { SettingsContext, useSettings } from '@/components/editor/context/SettingsContext'; // 🔥 추가
 import { ToolbarContext } from '@/components/editor/context/ToolbarContext';
 import { TableContext } from '@/components/editor/plugins/TablePlugin';
+import Settings from '@/components/editor/Settings'; // 🔥 추가
 import PlaygroundNodes from '@/components/editor/nodes/PlaygroundNodes';
 import PlaygroundEditorTheme from '@/components/editor/theme/PlaygroundEditorTheme';
 import Editor from '@/components/editor/Editor';
@@ -91,7 +92,8 @@ function LoadContentForEditPlugin({ note, editorType }: { note?: Note; editorTyp
   return null;
 }
 
-function NoteEditorApp({ editorType, fetchNotes, note }: NoteEditorAppProps) {
+// 🔥 내부 컴포넌트 (useSettings 사용)
+function NoteEditorContent({ editorType, fetchNotes, note }: NoteEditorAppProps) {
   const {
     settings: { isCollab, emptyEditor },
   } = useSettings();
@@ -130,6 +132,11 @@ function NoteEditorApp({ editorType, fetchNotes, note }: NoteEditorAppProps) {
               <Editor />
             </div>
 
+            {/* 🔥 편집/작성 모드에서만 Settings 표시 */}
+            {(editorType === 'add' || editorType === 'edit') && (
+              <Settings />
+            )}
+
             {/* 커스텀 플러그인들 (자동저장 등) */}
             <NoteEditorPlugins 
               note={note} 
@@ -146,6 +153,19 @@ function NoteEditorApp({ editorType, fetchNotes, note }: NoteEditorAppProps) {
         </ToolbarContext>
       </TableContext>
     </LexicalExtensionComposer>
+  );
+}
+
+// 🔥 메인 컴포넌트 (SettingsContext Provider로 감싸기)
+function NoteEditorApp({ editorType, fetchNotes, note }: NoteEditorAppProps) {
+  return (
+    <SettingsContext>
+      <NoteEditorContent 
+        editorType={editorType}
+        fetchNotes={fetchNotes}
+        note={note}
+      />
+    </SettingsContext>
   );
 }
 
