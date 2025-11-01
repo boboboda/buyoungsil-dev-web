@@ -311,14 +311,14 @@ function getBaseOptions(editor: LexicalEditor, showModal: ShowModal) {
         )),
     }),
     new ComponentPickerOption('GIF', {
-      icon: <i className="icon gif" />,
-      keywords: ['gif', 'animate', 'image', 'file'],
-      onSelect: () =>
-        editor.dispatchCommand(INSERT_IMAGE_COMMAND, {
-          altText: 'Cat typing on a laptop',
-          src: catTypingGif,
-        }),
+  icon: <i className="icon gif" />,
+  keywords: ['gif', 'animate', 'image', 'file'],
+  onSelect: () =>
+    editor.dispatchCommand(INSERT_IMAGE_COMMAND, {
+      altText: 'Cat typing on a laptop',
+      src: catTypingGif.src, // 🔥 .src 추가
     }),
+}),
     new ComponentPickerOption('Image', {
       icon: <i className="icon image" />,
       keywords: ['image', 'photo', 'picture', 'file'],
