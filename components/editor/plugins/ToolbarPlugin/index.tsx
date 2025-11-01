@@ -114,6 +114,8 @@ const rootTypeToRootName = {
   table: 'Table',
 };
 
+// components/editor/plugins/ToolbarPlugin/index.tsx
+
 const CODE_LANGUAGE_OPTIONS_PRISM: [string, string][] =
   getCodeLanguageOptionsPrism().filter((option) =>
     [
@@ -125,6 +127,7 @@ const CODE_LANGUAGE_OPTIONS_PRISM: [string, string][] =
       'java',
       'js',
       'javascript',
+      'kotlin',        // 👈 추가
       'markdown',
       'objc',
       'objective-c',
@@ -151,6 +154,8 @@ const CODE_LANGUAGE_OPTIONS_SHIKI: [string, string][] =
       'java',
       'js',
       'javascript',
+      'kotlin',
+      'swift',        // 👈 추가
       'markdown',
       'objc',
       'objective-c',
