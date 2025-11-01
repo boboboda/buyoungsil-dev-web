@@ -1,6 +1,6 @@
 "use server"
 
-import { NoteLevel } from "@/components/developmentNote/EditorHeader";
+import { NoteLevel } from "@/components/developmentNote/NoteEditorHeader";
 import prisma from "@/lib/prisma"
 import { Note } from "@/store/editorSotre"
 import { NoteCategory } from "@/types";
