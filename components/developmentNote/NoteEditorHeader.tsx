@@ -283,7 +283,7 @@ export default function NoteEditorHeader({
 
       if (result) {
         notifySuccessEvent("서버에 저장되었습니다.");
-        router.push("/admin/list");
+        router.push("/admin/notes");
         router.refresh();
       }
     } catch (error) {

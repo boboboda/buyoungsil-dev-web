@@ -152,49 +152,11 @@ function LazyImage({
     return <BrokenImage />;
   }
 
-  // Calculate final dimensions with proper scaling
-  const calculateDimensions = () => {
-    if (!isSVGImage) {
-      return {
-        height,
-        maxWidth,
-        width,
-      };
-    }
-
-    if (status.error !== true) {
-      const naturalWidth = status.width;
-      const naturalHeight = status.height;
-
-       let finalWidth = naturalWidth;
-    let finalHeight = naturalHeight;
-
-    // Scale down if width exceeds maxWidth while maintaining aspect ratio
-    if (finalWidth > maxWidth) {
-      const scale = maxWidth / finalWidth;
-      finalWidth = maxWidth;
-      finalHeight = Math.round(finalHeight * scale);
-    }
-
-    // Scale down if height exceeds maxHeight while maintaining aspect ratio
-    const maxHeight = 500;
-    if (finalHeight > maxHeight) {
-      const scale = maxHeight / finalHeight;
-      finalHeight = maxHeight;
-      finalWidth = Math.round(finalWidth * scale);
-
-
-    }
-
-     return {
-      height: finalHeight,
-      maxWidth,
-      width: finalWidth,
-    };
-    } 
+  // 🔥 수정: maxWidth 제거
+  const imageStyle = {
+    width: width === 'inherit' ? 'inherit' : `${width}px`,
+    height: height === 'inherit' ? 'inherit' : `${height}px`,
   };
-
-  const imageStyle = calculateDimensions();
 
   return (
     <img

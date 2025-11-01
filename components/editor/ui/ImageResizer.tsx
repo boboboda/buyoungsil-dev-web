@@ -72,16 +72,10 @@ export default function ImageResizer({
     startY: 0,
   });
   const editorRootElement = editor.getRootElement();
-  // Find max width, accounting for editor padding.
-  const maxWidthContainer = maxWidth
-    ? maxWidth
-    : editorRootElement !== null
-      ? editorRootElement.getBoundingClientRect().width - 20
-      : 100;
-  const maxHeightContainer =
-    editorRootElement !== null
-      ? editorRootElement.getBoundingClientRect().height - 20
-      : 100;
+  
+  // 🔥 충분히 큰 값으로 설정 (제한 완화)
+  const maxWidthContainer = 3000;
+  const maxHeightContainer = 3000;
 
   const minWidth = 100;
   const minHeight = 100;
@@ -136,6 +130,102 @@ export default function ImageResizer({
     }
   };
 
+  const handlePointerMove = (event: PointerEvent) => {
+    const image = imageRef.current;
+    const positioning = positioningRef.current;
+
+    if (!image || !positioning.isResizing) {
+      return;
+    }
+
+    const zoom = calculateZoomLevel(image);
+    const direction = positioning.direction;
+
+    // 동서남북 체크
+    const hasEast = (direction & Direction.east) !== 0;
+    const hasWest = (direction & Direction.west) !== 0;
+    const hasNorth = (direction & Direction.north) !== 0;
+    const hasSouth = (direction & Direction.south) !== 0;
+
+    const isHorizontal = hasEast || hasWest;
+    const isVertical = hasNorth || hasSouth;
+
+    // 대각선 (코너)
+    if (isHorizontal && isVertical) {
+      let diff = Math.floor(positioning.startX - event.clientX / zoom);
+      diff = hasEast ? -diff : diff;
+
+      const width = clamp(
+        positioning.startWidth + diff,
+        minWidth,
+        maxWidthContainer,
+      );
+      const height = width / positioning.ratio;
+
+      image.style.width = `${width}px`;
+      image.style.height = `${height}px`;
+      positioning.currentWidth = width;
+      positioning.currentHeight = height;
+    }
+    // 세로만 (위/아래)
+    else if (isVertical && !isHorizontal) {
+      let diff = Math.floor(positioning.startY - event.clientY / zoom);
+      diff = hasSouth ? -diff : diff;
+
+      const height = clamp(
+        positioning.startHeight + diff,
+        minHeight,
+        maxHeightContainer,
+      );
+
+      image.style.height = `${height}px`;
+      positioning.currentHeight = height;
+    }
+    // 가로만 (좌/우)
+    else if (isHorizontal && !isVertical) {
+      let diff = Math.floor(positioning.startX - event.clientX / zoom);
+      diff = hasEast ? -diff : diff;
+
+      const width = clamp(
+        positioning.startWidth + diff,
+        minWidth,
+        maxWidthContainer,
+      );
+      const height = width / positioning.ratio;
+
+      image.style.width = `${width}px`;
+      image.style.height = `${height}px`;
+      positioning.currentWidth = width;
+      positioning.currentHeight = height;
+    }
+  };
+
+  const handlePointerUp = () => {
+    const image = imageRef.current;
+    const positioning = positioningRef.current;
+    const controlWrapper = controlWrapperRef.current;
+    if (image !== null && controlWrapper !== null && positioning.isResizing) {
+      const width = positioning.currentWidth;
+      const height = positioning.currentHeight;
+      positioning.startWidth = 0;
+      positioning.startHeight = 0;
+      positioning.ratio = 0;
+      positioning.startX = 0;
+      positioning.startY = 0;
+      positioning.currentWidth = 0;
+      positioning.currentHeight = 0;
+      positioning.isResizing = false;
+
+      controlWrapper.classList.remove('image-control-wrapper--resizing');
+
+      setEndCursor();
+      onResizeEnd(width, height);
+
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', handlePointerUp);
+    }
+  };
+
   const handlePointerDown = (
     event: React.PointerEvent<HTMLDivElement>,
     direction: number,
@@ -173,85 +263,7 @@ export default function ImageResizer({
       document.addEventListener('pointerup', handlePointerUp);
     }
   };
-  const handlePointerMove = (event: PointerEvent) => {
-    const image = imageRef.current;
-    const positioning = positioningRef.current;
 
-    const isHorizontal =
-      positioning.direction & (Direction.east | Direction.west);
-    const isVertical =
-      positioning.direction & (Direction.south | Direction.north);
-
-    if (image !== null && positioning.isResizing) {
-      const zoom = calculateZoomLevel(image);
-      // Corner cursor
-      if (isHorizontal && isVertical) {
-        let diff = Math.floor(positioning.startX - event.clientX / zoom);
-        diff = positioning.direction & Direction.east ? -diff : diff;
-
-        const width = clamp(
-          positioning.startWidth + diff,
-          minWidth,
-          maxWidthContainer,
-        );
-
-        const height = width / positioning.ratio;
-        image.style.width = `${width}px`;
-        image.style.height = `${height}px`;
-        positioning.currentHeight = height;
-        positioning.currentWidth = width;
-      } else if (isVertical) {
-        let diff = Math.floor(positioning.startY - event.clientY / zoom);
-        diff = positioning.direction & Direction.south ? -diff : diff;
-
-        const height = clamp(
-          positioning.startHeight + diff,
-          minHeight,
-          maxHeightContainer,
-        );
-
-        image.style.height = `${height}px`;
-        positioning.currentHeight = height;
-      } else {
-        let diff = Math.floor(positioning.startX - event.clientX / zoom);
-        diff = positioning.direction & Direction.east ? -diff : diff;
-
-        const width = clamp(
-          positioning.startWidth + diff,
-          minWidth,
-          maxWidthContainer,
-        );
-
-        image.style.width = `${width}px`;
-        positioning.currentWidth = width;
-      }
-    }
-  };
-  const handlePointerUp = () => {
-    const image = imageRef.current;
-    const positioning = positioningRef.current;
-    const controlWrapper = controlWrapperRef.current;
-    if (image !== null && controlWrapper !== null && positioning.isResizing) {
-      const width = positioning.currentWidth;
-      const height = positioning.currentHeight;
-      positioning.startWidth = 0;
-      positioning.startHeight = 0;
-      positioning.ratio = 0;
-      positioning.startX = 0;
-      positioning.startY = 0;
-      positioning.currentWidth = 0;
-      positioning.currentHeight = 0;
-      positioning.isResizing = false;
-
-      controlWrapper.classList.remove('image-control-wrapper--resizing');
-
-      setEndCursor();
-      onResizeEnd(width, height);
-
-      document.removeEventListener('pointermove', handlePointerMove);
-      document.removeEventListener('pointerup', handlePointerUp);
-    }
-  };
   return (
     <div ref={controlWrapperRef}>
       {!showCaption && captionsEnabled && (
