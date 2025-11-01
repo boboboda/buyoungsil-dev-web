@@ -1,5 +1,6 @@
 "use client";
 import './editor.css';
+import 'prismjs/themes/prism-tomorrow.css';
 import type {JSX} from 'react';
 
 import {AutoFocusPlugin} from '@lexical/react/LexicalAutoFocusPlugin';
