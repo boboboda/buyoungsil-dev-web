@@ -73,7 +73,7 @@ export default function PostWrite({
     <div className="w-full p-6">
       <Card className="w-full shadow-lg" fullWidth={true}>
         <CardBody className="p-8">
-          <h1 className="text-2xl font-bold mb-8 text-left">공지사항 작성</h1>
+          <h1 className="text-2xl font-bold mb-8 text-left">{postType === "notice" ? "공지사항" : "문의게시판"} 작성</h1>
 
           <div className="w-full space-y-6">
             <div className="w-full space-y-2">
