@@ -55,6 +55,8 @@ export default async function AdminProjectBoardPage({
           <span>{project.title}</span>
           <span>/</span>
           <span className="text-gray-900 dark:text-white">{postTitle}</span>
+
+         
         </div>
 
         <div className="flex items-center justify-between">
@@ -66,6 +68,14 @@ export default async function AdminProjectBoardPage({
               총 {posts.length}개의 게시글
             </p>
           </div>
+
+
+            <Link
+          href={`/project/${projectName}/board/${postType}/write`}
+          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+        >
+          + 새 {postTitle} 작성
+        </Link>
         </div>
       </div>
 
