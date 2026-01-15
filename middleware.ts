@@ -34,6 +34,9 @@ function isBot(userAgent: string): boolean {
     "selenium",
     "webdriver",
     "headless",
+    "ZZ; Linux",        // 공격 봇 차단
+    "fasthttp",         // 공격 봇 차단
+    "python-requests",  // 공격 봇 차단
   ];
 
   return botPatterns.some((pattern) =>
