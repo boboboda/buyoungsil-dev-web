@@ -59,7 +59,6 @@
     "@tiptap/extension-table-of-contents": "^3.7.2",
     "@tiptap/extensions": "^3.10.1",
     "@tiptap/y-tiptap": "^3.0.0",
-    "bcrypt": "^5.1.1",
     "bcryptjs": "^3.0.2",
     "classnames": "^2.5.1",
     "clsx": "2.1.1",
