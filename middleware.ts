@@ -1,67 +1,177 @@
 // middleware.ts
 import type { NextRequest } from "next/server";
-
 import { NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { format } from "date-fns";
 
 const VISITOR_LOG_COOKIE_KEY = "visited_today_";
 
-// 봇 탐지 함수
-function isBot(userAgent: string): boolean {
-  const botPatterns = [
-    "Googlebot",
-    "Bingbot",
-    "Slurp",
-    "DuckDuckBot",
-    "Baiduspider",
-    "YandexBot",
-    "facebookexternalhit",
-    "Twitterbot",
-    "LinkedInBot",
-    "WhatsApp",
-    "TelegramBot",
-    "crawler",
-    "spider",
-    "bot",
-    "Bot",
-    "Crawl",
-    "Spider",
-    "HeadlessChrome",
-    "PhantomJS",
-    "SlimerJS",
-    "HtmlUnit",
-    "selenium",
-    "webdriver",
-    "headless",
-    "ZZ; Linux",        // 공격 봇 차단
-    "fasthttp",         // 공격 봇 차단
-    "python-requests",  // 공격 봇 차단
-  ];
+// 🔒 악성 패턴 감지
+const MALICIOUS_PATTERNS = [
+  /curl.*\|.*sh/i,
+  /wget.*\|.*sh/i,
+  /bash.*-c/i,
+  /\/bin\/(ba)?sh/i,
+  /repositorylinux/i,
+  /linuxsys/i,
+  /\$\{[^}]*\}/,  // Shell variable injection
+  /`[^`]*`/,      // Command substitution
+  /<script/i,     // XSS
+  /\.\.\/\.\.\//,  // Path traversal
+  /etc\/passwd/i,
+  /proc\/self/i,
+];
 
-  return botPatterns.some((pattern) =>
-    userAgent.toLowerCase().includes(pattern.toLowerCase()),
+// 🤖 허용할 봇 (AdMob 등)
+const ALLOWED_BOTS = [
+  "Googlebot",
+  "Mediapartners-Google",  // AdMob/AdSense
+  "AdsBot-Google",
+  "Bingbot",
+];
+
+// 🚫 차단할 봇
+const BLOCKED_BOTS = [
+  "ZZ; Linux",
+  "fasthttp",
+  "python-requests",
+  "curl/",
+  "wget/",
+  "HeadlessChrome",
+  "PhantomJS",
+  "selenium",
+  "webdriver",
+];
+
+// 🌐 악성 IP 차단
+const blockedIPs = new Set<string>([
+  "82.23.183.171",
+]);
+
+// IP별 공격 시도 카운트
+const attackAttempts = new Map<string, { count: number; lastAttempt: number }>();
+
+function getClientIP(request: NextRequest): string {
+  // x-forwarded-for 헤더에서 첫 번째 IP 추출
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    return forwardedFor.split(",")[0].trim();
+  }
+  
+  // x-real-ip 헤더 확인
+  const realIP = request.headers.get("x-real-ip");
+  if (realIP) {
+    return realIP.trim();
+  }
+  
+  return "unknown";
+}
+
+function isAllowedBot(userAgent: string): boolean {
+  return ALLOWED_BOTS.some((pattern) =>
+    userAgent.toLowerCase().includes(pattern.toLowerCase())
   );
+}
+
+function isBlockedBot(userAgent: string): boolean {
+  return BLOCKED_BOTS.some((pattern) =>
+    userAgent.toLowerCase().includes(pattern.toLowerCase())
+  );
+}
+
+function containsMaliciousPattern(text: string): boolean {
+  return MALICIOUS_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function recordAttack(ip: string): boolean {
+  const now = Date.now();
+  const record = attackAttempts.get(ip) || { count: 0, lastAttempt: now };
+
+  // 1시간이 지났으면 초기화
+  if (now - record.lastAttempt > 60 * 60 * 1000) {
+    record.count = 1;
+    record.lastAttempt = now;
+  } else {
+    record.count++;
+    record.lastAttempt = now;
+  }
+
+  attackAttempts.set(ip, record);
+
+  // 5번 이상 공격 시도하면 영구 차단
+  if (record.count >= 5) {
+    blockedIPs.add(ip);
+    console.log(`🚨 [SECURITY] IP ${ip} 영구 차단됨`);
+    return true;
+  }
+
+  return false;
 }
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  const searchParams = request.nextUrl.search;
+  const fullUrl = pathname + searchParams;
+  const userAgent = request.headers.get("user-agent") || "";
+  const clientIP = getClientIP(request);
 
   console.log("미들웨어 엔드포인트:", pathname);
 
-  // 봇 체크 - 방문자 카운트에서 제외
-  const userAgent = request.headers.get("user-agent") || "";
+  // ========================================
+  // 1️⃣ 보안 체크 (최우선)
+  // ========================================
 
-  if (isBot(userAgent)) {
-    console.log("[Middleware] 봇 탐지됨:", userAgent);
-    // 인증 로직은 여전히 실행하되, 방문자 카운트는 건너뜀
-  } else {
-    console.log("[Middleware] 일반 사용자 접근:", userAgent);
+  // IP 차단 확인
+  if (blockedIPs.has(clientIP)) {
+    console.log(`🚫 [SECURITY] 차단된 IP: ${clientIP}`);
+    return new NextResponse("Forbidden", { status: 403 });
   }
 
-  const secret = process.env.AUTH_SECRET;
+  // 악성 봇 차단
+  if (isBlockedBot(userAgent)) {
+    console.log(`🤖 [SECURITY] 차단된 봇: ${userAgent}`);
+    recordAttack(clientIP);
+    return new NextResponse("Forbidden", { status: 403 });
+  }
 
-  // 🔥 getToken 함수에 쿠키 이름과 보안 옵션을 명시적으로 전달
+  // URL에서 악성 패턴 감지
+  if (containsMaliciousPattern(fullUrl)) {
+    console.log(`🚨 [SECURITY] 악성 URL 패턴 감지: ${fullUrl}`);
+    recordAttack(clientIP);
+    return new NextResponse("Forbidden", { status: 403 });
+  }
+
+  // POST 요청의 Body 검사
+  if (request.method === "POST" || request.method === "PUT") {
+    try {
+      const clonedRequest = request.clone();
+      const body = await clonedRequest.text();
+      
+      if (containsMaliciousPattern(body)) {
+        console.log(`🚨 [SECURITY] 악성 Body 패턴 감지`);
+        recordAttack(clientIP);
+        return new NextResponse("Forbidden", { status: 403 });
+      }
+    } catch (e) {
+      // Body 읽기 실패는 무시
+    }
+  }
+
+  // ========================================
+  // 2️⃣ 봇 분류 (허용된 봇은 통과)
+  // ========================================
+  
+  const isAllowedBotRequest = isAllowedBot(userAgent);
+  
+  if (isAllowedBotRequest) {
+    console.log("[Middleware] 허용된 봇 (AdMob 등):", userAgent);
+  }
+
+  // ========================================
+  // 3️⃣ 인증 로직
+  // ========================================
+
+  const secret = process.env.AUTH_SECRET;
   const isProduction =
     process.env.NODE_ENV === "production" ||
     process.env.VERCEL_ENV === "production";
@@ -73,31 +183,31 @@ export async function middleware(request: NextRequest) {
     req: request,
     secret: secret,
     cookieName: cookieName,
-    secureCookie: isProduction, // HTTPS 환경에서만 true
+    secureCookie: isProduction,
   });
 
-  // 1. next-auth 인증 및 권한 로직
   if (session && (pathname === "/signup" || pathname === "/signin")) {
     console.log("인증된 사용자 리다이렉트:", session.email ?? "알 수 없음");
-
     return NextResponse.redirect(new URL("/", request.url));
   }
+
   if (pathname.startsWith("/admin")) {
     if (!session) {
       console.log("어드민 페이지 접근 시도: 세션 없음");
-
       return NextResponse.redirect(new URL("/signin", request.url));
     }
     if (session.role !== "admin") {
       console.log("어드민 페이지 접근 시도: 권한 없음");
-
       return NextResponse.redirect(new URL("/", request.url));
     }
     console.log("어드민 페이지 접근 허용:", session.email);
   }
 
-  // 2. 방문자 기록 로직 - 봇이 아닌 경우에만 실행
-  if (!isBot(userAgent)) {
+  // ========================================
+  // 4️⃣ 방문자 기록 (허용된 봇과 일반 봇은 제외)
+  // ========================================
+
+  if (!isAllowedBotRequest) {
     const today = format(new Date(), "yyyy-MM-dd");
     const hasVisitedToday =
       request.cookies.get(VISITOR_LOG_COOKIE_KEY)?.value === today;
@@ -121,12 +231,11 @@ export async function middleware(request: NextRequest) {
           finalResponse.headers.append("Set-Cookie", cookie);
         });
         console.log("[Middleware] 방문 기록 및 쿠키 설정 성공.");
-
         return finalResponse;
       }
     } else {
       console.log(
-        "[Middleware] 방문 쿠키 존재. 오늘 방문은 이미 기록되었습니다.",
+        "[Middleware] 방문 쿠키 존재. 오늘 방문은 이미 기록되었습니다."
       );
     }
   }
