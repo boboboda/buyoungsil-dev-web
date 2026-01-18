@@ -4,7 +4,7 @@ services:
     build:
       context: .
       args:
-        - ENV_FILE=.env.temp
+        - ENV_FILE=.env.local
     container_name: developWeb
     restart: always
     env_file:

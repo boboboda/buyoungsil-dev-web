@@ -207,7 +207,7 @@ export const authOptions: NextAuthOptions = {
         sameSite: "lax" as const,
         path: "/",
         secure: isProduction,
-        ...(isProduction ? { domain: ".buyoungsilcoding.com" } : {}),
+        // domain 설정 제거 - Google OAuth 세션 쿠키 문제 해결
       },
     },
   },
