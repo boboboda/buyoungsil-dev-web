@@ -8,13 +8,6 @@ import bcrypt from "bcryptjs";
 
 import prisma from "@/lib/prisma";
 
-const isProduction =
-  process.env.NODE_ENV === "production" ||
-  process.env.VERCEL_ENV === "production";
-const cookieName = isProduction
-  ? "__Secure-authjs.session-token"
-  : "next-auth.session-token";
-
 // 🔥 authOptions를 별도로 export
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
@@ -199,18 +192,7 @@ export const authOptions: NextAuthOptions = {
     },
   },
   secret: process.env.NEXTAUTH_SECRET,
-  cookies: {
-    sessionToken: {
-      name: cookieName,
-      options: {
-        httpOnly: true,
-        sameSite: "lax" as const,
-        path: "/",
-        secure: isProduction,
-        // domain 설정 제거 - Google OAuth 세션 쿠키 문제 해결
-      },
-    },
-  },
+  // cookies 설정 완전히 제거 - NextAuth가 자동으로 처리
 };
 
 // 🔥 default export는 NextAuth handler
