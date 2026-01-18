@@ -6,26 +6,19 @@ import { format } from "date-fns";
 
 const VISITOR_LOG_COOKIE_KEY = "visited_today_";
 
-// 🔒 악성 패턴 감지
+// 🔒 악성 패턴 감지 (완화됨)
 const MALICIOUS_PATTERNS = [
   /curl.*\|.*sh/i,
   /wget.*\|.*sh/i,
   /bash.*-c/i,
-  /\/bin\/(ba)?sh/i,
   /repositorylinux/i,
   /linuxsys/i,
-  /\$\{[^}]*\}/,  // Shell variable injection
-  /`[^`]*`/,      // Command substitution
-  /<script/i,     // XSS
-  /\.\.\/\.\.\//,  // Path traversal
-  /etc\/passwd/i,
-  /proc\/self/i,
 ];
 
 // 🤖 허용할 봇 (AdMob 등)
 const ALLOWED_BOTS = [
   "Googlebot",
-  "Mediapartners-Google",  // AdMob/AdSense
+  "Mediapartners-Google",
   "AdsBot-Google",
   "Bingbot",
 ];
@@ -37,34 +30,45 @@ const BLOCKED_BOTS = [
   "python-requests",
   "curl/",
   "wget/",
-  "HeadlessChrome",
-  "PhantomJS",
-  "selenium",
-  "webdriver",
 ];
 
 // 🌐 악성 IP 차단
 const blockedIPs = new Set<string>([
   "82.23.183.171",
+  "217.144.184.100",
 ]);
 
 // IP별 공격 시도 카운트
 const attackAttempts = new Map<string, { count: number; lastAttempt: number }>();
 
 function getClientIP(request: NextRequest): string {
-  // x-forwarded-for 헤더에서 첫 번째 IP 추출
   const forwardedFor = request.headers.get("x-forwarded-for");
   if (forwardedFor) {
     return forwardedFor.split(",")[0].trim();
   }
   
-  // x-real-ip 헤더 확인
   const realIP = request.headers.get("x-real-ip");
   if (realIP) {
     return realIP.trim();
   }
   
   return "unknown";
+}
+
+// 🏠 로컬 IP 체크 (차단하면 안 됨!)
+function isLocalIP(ip: string): boolean {
+  return (
+    ip === "unknown" ||
+    ip.includes("127.0.0.1") ||
+    ip.includes("localhost") ||
+    ip.includes("192.168.") ||
+    ip.includes("10.0.") ||
+    ip.includes("172.16.") ||
+    ip.includes("::1") ||
+    ip.includes("::ffff:192.168.") ||
+    ip.includes("::ffff:10.0.") ||
+    ip.includes("::ffff:172.16.")
+  );
 }
 
 function isAllowedBot(userAgent: string): boolean {
@@ -84,6 +88,12 @@ function containsMaliciousPattern(text: string): boolean {
 }
 
 function recordAttack(ip: string): boolean {
+  // 로컬 IP는 차단하지 않음
+  if (isLocalIP(ip)) {
+    console.log(`⚠️ [SECURITY] 로컬 IP에서 의심스러운 활동 감지: ${ip}`);
+    return false;
+  }
+
   const now = Date.now();
   const record = attackAttempts.get(ip) || { count: 0, lastAttempt: now };
 
@@ -98,8 +108,8 @@ function recordAttack(ip: string): boolean {
 
   attackAttempts.set(ip, record);
 
-  // 5번 이상 공격 시도하면 영구 차단
-  if (record.count >= 5) {
+  // 10번 이상 공격 시도하면 영구 차단
+  if (record.count >= 10) {
     blockedIPs.add(ip);
     console.log(`🚨 [SECURITY] IP ${ip} 영구 차단됨`);
     return true;
@@ -121,8 +131,8 @@ export async function middleware(request: NextRequest) {
   // 1️⃣ 보안 체크 (최우선)
   // ========================================
 
-  // IP 차단 확인
-  if (blockedIPs.has(clientIP)) {
+  // IP 차단 확인 (단, 로컬 IP는 제외)
+  if (!isLocalIP(clientIP) && blockedIPs.has(clientIP)) {
     console.log(`🚫 [SECURITY] 차단된 IP: ${clientIP}`);
     return new NextResponse("Forbidden", { status: 403 });
   }
@@ -136,21 +146,25 @@ export async function middleware(request: NextRequest) {
 
   // URL에서 악성 패턴 감지
   if (containsMaliciousPattern(fullUrl)) {
-    console.log(`🚨 [SECURITY] 악성 URL 패턴 감지: ${fullUrl}`);
+    console.log(`🚨 [SECURITY] 악성 URL 패턴 감지: ${fullUrl} from IP: ${clientIP}`);
     recordAttack(clientIP);
     return new NextResponse("Forbidden", { status: 403 });
   }
 
-  // POST 요청의 Body 검사
-  if (request.method === "POST" || request.method === "PUT") {
+  // POST 요청의 Body 검사 (API 경로만)
+  if ((request.method === "POST" || request.method === "PUT") && pathname.startsWith("/api/")) {
     try {
       const clonedRequest = request.clone();
       const body = await clonedRequest.text();
       
       if (containsMaliciousPattern(body)) {
-        console.log(`🚨 [SECURITY] 악성 Body 패턴 감지`);
+        console.log(`🚨 [SECURITY] 악성 Body 패턴 감지 from IP: ${clientIP}`);
         recordAttack(clientIP);
-        return new NextResponse("Forbidden", { status: 403 });
+        
+        // 로컬 IP가 아닐 때만 차단
+        if (!isLocalIP(clientIP)) {
+          return new NextResponse("Forbidden", { status: 403 });
+        }
       }
     } catch (e) {
       // Body 읽기 실패는 무시
@@ -204,7 +218,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // ========================================
-  // 4️⃣ 방문자 기록 (허용된 봇과 일반 봇은 제외)
+  // 4️⃣ 방문자 기록
   // ========================================
 
   if (!isAllowedBotRequest) {
