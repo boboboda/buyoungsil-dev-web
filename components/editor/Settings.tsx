@@ -16,11 +16,19 @@ import {useSettings} from './context/SettingsContext';
 import Switch from './ui/Switch';
 
 export default function Settings(): JSX.Element {
-  const windowLocation = window.location;
+  // ✅ useState로 변경
+  const [windowLocation, setWindowLocation] = useState<Location | null>(null);
+  
+  // ✅ useEffect에서 클라이언트 사이드에서만 설정
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setWindowLocation(window.location);
+    }
+  }, []);
+
   const {
     setOption,
     settings: {
-
       isRichText,
       isMaxLength,
       hasLinkAttributes,
@@ -39,6 +47,7 @@ export default function Settings(): JSX.Element {
       isCodeShiki,
     },
   } = useSettings();
+  
   useEffect(() => {
     if (INITIAL_SETTINGS.disableBeforeInput && CAN_USE_BEFORE_INPUT) {
       console.error(
@@ -46,8 +55,15 @@ export default function Settings(): JSX.Element {
       );
     }
   }, []);
+  
   const [showSettings, setShowSettings] = useState(false);
+  
+  // ✅ window 체크 추가
   const [isSplitScreen, search] = useMemo(() => {
+    if (typeof window === 'undefined' || !windowLocation) {
+      return [false, ''];
+    }
+    
     const parentWindow = window.parent;
     const _search = windowLocation.search;
     const _isSplitScreen =
@@ -67,6 +83,8 @@ export default function Settings(): JSX.Element {
           {isDevPlayground && (
             <Switch
               onClick={() => {
+                if (typeof window === 'undefined') return;
+                
                 if (isSplitScreen) {
                   window.parent.location.href = `/${search}`;
                 } else {
@@ -143,13 +161,6 @@ export default function Settings(): JSX.Element {
             checked={shouldPreserveNewLinesInMarkdown}
             text="Preserve newlines in Markdown"
           />
-          {/* <Switch
-            onClick={() => {
-              setOption('tableHorizontalScroll', !tableHorizontalScroll);
-            }}
-            checked={tableHorizontalScroll}
-            text="Tables have horizontal scroll"
-          /> */}
           <Switch
             onClick={() => {
               setOption(
@@ -158,31 +169,38 @@ export default function Settings(): JSX.Element {
               );
             }}
             checked={shouldAllowHighlightingWithBrackets}
-            text="Use Brackets for Highlighting"
+            text="Highlighting w/ bracket matching"
           />
-
+          <Switch
+            onClick={() => setOption('isRichText', !isRichText)}
+            checked={isRichText}
+            text="Rich Text"
+          />
+          {/* <Switch
+            onClick={() => setOption('tableHorizontalScroll', !tableHorizontalScroll)}
+            checked={tableHorizontalScroll}
+            text="Table Horizontal Scroll"
+          /> */}
           <Switch
             onClick={() => {
               setOption('selectionAlwaysOnDisplay', !selectionAlwaysOnDisplay);
             }}
             checked={selectionAlwaysOnDisplay}
-            text="Retain selection"
+            text="Selection Always on Display"
           />
-
           <Switch
             onClick={() => {
               setOption('isCodeHighlighted', !isCodeHighlighted);
             }}
             checked={isCodeHighlighted}
-            text="Enable Code Highlighting"
+            text="Code Highlighting"
           />
-
           <Switch
             onClick={() => {
               setOption('isCodeShiki', !isCodeShiki);
             }}
             checked={isCodeShiki}
-            text="Use Shiki for Code Highlighting"
+            text="Code Shiki"
           />
         </div>
       ) : null}

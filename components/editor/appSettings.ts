@@ -6,7 +6,8 @@
  *
  */
 
-const hostName = window.location.hostname;
+// ✅ typeof window 체크 추가
+const hostName = typeof window !== 'undefined' ? window.location.hostname : '';
 export const isDevPlayground: boolean =
   hostName !== 'playground.lexical.dev' &&
   hostName !== 'lexical-playground.vercel.app';

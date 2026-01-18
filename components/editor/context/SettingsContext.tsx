@@ -59,7 +59,10 @@ export const useSettings = (): SettingsContextShape => {
   return useContext(Context);
 };
 
+// ✅ window 체크 추가
 function setURLParam(param: SettingName, value: null | boolean) {
+  if (typeof window === 'undefined') return;
+  
   const url = new URL(window.location.href);
   const params = new URLSearchParams(url.search);
   if (value !== DEFAULT_SETTINGS[param]) {
