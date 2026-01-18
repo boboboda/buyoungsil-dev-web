@@ -1,6 +1,7 @@
-import NextAuth from "@/lib/auth/auth";
+// app/api/auth/[...nextauth]/route.ts
+import { authOptions } from "@/lib/auth/auth";
+import NextAuth from "next-auth";
 
-// 🔥 v4 방식
-const handler = NextAuth;
+const handler = NextAuth(authOptions);
 
 export { handler as GET, handler as POST };
