@@ -11,6 +11,8 @@ import prisma from "@/lib/prisma";
 // 🔥 authOptions를 별도로 export
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
+  trustHost: true, // 🔥 추가: Docker/프록시 환경에서 호스트 신뢰
+  
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -192,7 +194,6 @@ export const authOptions: NextAuthOptions = {
     },
   },
   secret: process.env.NEXTAUTH_SECRET,
-  // cookies 설정 완전히 제거 - NextAuth가 자동으로 처리
 };
 
 // 🔥 default export는 NextAuth handler
