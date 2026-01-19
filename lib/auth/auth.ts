@@ -11,7 +11,6 @@ import prisma from "@/lib/prisma";
 // 🔥 authOptions를 별도로 export
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
-  trustHost: true, // 🔥 추가: Docker/프록시 환경에서 호스트 신뢰
   
   providers: [
     GoogleProvider({
