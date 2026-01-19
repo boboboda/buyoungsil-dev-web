@@ -8,7 +8,6 @@ import bcrypt from "bcryptjs";
 
 import prisma from "@/lib/prisma";
 
-// 🔥 authOptions를 별도로 export
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   
@@ -40,7 +39,6 @@ export const authOptions: NextAuthOptions = {
 
         const { email, password, action, name } = credentials;
 
-        // 'register' 액션
         if (action === "register") {
           if (!name) throw new Error("회원가입 시 이름이 필요합니다.");
 
@@ -73,7 +71,6 @@ export const authOptions: NextAuthOptions = {
           };
         }
 
-        // 'login' 액션
         if (action === "login") {
           const user = await prisma.user.findUnique({ where: { email } });
 
@@ -103,6 +100,24 @@ export const authOptions: NextAuthOptions = {
     error: "/signin",
   },
   callbacks: {
+    // 🔥 추가: signIn 콜백으로 같은 이메일 자동 허용
+    signIn: async ({ user, account, profile }) => {
+      // OAuth 로그인인 경우
+      if (account?.provider === "google" || account?.provider === "github") {
+        // 같은 이메일의 사용자가 있는지 확인
+        const existingUser = await prisma.user.findUnique({
+          where: { email: user.email! },
+        });
+        
+        if (existingUser) {
+          // 이미 계정이 있으면 자동으로 허용
+          return true;
+        }
+      }
+      
+      return true;
+    },
+    
     jwt: async ({ token, user, account, trigger, session }) => {
       console.log("\n=================== JWT 콜백 시작");
       console.log("🔥 JWT 콜백 - trigger:", trigger);
@@ -195,5 +210,4 @@ export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
 };
 
-// 🔥 default export는 NextAuth handler
 export default NextAuth(authOptions);
