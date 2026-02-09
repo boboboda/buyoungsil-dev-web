@@ -100,21 +100,53 @@ export const authOptions: NextAuthOptions = {
     error: "/signin",
   },
   callbacks: {
-    // 🔥 추가: signIn 콜백으로 같은 이메일 자동 허용
+    // 🔥 같은 이메일로 여러 OAuth provider 수동 연결
     signIn: async ({ user, account, profile }) => {
+      if (!account) return true;
+
       // OAuth 로그인인 경우
-      if (account?.provider === "google" || account?.provider === "github") {
-        // 같은 이메일의 사용자가 있는지 확인
-        const existingUser = await prisma.user.findUnique({
-          where: { email: user.email! },
-        });
-        
-        if (existingUser) {
-          // 이미 계정이 있으면 자동으로 허용
+      if (account.provider === "google" || account.provider === "github") {
+        try {
+          // 같은 이메일의 기존 사용자 찾기
+          const existingUser = await prisma.user.findUnique({
+            where: { email: user.email! },
+            include: { accounts: true },
+          });
+
+          if (existingUser) {
+            // 이미 이 provider로 연결된 계정이 있는지 확인
+            const accountExists = existingUser.accounts.find(
+              (acc) => acc.provider === account.provider
+            );
+
+            // 없으면 새 Account 추가
+            if (!accountExists) {
+              await prisma.account.create({
+                data: {
+                  userId: existingUser.id,
+                  type: account.type,
+                  provider: account.provider,
+                  providerAccountId: account.providerAccountId,
+                  refresh_token: account.refresh_token,
+                  access_token: account.access_token,
+                  expires_at: account.expires_at,
+                  token_type: account.token_type,
+                  scope: account.scope,
+                  id_token: account.id_token,
+                  session_state: account.session_state,
+                },
+              });
+              console.log(`✅ ${account.provider} 계정이 기존 사용자에 연결되었습니다.`);
+            }
+          }
+
           return true;
+        } catch (error) {
+          console.error("signIn callback 에러:", error);
+          return true; // 에러가 나도 로그인은 진행
         }
       }
-      
+
       return true;
     },
     
