@@ -127,6 +127,17 @@ export async function middleware(request: NextRequest) {
 
   console.log("미들웨어 엔드포인트:", pathname);
 
+  // 🔍 헤더 디버깅 (signin 페이지만)
+  if (pathname === '/signin') {
+    console.log('=== HEADERS DEBUG ===');
+    console.log('x-forwarded-proto:', request.headers.get('x-forwarded-proto'));
+    console.log('x-forwarded-host:', request.headers.get('x-forwarded-host'));
+    console.log('host:', request.headers.get('host'));
+    console.log('url:', request.url);
+    console.log('protocol:', request.nextUrl.protocol);
+    console.log('====================');
+  }
+
   // ========================================
   // 1️⃣ 보안 체크 (최우선)
   // ========================================
