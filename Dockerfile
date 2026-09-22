@@ -11,6 +11,7 @@ ARG ENV_FILE
 COPY package.json package-lock.json ./
 COPY prisma ./prisma/
 RUN npm install
+RUN npm install --cpu=arm64 --os=linux --libc=musl sharp
 RUN npx prisma generate
 
 # 앱 복사
