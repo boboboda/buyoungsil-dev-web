@@ -46,12 +46,12 @@ function getClientIP(request: NextRequest): string {
   if (forwardedFor) {
     return forwardedFor.split(",")[0].trim();
   }
-  
+
   const realIP = request.headers.get("x-real-ip");
   if (realIP) {
     return realIP.trim();
   }
-  
+
   return "unknown";
 }
 
@@ -167,11 +167,11 @@ export async function middleware(request: NextRequest) {
     try {
       const clonedRequest = request.clone();
       const body = await clonedRequest.text();
-      
+
       if (containsMaliciousPattern(body)) {
         console.log(`🚨 [SECURITY] 악성 Body 패턴 감지 from IP: ${clientIP}`);
         recordAttack(clientIP);
-        
+
         // 로컬 IP가 아닐 때만 차단
         if (!isLocalIP(clientIP)) {
           return new NextResponse("Forbidden", { status: 403 });
@@ -185,9 +185,9 @@ export async function middleware(request: NextRequest) {
   // ========================================
   // 2️⃣ 봇 분류 (허용된 봇은 통과)
   // ========================================
-  
+
   const isAllowedBotRequest = isAllowedBot(userAgent);
-  
+
   if (isAllowedBotRequest) {
     console.log("[Middleware] 허용된 봇 (AdMob 등):", userAgent);
   }
@@ -210,6 +210,22 @@ export async function middleware(request: NextRequest) {
     cookieName: cookieName,
     secureCookie: isProduction,
   });
+
+  // 🔍 임시 디버그: /admin 요청일 때만 상세 로그
+  if (pathname.startsWith("/admin")) {
+    console.log("=== ADMIN AUTH DEBUG ===");
+    console.log("NODE_ENV:", process.env.NODE_ENV);
+    console.log("VERCEL_ENV:", process.env.VERCEL_ENV);
+    console.log("isProduction:", isProduction);
+    console.log("찾고 있는 쿠키 이름:", cookieName);
+    console.log(
+      "들어온 쿠키 목록:",
+      request.cookies.getAll().map((c) => c.name),
+    );
+    console.log("AUTH_SECRET 존재 여부:", !!secret);
+    console.log("getToken 결과:", session);
+    console.log("========================");
+  }
 
   if (session && (pathname === "/signup" || pathname === "/signin")) {
     console.log("인증된 사용자 리다이렉트:", session.email ?? "알 수 없음");
@@ -260,7 +276,7 @@ export async function middleware(request: NextRequest) {
       }
     } else {
       console.log(
-        "[Middleware] 방문 쿠키 존재. 오늘 방문은 이미 기록되었습니다."
+        "[Middleware] 방문 쿠키 존재. 오늘 방문은 이미 기록되었습니다.",
       );
     }
   }
