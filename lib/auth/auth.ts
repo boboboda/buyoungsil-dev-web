@@ -8,9 +8,13 @@ import bcrypt from "bcryptjs";
 
 import prisma from "@/lib/prisma";
 
+const isProduction = process.env.NODE_ENV === "production";
+const cookieName = isProduction
+  ? "__Secure-authjs.session-token"
+  : "next-auth.session-token";
+
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
-  
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -100,26 +104,21 @@ export const authOptions: NextAuthOptions = {
     error: "/signin",
   },
   callbacks: {
-    // 🔥 같은 이메일로 여러 OAuth provider 수동 연결
     signIn: async ({ user, account, profile }) => {
       if (!account) return true;
 
-      // OAuth 로그인인 경우
       if (account.provider === "google" || account.provider === "github") {
         try {
-          // 같은 이메일의 기존 사용자 찾기
           const existingUser = await prisma.user.findUnique({
             where: { email: user.email! },
             include: { accounts: true },
           });
 
           if (existingUser) {
-            // 이미 이 provider로 연결된 계정이 있는지 확인
             const accountExists = existingUser.accounts.find(
               (acc) => acc.provider === account.provider
             );
 
-            // 없으면 새 Account 추가
             if (!accountExists) {
               await prisma.account.create({
                 data: {
@@ -143,13 +142,13 @@ export const authOptions: NextAuthOptions = {
           return true;
         } catch (error) {
           console.error("signIn callback 에러:", error);
-          return true; // 에러가 나도 로그인은 진행
+          return true;
         }
       }
 
       return true;
     },
-    
+
     jwt: async ({ token, user, account, trigger, session }) => {
       console.log("\n=================== JWT 콜백 시작");
       console.log("🔥 JWT 콜백 - trigger:", trigger);
@@ -240,6 +239,18 @@ export const authOptions: NextAuthOptions = {
     },
   },
   secret: process.env.NEXTAUTH_SECRET,
+  cookies: {
+    sessionToken: {
+      name: cookieName,
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: isProduction,
+        ...(isProduction ? { domain: ".buyoungsilcoding.com" } : {}),
+      },
+    },
+  },
 };
 
 export default NextAuth(authOptions);
