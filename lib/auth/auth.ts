@@ -13,6 +13,19 @@ const cookieName = isProduction
   ? "__Secure-authjs.session-token"
   : "next-auth.session-token";
 
+// 브라우저를 완전히 닫고 다시 열었을 때 로그인이 유지되는 절대 최대 기간(리멤버미 개념).
+// 실제 "아무 활동 없을 시 로그아웃"은 클라이언트의 useIdleLogout 훅이 담당하고,
+// 여기서는 그 훅이 어떤 이유로든 동작하지 못했을 때(앱 강제종료, API 단독 호출 등)를
+// 대비한 서버 측 하한선 역할.
+const SESSION_MAX_AGE_SECONDS = Number(
+  process.env.SESSION_MAX_AGE_MINUTES ?? 60 * 24 * 7, // 기본 7일
+) * 60;
+// 활동 중인 사용자의 세션(쿠키)을 얼마나 자주 갱신할지. 너무 크면 활동 중에도
+// 쿠키 만료가 임박해 보일 수 있어 짧게 잡는다.
+const SESSION_UPDATE_AGE_SECONDS = Number(
+  process.env.SESSION_UPDATE_AGE_MINUTES ?? 15,
+) * 60;
+
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
@@ -97,7 +110,11 @@ export const authOptions: NextAuthOptions = {
       },
     }),
   ],
-  session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
+  session: {
+    strategy: "jwt",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+    updateAge: SESSION_UPDATE_AGE_SECONDS,
+  },
   pages: {
     signIn: "/signin",
     signOut: "/",
