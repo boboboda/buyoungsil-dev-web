@@ -12,7 +12,7 @@ import {
   Button,
   Tooltip,
 } from "@heroui/react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "react-toastify";
 import Link from "next/link";
@@ -20,24 +20,45 @@ import { GradientButton } from "@/components/common/GradientButton";
 import { toggleNotePublish } from "@/serverActions/editorServerAction";
 import { Pencil, Trash2 } from "lucide-react";
 
+// 🔥 subCategory는 DB에 { id, name } 형태의 JSON으로 저장됨 (types/index.ts의 SubCategory)
+interface NoteSubCategory {
+  id?: number;
+  name: string;
+}
+
 interface Note {
   id: string;
   noteId: number;  // 실제 노트 ID (number 타입)
   title: string;
   mainCategory?: string | null;
-  subCategory?: string | null;
+  subCategory?: NoteSubCategory | null;
   level?: string | null;
   isPublished: boolean;
   createdAt: Date | string;
 }
 
-interface NoteManageTableProps {
-  notes: Note[];
+// 🔥 NoteCategory 테이블에서 내려오는 카테고리 메타 정보 (이름/아이콘/정렬순서는 여기가 기준)
+interface CategoryMeta {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  icon?: string | null;
+  order: number;
+  isPublished: boolean;
 }
 
-export default function NoteManageTable({ notes }: NoteManageTableProps) {
+interface NoteManageTableProps {
+  notes: Note[];
+  categories: CategoryMeta[];
+}
+
+const ALL_FILTER = "__all__";
+
+export default function NoteManageTable({ notes, categories }: NoteManageTableProps) {
   const router = useRouter();
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
+  const [selectedCategory, setSelectedCategory] = useState<string>(ALL_FILTER);
 
   // 레벨별 뱃지 색상
   const getLevelColor = (level?: string | null) => {
@@ -90,26 +111,56 @@ export default function NoteManageTable({ notes }: NoteManageTableProps) {
     }
   };
 
-  // 카테고리 정보 가져오기
-  const getCategoryInfo = (mainCategory?: string | null, subCategory?: string | null) => {
-    const categoryMap: Record<string, { name: string; icon: string }> = {
-      'react': { name: 'React', icon: '⚛️' },
-      'nextjs': { name: 'Next.js', icon: '▲' },
-      'typescript': { name: 'TypeScript', icon: '📘' },
-      'javascript': { name: 'JavaScript', icon: '📙' },
-      'database': { name: 'Database', icon: '💾' },
-      'backend': { name: 'Backend', icon: '⚙️' },
-      'frontend': { name: 'Frontend', icon: '🎨' },
+  // 🔥 slug -> { name, icon } 조회용 맵. 실제 카테고리 이름/아이콘은
+  //    하드코딩하지 않고 DB(NoteCategory, /admin/categories에서 관리)를 그대로 사용.
+  const categoryMap = useMemo(() => {
+    const map: Record<string, { name: string; icon: string }> = {};
+    categories.forEach((c) => {
+      map[c.slug] = { name: c.name, icon: c.icon || "📝" };
+    });
+    return map;
+  }, [categories]);
+
+  // 카테고리 정보 텍스트 (예: "🧩 Kotlin Compose > Layout")
+  const getCategoryInfo = (mainCategory?: string | null, subCategory?: NoteSubCategory | null) => {
+    const info = categoryMap[mainCategory || ""] || {
+      name: mainCategory || "미분류",
+      icon: "📝",
     };
 
-    const info = categoryMap[mainCategory || ''] || { name: mainCategory || '미분류', icon: '📝' };
-    
-    if (subCategory) {
-      return `${info.icon} ${info.name} > ${subCategory}`;
+    // subCategory는 { id, name } 객체라서 그대로 찍으면 "[object Object]"가 됨 → name만 꺼내서 표시
+    const subCategoryName =
+      subCategory && typeof subCategory === "object" ? subCategory.name : subCategory;
+
+    if (subCategoryName) {
+      return `${info.icon} ${info.name} > ${subCategoryName}`;
     }
-    
+
     return `${info.icon} ${info.name}`;
   };
+
+  // 🔥 카테고리별 필터 탭에 쓸 노트 개수 (전체 노트 기준, 공개 여부 무관)
+  const noteCountBySlug = useMemo(() => {
+    const counts: Record<string, number> = {};
+    notes.forEach((note) => {
+      const slug = note.mainCategory || "";
+      counts[slug] = (counts[slug] || 0) + 1;
+    });
+    return counts;
+  }, [notes]);
+
+  // 실제로 노트가 하나라도 있는 카테고리만 탭으로 노출 (order 순서 유지)
+  const categoryTabs = useMemo(
+    () => categories.filter((c) => (noteCountBySlug[c.slug] || 0) > 0),
+    [categories, noteCountBySlug],
+  );
+
+  const visibleNotes = useMemo(() => {
+    if (selectedCategory === ALL_FILTER) {
+      return notes;
+    }
+    return notes.filter((note) => note.mainCategory === selectedCategory);
+  }, [notes, selectedCategory]);
 
   return (
     <div className="w-full">
@@ -173,9 +224,38 @@ export default function NoteManageTable({ notes }: NoteManageTableProps) {
         </p>
       </div>
 
+      {/* 카테고리 필터 탭 */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        <button
+          type="button"
+          onClick={() => setSelectedCategory(ALL_FILTER)}
+          className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+            selectedCategory === ALL_FILTER
+              ? "bg-blue-600 text-white border-blue-600"
+              : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+          }`}
+        >
+          전체 ({notes.length})
+        </button>
+        {categoryTabs.map((category) => (
+          <button
+            key={category.id}
+            type="button"
+            onClick={() => setSelectedCategory(category.slug)}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+              selectedCategory === category.slug
+                ? "bg-blue-600 text-white border-blue-600"
+                : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+            }`}
+          >
+            {category.icon || "📝"} {category.name} ({noteCountBySlug[category.slug] || 0})
+          </button>
+        ))}
+      </div>
+
       {/* 테이블 */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <Table 
+        <Table
           aria-label="개발노트 관리 테이블"
           classNames={{
             wrapper: "shadow-none",
@@ -189,8 +269,14 @@ export default function NoteManageTable({ notes }: NoteManageTableProps) {
             <TableColumn>작성일</TableColumn>
             <TableColumn>액션</TableColumn>
           </TableHeader>
-          <TableBody>
-            {notes.map((note) => (
+          <TableBody
+            emptyContent={
+              selectedCategory === ALL_FILTER
+                ? "노트가 없습니다."
+                : "이 카테고리에는 노트가 없습니다."
+            }
+          >
+            {visibleNotes.map((note) => (
               <TableRow key={note.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                 <TableCell>
                   <div className="flex flex-col gap-1">
