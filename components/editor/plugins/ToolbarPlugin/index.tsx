@@ -116,8 +116,14 @@ const rootTypeToRootName = {
 
 // components/editor/plugins/ToolbarPlugin/index.tsx
 
-const CODE_LANGUAGE_OPTIONS_PRISM: [string, string][] =
-  getCodeLanguageOptionsPrism().filter((option) =>
+// ⚠️ @lexical/code의 getCodeLanguageOptions()는 라이브러리 내장 friendly-name
+// 맵(c, cpp, css, html, java, js, markdown, objc, plain, powershell, py,
+// rust, sql, swift, typescript, xml 뿐)만 반환한다. dart/kotlin/bash는
+// 애초에 그 목록에 없어서 아무리 필터에 넣어도 걸러지지 않았음
+// (기존 dart/kotlin 항목이 실제로는 드롭다운에 안 뜨고 있었던 원인).
+// → 내장 목록에 있는 것만 필터링하고, 없는 언어는 직접 추가한다.
+const CODE_LANGUAGE_OPTIONS_PRISM: [string, string][] = [
+  ...getCodeLanguageOptionsPrism().filter((option) =>
     [
       'c',
       'clike',
@@ -126,23 +132,28 @@ const CODE_LANGUAGE_OPTIONS_PRISM: [string, string][] =
       'html',
       'java',
       'js',
-      'javascript',
-      'kotlin',        // 👈 추가
       'markdown',
       'objc',
-      'objective-c',
       'plain',
       'powershell',
       'py',
-      'python',
       'rust',
       'sql',
       'swift',
       'typescript',
       'xml',
     ].includes(option[0]),
-  );
+  ),
+  // 👇 내장 friendly-name 맵에 없어서 직접 추가
+  //   (CodeHighlightPrismPlugin에서 prismjs 컴포넌트도 같이 import 해둠)
+  ['dart', 'Dart'],
+  ['kotlin', 'Kotlin'],
+  ['bash', 'Bash'],
+];
 
+// Shiki 쪽은 getCodeLanguageOptions()가 shiki가 지원하는 언어를 전부
+// 돌려주므로(수백 개) 필터에 정확한 id만 넣으면 된다. 다만 bash의 실제
+// id는 'bash'가 아니라 'shellscript'(별칭으로 bash/sh/shell/zsh를 가짐).
 const CODE_LANGUAGE_OPTIONS_SHIKI: [string, string][] =
   getCodeLanguageOptionsShiki().filter((option) =>
     [
@@ -150,21 +161,20 @@ const CODE_LANGUAGE_OPTIONS_SHIKI: [string, string][] =
       'clike',
       'cpp',
       'css',
+      'dart',         // 👈 flutter 카테고리 기본 언어
       'html',
       'java',
       'js',
-      'javascript',
       'kotlin',
       'swift',        // 👈 추가
       'markdown',
       'objc',
-      'objective-c',
       'plain',
       'powershell',
       'py',
-      'python',
       'rust',
       'sql',
+      'shellscript',  // 👈 Bash
       'typescript',
       'xml',
     ].includes(option[0]),
