@@ -12,7 +12,10 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import { Note } from "@/store/editorSotre";
 import PlaygroundNodes from '@/components/editor/nodes/PlaygroundNodes';
 import PlaygroundEditorTheme from '@/components/editor/theme/PlaygroundEditorTheme';
+import CodeHighlightPrismPlugin from '@/components/editor/plugins/CodeHighlightPrismPlugin';
+import CodeLanguageLabelPlugin from '@/components/editor/plugins/CodeLanguageLabelPlugin';
 import { $prepareNoteContent } from '../noteEditorUtils';
+import { useComments } from '../../../app/hooks/posts/useComments';
 
 interface ReadLexicalEditorProps {
   note?: Note;
@@ -143,11 +146,11 @@ export default function ReadLexicalEditor({ note }: ReadLexicalEditorProps) {
           </div>
         </header>
 
-        <div className="prose prose-lg dark:prose-invert max-w-none">
+        <div className="read-only-code prose prose-lg dark:prose-invert max-w-none">
           <LexicalComposer initialConfig={initialConfig}>
             <RichTextPlugin
               contentEditable={
-                <ContentEditable 
+                <ContentEditable
                   className="min-h-[500px] outline-none focus:outline-none text-gray-800 dark:text-gray-200 leading-relaxed"
                   style={{ caretColor: 'transparent' }}
                 />
@@ -161,6 +164,8 @@ export default function ReadLexicalEditor({ note }: ReadLexicalEditorProps) {
             />
             <HistoryPlugin />
             <LoadContentPlugin note={note} />
+            <CodeHighlightPrismPlugin />
+            <CodeLanguageLabelPlugin />
           </LexicalComposer>
         </div>
       </article>

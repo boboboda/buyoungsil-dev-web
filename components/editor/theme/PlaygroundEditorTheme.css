@@ -189,6 +189,26 @@
   text-align: right;
   min-width: 25px;
 }
+/* 읽기 화면에서만 코드 블록 우측 상단에 언어 이름표를 항상 표시.
+   (글쓰기 화면은 CodeActionMenuPlugin이 마우스 오버 시 보여주므로 건드리지 않음) */
+.read-only-code .PlaygroundEditorTheme__code[data-language]:after {
+  content: attr(data-language);
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 3px 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
+    sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #666;
+  background-color: rgba(238, 238, 238, 0.95);
+  border-left: 1px solid #ccc;
+  border-bottom: 1px solid #ccc;
+  border-bottom-left-radius: 4px;
+  pointer-events: none;
+}
 .PlaygroundEditorTheme__tableScrollableWrapper {
   overflow-x: auto;
   margin: 0px 25px 30px 0px;

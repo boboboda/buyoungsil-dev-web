@@ -22,10 +22,20 @@ import { siteConfig } from "@/config/site";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { useModalStore } from "@/store/sponsorStore";
 import { useCachedSession } from "@/app/hooks/user/useCachedSession";
+import { useIdleLogout } from "@/app/hooks/auth/useIdleLogout";
 
 export default function NavBar() {
   const { session, isLoading, isAuthenticated, user, isSessionComplete } =
     useCachedSession();
+
+  // 로그인 상태에서 비활동 감지 + 로그아웃까지 남은 시간
+  const { remainingSeconds } = useIdleLogout();
+  const idleCountdownLabel =
+    remainingSeconds !== null
+      ? `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(
+          remainingSeconds % 60,
+        ).padStart(2, "0")} 후 로그아웃`
+      : null;
 
   const [path, setPath] = useState("/");
   const pathname = usePathname();
@@ -82,10 +92,10 @@ export default function NavBar() {
                   className="text-medium whitespace-nowrap box-border list-none"
                 >
                   <a
-                    className="relative inline-flex items-center tap-highlight-transparent outline-none 
+                    className="relative inline-flex items-center tap-highlight-transparent outline-none
                       text-xl text-slate-500 font-semibold
                       hover:opacity-80 hover:text-slate-100
-                      active:opacity-disabled transition-opacity 
+                      active:opacity-disabled transition-opacity
                       data-[active=true]:text-[#0072F5]
                       data-[active=true]:dark:text-[#0072F5]"
                     data-active={path === item.href ? true : false}
@@ -97,7 +107,7 @@ export default function NavBar() {
               ))}
 
               <button
-                className="relative inline-flex items-center tap-highlight-transparent outline-none 
+                className="relative inline-flex items-center tap-highlight-transparent outline-none
                   text-xl text-slate-500 font-semibold
                   hover:opacity-80 hover:text-slate-100
                   active:opacity-disabled transition-opacity cursor-pointer
@@ -118,10 +128,10 @@ export default function NavBar() {
                   className="text-medium whitespace-nowrap box-border list-none"
                 >
                   <a
-                    className="relative inline-flex items-center tap-highlight-transparent outline-none 
+                    className="relative inline-flex items-center tap-highlight-transparent outline-none
                       text-[13px] text-slate-500 font-semibold
                       hover:opacity-80 hover:text-slate-100
-                      active:opacity-disabled transition-opacity 
+                      active:opacity-disabled transition-opacity
                       data-[active=true]:text-[#0072F5]
                       data-[active=true]:dark:text-[#0072F5]"
                     data-active={path === item.href ? true : false}
@@ -165,9 +175,16 @@ export default function NavBar() {
                       <DropdownTrigger>
                         <div className="flex w-[150px] items-center justify-center bg-transparent cursor-pointer">
                           <UserCircleIcon className="w-6 h-6" />
-                          <p className="inline-block max-w-[100px] px-1 py-1 text-black dark:text-white bg-transparent truncate">
-                            {user?.name}
-                          </p>
+                          <div className="flex flex-col items-start px-1 py-1 max-w-[110px]">
+                            <p className="inline-block text-black dark:text-white bg-transparent truncate w-full">
+                              {user?.name}
+                            </p>
+                            {idleCountdownLabel && (
+                              <p className="text-[10px] leading-tight text-red-500 whitespace-nowrap">
+                                {idleCountdownLabel}
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </DropdownTrigger>
                       <DropdownMenu aria-label="Profile Actions" variant="flat">
@@ -178,7 +195,7 @@ export default function NavBar() {
                           <p>로그인 정보</p>
                           <p>{user?.email}</p>
                         </DropdownItem>
-                        
+
                         {user?.role === "admin" ? (
                           <>
                             <DropdownItem
@@ -188,7 +205,7 @@ export default function NavBar() {
                             >
                               <p>📊 관리자 대시보드</p>
                             </DropdownItem>
-                            
+
                             <DropdownItem
                               key="adminProjects"
                               textValue="adminProjects"
@@ -204,7 +221,7 @@ export default function NavBar() {
                             >
                               <p>📚 개발노트 관리</p>
                             </DropdownItem>
-                            
+
                             <DropdownItem
                               key="adminCategories"
                               textValue="adminCategories"
@@ -212,7 +229,7 @@ export default function NavBar() {
                             >
                               <p>🏷️ 카테고리 관리</p>
                             </DropdownItem>
-                            
+
                             <DropdownItem
                               key="adminStories"
                               textValue="adminStories"
@@ -229,7 +246,7 @@ export default function NavBar() {
                             >
                               <p>💻 외주 신청 관리</p>
                             </DropdownItem>
-                            
+
                             <DropdownItem
                               key="adminLogs"
                               textValue="adminLogs"
@@ -237,7 +254,7 @@ export default function NavBar() {
                             >
                               <p>📋 개발 로그 작성</p>
                             </DropdownItem>
-                            
+
                             <DropdownItem
                               key="adminRevenues"
                               textValue="adminRevenues"
@@ -247,7 +264,7 @@ export default function NavBar() {
                             </DropdownItem>
                           </>
                         ) : null}
-                        
+
                         <DropdownItem
                           key="logout"
                           color="danger"
@@ -332,9 +349,16 @@ export default function NavBar() {
                 <DropdownTrigger>
                   <div className="flex items-center gap-2 bg-transparent cursor-pointer">
                     <UserCircleIcon className="w-5 h-5" />
-                    <p className="text-sm truncate max-w-[80px]">
-                      {user?.name}
-                    </p>
+                    <div className="flex flex-col items-start max-w-[90px]">
+                      <p className="text-sm truncate w-full">
+                        {user?.name}
+                      </p>
+                      {idleCountdownLabel && (
+                        <p className="text-[10px] leading-tight text-red-500 whitespace-nowrap">
+                          {idleCountdownLabel}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </DropdownTrigger>
                 <DropdownMenu aria-label="Profile Actions" variant="flat">
@@ -342,7 +366,7 @@ export default function NavBar() {
                     <p>로그인 정보</p>
                     <p className="text-xs">{user?.email}</p>
                   </DropdownItem>
-                  
+
                   {user?.role === "admin" ? (
                     <>
                       <DropdownItem
@@ -352,7 +376,7 @@ export default function NavBar() {
                       >
                         <p>📊 대시보드</p>
                       </DropdownItem>
-                      
+
                       {/* 🔥 외주 관리 추가 */}
                       <DropdownItem
                         key="adminWorks"
@@ -361,7 +385,7 @@ export default function NavBar() {
                       >
                         <p>💻 외주 관리</p>
                       </DropdownItem>
-                      
+
                       <DropdownItem
                         key="adminWrite"
                         textValue="adminWrite"
@@ -371,7 +395,7 @@ export default function NavBar() {
                       </DropdownItem>
                     </>
                   ) : null}
-                  
+
                   <DropdownItem
                     key="logout"
                     color="danger"
