@@ -5,11 +5,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { NoteCategory } from "./../types/index";
 
 import {
-  addEdtiorServer,
   allFetchEditorServerAdmin,
-  deleteOneEditorServer,
-  findOneAndUpdateEditorServer,
-  getMaxNoteId,
 } from "@/serverActions/editorServerAction";
 import { allFetchEdtiorServer } from "@/serverActions/editorServerAction";
 
@@ -125,19 +121,16 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
         }
       },
       
-      // 🔥 서버 저장 - Lexical JSON 형식으로
+      // 🔥 서버 저장 - Lexical JSON 형식으로 (API 라우트 호출 방식으로 변경)
+      // Server Action은 배포마다 액션 ID가 바뀌어서, 편집 중 배포가 끼면
+      // "Failed to find Server Action" 에러로 저장이 실패할 수 있다.
+      // API 라우트(고정 URL)로 바꿔서 이 문제를 없앤다.
       saveToServer: async () => {
         try {
           console.log("🚀 서버 저장 시작");
           let note = get();
 
-          const maxNoteId = await getMaxNoteId();
-          note.noteId = maxNoteId + 1;
-          
-          console.log("새 노트 ID:", note.noteId);
-
           const newData = {
-            noteId: note.noteId,
             title: note.title,
             mainCategory: note.mainCategory,
             subCategory: note.subCategory,
@@ -147,15 +140,21 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
 
           console.log("📤 저장할 데이터:", newData);
 
-          const noteData = await addEdtiorServer(JSON.stringify(newData));
+          const response = await fetch("/api/notes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(newData),
+          });
 
-          if (noteData.success) {
+          const noteData = await response.json();
+
+          if (response.ok && noteData.success) {
             localStorage.removeItem("editorAutoSave");
             set({ ...defaultInitContent });
             console.log("✅ 서버 저장 성공");
             return true;
           } else {
-            console.log("❌ 서버 저장 실패");
+            console.log("❌ 서버 저장 실패", noteData);
             return false;
           }
         } catch (error) {
@@ -164,7 +163,7 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
         }
       },
       
-      // 🔥 서버 업데이트 - Lexical JSON 형식으로
+      // 🔥 서버 업데이트 - Lexical JSON 형식으로 (API 라우트 호출 방식으로 변경)
       updateToServer: async () => {
         try {
           let note = get();
@@ -172,7 +171,6 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
           console.log("🔄 수정 노트 정보:", note);
 
           const newData = {
-            noteId: note.noteId,
             title: note.title,
             mainCategory: note.mainCategory,
             subCategory: note.subCategory,
@@ -180,21 +178,25 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
             level: note.level,
           };
 
-          if (newData) {
+          if (newData && note.noteId) {
             console.log("📤 수정할 데이터:", newData);
-            const result = await findOneAndUpdateEditorServer(
-              note.noteId!.toString(),
-              JSON.stringify(newData),
-            );
+
+            const response = await fetch(`/api/notes/${note.noteId}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(newData),
+            });
+
+            const result = await response.json();
 
             console.log("결과:", result.success);
 
-            if (result.success) {
+            if (response.ok && result.success) {
               localStorage.removeItem("editorAutoSave");
               console.log("✅ 서버 업데이트 성공");
               return true;
             } else {
-              console.log("❌ 서버 업데이트 실패");
+              console.log("❌ 서버 업데이트 실패", result);
               return false;
             }
           } else {
@@ -208,9 +210,13 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
       
       deleteToServer: async (noteId: string) => {
         try {
-          const result = await deleteOneEditorServer(noteId);
+          const response = await fetch(`/api/notes/${noteId}`, {
+            method: "DELETE",
+          });
 
-          if (result.success) {
+          const result = await response.json();
+
+          if (response.ok && result.success) {
             return true;
           } else {
             return false;
