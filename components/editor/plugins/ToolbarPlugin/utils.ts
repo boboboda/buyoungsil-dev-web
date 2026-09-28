@@ -38,6 +38,7 @@ import {
   MAX_ALLOWED_FONT_SIZE,
   MIN_ALLOWED_FONT_SIZE,
 } from '../../context/ToolbarContext';
+import {getDefaultCodeLanguage} from '../../utils/defaultCodeLanguage';
 
 // eslint-disable-next-line no-shadow
 export enum UpdateFontSizeType {
@@ -245,10 +246,10 @@ export const formatCode = (editor: LexicalEditor, blockType: string) => {
         return;
       }
       if (!$isRangeSelection(selection) || selection.isCollapsed()) {
-        $setBlocksType(selection, () => $createCodeNode());
+        $setBlocksType(selection, () => $createCodeNode(getDefaultCodeLanguage()));
       } else {
         const textContent = selection.getTextContent();
-        const codeNode = $createCodeNode();
+        const codeNode = $createCodeNode(getDefaultCodeLanguage());
         selection.insertNodes([codeNode]);
         selection = $getSelection();
         if ($isRangeSelection(selection)) {

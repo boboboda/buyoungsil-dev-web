@@ -18,6 +18,7 @@ import { Note } from "@/store/editorSotre";
 import { $prepareNoteContent } from './noteEditorUtils';
 import NoteEditorPlugins from './NoteEditorPlugins';
 import NoteEditorHeader from './NoteEditorHeader';
+import NoteCodeLanguageDefaultPlugin from './NoteCodeLanguageDefaultPlugin';
 
 interface NoteEditorAppProps {
   editorType: NoteEditorType;
@@ -138,11 +139,14 @@ function NoteEditorContent({ editorType, fetchNotes, note }: NoteEditorAppProps)
             )}
 
             {/* 커스텀 플러그인들 (자동저장 등) */}
-            <NoteEditorPlugins 
-              note={note} 
+            <NoteEditorPlugins
+              note={note}
               editorType={editorType}
               fetchNotes={fetchNotes}
             />
+
+            {/* 메인 카테고리에 맞춰 코드블록 기본 언어 갱신 */}
+            <NoteCodeLanguageDefaultPlugin />
 
             {/* 🔥 편집 모드일 때 컨텐츠 로드 */}
             <LoadContentForEditPlugin 

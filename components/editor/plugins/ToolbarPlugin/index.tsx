@@ -123,6 +123,7 @@ const CODE_LANGUAGE_OPTIONS_PRISM: [string, string][] =
       'clike',
       'cpp',
       'css',
+      'dart',           // 👈 flutter 카테고리 기본 언어
       'html',
       'java',
       'js',
@@ -150,6 +151,7 @@ const CODE_LANGUAGE_OPTIONS_SHIKI: [string, string][] =
       'clike',
       'cpp',
       'css',
+      'dart',         // 👈 flutter 카테고리 기본 언어
       'html',
       'java',
       'js',
