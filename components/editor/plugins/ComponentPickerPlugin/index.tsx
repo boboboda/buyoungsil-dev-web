@@ -38,6 +38,7 @@ import * as ReactDOM from 'react-dom';
 
 import useModal from '../../hooks/useModal';
 import catTypingGif from '../../images/cat-typing.gif';
+import {getDefaultCodeLanguage} from '../../utils/defaultCodeLanguage';
 import {EmbedConfigs} from '../AutoEmbedPlugin';
 import {INSERT_COLLAPSIBLE_COMMAND} from '../CollapsiblePlugin';
 import {INSERT_DATETIME_COMMAND} from '../DateTimePlugin';
@@ -219,11 +220,11 @@ function getBaseOptions(editor: LexicalEditor, showModal: ShowModal) {
 
           if ($isRangeSelection(selection)) {
             if (selection.isCollapsed()) {
-              $setBlocksType(selection, () => $createCodeNode());
+              $setBlocksType(selection, () => $createCodeNode(getDefaultCodeLanguage()));
             } else {
               // Will this ever happen?
               const textContent = selection.getTextContent();
-              const codeNode = $createCodeNode();
+              const codeNode = $createCodeNode(getDefaultCodeLanguage());
               selection.insertNodes([codeNode]);
               selection.insertRawText(textContent);
             }
