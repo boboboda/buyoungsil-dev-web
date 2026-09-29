@@ -14,6 +14,7 @@ import AdFooter from "@/components/main/adFooter";
 import NavBar from "@/components/main/navBar";
 import NavbarVisibilityWrapper from "@/lib/wrappers/NavbarWrapper";
 import SponsorModal from "@/components/main/sponsorModal";
+import VisitorTracker from "@/components/main/visitorTracker";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
@@ -115,6 +116,7 @@ export default async function RootLayout({
               {children}
             </main>
             <SponsorModal />
+             <VisitorTracker />
           </div>
 
           <div className="mt-auto">

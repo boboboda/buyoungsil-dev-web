@@ -2,9 +2,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
-import { format } from "date-fns";
 
-const VISITOR_LOG_COOKIE_KEY = "visited_today_";
 
 // 🔒 악성 패턴 감지 (완화됨)
 const MALICIOUS_PATTERNS = [
@@ -244,42 +242,12 @@ export async function middleware(request: NextRequest) {
     console.log("어드민 페이지 접근 허용:", session.email);
   }
 
-  // ========================================
+    // ========================================
   // 4️⃣ 방문자 기록
   // ========================================
-
-  if (!isAllowedBotRequest) {
-    const today = format(new Date(), "yyyy-MM-dd");
-    const hasVisitedToday =
-      request.cookies.get(VISITOR_LOG_COOKIE_KEY)?.value === today;
-
-    if (!hasVisitedToday) {
-      console.log("[Middleware] 방문 쿠키 없음. 새로운 방문을 기록합니다.");
-      const visitRecordApiUrl = new URL("/api/visitor-record", request.url);
-
-      const apiResponse = await fetch(visitRecordApiUrl, {
-        method: "POST",
-        headers: {
-          Cookie: request.headers.get("cookie") || "",
-        },
-      });
-
-      const finalResponse = NextResponse.next();
-      const setCookieHeaders = apiResponse.headers.getSetCookie();
-
-      if (setCookieHeaders.length > 0) {
-        setCookieHeaders.forEach((cookie) => {
-          finalResponse.headers.append("Set-Cookie", cookie);
-        });
-        console.log("[Middleware] 방문 기록 및 쿠키 설정 성공.");
-        return finalResponse;
-      }
-    } else {
-      console.log(
-        "[Middleware] 방문 쿠키 존재. 오늘 방문은 이미 기록되었습니다.",
-      );
-    }
-  }
+  // 방문 집계는 미들웨어가 아니라 브라우저에서 JS가 실행된 뒤
+  // components/main/visitorTracker.tsx 가 /api/visitor-record 를 1회 호출한다.
+  // (미들웨어에서 세면 쿠키 없는 봇/스캐너 요청이 전부 방문자로 집계됨)
 
   return NextResponse.next();
 }
