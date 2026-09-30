@@ -1,7 +1,7 @@
 // components/developmentNote/NoteEditorHeader.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Button,
   Chip,
@@ -12,11 +12,16 @@ import {
 } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { toast } from "react-toastify";
-import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 
 import { useNoteStore } from "@/components/providers/editor-provider";
 import { noteCategories, NoteCategory, NoteEditorType } from "@/types/index";
-import { Note, SubCategory } from "@/store/editorSotre";
+import { Note } from "@/store/editorSotre";
+import {
+  createSubCategory,
+  fetchSubCategories,
+  SubCategoryOption,
+} from "@/serverActions/noteSubCategoryActions";
 
 // 등급 타입 및 옵션 정의
 export type NoteLevel = "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
@@ -28,13 +33,13 @@ const levelOptions = [
 ];
 
 interface NoteEditorHeaderProps {
-  notes: Note[];
+  /** @deprecated 서브 카테고리는 DB에서 직접 불러오므로 더 이상 사용하지 않음 */
+  notes?: Note[];
   note?: Note;
   editType: NoteEditorType;
 }
 
 export default function NoteEditorHeader({
-  notes,
   note,
   editType,
 }: NoteEditorHeaderProps) {
@@ -44,193 +49,168 @@ export default function NoteEditorHeader({
   const {
     setContent,
     mainCategory,
-    subCategories,
     subCategory,
-    setSubCategories,
     saveToServer,
     updateToServer,
     title,
     level,
   } = useNoteStore((state) => state);
 
-  const [viewMainCategory, setViewMainCategory] = useState<Set<NoteCategory>>(
-    new Set(),
-  );
-  const [viewSubCategory, setViewSubCategory] = useState<SubCategory>({
-    id: 0,
-    name: "",
-  });
-  const [viewLevel, setViewLevel] = useState<Set<string>>(
-    new Set(["BEGINNER"]),
-  );
+  // 선택된 메인 카테고리에 속한 서브 카테고리 목록 (DB)
+  const [subOptions, setSubOptions] = useState<SubCategoryOption[]>([]);
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [isAdding, setIsAdding] = useState(false);
+
+  // 🔥 초기화: 글/노트가 바뀔 때 한 번만 실행
+  // (예전에는 mainCategory 등이 deps 에 있어 카테고리를 바꿀 때마다 초기화가 다시 돌았음)
+  useEffect(() => {
+    switch (editType) {
+      case "add":
+        setContent({ level: "BEGINNER" });
+        break;
+
+      case "edit":
+      case "read": {
+        const sub = note?.subCategory?.name ? note.subCategory : null;
+
+        setContent({
+          noteId: note?.noteId,
+          title: note?.title ?? "",
+          mainCategory: note?.mainCategory ?? "basics",
+          subCategory: sub,
+          level: note?.level || "BEGINNER",
+        });
+        break;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editType, note?.noteId]);
+
+  // 🔥 메인 카테고리가 바뀌면 그 카테고리의 서브 카테고리 목록을 불러온다
+  useEffect(() => {
+    if (!mainCategory) {
+      setSubOptions([]);
+
+      return;
+    }
+
+    let cancelled = false;
+
+    setSubOptions([]);
+    fetchSubCategories(mainCategory)
+      .then((options) => {
+        if (!cancelled) setSubOptions(options);
+      })
+      .catch((error) => {
+        console.error("서브 카테고리 조회 실패:", error);
+        if (!cancelled) toast.error("서브 카테고리를 불러오지 못했습니다.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mainCategory]);
+
+  // 목록 로딩 중이거나 목록에 없는 기존 글의 서브 카테고리도 선택된 상태로 보이게 한다
+  const selectableSubs = useMemo<SubCategoryOption[]>(() => {
+    if (
+      subCategory?.name &&
+      !subOptions.some((option) => option.name === subCategory.name)
+    ) {
+      return [
+        ...subOptions,
+        { id: String(subCategory.id), name: subCategory.name },
+      ];
+    }
+
+    return subOptions;
+  }, [subOptions, subCategory]);
 
   // 🔥 메인 카테고리 선택 핸들러
   const handleSelectionChange = (keys: SharedSelection) => {
-    setViewMainCategory(keys as Set<NoteCategory>);
+    if (keys === "all") return;
 
-    const selectedArray = Array.from(keys);
-    const selectedCategory = selectedArray[0] as NoteCategory;
+    const selected = Array.from(keys)[0] as NoteCategory | undefined;
 
-    if (selectedCategory) {
-      setContent({ mainCategory: selectedCategory });
+    // 이미 선택된 항목을 다시 눌러 빈 선택이 되는 경우는 무시
+    if (!selected || selected === mainCategory) return;
+
+    // 서브 카테고리는 메인 카테고리에 종속되므로 메인이 바뀌면 선택을 비운다
+    setContent({ mainCategory: selected, subCategory: null });
+  };
+
+  // 🔥 서브 카테고리 선택 핸들러 (다시 누르면 선택 해제)
+  const handleSubCategoryChange = (keys: SharedSelection) => {
+    if (keys === "all") return;
+
+    const name = Array.from(keys)[0];
+
+    if (name === undefined) {
+      setContent({ subCategory: null });
+
+      return;
+    }
+
+    const found = selectableSubs.find((option) => option.name === String(name));
+
+    if (found) {
+      setContent({ subCategory: { id: found.id, name: found.name } });
     }
   };
 
   // 🔥 등급 선택 핸들러
   const handleLevelChange = (keys: SharedSelection) => {
-    console.log("🔥 레벨 변경 감지:", keys);
-
     if (keys === "all") return;
 
-    const selectedLevel = Array.from(keys)[0] as NoteLevel;
+    const selectedLevel = Array.from(keys)[0] as NoteLevel | undefined;
 
-    console.log("🔥 선택된 레벨:", selectedLevel);
-
-    if (
-      selectedLevel &&
-      (selectedLevel === "BEGINNER" ||
-        selectedLevel === "INTERMEDIATE" ||
-        selectedLevel === "ADVANCED")
-    ) {
-      const levelSet = new Set([selectedLevel]);
-
-      setViewLevel(levelSet);
+    if (selectedLevel && levelOptions.some((o) => o.value === selectedLevel)) {
       setContent({ level: selectedLevel });
-      console.log("🔥 스토어에 레벨 저장됨:", selectedLevel);
     }
   };
 
-  // 🔥 서브 카테고리 선택 핸들러
-  const handleSubCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const selectedValue = e.target.value;
+  // 🔥 서브 카테고리 추가: 현재 메인 카테고리 아래에 즉시 DB 저장
+  const addSubCategory = async () => {
+    const name = newCategoryName.trim();
 
-    console.log("카테고리", selectedValue);
+    if (!name || isAdding) return;
 
-    const existingCategory = subCategories.find(
-      (cat) => cat.name === selectedValue,
-    );
+    if (!mainCategory) {
+      toast.error("메인 카테고리를 먼저 선택해주세요.");
 
-    if (existingCategory) {
-      setViewSubCategory(existingCategory);
-      setContent({ subCategory: existingCategory });
-      console.log("실행됨");
+      return;
+    }
+
+    setIsAdding(true);
+
+    try {
+      const result = await createSubCategory(mainCategory, name);
+
+      const added = result.subCategory;
+
+      if (!result.success || !added) {
+        toast.error(result.error ?? "카테고리 추가에 실패했습니다.");
+
+        return;
+      }
+
+      setSubOptions((prev) =>
+        prev.some((option) => option.id === added.id) ? prev : [...prev, added],
+      );
+      setContent({ subCategory: added });
+      setNewCategoryName("");
+      toast.success(
+        result.created
+          ? `'${added.name}' 카테고리를 추가했습니다.`
+          : `이미 있는 카테고리라 '${added.name}'을(를) 선택했습니다.`,
+      );
+    } catch (error) {
+      console.error("서브 카테고리 추가 실패:", error);
+      toast.error("카테고리 추가 중 오류가 발생했습니다.");
+    } finally {
+      setIsAdding(false);
     }
   };
-
-  // 🔥 서브 카테고리 추가
-  const addSubCategory = () => {
-    const selectedValue = newCategoryName;
-    const existingCategory = subCategories.find(
-      (cat) => cat.name === selectedValue,
-    );
-
-    let newCategory: SubCategory;
-
-    if (existingCategory) {
-      newCategory = existingCategory;
-    } else {
-      const lastId =
-        subCategories.length > 0
-          ? Math.max(...subCategories.map((cat) => cat.id))
-          : 0;
-      const newId = lastId + 1;
-
-      newCategory = {
-        id: newId,
-        name: selectedValue,
-      };
-
-      setSubCategories([...subCategories, newCategory]);
-    }
-
-    setContent({ subCategory: newCategory });
-    setNewCategoryName("");
-  };
-
-  // 🔥 초기화 (editType에 따라)
-  useEffect(() => {
-    switch (editType) {
-      case "add":
-        // 서버에서 가져온 서브카테고리 설정
-        const serverSubCategories = notes
-          .map((note) => note.subCategory)
-          .filter(
-            (subCat): subCat is SubCategory =>
-              subCat !== null && subCat !== undefined,
-          );
-
-        if (serverSubCategories.length !== 0) {
-          // 중복 제거
-          const uniqueSubCats = Array.from(
-            new Map(serverSubCategories.map(cat => [cat.id, cat])).values()
-          );
-          setSubCategories(uniqueSubCats);
-        }
-
-        if (mainCategory) {
-          setViewMainCategory(new Set([mainCategory]));
-        }
-
-        console.log("🔥 ADD 모드: 기본 레벨 설정");
-        setViewLevel(new Set(["BEGINNER"]));
-        setContent({ level: "BEGINNER" });
-        break;
-
-      case "edit":
-        const editSubCat: SubCategory = note?.subCategory ?? { id: 0, name: "" };
-        const editMainCat: NoteCategory = note?.mainCategory ?? "basics";
-        const editLevel: NoteLevel = note?.level || "BEGINNER";
-
-        console.log("🔥 EDIT 모드: 기존 레벨 로드:", editLevel);
-
-        setSubCategories([editSubCat]);
-        setContent({ mainCategory: editMainCat });
-        setContent({ subCategory: editSubCat });
-        setContent({ noteId: note?.noteId });
-        setContent({ level: editLevel });
-
-        setViewSubCategory(editSubCat);
-        setViewMainCategory(new Set([editMainCat]));
-        setViewLevel(new Set([editLevel]));
-        break;
-
-      case "read":
-        const readSubCat: SubCategory = note?.subCategory ?? { id: 0, name: "" };
-        const readMainCat: NoteCategory = note?.mainCategory ?? "basics";
-        const readLevel: NoteLevel = note?.level || "BEGINNER";
-
-        console.log("🔥 READ 모드: 레벨 로드:", readLevel);
-
-        setSubCategories([readSubCat]);
-        setContent({ mainCategory: readMainCat });
-        setContent({ subCategory: readSubCat });
-        setContent({ noteId: note?.noteId });
-        setContent({ level: readLevel });
-
-        setViewSubCategory(readSubCat);
-        setViewMainCategory(new Set([readMainCat]));
-        setViewLevel(new Set([readLevel]));
-        break;
-
-      default:
-        console.log("Unknown edit type");
-        break;
-    }
-  }, [editType, note, notes, mainCategory, setContent, setSubCategories]);
-
-  // 🔥 서브카테고리 동기화
-  useEffect(() => {
-    if (subCategory && subCategories.length !== 0) {
-      console.log("sub", subCategories);
-      setViewSubCategory(subCategory);
-    }
-  }, [subCategories, subCategory]);
-
-  // 🔥 디버깅용 level 상태 감시
-  useEffect(() => {
-    console.log("🔥 현재 스토어 level 상태:", level);
-  }, [level]);
 
   const notifySuccessEvent = (msg: string) => toast.success(msg);
 
@@ -264,27 +244,17 @@ export default function NoteEditorHeader({
   // 🔥 저장 핸들러
   const handleSaveToServer = async () => {
     try {
-      console.log("🔥 저장 직전 스토어 상태 확인:");
-      console.log("- level:", level);
-      console.log("- title:", title);
-      console.log("- mainCategory:", mainCategory);
-      console.log("- subCategory:", subCategory);
-
-      // Lexical 에디터 상태 가져오기
-      const editorState = editor.getEditorState();
-      const json = editorState.toJSON();
-      
-      // content도 함께 저장
-      setContent({ content: json });
+      // Lexical 에디터 상태를 스토어에 반영
+      setContent({ content: editor.getEditorState().toJSON() });
 
       const result = await saveToServer();
-
-      console.log("saveServer", result);
 
       if (result) {
         notifySuccessEvent("서버에 저장되었습니다.");
         router.push("/admin/notes");
         router.refresh();
+      } else {
+        toast.error("저장에 실패했습니다. 서버 로그를 확인해주세요.");
       }
     } catch (error) {
       console.log(error);
@@ -295,27 +265,16 @@ export default function NoteEditorHeader({
   // 🔥 수정 핸들러
   const handleUpdateToServer = async () => {
     try {
-      console.log("🔥 수정 직전 스토어 상태 확인:");
-      console.log("- level:", level);
-      console.log("- title:", title);
-      console.log("- mainCategory:", mainCategory);
-      console.log("- subCategory:", subCategory);
-
-      // Lexical 에디터 상태 가져오기
-      const editorState = editor.getEditorState();
-      const json = editorState.toJSON();
-      
-      // content도 함께 저장
-      setContent({ content: json });
+      setContent({ content: editor.getEditorState().toJSON() });
 
       const result = await updateToServer();
-
-      console.log("updateServer", result);
 
       if (result) {
         notifySuccessEvent("문서가 수정되었습니다.");
         router.push("/admin/notes");
         router.refresh();
+      } else {
+        toast.error("수정에 실패했습니다. 서버 로그를 확인해주세요.");
       }
     } catch (error) {
       console.log(error);
@@ -331,7 +290,7 @@ export default function NoteEditorHeader({
           <Select
             className="max-w-xs"
             label="메인 카테고리"
-            selectedKeys={viewMainCategory}
+            selectedKeys={mainCategory ? [mainCategory] : []}
             onSelectionChange={handleSelectionChange}
           >
             {noteCategories.map((category) => (
@@ -340,16 +299,19 @@ export default function NoteEditorHeader({
           </Select>
         </div>
 
-        {/* 서브 카테고리 */}
+        {/* 서브 카테고리 (선택한 메인 카테고리에 속한 것만 표시) */}
         <div className="flex flex-1 max-w-[200px]">
           <Select
             className="max-w-xs"
             label="서브 카테고리"
-            selectedKeys={viewSubCategory ? [viewSubCategory.name] : []}
-            onChange={handleSubCategoryChange}
+            placeholder={
+              selectableSubs.length === 0 ? "없음 (오른쪽에서 추가)" : "선택 안 함"
+            }
+            selectedKeys={subCategory?.name ? [subCategory.name] : []}
+            onSelectionChange={handleSubCategoryChange}
           >
-            {subCategories.map((category) => (
-              <SelectItem key={category.name}>{category.name}</SelectItem>
+            {selectableSubs.map((option) => (
+              <SelectItem key={option.name}>{option.name}</SelectItem>
             ))}
           </Select>
         </div>
@@ -359,7 +321,7 @@ export default function NoteEditorHeader({
           <Select
             className="max-w-xs"
             label="난이도"
-            selectedKeys={viewLevel}
+            selectedKeys={level ? [level] : []}
             onSelectionChange={handleLevelChange}
           >
             {levelOptions.map((option) => (
@@ -375,19 +337,21 @@ export default function NoteEditorHeader({
         {/* 서브 카테고리 추가 */}
         <div className="flex space-x-2 items-center">
           <Input
-            placeholder="새 카테고리 이름"
+            placeholder="새 서브 카테고리 이름"
             value={newCategoryName}
             onChange={(e) => setNewCategoryName(e.target.value)}
+            onKeyDown={(e) => {
+              // 한글 입력 중 Enter(조합 확정)는 무시
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                addSubCategory();
+              }
+            }}
           />
           <Button
-            className={`
-              ${
-                newCategoryName === ""
-                  ? "opacity-50 cursor-not-allowed"
-                  : "hover:bg-blue-500"
-              }
-            `}
-            disabled={newCategoryName === ""}
+            className="hover:bg-blue-500"
+            isDisabled={newCategoryName.trim() === ""}
+            isLoading={isAdding}
             onClick={addSubCategory}
           >
             추가
@@ -425,10 +389,7 @@ export default function NoteEditorHeader({
             label="제목"
             type="text"
             value={title || ""}
-            onChange={(e) => {
-              setContent({ title: e.target.value });
-              console.log("인풋", e.target.value);
-            }}
+            onChange={(e) => setContent({ title: e.target.value })}
           />
         </div>
       </div>

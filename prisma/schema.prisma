@@ -280,7 +280,20 @@ model NoteCategory {
 }
 
 
+// 🔥 서브 카테고리 (메인 카테고리별로 관리)
+model NoteSubCategory {
+  id           String   @id @default(cuid())
+  mainCategory String   // NoteCategory 슬러그 ("flutter", "react" ...)
+  name         String
+  order        Int      @default(0)
 
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([mainCategory, name])
+  @@index([mainCategory])
+  @@map("note_sub_categories")
+}
 
 
 model WorkRequest {
