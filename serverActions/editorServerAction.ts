@@ -7,6 +7,14 @@ import { NoteCategory } from "@/types";
 import moment from "moment";
 import { revalidatePath } from "next/cache";
 import { cache } from 'react';
+import { Prisma } from "@prisma/client";
+
+// Json 컬럼에 null 을 그대로 넣으면 Prisma 가 오류를 내므로 Prisma.DbNull 로 바꿔서 저장한다.
+function toJsonOrDbNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  if (!value) return Prisma.DbNull;
+
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
 
 export async function addEdtiorServer(reqData: string) {
   console.log("에디터서버 db 추가 실행")
@@ -29,7 +37,7 @@ export async function addEdtiorServer(reqData: string) {
         noteId: note.noteId!,
         title: note.title,
         mainCategory: note.mainCategory || null,
-        subCategory: JSON.parse(JSON.stringify(note.subCategory)) || null,
+        subCategory: toJsonOrDbNull(note.subCategory),
         level: note.level || 'BEGINNER',
         content: note.content
       }
@@ -78,7 +86,7 @@ export async function findOneAndUpdateEditorServer(noteId: string, reqData: stri
       data: {
         title: note.title,
         mainCategory: note.mainCategory || null,
-        subCategory: note.subCategory || null,
+        subCategory: toJsonOrDbNull(note.subCategory),
         level: note.level || 'BEGINNER',
         content: note.content
       }

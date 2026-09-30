@@ -197,7 +197,7 @@ export interface Note {
 }
 
 export interface SubCategory {
-  id: number;
+  id: number | string;
   name: string;
 }
 

@@ -17,10 +17,8 @@ interface NoteEditorPluginsProps {
   fetchNotes: Note[];
 }
 
-export default function NoteEditorPlugins({ 
-  note, 
+export default function NoteEditorPlugins({
   editorType,
-  fetchNotes 
 }: NoteEditorPluginsProps) {
   const [editor] = useLexicalComposerContext();
   const { setContent, saveToLocal, setHasLocalChanges } = useNoteStore(
@@ -34,10 +32,7 @@ export default function NoteEditorPlugins({
       const json = editorState.toJSON();
       
       // Zustand store에 저장
-      setContent({
-        ...note,
-        content: json,
-      });
+       setContent({ content: json });
       
       setHasLocalChanges(true);
       

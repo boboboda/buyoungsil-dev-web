@@ -19,7 +19,7 @@ export interface Note {
 }
 
 export interface SubCategory {
-  id: number;
+  id: number | string;
   name: string;
 }
 
@@ -30,7 +30,7 @@ export interface EditorActions {
   loadFromLocal: () => Note | null | undefined;
   deleteLocal: () => Promise<boolean>;
   setHasLocalChanges: (value: boolean) => void;
-  deleteSubCategory: (id: number) => void;
+  deleteSubCategory: (id: number | string) => void;
   setSubCategories: (subCategories: SubCategory[]) => void;
   setEditorState: (state: EditorState) => void;
   updateToServer: () => Promise<boolean>;

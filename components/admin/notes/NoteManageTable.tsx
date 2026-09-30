@@ -31,7 +31,7 @@ interface Note {
   noteId: number;  // 실제 노트 ID (number 타입)
   title: string;
   mainCategory?: string | null;
-  subCategory?: NoteSubCategory | null;
+  subCategory?: string | { id?: number | string; name?: string } | null;
   level?: string | null;
   isPublished: boolean;
   createdAt: Date | string;
@@ -122,15 +122,17 @@ export default function NoteManageTable({ notes, categories }: NoteManageTablePr
   }, [categories]);
 
   // 카테고리 정보 텍스트 (예: "🧩 Kotlin Compose > Layout")
-  const getCategoryInfo = (mainCategory?: string | null, subCategory?: NoteSubCategory | null) => {
+    // 카테고리 정보 텍스트 (예: "🧩 Kotlin Compose > Layout")
+  const getCategoryInfo = (mainCategory?: string | null, rawSubCategory?: Note["subCategory"]) => {
     const info = categoryMap[mainCategory || ""] || {
       name: mainCategory || "미분류",
       icon: "📝",
     };
 
-    // subCategory는 { id, name } 객체라서 그대로 찍으면 "[object Object]"가 됨 → name만 꺼내서 표시
+    // subCategory는 { id, name } 객체(예전 데이터는 문자열)라서 그대로 찍으면
+    // "[object Object]"가 됨 → name만 꺼내서 표시
     const subCategoryName =
-      subCategory && typeof subCategory === "object" ? subCategory.name : subCategory;
+      typeof rawSubCategory === "string" ? rawSubCategory : rawSubCategory?.name;
 
     if (subCategoryName) {
       return `${info.icon} ${info.name} > ${subCategoryName}`;
