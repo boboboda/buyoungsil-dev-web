@@ -7,12 +7,12 @@ import { usePostActions } from "./usePostActions";
 import { useComments } from "./useComments";
 import { useConfirmModal } from "./useConfirmModal";
 
+// 작성자 정보는 서버가 세션에서 읽으므로 더 이상 currentUser 를 받지 않는다.
 export function usePostDetail(
   appName: string,
   postType: string,
   postId: string,
-  initialPost?: Post,
-  currentUser?: { name: string; email: string },
+  initialPost?: Post | null,
 ) {
   // 기본 데이터 및 액션 훅들
   const postQuery = usePost(appName, postType, postId, initialPost);
@@ -21,29 +21,13 @@ export function usePostDetail(
   const { isOpen, onOpenChange, modalConfig, showConfirm, hideModal } =
     useConfirmModal();
 
-  // 사용자 정보 기본값
-  const user = currentUser || { name: "익명", email: "anonymous@example.com" };
-
   // 래핑된 액션 함수들 (매개변수 자동 바인딩)
   const handleCommentSubmit = () => {
-    comments.handleCommentSubmit(
-      appName,
-      postType,
-      postId,
-      user.name,
-      user.email,
-    );
+    comments.handleCommentSubmit(appName, postType, postId);
   };
 
   const handleReplySubmit = (commentId: string) => {
-    comments.handleReplySubmit(
-      appName,
-      postType,
-      postId,
-      commentId,
-      user.name,
-      user.email,
-    );
+    comments.handleReplySubmit(appName, postType, postId, commentId);
   };
 
   const handleCommentDelete = (commentId: string) => {
@@ -62,23 +46,35 @@ export function usePostDetail(
     comments.handleReplyEdit(appName, postType, postId, replyId);
   };
 
-  const handleEditPost = (title: string, content: string) => {
-    postActions.handleEditPost(appName, postType, postId, title, content);
+  // 수정에 성공하면 onDone 이 호출된다 (편집 모드 닫기용)
+  const handleEditPost = (
+    title: string,
+    content: string,
+    onDone?: () => void,
+  ) => {
+    postActions.handleEditPost(
+      appName,
+      postType,
+      postId,
+      title,
+      content,
+      onDone,
+    );
   };
 
-  const openPostDeleteModal = (postId : string) => {
+  const openPostDeleteModal = (targetPostId: string) => {
     showConfirm({
       content: "게시글을 삭제하시겠습니까?",
       confirmText: "삭제",
       confirmColor: "danger",
       onConfirm: async () => {
-        await postActions.handleDeletePost(appName, postType, postId);
+        await postActions.handleDeletePost(appName, postType, targetPostId);
         hideModal();
       },
     });
   };
 
-  const openCommentDeleteModal = (commentId : string) => {
+  const openCommentDeleteModal = (commentId: string) => {
     showConfirm({
       content: "댓글을 삭제하시겠습니까?",
       confirmText: "삭제",
@@ -91,7 +87,7 @@ export function usePostDetail(
   };
 
   // 답글 삭제 모달 열기
-  const openReplyDeleteModal = (replyId : string) => {
+  const openReplyDeleteModal = (replyId: string) => {
     showConfirm({
       content: "답글을 삭제하시겠습니까?",
       confirmText: "삭제",

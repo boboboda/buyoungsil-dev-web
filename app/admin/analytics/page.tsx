@@ -2,9 +2,13 @@
 import { Metadata } from "next";
 import { Card, CardBody } from "@heroui/react";
 
+import AdsView from "@/components/admin/analytics/AdsView";
+import LiveView from "@/components/admin/analytics/LiveView";
 import AnalyticsNav from "@/components/admin/analytics/AnalyticsNav";
 import ServerStatsView from "@/components/admin/analytics/ServerStatsView";
 import UsersView from "@/components/admin/analytics/UsersView";
+import { AdStats, getAdStats } from "@/lib/analytics/adStats";
+import { getLiveStats, LiveStats } from "@/lib/analytics/liveStats";
 import { getServerStats, ServerStats } from "@/lib/analytics/serverStats";
 import { AnalyticsAppInfo, getUserStats, listApps, UserStats } from "@/lib/analytics/stats";
 
@@ -83,8 +87,37 @@ export default async function AdminAnalyticsPage({
     ) : (
       <Notice>사용자 통계를 불러오지 못했습니다. 서버 로그를 확인하세요.</Notice>
     );
-  } else {
-    content = <Notice>이 탭은 다음 단계에서 추가됩니다.</Notice>;
+  } else if (tab === "ads") {
+    let stats: AdStats | null = null;
+
+    try {
+      stats = await getAdStats(selected.id, { excludeDebug });
+    } catch (e) {
+      console.error("[analytics] 광고 통계 조회 실패:", e);
+    }
+
+    content = stats ? (
+      <AdsView stats={stats} />
+    ) : (
+      <Notice>광고 통계를 불러오지 못했습니다. 서버 로그를 확인하세요.</Notice>
+    );
+  } else if (tab === "live") {
+    let stats: LiveStats | null = null;
+
+    try {
+      stats = await getLiveStats(selected.id, { excludeDebug });
+    } catch (e) {
+      console.error("[analytics] 실시간 조회 실패:", e);
+    }
+
+    content = (
+      <LiveView
+        key={`${selected.appId}-${excludeDebug}`}
+        appId={selected.appId}
+        excludeDebug={excludeDebug}
+        initial={stats}
+      />
+    );
   }
 
   return (

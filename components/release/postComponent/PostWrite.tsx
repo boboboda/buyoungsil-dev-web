@@ -36,31 +36,42 @@ export default function PostWrite({
   const { data: session, status } = useSession();
 
   const handleSubmit = async () => {
+    if (isLoading) return;
+
+    if (status !== "authenticated" || !session?.user?.email) {
+      notifyErrorEvent("로그인 후 작성할 수 있습니다.");
+
+      return;
+    }
+
+    if (!title.trim() || !content.trim()) {
+      notifyErrorEvent("제목과 내용을 입력해주세요.");
+
+      return;
+    }
+
+    // addAPost 와 이동 경로에서 같은 postType 을 쓰도록 한 번만 정한다.
+    const resolvedPostType = postType || "notice";
+
     setIsLoading(true);
 
-    await new Promise((f) => setTimeout(f, 600));
-
     try {
+      // 작성자 이름/이메일은 서버가 세션에서 직접 읽는다.
       await addAPost({
         appName: appName!,
-        postType: postType || "notice",
-        title: title,
-        writer: session?.user.name || "익명",
-        email: session?.user.email!,
-        content: content,
+        postType: resolvedPostType,
+        title,
+        content,
       });
 
-      setIsLoading(false);
-
-      router.push(`/project/${appName}/board/${postType}`);
+      router.push(`/project/${appName}/board/${resolvedPostType}`);
 
       notifySuccessEvent(`성공적으로 작성되었습니다!`);
-
-      console.log(`게시글 추가완료`);
     } catch (error) {
-      setIsLoading(false);
-      console.error("공지사항 작성 실패:", error);
+      console.error("게시글 작성 실패:", error);
       notifyErrorEvent(`작성이 실패되었습니다!`);
+    } finally {
+      setIsLoading(false);
     }
   };
 

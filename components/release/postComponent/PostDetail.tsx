@@ -3,6 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "react-toastify";
 
 import { Post } from "@/types";
 import SimpleModal from "@/components/modal/simpleModal";
@@ -24,10 +25,21 @@ export default function PostDetail({
   const [editTitle, setEditTitle] = useState(post?.title || "");
   const [editContent, setEditContent] = useState(post?.content || "");
 
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
 
-  // 현재 사용자 정보 (실제로는 로그인 상태에서 가져와야 함)
-  const currentUser = { name: session?.user.name!, email: session?.user.email! };
+  // 작성자 정보는 서버가 세션에서 직접 읽는다. 여기서는 로그인/관리자 여부만 UI 용으로 사용.
+  const isLoggedIn = !!session?.user?.email;
+  const isAdmin = session?.user?.role === "admin";
+
+  const requireLogin = () => {
+    if (!isLoggedIn) {
+      toast.info("로그인 후 이용할 수 있습니다.");
+
+      return false;
+    }
+
+    return true;
+  };
 
   const {
     post: currentPost,
@@ -61,6 +73,7 @@ export default function PostDetail({
     handleReplySubmit,
     handleCommentEdit,
     handleReplyEdit,
+    handleEditPost,
     openPostDeleteModal,
     openCommentDeleteModal,
     openReplyDeleteModal,
@@ -84,7 +97,10 @@ export default function PostDetail({
     isEditingReplyLoading,
     isDeleting,
     isEditing: isEditingPost,
-  } = usePostDetail(appName, postType, postId, post, currentUser);
+  } = usePostDetail(appName, postType, postId, post);
+
+  // 서버에서 받은 초기값(post)이 아니라 갱신되는 캐시(currentPost)를 기준으로 그린다.
+  const viewPost = currentPost ?? post;
 
   return (
     <>
@@ -133,7 +149,7 @@ export default function PostDetail({
               ) : (
                 /* 읽기 모드 - 제목 */
                 <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-slate-900 dark:text-slate-50 mb-6 leading-tight">
-                  {post.title}
+                  {viewPost.title}
                 </h1>
               )}
 
@@ -180,7 +196,7 @@ export default function PostDetail({
                 /* 읽기 모드 - 내용 */
                 <div className="prose prose-slate dark:prose-invert max-w-none">
                   <div className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line text-base sm:text-lg">
-                    {post.content}
+                    {viewPost.content}
                   </div>
                 </div>
               )}
@@ -195,20 +211,28 @@ export default function PostDetail({
                     className="px-5 py-2.5 text-sm font-medium text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-600 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all duration-200"
                     onClick={() => {
                       setIsEditing(false);
-                      setEditTitle(post.title);
-                      setEditContent(post.content);
+                      setEditTitle(viewPost.title);
+                      setEditContent(viewPost.content);
                     }}
                   >
                     취소
                   </button>
                   <button
-                    className="px-5 py-2.5 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all duration-200"
+                    className="px-5 py-2.5 text-sm font-medium bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white rounded-xl transition-all duration-200"
+                    disabled={isEditingPost}
                     onClick={() => {
-                      // handleEditPost(editTitle, editContent);
-                      setIsEditing(false);
+                      if (!editTitle.trim() || !editContent.trim()) {
+                        toast.warn("제목과 내용을 입력해주세요.");
+
+                        return;
+                      }
+                      // 저장에 성공했을 때만 편집 모드를 닫는다.
+                      handleEditPost(editTitle, editContent, () =>
+                        setIsEditing(false),
+                      );
                     }}
                   >
-                    저장
+                    {isEditingPost ? "저장중..." : "저장"}
                   </button>
                 </div>
               ) : (
@@ -217,7 +241,7 @@ export default function PostDetail({
                   <div className="flex space-x-3">
                     <button className="flex items-center space-x-2 px-5 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all duration-200 text-sm font-medium">
                       <span>💬</span>
-                      <span>댓글 {post.comments.length}</span>
+                      <span>댓글 {viewPost.comments.length}</span>
                     </button>
                     <button className="flex items-center space-x-2 px-5 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all duration-200 text-sm font-medium">
                       <span>📤</span>
@@ -225,18 +249,26 @@ export default function PostDetail({
                     </button>
                   </div>
                   <div className="flex space-x-3">
-                    <button
-                      className="px-5 py-2.5 text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-950 transition-all duration-200"
-                      onClick={() => setIsEditing(true)}
-                    >
-                      수정
-                    </button>
-                    <button
-                      className="px-5 py-2.5 text-sm font-medium text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded-xl hover:bg-red-50 dark:hover:bg-red-950 transition-all duration-200"
-                      onClick={() => openPostDeleteModal(post.id)}
-                    >
-                      삭제
-                    </button>
+                    {viewPost.isMine && (
+                      <button
+                        className="px-5 py-2.5 text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-950 transition-all duration-200"
+                        onClick={() => {
+                          setEditTitle(viewPost.title);
+                          setEditContent(viewPost.content);
+                          setIsEditing(true);
+                        }}
+                      >
+                        수정
+                      </button>
+                    )}
+                    {(viewPost.isMine || isAdmin) && (
+                      <button
+                        className="px-5 py-2.5 text-sm font-medium text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded-xl hover:bg-red-50 dark:hover:bg-red-950 transition-all duration-200"
+                        onClick={() => openPostDeleteModal(viewPost.id)}
+                      >
+                        삭제
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -249,7 +281,7 @@ export default function PostDetail({
               <h3 className="text-xl sm:text-2xl font-bold mb-8 flex items-center text-slate-900 dark:text-slate-50">
                 <span>댓글</span>
                 <span className="ml-3 px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-sm font-medium rounded-full">
-                  {post.comments.length}
+                  {viewPost.comments.length}
                 </span>
               </h3>
 
@@ -264,10 +296,13 @@ export default function PostDetail({
                   />
                   <div className="flex justify-end mt-4">
                     <button
-                      className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl"
-                      onClick={handleCommentSubmit}
+                      className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl"
+                      disabled={isCreatingComment}
+                      onClick={() => {
+                        if (requireLogin()) handleCommentSubmit();
+                      }}
                     >
-                      댓글 작성
+                      {isCreatingComment ? "작성중..." : "댓글 작성"}
                     </button>
                   </div>
                 </div>
@@ -275,7 +310,7 @@ export default function PostDetail({
 
               {/* 댓글 목록 */}
               <div className="space-y-8">
-                {currentPost?.comments.map((comment) => (
+                {viewPost.comments.map((comment) => (
                   <div
                     key={comment.id}
                     className="border-b border-slate-100 dark:border-slate-800 pb-8 last:border-b-0 last:pb-0"
@@ -301,21 +336,30 @@ export default function PostDetail({
 
                           {/* 댓글 액션 버튼 */}
                           <div className="flex items-center space-x-2">
-                            <button
-                              className="text-xs text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                              onClick={() =>
-                                startEditingComment(comment.id, comment.content)
-                              }
-                            >
-                              수정
-                            </button>
-                            <button
-                              className="text-xs text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors disabled:opacity-50"
-                              disabled={isDeletingComment}
-                              onClick={() => openCommentDeleteModal(comment.id)}
-                            >
-                              삭제
-                            </button>
+                            {comment.isMine && (
+                              <button
+                                className="text-xs text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                                onClick={() =>
+                                  startEditingComment(
+                                    comment.id,
+                                    comment.content,
+                                  )
+                                }
+                              >
+                                수정
+                              </button>
+                            )}
+                            {(comment.isMine || isAdmin) && (
+                              <button
+                                className="text-xs text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors disabled:opacity-50"
+                                disabled={isDeletingComment}
+                                onClick={() =>
+                                  openCommentDeleteModal(comment.id)
+                                }
+                              >
+                                삭제
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -356,11 +400,12 @@ export default function PostDetail({
                         <div className="flex items-center space-x-6 text-sm">
                           <button
                             className="text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition-colors duration-200"
-                            onClick={() =>
+                            onClick={() => {
+                              if (!requireLogin()) return;
                               setReplyTo(
                                 replyTo === comment.id ? null : comment.id,
-                              )
-                            }
+                              );
+                            }}
                           >
                             답글
                           </button>
@@ -454,27 +499,31 @@ export default function PostDetail({
 
                                       {/* 답글 액션 버튼 */}
                                       <div className="flex items-center space-x-2">
-                                        <button
-                                          className="text-xs text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                                          onClick={() =>
-                                            startEditingReply(
-                                              reply.id,
-                                              reply.content,
-                                              reply.mentionTo!,
-                                            )
-                                          }
-                                        >
-                                          수정
-                                        </button>
-                                        <button
-                                          className="text-xs text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors disabled:opacity-50"
-                                          disabled={isDeletingReply}
-                                          onClick={() =>
-                                            openReplyDeleteModal(reply.id)
-                                          }
-                                        >
-                                          삭제
-                                        </button>
+                                        {reply.isMine && (
+                                          <button
+                                            className="text-xs text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                                            onClick={() =>
+                                              startEditingReply(
+                                                reply.id,
+                                                reply.content,
+                                                reply.mentionTo,
+                                              )
+                                            }
+                                          >
+                                            수정
+                                          </button>
+                                        )}
+                                        {(reply.isMine || isAdmin) && (
+                                          <button
+                                            className="text-xs text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors disabled:opacity-50"
+                                            disabled={isDeletingReply}
+                                            onClick={() =>
+                                              openReplyDeleteModal(reply.id)
+                                            }
+                                          >
+                                            삭제
+                                          </button>
+                                        )}
                                       </div>
                                     </div>
 
@@ -523,12 +572,13 @@ export default function PostDetail({
                                         {/* 이 답글에 답글 달기 버튼 */}
                                         <button
                                           className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 text-xs font-medium transition-colors"
-                                          onClick={() =>
+                                          onClick={() => {
+                                            if (!requireLogin()) return;
                                             handleReplyToReply(
                                               comment.id,
                                               reply.writer,
-                                            )
-                                          }
+                                            );
+                                          }}
                                         >
                                           {reply.writer}님에게 답글
                                         </button>

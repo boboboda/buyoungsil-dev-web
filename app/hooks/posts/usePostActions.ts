@@ -21,7 +21,8 @@ export function usePostActions() {
     mutationFn: deleteAPost,
     onSuccess: (deletedPost, variables) => {
       if (deletedPost) {
-        router.push(`/release/${variables.postType}/${variables.appName}`);
+        // 실제 게시판 경로로 이동 (예전에는 /release/... 옛 경로로 보내고 있었음)
+        router.push(`/project/${variables.appName}/board/${variables.postType}`);
 
         notifySuccessEvent(`게시글이 성공적으로 삭제되었습니다!`);
         // 해당 게시글 캐시 제거
@@ -41,6 +42,9 @@ export function usePostActions() {
         notifyErrorEvent(`게시글 삭제에 실패했습니다!`);
       }
     },
+    onError: () => {
+      notifyErrorEvent(`게시글 삭제에 실패했습니다!`);
+    },
   });
 
   // 게시글 수정
@@ -51,17 +55,23 @@ export function usePostActions() {
         // 게시글 캐시 부분 업데이트
         queryClient.setQueryData(
           ["post", variables.appName, variables.postType, variables.id],
-          (oldPost: Post) => {
+          (oldPost: Post | null | undefined) => {
             if (!oldPost) return oldPost;
 
             return {
               ...oldPost,
-              title: variables.title,
-              content: variables.content,
+              title: updatedPost.title,
+              content: updatedPost.content,
             };
           },
         );
+        notifySuccessEvent(`게시글이 수정되었습니다!`);
+      } else {
+        notifyErrorEvent(`게시글 수정에 실패했습니다!`);
       }
+    },
+    onError: () => {
+      notifyErrorEvent(`게시글 수정에 실패했습니다!`);
     },
   });
 
@@ -69,14 +79,23 @@ export function usePostActions() {
     deletePostMutation.mutate({ appName, postType, id });
   };
 
+  // 수정이 성공했을 때만 onDone 이 호출된다 (편집 모드 닫기 등)
   const handleEditPost = (
     appName: string,
     postType: string,
     id: string,
     title: string,
     content: string,
+    onDone?: () => void,
   ) => {
-    editPostMutation.mutate({ appName, postType, id, title, content });
+    editPostMutation.mutate(
+      { appName, postType, id, title, content },
+      {
+        onSuccess: (updatedPost) => {
+          if (updatedPost) onDone?.();
+        },
+      },
+    );
   };
 
   return {

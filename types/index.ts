@@ -9,7 +9,7 @@ export type Post = {
   id: string;
   listNumber: string;
   writer: string;
-  email: string;
+  isMine: boolean; // 현재 로그인한 사용자가 작성자인지 (이메일은 클라이언트로 내려보내지 않음)
   title: string;
   content: string;
   created_at: string;
@@ -20,7 +20,6 @@ export interface PostSummary {
   id: string;
   listNumber: string;
   writer: string;
-  email: string;
   title: string;
   content: string;
   commentCount: number; // 댓글들 대신 개수만
@@ -30,7 +29,7 @@ export interface PostSummary {
 export type Comment = {
   id: string;
   writer: string;
-  email: string;
+  isMine: boolean;
   content: string;
   created_at: string;
   replys: Reply[];
@@ -39,7 +38,7 @@ export type Comment = {
 export type Reply = {
   id: string;
   writer: string;
-  email: string;
+  isMine: boolean;
   content: string;
   mentionTo: string | null; // 멘션 대상 (단순 문자열)
   created_at: string;
