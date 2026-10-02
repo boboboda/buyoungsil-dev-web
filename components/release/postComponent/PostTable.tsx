@@ -27,7 +27,21 @@ import { SearchIcon, ChevronDownIcon, PlusIcon } from "../../icons";
 
 import { columns } from "@/types";
 import { capitalize } from "@/lib/utils";
-import { Post, PostSummary } from "@/types";
+import { PostSummary } from "@/types";
+
+// 날짜를 한국 시간(KST) 기준 YYYY-MM-DD 로 표시
+const formatDate = (value?: string) => {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+
+  return d.toLocaleDateString("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+};
 
 const PostTable = ({
   posts,
@@ -38,9 +52,12 @@ const PostTable = ({
   appName: string;
   postType: string;
 }) => {
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
 
-  const isAdmin = session?.user.role === "admin";
+  const isAdmin = session?.user?.role === "admin";
+
+  // 공지사항은 관리자만, 문의 게시판은 누구나(비로그인은 write 페이지에서 로그인으로 이동)
+  const canWrite = postType !== "notice" || isAdmin;
 
   const [filterValue, setFilterValue] = React.useState("");
 
@@ -62,8 +79,8 @@ const PostTable = ({
   const [rowsPerPage, setRowsPerPage] = React.useState(5);
 
   const [sortDescriptor, setSortDescriptor] = React.useState<SortDescriptor>({
-    column: "create_at",
-    direction: "ascending",
+    column: "created_at",
+    direction: "descending",
   });
 
   const router = useRouter();
@@ -80,59 +97,58 @@ const PostTable = ({
     );
   }, [visibleColumns]);
 
+  // 검색 → 정렬 → 페이지 순서로 처리 (정렬이 현재 페이지에만 적용되던 문제 수정)
   const filteredItems = React.useMemo(() => {
     let filteredPosts = [...posts];
 
     if (hasSearchFilter) {
-      filteredPosts = filteredPosts.filter((Posts) =>
-        Posts.title.toLowerCase().includes(filterValue.toLowerCase()),
+      filteredPosts = filteredPosts.filter((p) =>
+        p.title.toLowerCase().includes(filterValue.toLowerCase()),
       );
     }
 
     return filteredPosts;
-  }, [posts, filterValue]);
+  }, [posts, filterValue, hasSearchFilter]);
 
-  const pages = Math.ceil(filteredItems.length / rowsPerPage);
+  const sortedAll = React.useMemo(() => {
+    return [...filteredItems].sort((a: PostSummary, b: PostSummary) => {
+      const col = sortDescriptor.column as keyof PostSummary;
+      let cmp: number;
 
-  const items = React.useMemo(() => {
-    const start = (page - 1) * rowsPerPage;
-    const end = start + rowsPerPage;
+      if (col === "listNumber") {
+        cmp = Number(a.listNumber) - Number(b.listNumber);
+      } else {
+        const first = String(a[col] ?? "");
+        const second = String(b[col] ?? "");
 
-    return filteredItems.slice(start, end);
-  }, [page, filteredItems, rowsPerPage]);
-
-  const sortedItems = React.useMemo(() => {
-    return [...items].sort((a: PostSummary, b: PostSummary) => {
-      const first = a[sortDescriptor.column as keyof PostSummary] as string;
-      const second = b[sortDescriptor.column as keyof PostSummary] as string;
-      const cmp = first < second ? -1 : first > second ? 1 : 0;
+        cmp = first < second ? -1 : first > second ? 1 : 0;
+      }
 
       return sortDescriptor.direction === "descending" ? -cmp : cmp;
     });
-  }, [sortDescriptor, items]);
+  }, [sortDescriptor, filteredItems]);
+
+  const pages = Math.max(1, Math.ceil(sortedAll.length / rowsPerPage));
+
+  const sortedItems = React.useMemo(() => {
+    const start = (page - 1) * rowsPerPage;
+
+    return sortedAll.slice(start, start + rowsPerPage);
+  }, [page, sortedAll, rowsPerPage]);
 
   const renderCell = React.useCallback(
-    (post: any, columnKey: any) => {
-      const cellValue = post[columnKey as keyof Post];
-
+    (post: PostSummary, columnKey: React.Key) => {
       switch (columnKey) {
         case "listNumber":
           return (
-            <h1 key={post.id} className="flex justify-center">
-              {post.listNumber}
-            </h1>
+            <span className="flex justify-center">{post.listNumber}</span>
           );
         case "writer":
-          return (
-            <h1 key={post.id} className="flex justify-center">
-              {post.writer}
-            </h1>
-          );
+          return <span className="flex justify-center">{post.writer}</span>;
         case "title":
           return (
-            <h1
-              key={post.id}
-              className="flex justify-center cursor-pointer"
+            <span
+              className="flex justify-center cursor-pointer hover:underline"
               onClick={() => {
                 router.push(
                   `/project/${appName}/board/${postType}/detail/${post.id}`,
@@ -140,23 +156,22 @@ const PostTable = ({
               }}
             >
               {post.title}
-            </h1>
+              {post.commentCount > 0 && (
+                <span className="ml-1 text-primary">[{post.commentCount}]</span>
+              )}
+            </span>
           );
-
-        case "create_at":
+        case "created_at":
           return (
-            <h1
-              key={post.id}
-              className="flex w-full text-center items-center justify-center"
-            >
-              {post.create_at}
-            </h1>
+            <span className="flex w-full text-center items-center justify-center">
+              {formatDate(post.created_at)}
+            </span>
           );
         default:
-          return cellValue;
+          return null;
       }
     },
-    [posts],
+    [router, appName, postType],
   );
 
   const onNextPage = React.useCallback(() => {
@@ -231,6 +246,18 @@ const PostTable = ({
                 ))}
               </DropdownMenu>
             </Dropdown>
+
+            {canWrite && (
+              <Button
+                color="primary"
+                endContent={<PlusIcon />}
+                onPress={() =>
+                  router.push(`/project/${appName}/board/${postType}/write`)
+                }
+              >
+                글쓰기
+              </Button>
+            )}
           </div>
         </div>
         <div className="flex justify-between items-center">
@@ -256,8 +283,12 @@ const PostTable = ({
     visibleColumns,
     onSearchChange,
     onRowsPerPageChange,
+    onClear,
     posts.length,
-    hasSearchFilter,
+    canWrite,
+    router,
+    appName,
+    postType,
   ]);
 
   const bottomContent = React.useMemo(() => {
@@ -297,12 +328,19 @@ const PostTable = ({
         </div>
       </div>
     );
-  }, [selectedKeys, items.length, page, pages, hasSearchFilter]);
+  }, [
+    selectedKeys,
+    filteredItems.length,
+    page,
+    pages,
+    onPreviousPage,
+    onNextPage,
+  ]);
 
   return (
     <Table
       isHeaderSticky
-      aria-label="Example table with custom cells, pagination and sorting"
+      aria-label="게시글 목록"
       bottomContent={bottomContent}
       bottomContentPlacement="outside"
       classNames={{
@@ -325,17 +363,15 @@ const PostTable = ({
         )}
       </TableHeader>
       <TableBody emptyContent={"보여줄 게시글이 없습니다"} items={sortedItems}>
-        {(item) =>
-          item && (
-            <TableRow key={item.id}>
-              {(columnKey) => (
-                <TableCell className=" text-center">
-                  {renderCell(item, columnKey)}
-                </TableCell>
-              )}
-            </TableRow>
-          )
-        }
+        {(item) => (
+          <TableRow key={item.id}>
+            {(columnKey) => (
+              <TableCell className=" text-center">
+                {renderCell(item, columnKey)}
+              </TableCell>
+            )}
+          </TableRow>
+        )}
       </TableBody>
     </Table>
   );
