@@ -262,6 +262,14 @@ export default function NavBar() {
                             >
                               <p>💰 수익 데이터 입력</p>
                             </DropdownItem>
+
+                            <DropdownItem
+                              key="adminAnalytics"
+                              textValue="adminAnalytics"
+                              onClick={() => router.push("/admin/analytics")}
+                            >
+                              <p>📈 앱 분석</p>
+                            </DropdownItem>
                           </>
                         ) : null}
 
