@@ -25,7 +25,7 @@ export function ToastProvider() {
       newestOnTop={false}
       position="top-right"
       rtl={false}
-      style={{ width: "450px" }}
+      style={{ width: "min(450px, calc(100vw - 24px))" }}
       theme="dark"
     />
   );

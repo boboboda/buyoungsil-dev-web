@@ -3,14 +3,17 @@
 import type { Post } from "@/types";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { isAppPath } from "@/lib/utils/appPath";
 import { toast } from "react-toastify";
+
 
 import { deleteAPost, editAPost } from "@/serverActions/posts";
 
 export function usePostActions() {
   const queryClient = useQueryClient();
   const router = useRouter();
+  const pathname = usePathname();
 
   //알람 처리
   const notifySuccessEvent = (msg: string) => toast.success(msg);
@@ -21,8 +24,12 @@ export function usePostActions() {
     mutationFn: deleteAPost,
     onSuccess: (deletedPost, variables) => {
       if (deletedPost) {
-        // 실제 게시판 경로로 이동 (예전에는 /release/... 옛 경로로 보내고 있었음)
-        router.push(`/project/${variables.appName}/board/${variables.postType}`);
+        // 실제 게시판 경로로 이동 
+        router.push(
+          isAppPath(pathname)
+            ? `/app/board/${variables.appName}/${variables.postType}`
+            : `/project/${variables.appName}/board/${variables.postType}`,
+        );
 
         notifySuccessEvent(`게시글이 성공적으로 삭제되었습니다!`);
         // 해당 게시글 캐시 제거

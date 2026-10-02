@@ -4,16 +4,9 @@ import React, { useState } from "react";
 import { Input, Textarea, Button, Card, CardBody } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { toast } from "react-toastify";
-import { useSession } from "next-auth/react";
 
 import { addAPost } from "@/serverActions/posts";
-
-interface ReceivedData {
-  postType?: string;
-  email?: string;
-  writeName?: string;
-  appName?: string;
-}
+import { useBoardBase, useViewer } from "@/components/app/AppViewerContext";
 
 export default function PostWrite({
   postType,
@@ -24,22 +17,27 @@ export default function PostWrite({
 }) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-  const [receivedData, setReceivedData] = useState<ReceivedData | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   const router = useRouter();
+  const { isApp, isLoggedIn } = useViewer();
 
-  const [isLoading, setIsLoading] = useState(false);
+  const resolvedPostType = postType || "notice";
+  const base = useBoardBase(appName!, resolvedPostType);
 
   const notifySuccessEvent = (msg: string) => toast.success(msg);
   const notifyErrorEvent = (msg: string) => toast.error(msg);
 
-  const { data: session, status } = useSession();
-
   const handleSubmit = async () => {
     if (isLoading) return;
 
-    if (status !== "authenticated" || !session?.user?.email) {
-      notifyErrorEvent("로그인 후 작성할 수 있습니다.");
+    if (!isLoggedIn) {
+      notifyErrorEvent(
+        isApp
+          ? "작성 권한을 확인하지 못했습니다. 앱을 닫고 다시 열어주세요."
+          : "로그인 후 작성할 수 있습니다.",
+      );
 
       return;
     }
@@ -50,13 +48,10 @@ export default function PostWrite({
       return;
     }
 
-    // addAPost 와 이동 경로에서 같은 postType 을 쓰도록 한 번만 정한다.
-    const resolvedPostType = postType || "notice";
-
     setIsLoading(true);
 
     try {
-      // 작성자 이름/이메일은 서버가 세션에서 직접 읽는다.
+      // 작성자 이름과 소유자 키는 서버가 직접 확인한다.
       await addAPost({
         appName: appName!,
         postType: resolvedPostType,
@@ -64,7 +59,7 @@ export default function PostWrite({
         content,
       });
 
-      router.push(`/project/${appName}/board/${resolvedPostType}`);
+      router.push(base);
 
       notifySuccessEvent(`성공적으로 작성되었습니다!`);
     } catch (error) {
@@ -75,35 +70,43 @@ export default function PostWrite({
     }
   };
 
+  // WebView에서는 window.confirm이 동작하지 않을 수 있어 두 번 눌러 취소하는 방식으로 처리한다.
   const handleCancel = () => {
-  const hasContent = title.trim() !== "" || content.trim() !== "";
+    const hasContent = title.trim() !== "" || content.trim() !== "";
 
-  if (hasContent && !window.confirm("작성 중인 내용이 사라집니다. 취소할까요?")) {
-    return;
-  }
+    if (hasContent && !confirmCancel) {
+      setConfirmCancel(true);
+      toast.info("작성 중인 내용이 사라집니다. 한 번 더 누르면 취소됩니다.");
 
-  // 목록으로 복귀 (appName/postType 은 props 로 받은 값)
-  router.push(`/project/${appName}/board/${postType || "notice"}`);
-};
+      return;
+    }
+
+    router.push(base);
+  };
 
   return (
-    <div className="w-full p-6">
+    <div className="w-full p-4 sm:p-6 box-border">
       <Card className="w-full shadow-lg" fullWidth={true}>
-        <CardBody className="p-8">
-          <h1 className="text-2xl font-bold mb-8 text-left">{postType === "notice" ? "공지사항" : "문의게시판"} 작성</h1>
+        <CardBody className="p-4 sm:p-8">
+          <h1 className="text-xl sm:text-2xl font-bold mb-6 text-left">
+            {resolvedPostType === "notice" ? "공지사항" : "문의사항"} 작성
+          </h1>
 
-          <div className="w-full space-y-6">
+          <div className="w-full space-y-5">
             <div className="w-full space-y-2">
-              <label htmlFor="post-title" className="text-sm font-medium text-gray-700 block text-left">
+              <label
+                className="text-sm font-medium text-gray-700 block text-left"
+                htmlFor="post-title"
+              >
                 제목:
               </label>
               <Input
                 className="text-left"
-                id="post-title"
                 classNames={{
                   input: "text-left",
                   inputWrapper: "border-2",
                 }}
+                id="post-title"
                 placeholder="제목을 입력해주세요"
                 size="lg"
                 type="text"
@@ -132,9 +135,9 @@ export default function PostWrite({
               />
             </div>
 
-            <div className="flex flex-row justify-end gap-4 pt-6">
+            <div className="flex flex-row justify-end gap-3 pt-4">
               <Button
-                className="px-8"
+                className="px-6"
                 color="primary"
                 isLoading={isLoading}
                 size="lg"
@@ -143,12 +146,13 @@ export default function PostWrite({
                 작성 완료
               </Button>
               <Button
-                className="px-8"
+                className="px-6"
+                color={confirmCancel ? "danger" : "default"}
                 size="lg"
                 variant="bordered"
                 onPress={handleCancel}
               >
-                취소
+                {confirmCancel ? "정말 취소" : "취소"}
               </Button>
             </div>
           </div>

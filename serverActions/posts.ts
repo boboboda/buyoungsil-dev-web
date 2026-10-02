@@ -6,6 +6,8 @@ import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { authOptions } from "@/lib/auth/auth";
 import { Post } from "@/types";
+import { getAppViewer } from "@/lib/auth/app-session";
+
 
 // ---------------------------------------------------------------------------
 // 공통 헬퍼 (이 파일은 "use server" 라서 export 하지 않는 내부 함수만 둡니다)
@@ -15,6 +17,7 @@ type Viewer = {
   name: string;
   email: string;
   isAdmin: boolean;
+  isApp?: boolean;
 };
 
 const formatDate = (date: Date | string) => {
@@ -26,6 +29,17 @@ const formatDate = (date: Date | string) => {
 
 // 서버에서 세션을 직접 확인한다. 클라이언트가 보낸 writer/email 은 신뢰하지 않는다.
 async function getViewer(): Promise<Viewer | null> {
+  const appViewer = await getAppViewer();
+
+  if (appViewer) {
+    return {
+      name: appViewer.name,
+      email: appViewer.ownerKey,
+      isAdmin: false,
+      isApp: true,
+    };
+  }
+
   const session = await getServerSession(authOptions);
   const user = session?.user;
 
@@ -46,6 +60,24 @@ async function requireViewer(): Promise<Viewer> {
   }
 
   return viewer;
+}
+
+const APP_POST_LIMIT = 3;
+const APP_POST_WINDOW_MS = 10 * 60 * 1000;
+
+async function assertAppPostRate(viewer: Viewer) {
+  if (!viewer.isApp) return;
+
+  const recent = await prisma.post.count({
+    where: {
+      email: viewer.email,
+      createdAt: { gte: new Date(Date.now() - APP_POST_WINDOW_MS) },
+    },
+  });
+
+  if (recent >= APP_POST_LIMIT) {
+    throw new Error("잠시 후 다시 작성해주세요.");
+  }
 }
 
 const isOwner = (viewer: Viewer | null, ownerEmail: string) =>
@@ -140,6 +172,8 @@ export async function addAPost({
     if (postType === "notice" && !viewer.isAdmin) {
       throw new Error("공지사항은 관리자만 작성할 수 있습니다.");
     }
+
+     await assertAppPostRate(viewer);
 
     const trimmedTitle = title.trim();
     const trimmedContent = content.trim();

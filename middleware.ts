@@ -260,5 +260,6 @@ export const config = {
     "/admin/:path*",
     "/signin",
     "/signup",
+    "/app/:path*", // ✅ 추가
   ],
 };

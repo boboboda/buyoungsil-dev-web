@@ -1,6 +1,6 @@
 "use client";
 // import { useUserStore } from '@/components/providers/user-store-provider';
-import { useSession } from "next-auth/react";
+import { useBoardBase, useViewer } from "@/components/app/AppViewerContext";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "react-toastify";
@@ -25,11 +25,8 @@ export default function PostDetail({
   const [editTitle, setEditTitle] = useState(post?.title || "");
   const [editContent, setEditContent] = useState(post?.content || "");
 
-  const { data: session } = useSession();
-
-  // 작성자 정보는 서버가 세션에서 직접 읽는다. 여기서는 로그인/관리자 여부만 UI 용으로 사용.
-  const isLoggedIn = !!session?.user?.email;
-  const isAdmin = session?.user?.role === "admin";
+  const { isLoggedIn, isAdmin } = useViewer();
+  const base = useBoardBase(appName, postType);
 
   const requireLogin = () => {
     if (!isLoggedIn) {
@@ -123,7 +120,7 @@ export default function PostDetail({
             <button
               className="flex items-center space-x-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
               onClick={() => {
-                router.back();
+                 router.push(base);
               }}
             >
               <span>←</span>
