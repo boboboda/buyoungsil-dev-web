@@ -1,9 +1,12 @@
 // app/admin/analytics/page.tsx
 import { Metadata } from "next";
+import { Card, CardBody } from "@heroui/react";
 
+import AnalyticsNav from "@/components/admin/analytics/AnalyticsNav";
+import ServerStatsView from "@/components/admin/analytics/ServerStatsView";
+import UsersView from "@/components/admin/analytics/UsersView";
 import { getServerStats, ServerStats } from "@/lib/analytics/serverStats";
-import ServerStatsView from "@/components/analytics/ServerStatsView";
-
+import { AnalyticsAppInfo, getUserStats, listApps, UserStats } from "@/lib/analytics/stats";
 
 export const dynamic = "force-dynamic";
 
@@ -11,21 +14,89 @@ export const metadata: Metadata = {
   title: "앱 분석 | 관리자",
 };
 
-export default async function AdminAnalyticsPage() {
-  let stats: ServerStats | null = null;
-  let error: string | null = null;
+const TAB_KEYS = ["users", "ads", "live", "server"];
+
+function Notice({ children }: { children: React.ReactNode }) {
+  return (
+    <Card>
+      <CardBody>
+        <p className="text-sm text-default-500">{children}</p>
+      </CardBody>
+    </Card>
+  );
+}
+
+export default async function AdminAnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string; app?: string; nodebug?: string }>;
+}) {
+  const sp = await searchParams;
+  const tab = TAB_KEYS.includes(sp.tab ?? "") ? (sp.tab as string) : "users";
+  const excludeDebug = sp.nodebug === "1";
+
+  let apps: AnalyticsAppInfo[] = [];
+  let appsError: string | null = null;
 
   try {
-    stats = await getServerStats();
+    apps = await listApps();
   } catch (e) {
-    console.error("[analytics] 서버 현황 조회 실패:", e);
-    error = "환율 DB에 연결하지 못했습니다. MONGODB_URI와 DB 상태를 확인하세요.";
+    console.error("[analytics] 앱 목록 조회 실패:", e);
+    appsError = "분석 DB를 읽지 못했습니다. 분석 테이블이 만들어졌는지 확인하세요.";
+  }
+
+  const selected = apps.find((a) => a.appId === sp.app) ?? apps[0] ?? null;
+
+  let content: React.ReactNode = null;
+
+  if (tab === "server") {
+    let stats: ServerStats | null = null;
+    let error: string | null = null;
+
+    try {
+      stats = await getServerStats();
+    } catch (e) {
+      console.error("[analytics] 서버 현황 조회 실패:", e);
+      error = "환율 DB에 연결하지 못했습니다. MONGODB_URI와 DB 상태를 확인하세요.";
+    }
+
+    content = <ServerStatsView error={error} stats={stats} />;
+  } else if (appsError) {
+    content = <Notice>{appsError}</Notice>;
+  } else if (!selected) {
+    content = (
+      <Notice>
+        등록된 앱이 없습니다. scripts/create-analytics-app.ts 로 앱을 등록하세요.
+      </Notice>
+    );
+  } else if (tab === "users") {
+    let stats: UserStats | null = null;
+
+    try {
+      stats = await getUserStats(selected.id, { excludeDebug });
+    } catch (e) {
+      console.error("[analytics] 사용자 통계 조회 실패:", e);
+    }
+
+    content = stats ? (
+      <UsersView stats={stats} />
+    ) : (
+      <Notice>사용자 통계를 불러오지 못했습니다. 서버 로그를 확인하세요.</Notice>
+    );
+  } else {
+    content = <Notice>이 탭은 다음 단계에서 추가됩니다.</Notice>;
   }
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">
-      <h1 className="text-3xl font-bold mb-8">📈 앱 분석</h1>
-      <ServerStatsView error={error} stats={stats} />
+      <h1 className="text-3xl font-bold mb-6">📈 앱 분석</h1>
+      <AnalyticsNav
+        appId={selected?.appId ?? null}
+        apps={apps}
+        excludeDebug={excludeDebug}
+        tab={tab}
+      />
+      {content}
     </div>
   );
 }
