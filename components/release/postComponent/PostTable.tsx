@@ -21,7 +21,7 @@ import { useRouter } from "next/navigation";
 import React from "react";
 import "react-toastify/dist/ReactToastify.css";
 
-import { useSession } from "next-auth/react";
+import { useBoardBase, useViewer } from "@/components/app/AppViewerContext";
 
 import { SearchIcon, ChevronDownIcon, PlusIcon } from "../../icons";
 
@@ -52,9 +52,9 @@ const PostTable = ({
   appName: string;
   postType: string;
 }) => {
-  const { data: session } = useSession();
-
-  const isAdmin = session?.user?.role === "admin";
+  const { isAdmin } = useViewer();
+  // 웹이면 /project/..., 앱이면 /app/board/... 로 이동한다.
+  const base = useBoardBase(appName, postType);
 
   // 공지사항은 관리자만, 문의 게시판은 누구나(비로그인은 write 페이지에서 로그인으로 이동)
   const canWrite = postType !== "notice" || isAdmin;
@@ -150,9 +150,7 @@ const PostTable = ({
             <span
               className="flex justify-center cursor-pointer hover:underline"
               onClick={() => {
-                router.push(
-                  `/project/${appName}/board/${postType}/detail/${post.id}`,
-                );
+                router.push(`${base}/detail/${post.id}`);
               }}
             >
               {post.title}
@@ -171,7 +169,7 @@ const PostTable = ({
           return null;
       }
     },
-    [router, appName, postType],
+    [router, base],
   );
 
   const onNextPage = React.useCallback(() => {
@@ -211,17 +209,18 @@ const PostTable = ({
   const topContent = React.useMemo(() => {
     return (
       <div className="flex flex-col gap-4 ">
-        <div className="flex justify-between gap-3 items-end">
+        <div className="flex justify-between gap-3 items-end min-w-0">
           <Input
             isClearable
-            className="w-full sm:max-w-[44%]"
+            className="min-w-0 w-full sm:max-w-[44%]"
             placeholder="제목 검색"
             startContent={<SearchIcon />}
             value={filterValue}
             onClear={() => onClear()}
             onValueChange={onSearchChange}
           />
-          <div className="flex gap-3">
+          <div className="flex gap-3 shrink-0">
+            <div className="hidden sm:block">
             <Dropdown>
               <DropdownTrigger className="flex">
                 <Button
@@ -246,14 +245,13 @@ const PostTable = ({
                 ))}
               </DropdownMenu>
             </Dropdown>
+            </div>
 
             {canWrite && (
               <Button
                 color="primary"
                 endContent={<PlusIcon />}
-                onPress={() =>
-                  router.push(`/project/${appName}/board/${postType}/write`)
-                }
+                onPress={() => router.push(`${base}/write`)}
               >
                 글쓰기
               </Button>
@@ -287,14 +285,13 @@ const PostTable = ({
     posts.length,
     canWrite,
     router,
-    appName,
-    postType,
+    base,
   ]);
 
   const bottomContent = React.useMemo(() => {
     return (
-      <div className="py-2 px-2 flex justify-between items-center">
-        <span className="w-[30%] text-small text-default-400">
+      <div className="py-2 px-2 flex justify-between items-center gap-2 max-sm:justify-center">
+        <span className="hidden sm:block w-[30%] text-small text-default-400">
           {selectedKeys === "all"
             ? "All items selected"
             : `${selectedKeys.size} of ${filteredItems.length} selected`}
@@ -344,7 +341,7 @@ const PostTable = ({
       bottomContent={bottomContent}
       bottomContentPlacement="outside"
       classNames={{
-        wrapper: "max-h-[382px]",
+        wrapper: "max-h-[382px] max-w-full overflow-x-auto",
       }}
       sortDescriptor={sortDescriptor}
       topContent={topContent}
