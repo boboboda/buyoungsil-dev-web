@@ -76,9 +76,15 @@ export default function PostWrite({
   };
 
   const handleCancel = () => {
-    setTitle("");
-    setContent("");
-  };
+  const hasContent = title.trim() !== "" || content.trim() !== "";
+
+  if (hasContent && !window.confirm("작성 중인 내용이 사라집니다. 취소할까요?")) {
+    return;
+  }
+
+  // 목록으로 복귀 (appName/postType 은 props 로 받은 값)
+  router.push(`/project/${appName}/board/${postType || "notice"}`);
+};
 
   return (
     <div className="w-full p-6">
