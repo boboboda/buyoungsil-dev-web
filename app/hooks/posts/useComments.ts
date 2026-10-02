@@ -2,6 +2,7 @@
 "use client";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "react-toastify";
 
 import {
   addAComment,
@@ -11,6 +12,22 @@ import {
   deleteAReply,
   editReply,
 } from "@/serverActions/posts";
+
+// "@이름 내용" 형태에서 멘션 대상과 실제 내용을 분리한다. (줄바꿈이 있는 내용도 허용)
+const MENTION_REGEX = /^@([가-힣a-zA-Z0-9_]+)\s+([\s\S]*)$/;
+
+function parseMention(text: string): {
+  mentionTo: string | null;
+  content: string;
+} {
+  const match = text.match(MENTION_REGEX);
+
+  if (match) {
+    return { mentionTo: match[1], content: match[2] };
+  }
+
+  return { mentionTo: null, content: text };
+}
 
 export function useComments() {
   const [newComment, setNewComment] = useState("");
@@ -27,6 +44,8 @@ export function useComments() {
 
   const queryClient = useQueryClient();
 
+  const notifyError = (msg: string) => toast.error(msg);
+
   // 댓글 생성
   const createCommentMutation = useMutation({
     mutationFn: addAComment,
@@ -35,6 +54,9 @@ export function useComments() {
         ["post", variables.appName, variables.postType, variables.postId],
         updatedPost,
       );
+    },
+    onError: () => {
+      notifyError("댓글 작성에 실패했습니다. 로그인 상태를 확인해주세요.");
     },
   });
 
@@ -46,6 +68,9 @@ export function useComments() {
         ["post", variables.appName, variables.postType, variables.postId],
         updatedPost,
       );
+    },
+    onError: () => {
+      notifyError("댓글 삭제에 실패했습니다.");
     },
   });
 
@@ -60,6 +85,9 @@ export function useComments() {
       setEditingComment(null);
       setEditCommentContent("");
     },
+    onError: () => {
+      notifyError("댓글 수정에 실패했습니다.");
+    },
   });
 
   // 답글 생성
@@ -70,6 +98,11 @@ export function useComments() {
         ["post", variables.appName, variables.postType, variables.postId],
         updatedPost,
       );
+      // 방금 단 답글이 바로 보이도록 해당 댓글의 답글 목록을 펼친다.
+      setShowReplies((prev) => ({ ...prev, [variables.commentId]: true }));
+    },
+    onError: () => {
+      notifyError("답글 작성에 실패했습니다. 로그인 상태를 확인해주세요.");
     },
   });
 
@@ -81,6 +114,9 @@ export function useComments() {
         ["post", variables.appName, variables.postType, variables.postId],
         updatedPost,
       );
+    },
+    onError: () => {
+      notifyError("답글 삭제에 실패했습니다.");
     },
   });
 
@@ -95,28 +131,31 @@ export function useComments() {
       setEditingReply(null);
       setEditReplyContent("");
     },
+    onError: () => {
+      notifyError("답글 수정에 실패했습니다.");
+    },
   });
 
-  // 액션 함수들
+  // 액션 함수들 (작성자 이름/이메일은 서버가 세션에서 직접 읽는다)
   const handleCommentSubmit = (
     appName: string,
     postType: string,
     postId: string,
-    writer: string,
-    email: string,
   ) => {
     if (!newComment.trim()) return;
 
-    createCommentMutation.mutate({
-      appName,
-      postType,
-      postId,
-      commentWriter: writer,
-      commentContent: newComment,
-      email,
-    });
-
-    setNewComment("");
+    createCommentMutation.mutate(
+      {
+        appName,
+        postType,
+        postId,
+        commentContent: newComment,
+      },
+      {
+        // 성공했을 때만 입력창을 비운다 (실패하면 쓴 내용이 남아 있다)
+        onSuccess: () => setNewComment(""),
+      },
+    );
   };
 
   const handleCommentDelete = (
@@ -156,37 +195,31 @@ export function useComments() {
     postType: string,
     postId: string,
     commentId: string,
-    writer: string,
-    email: string,
   ) => {
     if (!replyContent.trim()) return;
 
-    let actualContent = replyContent;
-    let mentionTo = mentionTarget;
+    const { mentionTo, content } = parseMention(replyContent);
 
-    // @멘션 텍스트에서 파싱
-    const mentionMatch = replyContent.match(/^@([가-힣a-zA-Z0-9_]+)\s+(.*)$/);
+    if (!content.trim()) return;
 
-    if (mentionMatch) {
-      mentionTo = mentionMatch[1];
-      actualContent = mentionMatch[2];
-    }
-
-    createReplyMutation.mutate({
-      appName,
-      postType,
-      postId,
-      email,
-      commentId,
-      replyWriter: writer,
-      replyContent: actualContent,
-      mentionTarget: mentionTo, // 멘션 대상 포함
-    });
-
-    // 초기화
-    setReplyContent("");
-    setReplyTo(null);
-    setMentionTarget(null);
+    createReplyMutation.mutate(
+      {
+        appName,
+        postType,
+        postId,
+        commentId,
+        replyContent: content,
+        mentionTarget: mentionTo,
+      },
+      {
+        // 성공했을 때만 초기화
+        onSuccess: () => {
+          setReplyContent("");
+          setReplyTo(null);
+          setMentionTarget(null);
+        },
+      },
+    );
   };
 
   const handleReplyDelete = (
@@ -212,26 +245,17 @@ export function useComments() {
   ) => {
     if (!editReplyContent.trim()) return;
 
-    let actualContent = editReplyContent;
-    let mentionTo = null;
+    const { mentionTo, content } = parseMention(editReplyContent);
 
-    // @멘션 텍스트에서 파싱
-    const mentionMatch = editReplyContent.match(
-      /^@([가-힣a-zA-Z0-9_]+)\s+(.*)$/,
-    );
-
-    if (mentionMatch) {
-      mentionTo = mentionMatch[1];
-      actualContent = mentionMatch[2];
-    }
+    if (!content.trim()) return;
 
     editReplyMutation.mutate({
       appName,
       postType,
       postId,
       replyId,
-      content: actualContent,
-      mentionTarget: mentionTo, // 멘션 대상 포함
+      content,
+      mentionTarget: mentionTo,
     });
   };
 
@@ -266,7 +290,7 @@ export function useComments() {
   const startEditingReply = (
     replyId: string,
     currentContent: string,
-    currentMentionTo?: string,
+    currentMentionTo?: string | null,
   ) => {
     setEditingReply(replyId);
 

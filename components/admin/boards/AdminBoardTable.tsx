@@ -46,11 +46,16 @@ export default function AdminBoardTable({
 
     setIsDeleting(true);
     try {
-      await deleteAPost({
+      const deleted = await deleteAPost({
         appName: projectName,
         postType: postType,
         id: selectedPost.id,
       });
+
+      // deleteAPost 는 권한 없음/없는 글이면 예외 대신 null 을 돌려준다.
+      if (!deleted) {
+        throw new Error("게시글을 삭제하지 못했습니다.");
+      }
 
       toast.success("게시글이 삭제되었습니다");
       onClose();

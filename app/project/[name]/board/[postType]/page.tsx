@@ -1,31 +1,27 @@
-// app/project/[name]/board/[postType]/page.tsx
-import { title } from "@/components/primitives";
-import PostTable from "@/components/release/postComponent/PostTable";
-import { fetchPosts } from "@/serverActions/posts";
+// app/project/[name]/board/[postType]/write/page.tsx
+import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth/next";
 
-export default async function BoardPage({
+import PostWrite from "@/components/release/postComponent/PostWrite";
+import { authOptions } from "@/lib/auth/auth";
+
+export default async function WritePage({
   params,
 }: {
-  params: Promise<{ name: string; postType: string }>;  // ✅ appName → name
+  params: Promise<{ postType: string; name: string }>;
 }) {
-  const { name, postType } = await params;  // ✅ appName → name
+  const { postType, name } = await params;
 
-  const response = await fetchPosts(name, postType);  // ✅ appName → name
+  // 로그인하지 않았다면 글쓰기 화면 대신 로그인 페이지로 보낸다.
+  const session = await getServerSession(authOptions);
 
-  const fetchedPosts = response?.posts ?? [];
-
-  const postTitle = postType === "notice" ? "공지사항" : "문의 게시판";
+  if (!session?.user?.email) {
+    redirect("/signin");
+  }
 
   return (
-    <>
-      <div className="container flex w-full pl-5 py-5 flex-col items-center justify-center gap-y-3 pr-4">
-        <h1 className={title()}>{postTitle}</h1>
-        <PostTable
-          appName={name}  // ✅ PostTable에는 appName prop으로 전달
-          postType={postType}
-          posts={fetchedPosts}
-        />
-      </div>
-    </>
+    <div className="flex flex-col w-full space-y-8 pr-4">
+      <PostWrite appName={name} postType={postType} />
+    </div>
   );
 }
