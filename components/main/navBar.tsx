@@ -33,8 +33,8 @@ export default function NavBar() {
   const idleCountdownLabel =
     remainingSeconds !== null
       ? `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(
-          remainingSeconds % 60,
-        ).padStart(2, "0")} 후 로그아웃`
+        remainingSeconds % 60,
+      ).padStart(2, "0")} 후 로그아웃`
       : null;
 
   const [path, setPath] = useState("/");
@@ -375,6 +375,14 @@ export default function NavBar() {
                         onClick={() => router.push("/admin")}
                       >
                         <p>📊 대시보드</p>
+                      </DropdownItem>
+
+                      <DropdownItem
+                        key="adminAnalytics"
+                        textValue="adminAnalytics"
+                        onClick={() => router.push("/admin/analytics")}
+                      >
+                        <p>📈 앱 분석</p>
                       </DropdownItem>
 
                       {/* 🔥 외주 관리 추가 */}
