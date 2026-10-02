@@ -15,8 +15,6 @@ import NavBar from "@/components/main/navBar";
 import NavbarVisibilityWrapper from "@/lib/wrappers/NavbarWrapper";
 import SponsorModal from "@/components/main/sponsorModal";
 import VisitorTracker from "@/components/main/visitorTracker";
-import HideInApp from "@/components/main/HideInApp";
-
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
@@ -102,32 +100,28 @@ export default async function RootLayout({
     <html className="light" lang="ko">
       <body className={clsx("flex flex-col min-h-screen", fontSans.className)}>
         <Providers themeProps={{ attribute: "class", defaultTheme: "light" }}>
+          {/* 나머지 코드는 동일... */}
           <div className="flex flex-col flex-grow min-h-0">
-            <Header />
-            <HideInApp>
-              <div className="flex flex-col w-full justify-center items-center">
-                <NavbarVisibilityWrapper>
-                  <div className="w-full flex justify-center">
-                    <NavBar />
-                  </div>
-                  <Divider className="w-full mt-4" />
-                </NavbarVisibilityWrapper>
-              </div>
-            </HideInApp>
+            <div className="flex flex-col w-full justify-center items-center">
+              <Header />
+              <NavbarVisibilityWrapper>
+                <div className="w-full flex justify-center">
+                  <NavBar />
+                </div>
+                <Divider className="w-full mt-4" />
+              </NavbarVisibilityWrapper>
+            </div>
 
-            <main className="flex-grow w-full min-h-screen">{children}</main>
-
-            <HideInApp>
-              <SponsorModal />
-              <VisitorTracker />
-            </HideInApp>
+             <main className="flex-grow w-full min-h-screen">
+              {children}
+            </main>
+            <SponsorModal />
+             <VisitorTracker />
           </div>
 
-          <HideInApp>
-            <div className="mt-auto">
-              <Footer />
-            </div>
-          </HideInApp>
+          <div className="mt-auto">
+            <Footer />
+          </div>
 
           {/* <AdFooter /> */}
         </Providers>
