@@ -1,6 +1,5 @@
 "use client";
 // import { useUserStore } from '@/components/providers/user-store-provider';
-import { useBoardBase, useViewer } from "@/components/app/AppViewerContext";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "react-toastify";
@@ -8,6 +7,34 @@ import { toast } from "react-toastify";
 import { Post } from "@/types";
 import SimpleModal from "@/components/modal/simpleModal";
 import { usePostDetail } from "@/app/hooks/posts/usePostDtail";
+import { useBoardBase, useViewer } from "@/components/app/AppViewerContext";
+
+// 2026-10-03 01:28:10 형태의 날짜를 모바일에서는 10.03 01:28 로 짧게 보여준다.
+// 올해가 아니면 25.10.03 01:28. 형식이 다르면 원문을 그대로 쓴다.
+const shortDate = (value?: string) => {
+  if (!value) return "";
+
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+
+  if (!m) return value;
+
+  const [, y, mo, d, h, mi] = m;
+  const thisYear = String(new Date().getFullYear());
+
+  return y === thisYear
+    ? `${mo}.${d} ${h}:${mi}`
+    : `${y.slice(2)}.${mo}.${d} ${h}:${mi}`;
+};
+
+// 모바일은 짧은 날짜, md 이상은 원래 날짜를 보여준다.
+function DateText({ value }: { value: string }) {
+  return (
+    <>
+      <span className="md:hidden">{shortDate(value)}</span>
+      <span className="hidden md:inline">{value}</span>
+    </>
+  );
+}
 
 export default function PostDetail({
   appName,
@@ -25,6 +52,7 @@ export default function PostDetail({
   const [editTitle, setEditTitle] = useState(post?.title || "");
   const [editContent, setEditContent] = useState(post?.content || "");
 
+  // 웹이면 next-auth 세션, 앱이면 입장 티켓으로 만든 신원을 쓴다.
   const { isLoggedIn, isAdmin } = useViewer();
   const base = useBoardBase(appName, postType);
 
@@ -113,30 +141,31 @@ export default function PostDetail({
           onOpenChange={onModalOpenChange}
         />
       )}
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-        <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
+      <div className="min-h-screen bg-white dark:bg-slate-950 md:bg-slate-50 md:dark:bg-slate-950">
+        <div className="max-w-full mx-auto px-4 pt-3 pb-28 md:px-6 lg:px-8 md:py-6 lg:py-8">
           {/* 뒤로가기 & 목록 버튼 */}
-          <div className="mb-6">
+          <div className="mb-2 md:mb-6">
             <button
-              className="flex items-center space-x-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+              className="flex items-center space-x-2 py-1 text-sm md:text-base text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
               onClick={() => {
-                 router.push(base);
+                router.push(base);
               }}
             >
               <span>←</span>
-              <span>목록으로</span>
+              <span className="md:hidden">목록</span>
+              <span className="hidden md:inline">목록으로</span>
             </button>
           </div>
 
           {/* 게시글 메인 */}
-          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 mb-6">
+          <div className="md:bg-white md:dark:bg-slate-900 md:rounded-xl md:shadow-sm md:border md:border-slate-200 md:dark:border-slate-800 mb-2 md:mb-6">
             {/* 헤더 */}
-            <div className="border-b border-slate-100 dark:border-slate-800 p-6 sm:p-8">
+            <div className="border-b border-slate-100 dark:border-slate-800 pb-3 md:p-8">
               {isEditing ? (
                 /* 수정 모드 - 제목 입력 */
-                <div className="mb-6">
+                <div className="mb-4 md:mb-6">
                   <input
-                    className="w-full text-2xl sm:text-3xl lg:text-4xl font-bold text-slate-900 dark:text-slate-50 bg-transparent border-2 border-slate-300 dark:border-slate-600 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full text-xl md:text-3xl lg:text-4xl font-bold text-slate-900 dark:text-slate-50 bg-transparent border-2 border-slate-300 dark:border-slate-600 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="제목을 입력하세요..."
                     type="text"
                     value={editTitle}
@@ -145,12 +174,53 @@ export default function PostDetail({
                 </div>
               ) : (
                 /* 읽기 모드 - 제목 */
-                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-slate-900 dark:text-slate-50 mb-6 leading-tight">
+                <h1 className="text-xl md:text-3xl lg:text-4xl font-bold text-slate-900 dark:text-slate-50 mb-2 md:mb-6 leading-snug md:leading-tight">
                   {viewPost.title}
                 </h1>
               )}
 
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+              {/* 모바일: 작성자 · 날짜 한 줄, 수정/삭제는 오른쪽 */}
+              <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 md:hidden">
+                <span className="truncate">{post.writer}</span>
+                <span className="h-[3px] w-[3px] shrink-0 rounded-full bg-slate-400" />
+                <span className="shrink-0 tabular-nums">
+                  {shortDate(post.created_at)}
+                </span>
+                <span className="flex-1" />
+                {isEditing ? (
+                  <span className="shrink-0 font-semibold text-orange-600 dark:text-orange-400">
+                    편집 중
+                  </span>
+                ) : (
+                  <>
+                    {viewPost.isMine && (
+                      <button
+                        className="px-1 py-1 font-semibold text-slate-600 dark:text-slate-300"
+                        type="button"
+                        onClick={() => {
+                          setEditTitle(viewPost.title);
+                          setEditContent(viewPost.content);
+                          setIsEditing(true);
+                        }}
+                      >
+                        수정
+                      </button>
+                    )}
+                    {(viewPost.isMine || isAdmin) && (
+                      <button
+                        className="px-1 py-1 font-semibold text-red-600 dark:text-red-400"
+                        type="button"
+                        onClick={() => openPostDeleteModal(viewPost.id)}
+                      >
+                        삭제
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* md 이상: 기존 아바타 블록 */}
+              <div className="hidden md:flex md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center space-x-4 mb-3 sm:mb-0">
                   <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
                     <span className="text-white font-bold text-lg">
@@ -180,11 +250,11 @@ export default function PostDetail({
             </div>
 
             {/* 본문 */}
-            <div className="p-6 sm:p-8">
+            <div className="py-4 md:p-8">
               {isEditing ? (
                 /* 수정 모드 - 내용 입력 */
                 <textarea
-                  className="w-full h-80 text-slate-700 dark:text-slate-300 bg-transparent border-2 border-slate-300 dark:border-slate-600 rounded-lg p-4 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full h-64 md:h-80 text-slate-700 dark:text-slate-300 bg-transparent border-2 border-slate-300 dark:border-slate-600 rounded-lg p-4 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="내용을 입력하세요..."
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
@@ -192,7 +262,7 @@ export default function PostDetail({
               ) : (
                 /* 읽기 모드 - 내용 */
                 <div className="prose prose-slate dark:prose-invert max-w-none">
-                  <div className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line text-base sm:text-lg">
+                  <div className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line text-[15px] md:text-lg">
                     {viewPost.content}
                   </div>
                 </div>
@@ -200,7 +270,13 @@ export default function PostDetail({
             </div>
 
             {/* 액션 버튼 */}
-            <div className="border-t border-slate-100 dark:border-slate-800 p-6 sm:p-8">
+            <div
+              className={
+                isEditing
+                  ? "pb-2 md:border-t md:border-slate-100 md:dark:border-slate-800 md:p-8"
+                  : "hidden md:block md:border-t md:border-slate-100 md:dark:border-slate-800 md:p-8"
+              }
+            >
               {isEditing ? (
                 /* 수정 모드 - 저장/취소 버튼 */
                 <div className="flex justify-end space-x-3">
@@ -273,61 +349,66 @@ export default function PostDetail({
           </div>
 
           {/* 댓글 섹션 */}
-          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
-            <div className="p-6 sm:p-8">
-              <h3 className="text-xl sm:text-2xl font-bold mb-8 flex items-center text-slate-900 dark:text-slate-50">
+          <div className="md:bg-white md:dark:bg-slate-900 md:rounded-xl md:shadow-sm md:border md:border-slate-200 md:dark:border-slate-800">
+            <div className="pt-1 md:p-8">
+              <h3 className="text-base md:text-2xl font-bold mb-1 md:mb-8 flex items-center text-slate-900 dark:text-slate-50">
                 <span>댓글</span>
-                <span className="ml-3 px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-sm font-medium rounded-full">
+                <span className="ml-2 md:ml-3 px-2 py-0.5 md:px-3 md:py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs md:text-sm font-medium rounded-full">
                   {viewPost.comments.length}
                 </span>
               </h3>
 
-              {/* 댓글 작성 */}
-              <div className="mb-10">
-                <div className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700">
+              {/* 댓글 작성: 모바일은 화면 아래 고정, md 이상은 기존 위치 */}
+              <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:static md:z-auto md:border-t-0 md:bg-transparent md:dark:bg-transparent md:p-0 md:mb-10">
+                <div className="flex items-end gap-2 md:block md:bg-gradient-to-br md:from-slate-50 md:to-slate-100 md:dark:from-slate-800 md:dark:to-slate-900 md:p-6 md:rounded-xl md:border md:border-slate-200 md:dark:border-slate-700">
                   <textarea
-                    className="w-full p-4 border border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400 resize-none h-28 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent transition-all duration-200"
+                    className="flex-1 min-w-0 w-full p-3 md:p-4 border border-slate-200 dark:border-slate-600 rounded-2xl md:rounded-xl bg-slate-50 md:bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400 resize-none h-11 md:h-28 text-sm md:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent transition-all duration-200"
                     placeholder="따뜻한 댓글을 남겨보세요..."
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
                   />
-                  <div className="flex justify-end mt-4">
+                  <div className="shrink-0 md:flex md:justify-end md:mt-4">
                     <button
-                      className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl"
+                      className="h-11 md:h-auto px-4 md:px-6 md:py-3 bg-blue-600 hover:bg-blue-700 md:bg-gradient-to-r md:from-blue-600 md:to-purple-600 md:hover:from-blue-700 md:hover:to-purple-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium rounded-full md:rounded-xl transition-all duration-200 md:shadow-lg md:hover:shadow-xl"
                       disabled={isCreatingComment}
                       onClick={() => {
                         if (requireLogin()) handleCommentSubmit();
                       }}
                     >
-                      {isCreatingComment ? "작성중..." : "댓글 작성"}
+                      <span className="md:hidden">
+                        {isCreatingComment ? "등록중" : "등록"}
+                      </span>
+                      <span className="hidden md:inline">
+                        {isCreatingComment ? "작성중..." : "댓글 작성"}
+                      </span>
                     </button>
                   </div>
                 </div>
               </div>
 
               {/* 댓글 목록 */}
-              <div className="space-y-8">
+              <div className="md:space-y-8">
                 {viewPost.comments.map((comment) => (
                   <div
                     key={comment.id}
-                    className="border-b border-slate-100 dark:border-slate-800 pb-8 last:border-b-0 last:pb-0"
+                    className="border-b border-slate-100 dark:border-slate-800 py-3.5 md:pt-0 md:pb-8 last:border-b-0 md:last:pb-0"
                   >
                     {/* 댓글 */}
-                    <div className="flex space-x-4">
-                      <div className="w-11 h-11 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center flex-shrink-0">
+                    <div className="flex md:space-x-4">
+                      <div className="hidden md:flex w-11 h-11 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center flex-shrink-0">
                         <span className="text-white font-bold text-sm">
                           {comment.writer.charAt(0)}
                         </span>
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3">
-                          <div className="flex items-center space-x-3 mb-2 sm:mb-0">
-                            <span className="font-semibold text-slate-900 dark:text-slate-100 text-base">
+                        <div className="flex items-center justify-between mb-1 md:mb-3">
+                          <div className="flex items-center gap-2 md:gap-3">
+                            <span className="font-semibold text-slate-900 dark:text-slate-100 text-sm md:text-base">
                               {comment.writer}
                             </span>
-                            <span className="text-sm text-slate-500 dark:text-slate-400">
-                              {comment.created_at}
+                            <span className="text-xs md:text-sm text-slate-500 dark:text-slate-400 tabular-nums">
+                              <DateText value={comment.created_at} />
                             </span>
                           </div>
 
@@ -389,12 +470,12 @@ export default function PostDetail({
                             </div>
                           </div>
                         ) : (
-                          <p className="text-slate-700 dark:text-slate-300 mb-4 text-base leading-relaxed">
+                          <p className="text-slate-700 dark:text-slate-300 mb-2 md:mb-4 text-[15px] md:text-base leading-relaxed">
                             {comment.content}
                           </p>
                         )}
 
-                        <div className="flex items-center space-x-6 text-sm">
+                        <div className="flex items-center gap-4 md:gap-6 text-xs md:text-sm">
                           <button
                             className="text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition-colors duration-200"
                             onClick={() => {
@@ -420,8 +501,8 @@ export default function PostDetail({
 
                         {/* 답글 작성 폼 */}
                         {replyTo === comment.id && (
-                          <div className="mt-6">
-                            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 p-5 rounded-xl border border-blue-200 dark:border-blue-800">
+                          <div className="mt-3 md:mt-6">
+                            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 p-3 md:p-5 rounded-xl border border-blue-200 dark:border-blue-800">
                               {/* 🔥 멘션 대상 표시 (추가) */}
                               {mentionTarget && (
                                 <div className="mb-3 flex items-center space-x-2">
@@ -475,22 +556,22 @@ export default function PostDetail({
                         {/* 답글 목록 */}
                         {showReplies[comment.id] &&
                           comment.replys.length > 0 && (
-                            <div className="mt-6 ml-6 space-y-6 border-l-2 border-slate-200 dark:border-slate-700 pl-6">
+                            <div className="mt-3 ml-1 space-y-4 border-l-2 border-slate-200 dark:border-slate-700 pl-3 md:mt-6 md:ml-6 md:space-y-6 md:pl-6">
                               {comment.replys.map((reply) => (
-                                <div key={reply.id} className="flex space-x-4">
-                                  <div className="w-9 h-9 bg-gradient-to-br from-purple-500 to-pink-600 rounded-full flex items-center justify-center flex-shrink-0">
+                                <div key={reply.id} className="flex md:space-x-4">
+                                  <div className="hidden md:flex w-9 h-9 bg-gradient-to-br from-purple-500 to-pink-600 rounded-full flex items-center justify-center flex-shrink-0">
                                     <span className="text-white font-bold text-sm">
                                       {reply.writer.charAt(0)}
                                     </span>
                                   </div>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center justify-between mb-2">
-                                      <div className="flex items-center space-x-3">
+                                      <div className="flex items-center gap-2 md:gap-3">
                                         <span className="font-semibold text-slate-900 dark:text-slate-100 text-sm">
                                           {reply.writer}
                                         </span>
-                                        <span className="text-xs text-slate-500 dark:text-slate-400">
-                                          {reply.created_at}
+                                        <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                                          <DateText value={reply.created_at} />
                                         </span>
                                       </div>
 
