@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { signOut } from "next-auth/react";
 import { toast } from "react-toastify";
 import { UserCircleIcon } from "@heroicons/react/24/solid";
+import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 
 import { YouTubeIcon, DiscordIcon, GithubIcon, KakaoIcon } from "@/components/icons";
 import { siteConfig } from "@/config/site";
@@ -38,6 +39,7 @@ export default function NavBar() {
       : null;
 
   const [path, setPath] = useState("/");
+  const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -46,6 +48,7 @@ export default function NavBar() {
   useEffect(() => {
     console.log("Current pathname:", pathname);
     setPath(pathname.split("/").slice(0, 2).join("/"));
+    setMenuOpen(false); // 페이지 이동 시 모바일 메뉴 닫기
   }, [pathname]);
 
   const notifySuccessEvent = (msg: string) => toast.success(msg);
@@ -69,14 +72,14 @@ export default function NavBar() {
   };
 
   return (
-    <div className="w-full max-w-[1400px] flex flex-col mt-[20px] md:items-center justify-end md:justify-center">
+    <div className="w-full max-w-[1400px] flex flex-col mt-2 md:mt-[20px] md:items-center justify-end md:justify-center">
       <div className="w-full">
-        <div className="flex flex-row items-center justify-between w-full mb-2 md:mb-0 pr-4">
+        <div className="flex flex-row items-center justify-between w-full px-3 md:px-0 md:pr-4">
           <div className="flex flex-row items-center gap-6">
             <NextLink className="flex justify-start items-start" href="/">
               <Image
                 alt="Branding Image"
-                className="object-contain h-[50px] md:w-[180px] ms-[10px] w-[120px]"
+                className="object-contain h-[40px] w-[110px] md:h-[50px] md:w-[180px] md:ms-[10px]"
                 fallbackSrc="https://via.placeholder.com/300x200"
                 height="50%"
                 src="/brand.png"
@@ -119,29 +122,23 @@ export default function NavBar() {
             </ul>
           </div>
 
-          {/* 모바일 네비게이션 */}
-          <div className="md:hidden">
-            <ul className="flex gap-4 justify-start items-center">
-              {siteConfig.navItems.map((item, index) => (
-                <li
-                  key={index}
-                  className="text-medium whitespace-nowrap box-border list-none"
-                >
-                  <a
-                    className="relative inline-flex items-center tap-highlight-transparent outline-none
-                      text-[13px] text-slate-500 font-semibold
-                      hover:opacity-80 hover:text-slate-100
-                      active:opacity-disabled transition-opacity
-                      data-[active=true]:text-[#0072F5]
-                      data-[active=true]:dark:text-[#0072F5]"
-                    data-active={path === item.href ? true : false}
-                    href={item.href}
-                  >
-                    {item.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
+          {/* 모바일: 테마 전환 + 햄버거 */}
+          <div className="flex md:hidden items-center gap-1">
+            <ThemeSwitch />
+            <button
+              aria-controls="mobile-menu"
+              aria-expanded={menuOpen}
+              aria-label={menuOpen ? "메뉴 닫기" : "메뉴 열기"}
+              className="flex items-center justify-center w-11 h-11 rounded-lg bg-transparent border-none cursor-pointer active:bg-gray-100 dark:active:bg-gray-800"
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              {menuOpen ? (
+                <XMarkIcon className="w-6 h-6" />
+              ) : (
+                <Bars3Icon className="w-6 h-6" />
+              )}
+            </button>
           </div>
 
           {/* 데스크톱 로그인 영역 */}
@@ -324,8 +321,44 @@ export default function NavBar() {
           </div>
         </div>
 
-        {/* 모바일 로그인 영역 */}
-        <div className="flex md:hidden flex-row items-center justify-between w-full pt-2 border-t border-gray-200 dark:border-gray-700 pr-4">
+        {/* 모바일 드롭다운 메뉴 */}
+        {menuOpen && (
+          <div
+            className="md:hidden border-t border-gray-200 dark:border-gray-700 px-3 pb-3"
+            id="mobile-menu"
+          >
+            <ul className="flex flex-col py-2">
+              {siteConfig.navItems.map((item) => (
+                <li key={item.href} className="list-none">
+                  <NextLink
+                    className="flex items-center min-h-[44px] px-2 rounded-lg text-base font-semibold
+                      text-slate-600 dark:text-slate-300
+                      active:bg-gray-100 dark:active:bg-gray-800
+                      data-[active=true]:text-[#0072F5]"
+                    data-active={path === item.href}
+                    href={item.href}
+                  >
+                    {item.label}
+                  </NextLink>
+                </li>
+              ))}
+              <li className="list-none">
+                <button
+                  className="flex items-center w-full min-h-[44px] px-2 rounded-lg text-base font-semibold
+                    text-slate-600 dark:text-slate-300 bg-transparent border-none cursor-pointer
+                    active:bg-gray-100 dark:active:bg-gray-800"
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    openSponsorModal();
+                  }}
+                >
+                  💖 후원
+                </button>
+              </li>
+            </ul>
+
+            <div className="flex flex-row items-center justify-between w-full pt-3 border-t border-gray-200 dark:border-gray-700">
           <div className="flex flex-row gap-2">
             {shouldShowLoading ? (
               <div>
@@ -456,9 +489,10 @@ export default function NavBar() {
             >
               <KakaoIcon className="w-5 h-5 text-yellow-500" />
             </Link>
-            <ThemeSwitch />
           </div>
+            </div>
         </div>
+        )}
       </div>
     </div>
   );
