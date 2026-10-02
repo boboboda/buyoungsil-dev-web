@@ -3,7 +3,7 @@ FROM node:18-alpine
 
 RUN apk add --no-cache tzdata
 ENV TZ=Asia/Seoul
-WORKDIR /app
+WORKDIR /usr/src/web
 
 ARG ENV_FILE
 
@@ -16,7 +16,7 @@ RUN npx prisma generate
 COPY . .
 COPY ${ENV_FILE} .env
 
-RUN --mount=type=cache,target=/app/.next/cache npm run build
+RUN --mount=type=cache,target=/usr/src/web/.next/cache npm run build
 
 EXPOSE 5000
 CMD ["sh", "-c", "npx prisma migrate deploy && npm run start"]
