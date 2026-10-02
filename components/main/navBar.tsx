@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { signOut } from "next-auth/react";
 import { toast } from "react-toastify";
 import { UserCircleIcon } from "@heroicons/react/24/solid";
+import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 
 import { YouTubeIcon, DiscordIcon, GithubIcon, KakaoIcon } from "@/components/icons";
 import { siteConfig } from "@/config/site";
@@ -38,6 +39,7 @@ export default function NavBar() {
       : null;
 
   const [path, setPath] = useState("/");
+  const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -46,6 +48,7 @@ export default function NavBar() {
   useEffect(() => {
     console.log("Current pathname:", pathname);
     setPath(pathname.split("/").slice(0, 2).join("/"));
+    setMenuOpen(false); // 페이지 이동 시 모바일 메뉴 닫기
   }, [pathname]);
 
   const notifySuccessEvent = (msg: string) => toast.success(msg);
@@ -69,14 +72,14 @@ export default function NavBar() {
   };
 
   return (
-    <div className="w-full max-w-[1400px] flex flex-col mt-[20px] md:items-center justify-end md:justify-center">
+    <div className="w-full max-w-[1400px] flex flex-col mt-2 md:mt-[20px] md:items-center justify-end md:justify-center">
       <div className="w-full">
-        <div className="flex flex-row items-center justify-between w-full mb-2 md:mb-0 pr-4">
+        <div className="flex flex-row items-center justify-between w-full px-3 md:px-0 md:pr-4">
           <div className="flex flex-row items-center gap-6">
             <NextLink className="flex justify-start items-start" href="/">
               <Image
                 alt="Branding Image"
-                className="object-contain h-[50px] md:w-[180px] ms-[10px] w-[120px]"
+                className="object-contain h-[40px] w-[110px] md:h-[50px] md:w-[180px] md:ms-[10px]"
                 fallbackSrc="https://via.placeholder.com/300x200"
                 height="50%"
                 src="/brand.png"
@@ -119,29 +122,23 @@ export default function NavBar() {
             </ul>
           </div>
 
-          {/* 모바일 네비게이션 */}
-          <div className="md:hidden">
-            <ul className="flex gap-4 justify-start items-center">
-              {siteConfig.navItems.map((item, index) => (
-                <li
-                  key={index}
-                  className="text-medium whitespace-nowrap box-border list-none"
-                >
-                  <a
-                    className="relative inline-flex items-center tap-highlight-transparent outline-none
-                      text-[13px] text-slate-500 font-semibold
-                      hover:opacity-80 hover:text-slate-100
-                      active:opacity-disabled transition-opacity
-                      data-[active=true]:text-[#0072F5]
-                      data-[active=true]:dark:text-[#0072F5]"
-                    data-active={path === item.href ? true : false}
-                    href={item.href}
-                  >
-                    {item.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
+          {/* 모바일: 테마 전환 + 햄버거 */}
+          <div className="flex md:hidden items-center gap-1">
+            <ThemeSwitch />
+            <button
+              aria-controls="mobile-menu"
+              aria-expanded={menuOpen}
+              aria-label={menuOpen ? "메뉴 닫기" : "메뉴 열기"}
+              className="flex items-center justify-center w-11 h-11 rounded-lg bg-transparent border-none cursor-pointer active:bg-gray-100 dark:active:bg-gray-800"
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              {menuOpen ? (
+                <XMarkIcon className="w-6 h-6" />
+              ) : (
+                <Bars3Icon className="w-6 h-6" />
+              )}
+            </button>
           </div>
 
           {/* 데스크톱 로그인 영역 */}
@@ -324,141 +321,179 @@ export default function NavBar() {
           </div>
         </div>
 
-        {/* 모바일 로그인 영역 */}
-        <div className="flex md:hidden flex-row items-center justify-between w-full pt-2 border-t border-gray-200 dark:border-gray-700 pr-4">
-          <div className="flex flex-row gap-2">
-            {shouldShowLoading ? (
-              <div>
-                <Skeleton className="flex rounded-[5px] w-[80px] h-8" />
-              </div>
-            ) : !isAuthenticated ? (
-              <div className="flex flex-row gap-2">
-                {path !== "/signup" && (
-                  <Link
-                    className="text-white no-underline font-sans"
-                    href="/signup"
+        {/* 모바일 드롭다운 메뉴 */}
+        {menuOpen && (
+          <div
+            className="md:hidden border-t border-gray-200 dark:border-gray-700 px-3 pb-3"
+            id="mobile-menu"
+          >
+            <ul className="flex flex-col py-2">
+              {siteConfig.navItems.map((item) => (
+                <li key={item.href} className="list-none">
+                  <NextLink
+                    className="flex items-center min-h-[44px] px-2 rounded-lg text-base font-semibold
+                      text-slate-600 dark:text-slate-300
+                      active:bg-gray-100 dark:active:bg-gray-800
+                      data-[active=true]:text-[#0072F5]"
+                    data-active={path === item.href}
+                    href={item.href}
                   >
-                    <Button size="sm" variant="ghost">
-                      Sign Up
-                    </Button>
-                  </Link>
-                )}
-                <Link
-                  className="text-white no-underline font-sans"
-                  href="/signin"
+                    {item.label}
+                  </NextLink>
+                </li>
+              ))}
+              <li className="list-none">
+                <button
+                  className="flex items-center w-full min-h-[44px] px-2 rounded-lg text-base font-semibold
+                    text-slate-600 dark:text-slate-300 bg-transparent border-none cursor-pointer
+                    active:bg-gray-100 dark:active:bg-gray-800"
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    openSponsorModal();
+                  }}
                 >
-                  <Button size="sm" variant="ghost">
-                    Sign In
-                  </Button>
+                  💖 후원
+                </button>
+              </li>
+            </ul>
+
+            {/* 모바일 로그인 + 소셜 */}
+            <div className="flex flex-row items-center justify-between w-full pt-3 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex flex-row gap-2">
+                {shouldShowLoading ? (
+                  <div>
+                    <Skeleton className="flex rounded-[5px] w-[80px] h-8" />
+                  </div>
+                ) : !isAuthenticated ? (
+                  <div className="flex flex-row gap-2">
+                    {path !== "/signup" && (
+                      <Link
+                        className="text-white no-underline font-sans"
+                        href="/signup"
+                      >
+                        <Button size="sm" variant="ghost">
+                          Sign Up
+                        </Button>
+                      </Link>
+                    )}
+                    <Link
+                      className="text-white no-underline font-sans"
+                      href="/signin"
+                    >
+                      <Button size="sm" variant="ghost">
+                        Sign In
+                      </Button>
+                    </Link>
+                  </div>
+                ) : (
+                  <Dropdown placement="bottom-start">
+                    <DropdownTrigger>
+                      <div className="flex items-center gap-2 bg-transparent cursor-pointer">
+                        <UserCircleIcon className="w-5 h-5" />
+                        <div className="flex flex-col items-start max-w-[90px]">
+                          <p className="text-sm truncate w-full">
+                            {user?.name}
+                          </p>
+                          {idleCountdownLabel && (
+                            <p className="text-[10px] leading-tight text-red-500 whitespace-nowrap">
+                              {idleCountdownLabel}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </DropdownTrigger>
+                    <DropdownMenu aria-label="Profile Actions" variant="flat">
+                      <DropdownItem key="profile" textValue={`${user?.email}`}>
+                        <p>로그인 정보</p>
+                        <p className="text-xs">{user?.email}</p>
+                      </DropdownItem>
+
+                      {user?.role === "admin" ? (
+                        <>
+                          <DropdownItem
+                            key="adminDashboard"
+                            textValue="adminDashboard"
+                            onClick={() => router.push("/admin")}
+                          >
+                            <p>📊 대시보드</p>
+                          </DropdownItem>
+
+                          <DropdownItem
+                            key="adminAnalytics"
+                            textValue="adminAnalytics"
+                            onClick={() => router.push("/admin/analytics")}
+                          >
+                            <p>📈 앱 분석</p>
+                          </DropdownItem>
+
+                          {/* 🔥 외주 관리 추가 */}
+                          <DropdownItem
+                            key="adminWorks"
+                            textValue="adminWorks"
+                            onClick={() => router.push("/admin/works")}
+                          >
+                            <p>💻 외주 관리</p>
+                          </DropdownItem>
+
+                          <DropdownItem
+                            key="adminWrite"
+                            textValue="adminWrite"
+                            onClick={() => router.push("/admin/write")}
+                          >
+                            <p>개발노트 쓰기</p>
+                          </DropdownItem>
+                        </>
+                      ) : null}
+
+                      <DropdownItem
+                        key="logout"
+                        color="danger"
+                        textValue="Log Out"
+                        onClick={handleLogOut}
+                      >
+                        Log Out
+                      </DropdownItem>
+                    </DropdownMenu>
+                  </Dropdown>
+                )}
+              </div>
+
+              {/* 모바일 소셜 아이콘 - 카카오톡 추가 */}
+              <div className="flex flex-row gap-3">
+                <Link
+                  href={siteConfig.links.github}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  <GithubIcon className="w-5 h-5 text-gray-500" />
+                </Link>
+                <Link
+                  href={siteConfig.links.youtube}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  <YouTubeIcon className="w-5 h-5 text-red-600" />
+                </Link>
+                <Link
+                  href={siteConfig.links.discord}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  <DiscordIcon className="w-5 h-5" />
+                </Link>
+                {/* 🔥 카카오톡 아이콘 추가 */}
+                <Link
+                  href={siteConfig.links.kakao}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  <KakaoIcon className="w-5 h-5 text-yellow-500" />
                 </Link>
               </div>
-            ) : (
-              <Dropdown placement="bottom-start">
-                <DropdownTrigger>
-                  <div className="flex items-center gap-2 bg-transparent cursor-pointer">
-                    <UserCircleIcon className="w-5 h-5" />
-                    <div className="flex flex-col items-start max-w-[90px]">
-                      <p className="text-sm truncate w-full">
-                        {user?.name}
-                      </p>
-                      {idleCountdownLabel && (
-                        <p className="text-[10px] leading-tight text-red-500 whitespace-nowrap">
-                          {idleCountdownLabel}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </DropdownTrigger>
-                <DropdownMenu aria-label="Profile Actions" variant="flat">
-                  <DropdownItem key="profile" textValue={`${user?.email}`}>
-                    <p>로그인 정보</p>
-                    <p className="text-xs">{user?.email}</p>
-                  </DropdownItem>
-
-                  {user?.role === "admin" ? (
-                    <>
-                      <DropdownItem
-                        key="adminDashboard"
-                        textValue="adminDashboard"
-                        onClick={() => router.push("/admin")}
-                      >
-                        <p>📊 대시보드</p>
-                      </DropdownItem>
-
-                      <DropdownItem
-                        key="adminAnalytics"
-                        textValue="adminAnalytics"
-                        onClick={() => router.push("/admin/analytics")}
-                      >
-                        <p>📈 앱 분석</p>
-                      </DropdownItem>
-
-                      {/* 🔥 외주 관리 추가 */}
-                      <DropdownItem
-                        key="adminWorks"
-                        textValue="adminWorks"
-                        onClick={() => router.push("/admin/works")}
-                      >
-                        <p>💻 외주 관리</p>
-                      </DropdownItem>
-
-                      <DropdownItem
-                        key="adminWrite"
-                        textValue="adminWrite"
-                        onClick={() => router.push("/admin/write")}
-                      >
-                        <p>개발노트 쓰기</p>
-                      </DropdownItem>
-                    </>
-                  ) : null}
-
-                  <DropdownItem
-                    key="logout"
-                    color="danger"
-                    textValue="Log Out"
-                    onClick={handleLogOut}
-                  >
-                    Log Out
-                  </DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
-            )}
+            </div>
           </div>
-
-          {/* 모바일 소셜 아이콘 - 카카오톡 추가 */}
-          <div className="flex flex-row gap-3">
-            <Link
-              href={siteConfig.links.github}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              <GithubIcon className="w-5 h-5 text-gray-500" />
-            </Link>
-            <Link
-              href={siteConfig.links.youtube}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              <YouTubeIcon className="w-5 h-5 text-red-600" />
-            </Link>
-            <Link
-              href={siteConfig.links.discord}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              <DiscordIcon className="w-5 h-5" />
-            </Link>
-            {/* 🔥 카카오톡 아이콘 추가 */}
-            <Link
-              href={siteConfig.links.kakao}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              <KakaoIcon className="w-5 h-5 text-yellow-500" />
-            </Link>
-            <ThemeSwitch />
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
