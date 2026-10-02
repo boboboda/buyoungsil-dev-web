@@ -329,4 +329,80 @@ model WorkRequest {
   @@map("work_requests")
   @@index([status])
   @@index([createdAt])
+
+
+  
+}
+
+// ===== prisma/schema.prisma 맨 아래에 추가 =====
+
+// 분석 대상 앱 목록과 수집 키
+model AnalyticsApp {
+  id        String   @id @default(cuid())
+  appId     String   @unique // 사람이 읽는 앱 이름 (예: "exchange-rate")
+  name      String
+  ingestKey String   @unique // 앱이 이벤트를 보낼 때 헤더로 보내는 키
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  events       AnalyticsEvent[]
+  installs     AnalyticsInstall[]
+  dailyActives DailyActiveInstall[]
+
+  @@map("analytics_apps")
+}
+
+// 원본 이벤트 (90일 보관 예정)
+model AnalyticsEvent {
+  id         Int      @id @default(autoincrement())
+  appId      String
+  eventId    String // 앱이 만든 UUID. 재전송해도 한 번만 저장
+  installId  String
+  sessionId  String?
+  name       String
+  params     Json?
+  appVersion String?
+  platform   String?
+  osVersion  String?
+  occurredAt DateTime
+  receivedAt DateTime @default(now())
+
+  app AnalyticsApp @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, eventId])
+  @@index([appId, occurredAt])
+  @@index([appId, name, occurredAt])
+  @@index([appId, installId, occurredAt])
+  @@map("analytics_events")
+}
+
+// 설치(기기)별 첫 접속, 마지막 접속, 버전
+model AnalyticsInstall {
+  appId       String
+  installId   String
+  firstSeenAt DateTime
+  lastSeenAt  DateTime
+  appVersion  String?
+  platform    String?
+  osVersion   String?
+
+  app AnalyticsApp @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@id([appId, installId])
+  @@index([appId, lastSeenAt])
+  @@index([appId, firstSeenAt])
+  @@map("analytics_installs")
+}
+
+// 하루에 한 번이라도 앱을 연 설치 (한국 시간 기준 날짜)
+model DailyActiveInstall {
+  appId     String
+  date      String // yyyy-MM-dd (KST)
+  installId String
+
+  app AnalyticsApp @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@id([appId, date, installId])
+  @@index([appId, date])
+  @@map("daily_active_installs")
 }
