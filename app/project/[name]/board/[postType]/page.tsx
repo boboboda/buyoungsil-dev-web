@@ -1,27 +1,24 @@
-// app/project/[name]/board/[postType]/write/page.tsx
-import { redirect } from "next/navigation";
-import { getServerSession } from "next-auth/next";
+// app/project/[name]/board/[postType]/page.tsx
+import { title } from "@/components/primitives";
+import PostTable from "@/components/release/postComponent/PostTable";
+import { fetchPosts } from "@/serverActions/posts";
 
-import PostWrite from "@/components/release/postComponent/PostWrite";
-import { authOptions } from "@/lib/auth/auth";
-
-export default async function WritePage({
+export default async function BoardPage({
   params,
 }: {
-  params: Promise<{ postType: string; name: string }>;
+  params: Promise<{ name: string; postType: string }>;
 }) {
-  const { postType, name } = await params;
+  const { name, postType } = await params;
 
-  // 로그인하지 않았다면 글쓰기 화면 대신 로그인 페이지로 보낸다.
-  const session = await getServerSession(authOptions);
+  const response = await fetchPosts(name, postType);
+  const fetchedPosts = response?.posts ?? [];
 
-  if (!session?.user?.email) {
-    redirect("/signin");
-  }
+  const postTitle = postType === "notice" ? "공지사항" : "문의 게시판";
 
   return (
-    <div className="flex flex-col w-full space-y-8 pr-4">
-      <PostWrite appName={name} postType={postType} />
+    <div className="container flex w-full pl-5 py-5 flex-col items-center justify-center gap-y-3 pr-4">
+      <h1 className={title()}>{postTitle}</h1>
+      <PostTable appName={name} postType={postType} posts={fetchedPosts} />
     </div>
   );
 }
