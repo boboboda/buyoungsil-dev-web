@@ -15,6 +15,8 @@ import {
 import { toast } from "react-toastify";
 import { createProject, updateProject } from "@/serverActions/projects";
 import { generateTempSlug } from "@/lib/utils/slugify";
+import { buildPrivacyTemplate, hasUnfilledPlaceholder } from "@/lib/privacy/template";
+import PrivacyPolicyView from "@/components/project/PrivacyPolicyView";
 import type { Project, ProjectTag } from "@/types";
 
 // 🔥 타입 정의 추가
@@ -42,6 +44,14 @@ export default function ProjectForm({ project }: ProjectFormProps) {
   const [loading, setLoading] = useState(false);
   const [tagInput, setTagInput] = useState({ name: "", color: "#3b82f6" });
 
+  // 🔒 개인정보처리방침 템플릿 옵션 / 미리보기
+  const [templateOptions, setTemplateOptions] = useState({
+    contactEmail: "",
+    usesAds: false,
+    usesAnalytics: false,
+  });
+  const [showPrivacyPreview, setShowPrivacyPreview] = useState(false);
+
   const [formData, setFormData] = useState({
     name: project?.name || "",
     title: project?.title || "",
@@ -53,8 +63,32 @@ export default function ProjectForm({ project }: ProjectFormProps) {
     progress: project?.progress || 0,
     techStack: project?.techStack || [],
     tags: project?.tags || [],
-    databaseId: project?.databaseId || ""
+    databaseId: project?.databaseId || "",
+    privacyPolicy: project?.privacyPolicy || ""
   });
+
+  const handleLoadPrivacyTemplate = () => {
+    if (!formData.title.trim()) {
+      toast.error("프로젝트 제목을 먼저 입력하세요");
+      return;
+    }
+
+    if (
+      formData.privacyPolicy.trim() &&
+      !window.confirm("입력된 처리방침이 템플릿으로 덮어써집니다. 계속할까요?")
+    ) {
+      return;
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      privacyPolicy: buildPrivacyTemplate({
+        title: prev.title,
+        ...templateOptions,
+      })
+    }));
+    toast.info("템플릿을 불러왔습니다. [[ ]] 표시된 부분을 채워 주세요");
+  };
 
   const handleAddTag = () => {
     if (!tagInput.name.trim()) {
@@ -91,6 +125,12 @@ export default function ProjectForm({ project }: ProjectFormProps) {
 
     if (!formData.title || !formData.description) {
       toast.error("필수 항목을 입력하세요");
+      return;
+    }
+
+    // 🔒 템플릿의 [[ ]] 자리표시자가 남은 채로 공개되는 것을 방지
+    if (hasUnfilledPlaceholder(formData.privacyPolicy)) {
+      toast.error("개인정보처리방침에 [[ ]] 로 표시된 빈칸이 남아 있습니다");
       return;
     }
 
@@ -301,6 +341,89 @@ export default function ProjectForm({ project }: ProjectFormProps) {
         value={formData.appLink}
         onValueChange={(value) => setFormData(prev => ({ ...prev, appLink: value }))}
       />
+
+      {/* 🔒 개인정보처리방침 */}
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm font-medium">🔒 개인정보처리방침 (마크다운)</label>
+          <p className="text-xs text-gray-500 mt-1">
+            비워 두면 상세 페이지의 "개인정보처리방침" 탭이 표시되지 않습니다.
+            저장하면 <code>/project/{formData.name || "[name]"}/privacy</code> 주소로도 공개되며,
+            스토어 등록 시 이 주소를 입력하세요.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-3 p-4 rounded-lg bg-gray-50 dark:bg-gray-800">
+          <Input
+            size="sm"
+            type="email"
+            label="문의 이메일 (템플릿용)"
+            placeholder="블로그용 별도 메일 권장"
+            value={templateOptions.contactEmail}
+            onValueChange={(value) =>
+              setTemplateOptions(prev => ({ ...prev, contactEmail: value }))
+            }
+          />
+          <div className="flex flex-wrap gap-4">
+            <Checkbox
+              size="sm"
+              isSelected={templateOptions.usesAds}
+              onValueChange={(v) => setTemplateOptions(prev => ({ ...prev, usesAds: v }))}
+            >
+              광고 SDK 사용 (AdMob 등)
+            </Checkbox>
+            <Checkbox
+              size="sm"
+              isSelected={templateOptions.usesAnalytics}
+              onValueChange={(v) => setTemplateOptions(prev => ({ ...prev, usesAnalytics: v }))}
+            >
+              분석·오류 수집 사용 (Firebase 등)
+            </Checkbox>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="flat"
+            color="primary"
+            onClick={handleLoadPrivacyTemplate}
+            className="self-start"
+          >
+            기본 템플릿 불러오기
+          </Button>
+        </div>
+
+        <Textarea
+          placeholder="# 앱 이름 개인정보처리방침 ..."
+          value={formData.privacyPolicy}
+          onValueChange={(value) => setFormData(prev => ({ ...prev, privacyPolicy: value }))}
+          minRows={12}
+          maxRows={40}
+          classNames={{ input: "font-mono text-sm" }}
+        />
+
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-gray-500">
+            {project?.privacyUpdatedAt
+              ? `현재 시행일: ${project.privacyUpdatedAt} (내용을 수정해 저장하면 오늘 날짜로 갱신됩니다)`
+              : "저장하는 날짜가 시행일로 기록됩니다"}
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="light"
+            isDisabled={!formData.privacyPolicy.trim()}
+            onClick={() => setShowPrivacyPreview(prev => !prev)}
+          >
+            {showPrivacyPreview ? "미리보기 닫기" : "미리보기"}
+          </Button>
+        </div>
+
+        {showPrivacyPreview && formData.privacyPolicy.trim() && (
+          <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+            <PrivacyPolicyView policy={formData.privacyPolicy} />
+          </div>
+        )}
+      </div>
 
       {/* Database ID */}
       <Input

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import moment from "moment";
 import { Button } from "@heroui/react";
+import PrivacyPolicyView from "./PrivacyPolicyView";
 
 // ==================== 타입 정의 ====================
 interface Revenue {
@@ -47,6 +48,8 @@ interface Project {
   progress: number;
   platform: string;
   techStack: string[];
+  privacyPolicy?: string | null;
+  privacyUpdatedAt?: string | null;
   tags: Array<{ id: string; name: string; color: string }>;
   logs?: ProjectLog[];
   revenues?: Revenue[];
@@ -63,7 +66,7 @@ interface ProjectDetailClientProps {
 // ==================== 메인 컴포넌트 ====================
 export default function ProjectDetailClient({ project }: ProjectDetailClientProps) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"overview" | "logs" | "revenues" | "community">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "logs" | "revenues" | "community" | "privacy">("overview");
 
   const statusEmoji = {
     released: "🚀",
@@ -190,6 +193,18 @@ export default function ProjectDetailClient({ project }: ProjectDetailClientProp
           >
             💬 커뮤니티
           </button>
+          {project.privacyPolicy && (
+            <button
+              onClick={() => setActiveTab("privacy")}
+              className={`pb-4 px-2 font-medium transition-colors ${
+                activeTab === "privacy"
+                  ? "text-blue-600 border-b-2 border-blue-600"
+                  : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              }`}
+            >
+              🔒 개인정보처리방침
+            </button>
+          )}
         </nav>
       </div>
 
@@ -211,6 +226,25 @@ export default function ProjectDetailClient({ project }: ProjectDetailClientProp
 
       {activeTab === "community" && (
         <CommunityTab projectName={project.name} />
+      )}
+
+      {activeTab === "privacy" && project.privacyPolicy && (
+        <div className="space-y-4">
+          <PrivacyPolicyView
+            policy={project.privacyPolicy}
+            updatedAt={project.privacyUpdatedAt}
+          />
+          {/* 스토어 등록용 독립 URL */}
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            스토어 등록용 주소:{" "}
+            <Link
+              href={`/project/${project.name}/privacy`}
+              className="underline"
+            >
+              /project/{project.name}/privacy
+            </Link>
+          </p>
+        </div>
       )}
     </div>
   );

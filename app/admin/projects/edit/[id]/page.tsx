@@ -38,6 +38,10 @@ export default async function EditProjectPage({ params }: EditProjectPageProps) 
   platform: project.platform as any,
   techStack: project.techStack, // 🔥 이 줄 추가!
   databaseId: project.databaseId,
+  privacyPolicy: project.privacyPolicy, // 🔥 빠지면 수정 저장 시 처리방침이 지워집니다
+  privacyUpdatedAt: project.privacyUpdatedAt
+    ? moment(project.privacyUpdatedAt).format("YYYY-MM-DD")
+    : null,
   tags: project.tags,
   createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
   updatedAt: moment(project.updatedAt).format("YYYY-MM-DD")

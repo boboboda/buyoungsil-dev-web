@@ -245,7 +245,11 @@ model Project {
   
   progress    Int          @default(0)
   databaseId  String?
-  
+
+  // 🔥 개인정보처리방침 (마크다운 본문 + 시행일)
+  privacyPolicy    String?   @db.Text
+  privacyUpdatedAt DateTime?
+
   tags        ProjectTag[]
   logs        ProjectLog[]
   revenues    Revenue[]

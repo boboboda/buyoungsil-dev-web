@@ -14,7 +14,14 @@ interface CreateProjectData {
   appLink?: string;
   progress?: number;
   techStack?: string[];
+  privacyPolicy?: string;
   tags?: Array<{ name: string; color: string }>;
+}
+
+// 빈 문자열/공백만 있는 처리방침은 null 로 저장 (탭 숨김 판단 기준)
+function normalizePrivacyPolicy(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }
 
 // ========================================
@@ -36,6 +43,8 @@ export async function createProject(data: CreateProjectData) {
         appLink: data.appLink,
         progress: data.progress || 0,
         techStack: data.techStack || [],
+        privacyPolicy: normalizePrivacyPolicy(data.privacyPolicy),
+        privacyUpdatedAt: normalizePrivacyPolicy(data.privacyPolicy) ? new Date() : null,
         tags: {
           create: data.tags || []
         }
@@ -83,13 +92,27 @@ export async function updateProject(
     // const { tags, ...updateData } = data;
 
     // ✅ 수정: tags 처리 추가
-    const { tags, ...updateData } = data;
+    const { tags, privacyPolicy, ...updateData } = data;
 
     // 기본 필드 업데이트
     const updateOperation: any = {
       ...updateData,
       updatedAt: new Date()
     };
+
+    // 🔥 개인정보처리방침: 내용이 실제로 바뀐 경우에만 시행일 갱신
+    if (privacyPolicy !== undefined) {
+      const nextPolicy = normalizePrivacyPolicy(privacyPolicy);
+      const current = await prisma.project.findUnique({
+        where: { id },
+        select: { privacyPolicy: true }
+      });
+
+      if (nextPolicy !== (current?.privacyPolicy ?? null)) {
+        updateOperation.privacyPolicy = nextPolicy;
+        updateOperation.privacyUpdatedAt = nextPolicy ? new Date() : null;
+      }
+    }
 
     // ✅ 태그가 있으면 기존 태그 삭제 후 새로 생성
     if (tags !== undefined) {
@@ -112,6 +135,7 @@ export async function updateProject(
 
     revalidatePath("/project");
     revalidatePath(`/project/${project.name}`);
+    revalidatePath(`/project/${project.name}/privacy`);
     revalidatePath("/admin/projects");
 
     return {

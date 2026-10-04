@@ -1,101 +1,140 @@
+// app/project/[name]/page.tsx (Server Component)
 import { Metadata } from "next";
-import { fetchAllProjects } from "@/serverActions/projects";
-import ProjectCard from "@/components/project/ProjectCard";
-import { PageHero } from "@/components/common/PageHero";
-import moment from "moment";
+import { notFound } from "next/navigation";
+import prisma from "@/lib/prisma";
+import Link from "next/link";
+import ProjectDetailClient from "@/components/project/ProjectDetailClient";
 
 export const dynamic = 'force-dynamic';
 
-export const metadata: Metadata = {
-  title: "프로젝트 | 코딩천재 부영실",
-  description: "AI로 만든 모바일/웹 프로젝트 모음. 출시된 앱부터 개발 중인 프로젝트까지 모두 공개합니다.",
-  keywords: ["프로젝트", "앱 개발", "웹 개발", "Flutter", "Next.js", "AI 개발"],
-};
+interface ProjectDetailPageProps {
+  params: Promise<{
+    name: string;
+  }>;
+}
 
-export default async function ProjectPage() {
-  const rawProjects = await fetchAllProjects();
+export async function generateMetadata({ params }: ProjectDetailPageProps): Promise<Metadata> {
+  const { name } = await params;
+  
+  const project = await prisma.project.findUnique({
+    where: { name },
+    include: { tags: true }
+  });
+  
+  if (!project) {
+    return {
+      title: "프로젝트를 찾을 수 없습니다",
+    };
+  }
 
-  // 🔥 Date를 string으로 변환
-  const projects = rawProjects.map(project => ({
+  return {
+    title: `${project.title} | 코딩천재 부영실`,
+    description: project.description,
+  };
+}
+
+export default async function ProjectDetailPage({ params }: ProjectDetailPageProps) {
+  const { name } = await params;
+  
+  // ✅ 프로젝트, 로그, 수익 데이터 모두 가져오기
+  const project = await prisma.project.findUnique({
+    where: { name },
+    include: { 
+      tags: true,
+      logs: {
+        orderBy: {
+          createdAt: 'desc'
+        }
+      },
+      revenues: {  // ✅✅✅ 이 부분이 빠져있었습니다!
+        orderBy: {
+          month: 'desc'
+        }
+      }
+    }
+  });
+
+  if (!project) {
+    notFound();
+  }
+
+  console.log("🔍 revenues 데이터:", project.revenues); // ✅ 디버깅용
+
+  // 🔥 로그에 noteId가 있으면 해당 노트 정보 조회
+  const logsWithNotes = await Promise.all(
+    project.logs.map(async (log) => {
+      if (log.noteId) {
+        const note = await prisma.developNote.findUnique({
+          where: { noteId: log.noteId },
+          select: {
+            noteId: true,
+            title: true,
+            mainCategory: true
+          }
+        });
+        
+        return {
+          ...log,
+          note
+        };
+      }
+      
+      return {
+        ...log,
+        note: null
+      };
+    })
+  );
+
+  // 데이터 포맷팅
+  const formattedProject = {
     ...project,
-    createdAt: moment(project.createdAt).format("YYYY-MM-DD"),
-    updatedAt: moment(project.updatedAt).format("YYYY-MM-DD")
-  }));
+    createdAt: project.createdAt.toISOString(),
+    updatedAt: project.updatedAt.toISOString(),
+    // 🔥 Date -> 문자열 (Client Component 로 넘기기 위해)
+    privacyUpdatedAt: project.privacyUpdatedAt?.toISOString() ?? null,
+    logs: logsWithNotes.map(log => ({
+      id: log.id,
+      title: log.title,
+      content: log.content,
+      logType: log.logType,
+      noteId: log.noteId,
+      createdAt: log.createdAt.toISOString(),
+      updatedAt: log.updatedAt.toISOString(),
+      note: log.note
+    })),
+    // ✅ 수익 데이터 포맷팅 추가
+    revenues: project.revenues.map(revenue => ({
+      id: revenue.id,
+      projectId: revenue.projectId,
+      month: revenue.month,
+      adsense: revenue.adsense,
+      inapp: revenue.inapp,
+      total: revenue.total,
+      dau: revenue.dau,
+      mau: revenue.mau,
+      downloads: revenue.downloads,
+      retention: revenue.retention,
+      notes: revenue.notes,
+      createdAt: revenue.createdAt.toISOString(),
+      updatedAt: revenue.updatedAt.toISOString()
+    }))
+  };
 
-  // 상태별로 그룹화
-  const releasedProjects = projects.filter(p => p.status === 'released');
-  const inProgressProjects = projects.filter(p => p.status === 'in-progress');
-  const backendProjects = projects.filter(p => p.status === 'backend');
+  console.log("✅ formattedProject.revenues:", formattedProject.revenues); // ✅ 디버깅용
 
   return (
-    <div className="w-full">
-      {/* Hero 섹션 */}
-      <PageHero
-        icon="💼"
-        title="프로젝트"
-        description="AI로 만든 모바일/웹 프로젝트를 공유합니다"
-        gradient="from-green-500 to-emerald-500"
-      />
+    <div className="container mx-auto px-4 py-8 max-w-4xl">
+      {/* 뒤로가기 */}
+      <Link 
+        href="/project" 
+        className="inline-flex items-center text-blue-600 hover:text-blue-800 mb-6"
+      >
+        ← 프로젝트 목록으로
+      </Link>
 
-      {/* 메인 컨텐츠 */}
-      <div className="container mx-auto px-4 py-12 max-w-7xl">
-        {/* 출시된 프로젝트 */}
-        {releasedProjects.length > 0 && (
-          <section className="mb-16">
-            <h2 className="text-3xl font-bold mb-6 flex items-center gap-2">
-              🚀 출시된 프로젝트
-              <span className="text-sm font-normal text-gray-500">
-                ({releasedProjects.length})
-              </span>
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {releasedProjects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* 개발 중인 프로젝트 */}
-        {inProgressProjects.length > 0 && (
-          <section className="mb-16">
-            <h2 className="text-3xl font-bold mb-6 flex items-center gap-2">
-              🔨 개발 중
-              <span className="text-sm font-normal text-gray-500">
-                ({inProgressProjects.length})
-              </span>
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {inProgressProjects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* 백엔드 프로젝트 */}
-        {backendProjects.length > 0 && (
-          <section className="mb-16">
-            <h2 className="text-3xl font-bold mb-6 flex items-center gap-2">
-              ⚙️ 백엔드
-              <span className="text-sm font-normal text-gray-500">
-                ({backendProjects.length})
-              </span>
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {backendProjects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {projects.length === 0 && (
-          <div className="text-center py-20 text-gray-500">
-            아직 등록된 프로젝트가 없습니다.
-          </div>
-        )}
-      </div>
+      {/* Client Component로 분리 */}
+      <ProjectDetailClient project={formattedProject} />
     </div>
   );
 }

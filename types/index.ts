@@ -124,6 +124,8 @@ export interface Project {
   techStack: string[];
 
   databaseId?: string | null;
+  privacyPolicy?: string | null;
+  privacyUpdatedAt?: string | null;
   tags: ProjectTag[];
   logCount?: number;
   revenue?: number;
