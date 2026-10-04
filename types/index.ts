@@ -125,8 +125,7 @@ export interface Project {
 
   databaseId?: string | null;
   privacyPolicy?: string | null;
-  privacyUpdatedAt?: string | null;
-  tags: ProjectTag[];
+  privacyUpdatedAt?: string | Date | null;  tags: ProjectTag[];
   logCount?: number;
   revenue?: number;
   createdAt: string;

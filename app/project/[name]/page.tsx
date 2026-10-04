@@ -91,6 +91,8 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     ...project,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
+    // 🔥 Date -> 문자열 (Client Component 로 넘기기 위해)
+    privacyUpdatedAt: project.privacyUpdatedAt?.toISOString() ?? null,
     logs: logsWithNotes.map(log => ({
       id: log.id,
       title: log.title,

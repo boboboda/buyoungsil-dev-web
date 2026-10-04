@@ -84,6 +84,7 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     ...project,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
+    privacyUpdatedAt: project.privacyUpdatedAt?.toISOString() ?? null,
     logs: logsWithNotes.map(log => ({
       id: log.id,
       title: log.title,
