@@ -32,7 +32,10 @@ export function Providers({ children, themeProps }: ProvidersProps) {
       refetchWhenOffline={false}
     >
       <SessionInitializer />
-      <SocialLoginProvider />
+      {/* useSearchParams 를 쓰므로 Suspense 로 감싸야 정적 페이지 빌드가 통과한다 */}
+      <React.Suspense fallback={null}>
+        <SocialLoginProvider />
+      </React.Suspense>
       <ChannelProvider>
         <QueryProvider>
           <HeroUIProvider navigate={router.push}>
