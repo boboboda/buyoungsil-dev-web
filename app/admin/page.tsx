@@ -140,7 +140,7 @@ export default async function AdminDashboard() {
       {/* 빠른 작업 */}
       <div className="mb-8">
         <h2 className="text-xl font-bold mb-4">⚡ 빠른 작업</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           <Link href="/admin/projects/create">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium hover:shadow-lg transition-shadow">
               + 새 프로젝트
@@ -164,6 +164,11 @@ export default async function AdminDashboard() {
           <Link href="/admin/boards">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium hover:shadow-lg transition-shadow">
               💬 게시판 관리
+            </button>
+          </Link>
+          <Link href="/admin/categories">
+            <button className="w-full p-4 rounded-lg bg-gradient-to-r from-teal-500 to-green-500 text-white font-medium hover:shadow-lg transition-shadow">
+              🏷️ 카테고리 관리
             </button>
           </Link>
         </div>
