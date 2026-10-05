@@ -95,7 +95,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html className="light" lang="ko">
+    <html suppressHydrationWarning className="light" lang="ko">
       <body className={clsx("flex flex-col min-h-screen", fontSans.className)}>
         <Providers themeProps={{ attribute: "class", defaultTheme: "light" }}>
           <div className="flex flex-col flex-grow min-h-0">

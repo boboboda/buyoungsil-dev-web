@@ -66,6 +66,7 @@ import TreeViewPlugin from './plugins/TreeViewPlugin';
 import TwitterPlugin from './plugins/TwitterPlugin';
 import YouTubePlugin from './plugins/YouTubePlugin';
 import ContentEditable from './ui/ContentEditable';
+import CodeLanguagePastePlugin from './plugins/CodeLanguagePastePlugin';
 
 export default function Editor(): JSX.Element {
   const {
@@ -175,6 +176,7 @@ export default function Editor(): JSX.Element {
               ErrorBoundary={LexicalErrorBoundary}
             />
             <MarkdownShortcutPlugin />
+            <CodeLanguagePastePlugin />
             {isCodeHighlighted &&
               (isCodeShiki ? (
                 <CodeHighlightShikiPlugin />
