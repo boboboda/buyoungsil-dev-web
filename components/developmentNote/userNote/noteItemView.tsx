@@ -224,7 +224,7 @@ export default function NoteItemView({
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900 relative overflow-hidden">
+    <div className="flex h-[100dvh] bg-gray-50 dark:bg-gray-900 relative overflow-hidden">
       
       {/* 🔥 Overlay Background */}
       {isSidebarOpen && (
@@ -236,7 +236,7 @@ export default function NoteItemView({
 
       {/* 🔥 사이드바 - Fixed Position with Overlay */}
       <aside
-        className={`fixed left-0 top-0 h-full w-80 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col ${
+        className={`fixed left-0 top-0 h-full w-[85vw] max-w-xs bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col ${
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >

@@ -115,7 +115,7 @@ export default function ReadLexicalEditor({ note }: ReadLexicalEditorProps) {
 
   return (
     <div className="w-full min-h-full bg-white dark:bg-gray-900">
-      <article className="max-w-6xl mx-auto px-8 py-8 lg:py-12">
+      <article className="max-w-6xl mx-auto px-4 sm:px-8 py-6 lg:py-12">
         
         <header className="mb-10 pb-8 border-b border-gray-200 dark:border-gray-700">
           <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-6 leading-tight">
@@ -146,12 +146,12 @@ export default function ReadLexicalEditor({ note }: ReadLexicalEditorProps) {
           </div>
         </header>
 
-        <div className="read-only-code prose prose-lg dark:prose-invert max-w-none">
+        <div className="read-only-code prose prose-base lg:prose-lg dark:prose-invert max-w-none break-words [&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto">
           <LexicalComposer initialConfig={initialConfig}>
             <RichTextPlugin
               contentEditable={
                 <ContentEditable
-                  className="min-h-[500px] outline-none focus:outline-none text-gray-800 dark:text-gray-200 leading-relaxed"
+                  className="min-h-[300px] md:min-h-[500px] outline-none focus:outline-none text-gray-800 dark:text-gray-200 leading-relaxed"
                   style={{ caretColor: 'transparent' }}
                 />
               }
