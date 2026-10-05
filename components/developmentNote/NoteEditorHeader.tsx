@@ -283,83 +283,14 @@ export default function NoteEditorHeader({
   };
 
   return (
-    <div className="flex flex-col items-center w-full py-2 pl-6 pr-3 gap-3 border-b border-neutral-200 dark:border-neutral-700">
-      <div className="flex flex-row w-full gap-4">
-        {/* 메인 카테고리 */}
-        <div className="flex flex-1 max-w-[200px]">
-          <Select
-            className="max-w-xs"
-            label="메인 카테고리"
-            selectedKeys={mainCategory ? [mainCategory] : []}
-            onSelectionChange={handleSelectionChange}
-          >
-            {noteCategories.map((category) => (
-              <SelectItem key={category}>{category}</SelectItem>
-            ))}
-          </Select>
-        </div>
-
-        {/* 서브 카테고리 (선택한 메인 카테고리에 속한 것만 표시) */}
-        <div className="flex flex-1 max-w-[200px]">
-          <Select
-            className="max-w-xs"
-            label="서브 카테고리"
-            placeholder={
-              selectableSubs.length === 0 ? "없음 (오른쪽에서 추가)" : "선택 안 함"
-            }
-            selectedKeys={subCategory?.name ? [subCategory.name] : []}
-            onSelectionChange={handleSubCategoryChange}
-          >
-            {selectableSubs.map((option) => (
-              <SelectItem key={option.name}>{option.name}</SelectItem>
-            ))}
-          </Select>
-        </div>
-
-        {/* 난이도 선택 */}
-        <div className="flex flex-1 max-w-[200px]">
-          <Select
-            className="max-w-xs"
-            label="난이도"
-            selectedKeys={level ? [level] : []}
-            onSelectionChange={handleLevelChange}
-          >
-            {levelOptions.map((option) => (
-              <SelectItem key={option.value} textValue={option.label}>
-                <div className="flex flex-col">
-                  <span>{option.label}</span>
-                </div>
-              </SelectItem>
-            ))}
-          </Select>
-        </div>
-
-        {/* 서브 카테고리 추가 */}
-        <div className="flex space-x-2 items-center">
-          <Input
-            placeholder="새 서브 카테고리 이름"
-            value={newCategoryName}
-            onChange={(e) => setNewCategoryName(e.target.value)}
-            onKeyDown={(e) => {
-              // 한글 입력 중 Enter(조합 확정)는 무시
-              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                addSubCategory();
-              }
-            }}
-          />
-          <Button
-            className="hover:bg-blue-500"
-            isDisabled={newCategoryName.trim() === ""}
-            isLoading={isAdding}
-            onClick={addSubCategory}
-          >
-            추가
-          </Button>
-        </div>
-
-        {/* 우측: 모드 표시 + 저장 버튼 */}
-        <div className="flex flex-1 justify-end items-center gap-3">
+    <div className="flex flex-col w-full py-2 px-3 sm:pl-6 gap-3 border-b border-neutral-200 dark:border-neutral-700">
+      {/*
+        모바일: 모드 표시 + 저장 버튼 → 카테고리/난이도 → 새 서브 카테고리 → (아래) 제목
+        PC(lg 이상): 한 줄 (카테고리/난이도 → 새 서브 카테고리 → 오른쪽 끝에 모드 표시 + 저장 버튼)
+      */}
+      <div className="flex flex-col lg:flex-row lg:items-center gap-3 w-full">
+        {/* 모드 표시 + 저장 버튼 (모바일에서는 맨 위, PC에서는 맨 오른쪽) */}
+        <div className="order-first lg:order-last lg:ml-auto flex items-center justify-between lg:justify-end gap-3">
           <TextEditMode />
           <Button
             className="hover:bg-blue-500"
@@ -379,19 +310,94 @@ export default function NoteEditorHeader({
             {editType === "add" ? "배포" : "수정"}
           </Button>
         </div>
+
+        {/* 카테고리 / 난이도 (모바일 2칸 + 난이도 전체 폭, PC 한 줄) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-row gap-3">
+          {/* 메인 카테고리 */}
+          <div className="min-w-0 lg:w-[200px]">
+            <Select
+              className="w-full"
+              label="메인 카테고리"
+              selectedKeys={mainCategory ? [mainCategory] : []}
+              onSelectionChange={handleSelectionChange}
+            >
+              {noteCategories.map((category) => (
+                <SelectItem key={category}>{category}</SelectItem>
+              ))}
+            </Select>
+          </div>
+
+          {/* 서브 카테고리 (선택한 메인 카테고리에 속한 것만 표시) */}
+          <div className="min-w-0 lg:w-[200px]">
+            <Select
+              className="w-full"
+              label="서브 카테고리"
+              placeholder={
+                selectableSubs.length === 0 ? "없음" : "선택 안 함"
+              }
+              selectedKeys={subCategory?.name ? [subCategory.name] : []}
+              onSelectionChange={handleSubCategoryChange}
+            >
+              {selectableSubs.map((option) => (
+                <SelectItem key={option.name}>{option.name}</SelectItem>
+              ))}
+            </Select>
+          </div>
+
+          {/* 난이도 선택 */}
+          <div className="min-w-0 col-span-2 sm:col-span-1 lg:w-[200px]">
+            <Select
+              className="w-full"
+              label="난이도"
+              selectedKeys={level ? [level] : []}
+              onSelectionChange={handleLevelChange}
+            >
+              {levelOptions.map((option) => (
+                <SelectItem key={option.value} textValue={option.label}>
+                  <div className="flex flex-col">
+                    <span>{option.label}</span>
+                  </div>
+                </SelectItem>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        {/* 서브 카테고리 추가 */}
+        <div className="flex items-center gap-2 w-full lg:w-auto">
+          <Input
+            className="flex-1 min-w-0 lg:w-[220px] lg:flex-none"
+            placeholder="새 서브 카테고리 이름"
+            value={newCategoryName}
+            onChange={(e) => setNewCategoryName(e.target.value)}
+            onKeyDown={(e) => {
+              // 한글 입력 중 Enter(조합 확정)는 무시
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                addSubCategory();
+              }
+            }}
+          />
+          <Button
+            className="shrink-0 hover:bg-blue-500"
+            isDisabled={newCategoryName.trim() === ""}
+            isLoading={isAdding}
+            onClick={addSubCategory}
+          >
+            추가
+          </Button>
+        </div>
       </div>
 
       {/* 제목 입력 */}
       <div className="w-full">
-        <div className="flex flex-1 gap-4">
-          <Input
-            className="no-underline"
-            label="제목"
-            type="text"
-            value={title || ""}
-            onChange={(e) => setContent({ title: e.target.value })}
-          />
-        </div>
+        <Input
+          className="no-underline"
+          label="제목"
+          type="text"
+          value={title || ""}
+          onChange={(e) => setContent({ title: e.target.value })}
+        />
       </div>
     </div>
   );
