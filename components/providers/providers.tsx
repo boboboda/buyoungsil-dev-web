@@ -21,17 +21,10 @@ export interface ProvidersProps {
 }
 
 export function Providers({ children, themeProps }: ProvidersProps) {
-  const [isMount, setMount] = React.useState(false);
   const router = useRouter();
 
-  React.useEffect(() => {
-    setMount(true);
-  }, []);
-
-  if (!isMount) {
-    return null;
-  }
-
+  // 서버 HTML에도 본문이 들어가도록 mount 게이트를 두지 않는다.
+  // (예전에는 마운트 전까지 null 을 반환해 크롤러/애드센스가 빈 페이지를 받았음)
   return (
     <SessionProvider
       refetchInterval={30 * 60} // 30분마다 갱신 (초 단위)
