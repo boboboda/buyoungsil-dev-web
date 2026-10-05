@@ -80,9 +80,6 @@ export const metadata: Metadata = {
       "google-adsense-account": "ca-pub-8596470561558049",
     },
   },
-  alternates: {
-    canonical: siteConfig.url,
-  },
 };
 
 export const viewport: Viewport = {

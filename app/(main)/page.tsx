@@ -19,6 +19,7 @@ export const metadata: Metadata = {
     "AI 개발", "ChatGPT 코딩", "비개발자 개발", "Flutter 앱 개발",
     "Next.js", "앱 개발", "부영실", "코딩천재", "AI 코딩"
   ],
+  alternates: { canonical: "/" },
 };
 
 export default async function Home() {

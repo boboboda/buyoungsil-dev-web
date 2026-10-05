@@ -41,8 +41,7 @@ export async function createProject(data: CreateProjectData) {
         platform: data.platform,
         coverImage: data.coverImage,
         appLink: data.appLink,
-        progress: data.progress || 0,
-        techStack: data.techStack || [],
+        progress: data.status === "released" ? 100 : data.progress || 0,        techStack: data.techStack || [],
         privacyPolicy: normalizePrivacyPolicy(data.privacyPolicy),
         privacyUpdatedAt: normalizePrivacyPolicy(data.privacyPolicy) ? new Date() : null,
         tags: {
@@ -99,6 +98,11 @@ export async function updateProject(
       ...updateData,
       updatedAt: new Date()
     };
+
+      // 🔥 출시됨 상태면 진행률은 항상 100
+    if (data.status === "released") {
+      updateOperation.progress = 100;
+    }
 
     // 🔥 개인정보처리방침: 내용이 실제로 바뀐 경우에만 시행일 갱신
     if (privacyPolicy !== undefined) {
