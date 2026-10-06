@@ -1,150 +1,147 @@
-// app/note/[slug]/[noteId]/page.tsx
-// 글 하나의 고유 주소 (예: /note/flutter/12)
-export const dynamic = "force-dynamic";
+// app/note/[slug]/page.tsx
+export const dynamic = 'force-dynamic'
 
-import { Metadata } from "next";
-import { notFound } from "next/navigation";
-
-import prisma from "@/lib/prisma";
-import { siteConfig } from "@/config/site";
 import { allFetchEdtiorServer } from "@/serverActions/editorServerAction";
-import { fetchPublishedCategories } from "@/serverActions/noteCategoryActions";
 import { Note } from "@/store/editorSotre";
 import NoteItemView from "@/components/developmentNote/userNote/noteItemView";
-import { RelatedNoteSummary } from "@/components/developmentNote/userNote/RelatedNotes";
 import { NoteStoreProvider } from "@/components/providers/editor-provider";
+import { Metadata } from "next";
+import { notFound } from "next/navigation";
+import { fetchPublishedCategories } from "@/serverActions/noteCategoryActions";
+// 🔥 새로 추가
 import { PageHero } from "@/components/common/PageHero";
-import { extractPlainText, noteHref } from "@/lib/note/noteUtils";
 
-interface PageProps {
-  params: Promise<{ slug: string; noteId: string }>;
+// 카테고리별 메타데이터
+function getCategoryMetadata(slug: string) {
+  const categoryMap: Record<string, { title: string; description: string; keywords: string[] }> = {
+    'kotlin-compose': {
+      title: 'Kotlin + Compose',
+      description: 'Jetpack Compose를 활용한 안드로이드 앱 개발 경험을 공유합니다.',
+      keywords: ['Kotlin', 'Jetpack Compose', 'Android', '안드로이드']
+    },
+    'swift-swiftui': {
+      title: 'Swift + SwiftUI',
+      description: 'SwiftUI를 활용한 iOS 앱 개발 노하우를 정리했습니다.',
+      keywords: ['Swift', 'SwiftUI', 'iOS', 'iPhone']
+    },
+    'flutter': {
+      title: 'Flutter',
+      description: 'Flutter로 크로스플랫폼 모바일 앱 개발 방법을 공유합니다.',
+      keywords: ['Flutter', 'Dart', '모바일', '앱개발']
+    },
+    'nextjs-heroui': {
+      title: 'Next.js + HeroUI',
+      description: 'Next.js와 HeroUI로 웹 애플리케이션 개발 경험을 정리했습니다.',
+      keywords: ['Next.js', 'HeroUI', 'React', 'TypeScript']
+    },
+    'react': {
+      title: 'React',
+      description: 'React 컴포넌트 설계와 상태 관리 실전 경험을 공유합니다.',
+      keywords: ['React', 'JavaScript', '프론트엔드', 'UI']
+    },
+    'nestjs-typescript': {
+      title: 'NestJS + TypeScript',
+      description: 'NestJS와 TypeScript로 백엔드 개발 노하우를 정리했습니다.',
+      keywords: ['NestJS', 'TypeScript', 'Node.js', '백엔드']
+    },
+    'nodejs': {
+      title: 'Node.js',
+      description: 'Node.js를 활용한 백엔드 개발 경험을 공유합니다.',
+      keywords: ['Node.js', 'JavaScript', '백엔드', 'API']
+    },
+    'python-crawling': {
+      title: 'Python 크롤링',
+      description: 'Python을 활용한 웹 크롤링 및 데이터 수집 방법을 정리했습니다.',
+      keywords: ['Python', '크롤링', '데이터', '자동화']
+    },
+    'basics': {
+      title: '개발 기초',
+      description: '프로그래밍 입문과 기본 개념을 정리한 노트입니다.',
+      keywords: ['프로그래밍', '기초', '입문', '개발']
+    },
+    'default': {
+      title: '개발노트',
+      description: '다양한 개발 기술과 경험을 정리한 개발노트입니다.',
+      keywords: ['개발', '프로그래밍', '웹개발', '앱개발']
+    }
+  };
+
+  return categoryMap[slug] || categoryMap['default'];
 }
 
-// 카테고리가 공개 상태인지, 글이 이 카테고리의 공개 글인지 확인하고 필요한 데이터를 모은다.
-async function loadNotePage(slug: string, noteIdParam: string) {
-  const noteId = Number(noteIdParam);
-
-  if (!Number.isInteger(noteId)) return null;
-
-  const categories = await fetchPublishedCategories();
-  const category = categories.find((cat) => cat.slug === slug);
-
-  if (!category) return null;
-
-  const noteRes = await allFetchEdtiorServer();
-  const notes: Note[] = JSON.parse(noteRes);
-  const categoryNotes = notes.filter((note) => note.mainCategory === slug);
-  const current = categoryNotes.find((note) => note.noteId === noteId);
-
-  if (!current) return null;
-
-  // 관련 글: 지정한 순서를 유지하고, 비공개 글/비공개 카테고리 글은 제외한다.
-  const relatedIds: number[] = (current as any).relatedNoteIds ?? [];
-  let related: RelatedNoteSummary[] = [];
-
-  if (relatedIds.length > 0) {
-    const rows = await prisma.developNote.findMany({
-      where: { noteId: { in: relatedIds }, isPublished: true },
-      select: { noteId: true, title: true, mainCategory: true, level: true },
-    });
-
-    related = relatedIds
-      .map((id) => rows.find((row) => row.noteId === id))
-      .flatMap((row) => {
-        const cat = categories.find((c) => c.slug === row?.mainCategory);
-
-        if (!row || !cat) return [];
-
-        return [
-          {
-            noteId: row.noteId,
-            title: row.title || "(제목 없음)",
-            mainCategory: cat.slug,
-            categoryName: cat.name,
-            level: row.level as RelatedNoteSummary["level"],
-          },
-        ];
-      });
-  }
-
-  return { category, categoryNotes, current, related };
-}
-
-export async function generateMetadata({
-  params,
-}: PageProps): Promise<Metadata> {
-  const { slug, noteId } = await params;
-  const data = await loadNotePage(slug, noteId);
-
-  if (!data) {
-    return { title: "노트를 찾을 수 없습니다" };
-  }
-
-  const { category, current } = data;
-  const title = current.title || "개발노트";
-  const description =
-    (current as any).metaDescription ||
-    extractPlainText(current.content, 150) ||
-    `${category.name} 개발노트: ${title}`;
-  const path = noteHref(slug, current.noteId as number);
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const { slug } = await params;
+  const meta = getCategoryMetadata(slug);
 
   return {
-    title: (current as any).metaTitle || `${title} | ${category.name}`,
-    description,
-    alternates: { canonical: path },
-    openGraph: {
-      type: "article",
-      title,
-      description,
-      url: path,
-    },
+    title: `${meta.title} | 코딩천재 부영실`,
+    description: meta.description,
+    keywords: meta.keywords,
   };
 }
 
-export default async function NotePage({ params }: PageProps) {
-  const { slug, noteId } = await params;
-  const data = await loadNotePage(slug, noteId);
+const EmptyNoteMessage = () => (
+  <div className="flex h-full w-full items-center justify-center min-h-[400px]">
+    <div className="text-center">
+      <h1 className="text-gray-500 text-3xl font-bold mb-2">
+        아직 작성된 노트가 없습니다.
+      </h1>
+      <p className="text-gray-400">곧 새로운 개발노트가 추가될 예정입니다.</p>
+    </div>
+  </div>
+);
 
-  if (!data) {
-    notFound();
+export default async function NoteContentItemPage({ 
+  params 
+}: { 
+  params: Promise<{ slug: string }> 
+}) {
+  const { slug } = await params;
+
+  // 🔥 1. 카테고리가 공개되어 있는지 확인
+  const publishedCategories = await fetchPublishedCategories();
+  const category = publishedCategories.find((cat) => cat.slug === slug);
+
+  if (!category) {
+    notFound(); // 비공개 카테고리
   }
 
-  const { category, categoryNotes, current, related } = data;
-  const path = noteHref(slug, current.noteId as number);
+  // 🔥 2. 해당 카테고리의 모든 노트 가져오기 (isPublished 무관)
+  const noteRes = await allFetchEdtiorServer();
+  const notes: Note[] = JSON.parse(noteRes);
+  const filterNotes = notes.filter((note) => note.mainCategory === slug);
 
-  const jsonLd = {
-    "@context": "https://schema.org",
-    "@type": "TechArticle",
-    headline: current.title,
-    description: extractPlainText(current.content, 150) || undefined,
-    inLanguage: "ko-KR",
-    url: `${siteConfig.url}${path}`,
-    mainEntityOfPage: `${siteConfig.url}${path}`,
-    dateModified: (current as any).updatedAt,
-    datePublished: (current as any).createdAt,
-    author: { "@type": "Person", name: "부영실" },
-    isPartOf: { "@type": "CollectionPage", name: category.name },
-  };
+  if (!filterNotes || filterNotes.length === 0) {
+    // 🔥 Hero 추가 (빈 페이지에도)
+    const meta = getCategoryMetadata(slug);
+    return (
+      <>
+        <PageHero
+          icon="📚"
+          title={meta.title}
+          description={meta.description}
+          gradient="from-blue-600 to-purple-600"
+        />
+        <EmptyNoteMessage />
+      </>
+    );
+  }
+
+  const initialNote = filterNotes[0];
+  const meta = getCategoryMetadata(slug);
 
   return (
     <NoteStoreProvider>
-      <script
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-        type="application/ld+json"
-      />
+      {/* 🔥 Hero 섹션 추가 */}
       <PageHero
-        description={category.description || "개발노트"}
+        icon="📚"
+        title={meta.title}
+        description={meta.description}
         gradient="from-blue-600 to-purple-600"
-        icon={category.icon || "📚"}
-        title={category.name}
       />
-
+      
       <div className="w-full">
-        <NoteItemView
-          fetchNotes={categoryNotes}
-          initialNote={current}
-          relatedNotes={related}
-        />
+        <NoteItemView fetchNotes={filterNotes} initialNote={initialNote} />
       </div>
     </NoteStoreProvider>
   );
