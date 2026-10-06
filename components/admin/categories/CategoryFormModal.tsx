@@ -204,7 +204,7 @@ export default function CategoryFormModal({
 
             <ModalBody className="gap-4">
               {/* 미리보기 */}
-              <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+              <div className="shrink-0 overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
                 {imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
