@@ -42,11 +42,11 @@ export default function NoteCategoryGrid({ categories }: NoteCategoryGridProps) 
             >
               {/* 대표 이미지 (없으면 아이콘) */}
               {category.imageUrl ? (
-                <div className="-mx-3 -mt-3 mb-5 overflow-hidden rounded-t-xl">
+                <div className="-mx-3 -mt-3 mb-5 overflow-hidden rounded-t-xl bg-white/80 dark:bg-gray-900/50">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     alt={`${category.name} 대표 이미지`}
-                    className="aspect-video w-full object-cover"
+                    className="aspect-video w-full object-contain p-3"
                     loading="lazy"
                     src={category.imageUrl}
                   />

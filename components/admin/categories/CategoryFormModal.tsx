@@ -209,7 +209,7 @@ export default function CategoryFormModal({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     alt="카드 이미지 미리보기"
-                    className="aspect-video w-full object-cover"
+                    className="aspect-video w-full bg-gray-50 object-contain p-3 dark:bg-gray-800"
                     src={imageUrl}
                   />
                 ) : (

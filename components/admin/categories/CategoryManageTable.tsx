@@ -143,7 +143,7 @@ export default function CategoryManageTable({ categories }: CategoryTableProps) 
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       alt={`${category.name} 이미지`}
-                      className="h-9 w-16 rounded object-cover"
+                      className="h-9 w-16 rounded bg-gray-100 object-contain p-0.5 dark:bg-gray-800"
                       src={category.imageUrl}
                     />
                   ) : (
