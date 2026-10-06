@@ -125,7 +125,8 @@ export interface Project {
 
   databaseId?: string | null;
   privacyPolicy?: string | null;
-  privacyUpdatedAt?: string | Date | null;  tags: ProjectTag[];
+  privacyUpdatedAt?: string | Date | null;
+  tags: ProjectTag[];
   logCount?: number;
   revenue?: number;
   createdAt: string;
@@ -338,20 +339,9 @@ export const noteCategories: NoteCategory[] = [
 
 export type Platform = "mobile" | "web" | "backend";
 
-export type NoteCategory = 
-  // Mobile
-  | "kotlin-compose"
-  | "swift-swiftui"
-  | "flutter"
-  // Web
-  | "nextjs-heroui"
-  | "react"
-  // Backend
-  | "nestjs-typescript"
-  | "nodejs"
-  | "python-crawling"
-  // Basics
-  | "basics";
+// 메인 카테고리는 이제 DB(NoteCategory 테이블, /admin/categories)에서 관리한다.
+// 슬러그는 관리자가 자유롭게 추가하므로 타입은 문자열이다.
+export type NoteCategory = string;
 
 // 🔥 카테고리 → 플랫폼 매핑
 export const categoryToPlatform: Record<NoteCategory, Platform | null> = {

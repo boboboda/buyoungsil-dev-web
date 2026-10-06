@@ -15,7 +15,7 @@ import { toast } from "react-toastify";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 
 import { useNoteStore } from "@/components/providers/editor-provider";
-import { noteCategories, NoteCategory, NoteEditorType } from "@/types/index";
+import { NoteCategory, NoteEditorType } from "@/types/index";
 import { Note } from "@/store/editorSotre";
 import {
   createSubCategory,
@@ -26,6 +26,10 @@ import {
   fetchNoteLinkOptions,
   NoteLinkOption,
 } from "@/serverActions/noteLinkActions";
+import {
+  CategoryOption,
+  fetchCategoryOptions,
+} from "@/serverActions/noteCategoryActions";
 
 import NoteLinkButton from "./NoteLinkButton";
 import RelatedNotesField from "./RelatedNotesField";
@@ -64,6 +68,18 @@ export default function NoteEditorHeader({
     relatedNoteIds,
     noteId: currentNoteId,
   } = useNoteStore((state) => state);
+
+  // 메인 카테고리 선택 목록 (DB: /admin/categories 에서 추가/수정한 카테고리)
+  const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
+
+  useEffect(() => {
+    fetchCategoryOptions()
+      .then(setCategoryOptions)
+      .catch((error) => {
+        console.error("카테고리 목록 조회 실패:", error);
+        toast.error("메인 카테고리 목록을 불러오지 못했습니다.");
+      });
+  }, []);
 
   // 관련 글 / 본문 링크로 고를 수 있는 전체 노트 목록
   const [noteOptions, setNoteOptions] = useState<NoteLinkOption[]>([]);
@@ -336,13 +352,19 @@ export default function NoteEditorHeader({
           <div className="min-w-0 lg:w-[200px]">
             <Select
               className="w-full"
+              items={categoryOptions}
               label="메인 카테고리"
               selectedKeys={mainCategory ? [mainCategory] : []}
               onSelectionChange={handleSelectionChange}
             >
-              {noteCategories.map((category) => (
-                <SelectItem key={category}>{category}</SelectItem>
-              ))}
+              {(category) => (
+                <SelectItem
+                  key={category.slug}
+                  textValue={`${category.icon} ${category.name}`}
+                >
+                  {category.icon} {category.name}
+                </SelectItem>
+              )}
             </Select>
           </div>
 

@@ -5,7 +5,6 @@ import { getServerSession } from "next-auth/next";
 
 import prisma from "@/lib/prisma";
 import { authOptions } from "@/lib/auth/auth";
-import { noteCategories, NoteCategory } from "@/types";
 
 export interface SubCategoryOption {
   id: string;
@@ -22,8 +21,16 @@ export interface CreateSubCategoryResult {
 
 const MAX_NAME_LENGTH = 40;
 
-function isValidMainCategory(value: string): value is NoteCategory {
-  return (noteCategories as string[]).includes(value);
+// 메인 카테고리는 DB(NoteCategory)에 등록된 슬러그만 유효하다
+async function isValidMainCategory(value: string): Promise<boolean> {
+  if (!value) return false;
+
+  const found = await prisma.noteCategory.findUnique({
+    where: { slug: value },
+    select: { id: true },
+  });
+
+  return !!found;
 }
 
 async function isAdmin(): Promise<boolean> {
@@ -39,7 +46,7 @@ async function isAdmin(): Promise<boolean> {
 export async function fetchSubCategories(
   mainCategory: string,
 ): Promise<SubCategoryOption[]> {
-  if (!isValidMainCategory(mainCategory)) return [];
+  if (!(await isValidMainCategory(mainCategory))) return [];
 
   return prisma.noteSubCategory.findMany({
     where: { mainCategory },
@@ -60,7 +67,7 @@ export async function createSubCategory(
     return { success: false, error: "권한이 없습니다." };
   }
 
-  if (!isValidMainCategory(mainCategory)) {
+  if (!(await isValidMainCategory(mainCategory))) {
     return { success: false, error: "올바르지 않은 메인 카테고리입니다." };
   }
 
