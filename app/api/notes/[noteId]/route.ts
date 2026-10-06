@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import prisma from "@/lib/prisma";
 import { auth } from "@/lib/auth/get-sesstion";
+import { sanitizeRelatedIds } from "@/lib/note/noteUtils";
 
 // 노트 수정 (기존 findOneAndUpdateEditorServer 서버 액션을 API 라우트로 이전)
 export async function PUT(
@@ -29,12 +30,14 @@ export async function PUT(
         subCategory: note.subCategory ?? null,
         level: note.level || "BEGINNER",
         content: note.content,
+        relatedNoteIds: sanitizeRelatedIds(note.relatedNoteIds, numericNoteId),
       },
     });
 
     revalidatePath("/note");
     if (updated.mainCategory) {
       revalidatePath(`/note/${updated.mainCategory}`);
+      revalidatePath(`/note/${updated.mainCategory}/${numericNoteId}`);
     }
 
     return NextResponse.json({ success: true, note: updated });

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
 import { auth } from "@/lib/auth/get-sesstion";
+import { sanitizeRelatedIds } from "@/lib/note/noteUtils";
 
 // 노트 생성 (기존 addEdtiorServer 서버 액션을 API 라우트로 이전)
 export async function POST(request: NextRequest) {
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
         subCategory: note.subCategory ?? null,
         level: note.level || "BEGINNER",
         content: note.content,
+        relatedNoteIds: sanitizeRelatedIds(note.relatedNoteIds, nextNoteId),
       },
     });
 

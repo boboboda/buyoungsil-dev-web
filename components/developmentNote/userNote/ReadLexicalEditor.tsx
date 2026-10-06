@@ -15,10 +15,11 @@ import PlaygroundEditorTheme from '@/components/editor/theme/PlaygroundEditorThe
 import CodeHighlightPrismPlugin from '@/components/editor/plugins/CodeHighlightPrismPlugin';
 import CodeLanguageLabelPlugin from '@/components/editor/plugins/CodeLanguageLabelPlugin';
 import { $prepareNoteContent } from '../noteEditorUtils';
-import { useComments } from '../../../app/hooks/posts/useComments';
+import RelatedNotes, { RelatedNoteSummary } from './RelatedNotes';
 
 interface ReadLexicalEditorProps {
   note?: Note;
+  relatedNotes?: RelatedNoteSummary[];
 }
 
 function LoadContentPlugin({ note }: { note?: Note }) {
@@ -86,7 +87,7 @@ function LoadContentPlugin({ note }: { note?: Note }) {
   return null;
 }
 
-export default function ReadLexicalEditor({ note }: ReadLexicalEditorProps) {
+export default function ReadLexicalEditor({ note, relatedNotes = [] }: ReadLexicalEditorProps) {
   console.log("🎨 ReadLexicalEditor 렌더링");
   console.log("📦 받은 note:", note);
   
@@ -168,6 +169,8 @@ export default function ReadLexicalEditor({ note }: ReadLexicalEditorProps) {
             <CodeLanguageLabelPlugin />
           </LexicalComposer>
         </div>
+
+        <RelatedNotes notes={relatedNotes} />
       </article>
     </div>
   );

@@ -16,6 +16,7 @@ export interface Note {
   subCategory?: SubCategory | null;
   level?: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
   content?: any; // 🔥 Lexical JSON 또는 TipTap JSON
+  relatedNoteIds?: number[]; // 글 하단 "관련 글"로 보여줄 noteId 목록
 }
 
 export interface SubCategory {
@@ -100,6 +101,7 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
           subCategory: newData.subCategory,
           mainCategory: newData.mainCategory,
           level: newData.level,
+          relatedNoteIds: newData.relatedNoteIds,
           content: newData.content, // Lexical JSON 그대로 저장
         };
 
@@ -136,6 +138,7 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
             subCategory: note.subCategory,
             content: note.content, // 🔥 Lexical JSON 그대로 저장
             level: note.level,
+            relatedNoteIds: note.relatedNoteIds ?? [],
           };
 
           console.log("📤 저장할 데이터:", newData);
@@ -176,6 +179,7 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
             subCategory: note.subCategory,
             content: note.content, // 🔥 Lexical JSON 그대로 저장
             level: note.level,
+            relatedNoteIds: note.relatedNoteIds ?? [],
           };
 
           if (newData && note.noteId) {

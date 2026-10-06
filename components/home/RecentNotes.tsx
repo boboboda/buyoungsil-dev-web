@@ -33,7 +33,7 @@ export default function RecentNotes({ notes }: RecentNotesProps) {
           {notes.map((note) => (
             <Link
               key={note.noteId}
-              href={`/note/${note.noteId}`}
+              href={`/note/detail/${note.noteId}`}
               className="group"
             >
               <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-6 hover:shadow-lg transition-all duration-300 border border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-400 h-full flex flex-col">

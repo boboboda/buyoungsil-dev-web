@@ -66,6 +66,7 @@ model DevelopNote {
   isPublished     Boolean  @default(false)
   metaDescription String?
   metaTitle       String?
+  relatedNoteIds  Int[]    @default([])
 
   @@index([isPublished])
   @@index([mainCategory])

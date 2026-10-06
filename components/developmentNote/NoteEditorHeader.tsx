@@ -22,6 +22,13 @@ import {
   fetchSubCategories,
   SubCategoryOption,
 } from "@/serverActions/noteSubCategoryActions";
+import {
+  fetchNoteLinkOptions,
+  NoteLinkOption,
+} from "@/serverActions/noteLinkActions";
+
+import NoteLinkButton from "./NoteLinkButton";
+import RelatedNotesField from "./RelatedNotesField";
 
 // 등급 타입 및 옵션 정의
 export type NoteLevel = "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
@@ -54,7 +61,18 @@ export default function NoteEditorHeader({
     updateToServer,
     title,
     level,
+    relatedNoteIds,
+    noteId: currentNoteId,
   } = useNoteStore((state) => state);
+
+  // 관련 글 / 본문 링크로 고를 수 있는 전체 노트 목록
+  const [noteOptions, setNoteOptions] = useState<NoteLinkOption[]>([]);
+
+  useEffect(() => {
+    fetchNoteLinkOptions()
+      .then(setNoteOptions)
+      .catch((error) => console.error("노트 목록 조회 실패:", error));
+  }, []);
 
   // 선택된 메인 카테고리에 속한 서브 카테고리 목록 (DB)
   const [subOptions, setSubOptions] = useState<SubCategoryOption[]>([]);
@@ -66,7 +84,7 @@ export default function NoteEditorHeader({
   useEffect(() => {
     switch (editType) {
       case "add":
-        setContent({ level: "BEGINNER" });
+        setContent({ level: "BEGINNER", relatedNoteIds: [] });
         break;
 
       case "edit":
@@ -79,6 +97,7 @@ export default function NoteEditorHeader({
           mainCategory: note?.mainCategory ?? "basics",
           subCategory: sub,
           level: note?.level || "BEGINNER",
+          relatedNoteIds: note?.relatedNoteIds ?? [],
         });
         break;
       }
@@ -398,6 +417,19 @@ export default function NoteEditorHeader({
           value={title || ""}
           onChange={(e) => setContent({ title: e.target.value })}
         />
+      </div>
+
+      {/* 관련 글 (글 하단 카드) + 본문 문장 → 글 연결 (본문 링크) */}
+      <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="min-w-0 flex-1">
+          <RelatedNotesField
+            currentNoteId={currentNoteId}
+            options={noteOptions}
+            value={relatedNoteIds ?? []}
+            onChange={(ids) => setContent({ relatedNoteIds: ids })}
+          />
+        </div>
+        <NoteLinkButton currentNoteId={currentNoteId} options={noteOptions} />
       </div>
     </div>
   );

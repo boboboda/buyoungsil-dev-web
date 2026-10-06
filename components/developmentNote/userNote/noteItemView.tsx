@@ -1,7 +1,7 @@
 // components/developmentNote/userNote/noteItemView.tsx
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/solid";
 import { Button, useDisclosure } from "@heroui/react";
 import { useRouter } from "next/navigation";
@@ -14,6 +14,8 @@ import {
 } from "@/lib/utils/access-control";
 import SimpleModal from "@/components/modal/simpleModal";
 import ReadLexicalEditor from "./ReadLexicalEditor";
+import { RelatedNoteSummary } from "./RelatedNotes";
+import { noteHref } from "@/lib/note/noteUtils";
 
 interface GroupedNotes {
   [key: string]: Note[];
@@ -63,15 +65,19 @@ const ContentLevelIcon = ({
 export default function NoteItemView({
   fetchNotes,
   initialNote,
+  relatedNotes = [],
 }: {
   fetchNotes: Note[];
   initialNote: Note | null;
+  relatedNotes?: RelatedNoteSummary[];
 }) {
   const router = useRouter();
   const { session, isAuthenticated } = useCachedSession();
   const { isOpen, onOpen, onOpenChange } = useDisclosure();
 
-  const [note, setNote] = useState<Note | null>(initialNote);
+  // 글은 주소(/note/카테고리/번호)가 정하므로 서버에서 내려준 값을 그대로 쓴다.
+  const note = initialNote;
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false); // 🔥 기본값 false로 변경
   const [accessDeniedInfo, setAccessDeniedInfo] = useState<{
     contentLevel: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
@@ -205,8 +211,10 @@ export default function NoteItemView({
     );
 
     if (hasAccess) {
-      setNote(selectedNote);
       setIsSidebarOpen(false); // 🔥 노트 선택 시 사이드바 자동 닫기
+      if (selectedNote.noteId !== note?.noteId && selectedNote.mainCategory) {
+        router.push(noteHref(selectedNote.mainCategory, selectedNote.noteId!));
+      }
     } else {
       const modalConfig = createModalConfig(
         selectedNote.level || "BEGINNER",
@@ -220,6 +228,11 @@ export default function NoteItemView({
       onOpen();
     }
   };
+
+  // 글이 바뀌면 본문 스크롤을 맨 위로 올린다 (스크롤 영역이 window 가 아니라 내부 div 라서 직접 처리)
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [note?.noteId]);
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
@@ -413,8 +426,8 @@ export default function NoteItemView({
         </div>
 
         {/* 에디터 영역 */}
-        <div className="flex-1 overflow-y-auto">
-          <ReadLexicalEditor note={note!} />
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+          <ReadLexicalEditor note={note!} relatedNotes={relatedNotes} />
         </div>
       </main>
 
