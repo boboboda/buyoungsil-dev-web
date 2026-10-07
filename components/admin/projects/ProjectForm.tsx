@@ -18,6 +18,7 @@ import { generateTempSlug } from "@/lib/utils/slugify";
 import { mediaUploader } from "@/lib/utils/mediaUpload";
 import { buildPrivacyTemplate, hasUnfilledPlaceholder } from "@/lib/privacy/template";
 import PrivacyPolicyView from "@/components/project/PrivacyPolicyView";
+import AnalyticsConnectCard from "@/components/admin/projects/AnalyticsConnectCard";
 import type { Project, ProjectTag } from "@/types";
 
 // 🔥 타입 정의 추가
@@ -417,6 +418,11 @@ export default function ProjectForm({ project }: ProjectFormProps) {
         value={formData.appLink}
         onValueChange={(value) => setFormData(prev => ({ ...prev, appLink: value }))}
       />
+
+      {/* 📈 앱 분석 연동 (수정 화면에서만: 등록하면 분석 앱이 자동으로 생긴다) */}
+      {project?.id && (
+        <AnalyticsConnectCard platform={formData.platform} projectId={project.id} />
+      )}
 
       {/* 🔒 개인정보처리방침 */}
       <div className="space-y-4">

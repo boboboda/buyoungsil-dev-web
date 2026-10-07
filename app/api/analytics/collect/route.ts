@@ -48,8 +48,27 @@ function getClientIP(req: NextRequest): string {
   return req.headers.get("x-real-ip")?.trim() || "unknown";
 }
 
+// 웹사이트(브라우저)에서도 보낼 수 있도록 CORS 를 연다.
+// 수집 키는 이벤트를 "쓰기만" 할 수 있는 키라서 공개돼도 조회·삭제는 불가능하고, 요청 수 제한이 걸려 있다.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "content-type, x-analytics-key",
+  "Access-Control-Max-Age": "86400",
+};
+
+const withCors = (res: NextResponse) => {
+  for (const [k, v] of Object.entries(CORS_HEADERS)) res.headers.set(k, v);
+
+  return res;
+};
+
 const fail = (status: number, message: string) =>
-  NextResponse.json({ message }, { status });
+  withCors(NextResponse.json({ message }, { status }));
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
 
 export async function POST(req: NextRequest) {
   const key = req.headers.get("x-analytics-key");
@@ -93,13 +112,15 @@ export async function POST(req: NextRequest) {
   try {
     const { saved } = await saveEvents(app.id, result.payload);
 
-    return NextResponse.json(
-      {
-        accepted: result.payload.events.length,
-        saved,
-        dropped: result.dropped,
-      },
-      { status: 200 },
+    return withCors(
+      NextResponse.json(
+        {
+          accepted: result.payload.events.length,
+          saved,
+          dropped: result.dropped,
+        },
+        { status: 200 },
+      ),
     );
   } catch (error) {
     console.error("[analytics] 이벤트 저장 실패:", error);

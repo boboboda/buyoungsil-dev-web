@@ -4,6 +4,7 @@
 import { revalidatePath } from "next/cache";
 import prisma from "@/lib/prisma";
 import { generateSlug } from "@/lib/utils/slugify";
+import { ensureAnalyticsApp } from "@/lib/analytics/registerApp";
 
 interface CreateProjectData {
   title: string;
@@ -64,6 +65,9 @@ export async function createProject(data: CreateProjectData) {
         tags: true
       }
     });
+
+    // 분석 앱 자동 등록 (실패해도 프로젝트 생성은 그대로 성공)
+    await ensureAnalyticsApp(updatedProject);
 
     revalidatePath("/project");
     revalidatePath("/admin/projects");
@@ -136,6 +140,9 @@ export async function updateProject(
         tags: true
       }
     });
+
+    // 제목이 바뀌면 분석 앱 표시 이름도 맞춘다 (수집 키는 그대로)
+    await ensureAnalyticsApp(project);
 
     revalidatePath("/project");
     revalidatePath(`/project/${project.name}`);
