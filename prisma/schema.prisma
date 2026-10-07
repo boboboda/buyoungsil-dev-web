@@ -453,3 +453,24 @@ model EduReply {
   @@index([postId])
   @@map("edu_replies")
 }
+
+// 초안함: Claude 스킬이 보낸 글 초안. 관리자가 분류를 정해 개발노트/스토리(비공개)로 보내거나 버린다.
+model Draft {
+  id                  String    @id @default(cuid())
+  title               String
+  markdown            String    // 본문(마크다운). 보낼 때 Lexical 로 변환
+  recommendedTarget   String?   // "note" | "story" (스킬이 추천한 구분)
+  recommendedSection  String?   // 추천 섹션 (NoteCategory.slug 또는 이름)
+  recommendedCategory String?   // 추천 카테고리 (세부 카테고리 또는 스토리 분류)
+  level               String    @default("BEGINNER")
+  tags                String[]  @default([])
+  source              String?   // 어느 대화/프로젝트에서 왔는지 (선택)
+  status              String    @default("pending") // pending | sent | discarded
+  sentType            String?   // "note" | "story"
+  sentRef             String?   // 보낸 노트의 noteId 또는 스토리 id
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@map("drafts")
+}
