@@ -205,13 +205,10 @@ export default function ProjectForm({ project }: ProjectFormProps) {
         placeholder="플랫폼 선택"
         selectedKeys={[formData.platform]}
         onSelectionChange={(keys) => {
-  const value = Array.from(keys)[0] as ProjectStatus;  // 🔥 타입 캐스팅
-  setFormData(prev => ({
-    ...prev,
-    status: value,
-    progress: value === "released" ? 100 : prev.progress
-  }));
-}}
+          const value = Array.from(keys)[0] as ProjectPlatform | undefined;
+          if (!value) return;
+          setFormData(prev => ({ ...prev, platform: value }));
+        }}
         isRequired
       >
         <SelectItem key="mobile">📱 모바일</SelectItem>
