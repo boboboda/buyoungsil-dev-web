@@ -19,6 +19,8 @@ import { $prepareNoteContent } from './noteEditorUtils';
 import NoteEditorPlugins from './NoteEditorPlugins';
 import NoteEditorHeader from './NoteEditorHeader';
 
+const SHOW_EDITOR_SETTINGS = false;
+
 interface NoteEditorAppProps {
   editorType: NoteEditorType;
   fetchNotes: Note[];
@@ -132,8 +134,9 @@ function NoteEditorContent({ editorType, fetchNotes, note }: NoteEditorAppProps)
               <Editor />
             </div>
 
-            {/* 🔥 편집/작성 모드에서만 Settings 표시 */}
-            {(editorType === 'add' || editorType === 'edit') && (
+            {/* 에디터 설정 패널(Lexical 샘플의 디버그 스위치들)은 글쓰기에 필요 없어 숨긴다.
+                다시 보려면 SHOW_EDITOR_SETTINGS 를 true 로 바꾸면 된다. */}
+            {SHOW_EDITOR_SETTINGS && (editorType === 'add' || editorType === 'edit') && (
               <Settings />
             )}
 
