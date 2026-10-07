@@ -22,10 +22,7 @@ export interface EduPostItem {
   replies: EduReplyItem[];
 }
 
-const BOARDS = [
-  { value: "request", label: "💡 앱·도구 요청" },
-  { value: "contact", label: "✉️ 문의 (비밀글)" },
-];
+const BOARDS = [{ value: "request", label: "💡 앱·도구 요청" }];
 
 const STATUSES = [
   { value: "open", label: "접수" },

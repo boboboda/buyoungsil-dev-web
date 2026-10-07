@@ -23,7 +23,7 @@ const scrypt = (
     );
   });
 
-export const EDU_BOARDS = ["request", "contact"] as const;
+export const EDU_BOARDS = ["request"] as const; // 문의는 기존 프로젝트 게시판(posts)을 쓴다. projectBoard.ts 참고
 export type EduBoard = (typeof EDU_BOARDS)[number];
 
 export const isEduBoard = (value: unknown): value is EduBoard =>
