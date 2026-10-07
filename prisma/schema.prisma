@@ -419,3 +419,37 @@ model DailyActiveInstall {
   @@index([appId, date])
   @@map("daily_active_installs")
 }
+
+// ========================================
+// 특수교육 도구함(edu) 게시판
+// edu 사이트 서버가 /api/edu/* 로만 접근한다. 기존 posts 테이블과는 분리.
+// ========================================
+model EduPost {
+  id           String   @id @default(cuid())
+  board        String // "request" (앱·도구 요청, 공개) | "contact" (문의, 비밀글)
+  nickname     String
+  passwordHash String // scrypt$salt$hash (원문 비밀번호는 저장하지 않음)
+  title        String
+  content      String   @db.Text
+  isSecret     Boolean  @default(false)
+  status       String   @default("open") // "open" | "reviewing" | "planned" | "done"
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  replies EduReply[]
+
+  @@index([board, createdAt])
+  @@map("edu_posts")
+}
+
+model EduReply {
+  id        String   @id @default(cuid())
+  postId    String   @map("post_id")
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  post EduPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@map("edu_replies")
+}
