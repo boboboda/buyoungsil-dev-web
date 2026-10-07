@@ -24,6 +24,7 @@ async function getStats() {
     totalWorkRequests,
     pendingWorkRequests,
     pendingDrafts,
+    eduUnanswered,
   ] = await Promise.all([
     prisma.project.count(),
     prisma.developNote.count(),
@@ -39,6 +40,7 @@ async function getStats() {
     prisma.workRequest.count(),
     prisma.workRequest.count({ where: { status: 'pending' } }),
     prisma.draft.count({ where: { status: 'pending' } }).catch(() => 0), // 초안함 테이블을 만들기 전에도 대시보드가 깨지지 않게
+    prisma.eduPost.count({ where: { replies: { none: {} } } }).catch(() => 0), // edu 게시판: 답변 없는 글
   ]);
 
   return {
@@ -52,6 +54,7 @@ async function getStats() {
     totalWorkRequests,
     pendingWorkRequests,
     pendingDrafts,
+    eduUnanswered,
   };
 }
 
@@ -157,6 +160,11 @@ export default async function AdminDashboard() {
           <Link href="/admin/drafts">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 text-white font-medium hover:shadow-lg transition-shadow">
               📥 초안함{stats.pendingDrafts > 0 ? ` (${stats.pendingDrafts})` : ""}
+            </button>
+          </Link>
+          <Link href="/admin/edu">
+            <button className="w-full p-4 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white font-medium hover:shadow-lg transition-shadow">
+              🧰 도구함 게시판{stats.eduUnanswered > 0 ? ` (${stats.eduUnanswered})` : ""}
             </button>
           </Link>
           <Link href="/admin/stories/create">
