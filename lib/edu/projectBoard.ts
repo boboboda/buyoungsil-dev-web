@@ -1,19 +1,21 @@
 // lib/edu/projectBoard.ts
-// edu(특수교육 도구함) 문의는 홈페이지에 등록한 프로젝트의 기존 문의 게시판(posts, postType "post")을 그대로 쓴다.
-// 어느 프로젝트인지는 서버 환경변수 EDU_PROJECT_NAME (프로젝트 name, 주소에 쓰이는 값) 으로 정한다.
+// edu 등 외부 사이트가 홈페이지 프로젝트 게시판(posts)을 API 로 쓰기 위한 공통 도구.
+// 주소는 기존 화면 주소 /project/[name]/board/[postType] 과 같은 모양이다.
+//   [name]      프로젝트 슬러그 (프로젝트를 만들 때 자동으로 생기는 주소용 이름)
+//   [postType]  "post" = 문의 게시판 (읽기·쓰기), "notice" = 공지사항 (읽기만)
 import prisma from "@/lib/prisma";
 
 export const INQUIRY_POST_TYPE = "post"; // 문의 게시판
-export const EDU_GUEST_EMAIL = "edu-guest"; // 로그인 없이 edu 사이트에서 쓴 글의 소유자 표시
+export const NOTICE_POST_TYPE = "notice"; // 공지사항 (관리자만 작성)
+export const EDU_GUEST_EMAIL = "edu-guest"; // 로그인 없이 외부 사이트에서 쓴 글의 소유자 표시
 
-// 설정된 프로젝트 name. 환경변수가 없거나 그 이름의 프로젝트가 없으면 null.
-export async function getEduProjectName(): Promise<string | null> {
-  const name = process.env.EDU_PROJECT_NAME?.trim();
+export const isReadablePostType = (value: string) =>
+  value === INQUIRY_POST_TYPE || value === NOTICE_POST_TYPE;
 
-  if (!name) return null;
-
+// 슬러그에 해당하는 프로젝트가 있으면 그 name, 없으면 null.
+export async function findProjectName(slug: string): Promise<string | null> {
   const project = await prisma.project.findUnique({
-    where: { name },
+    where: { name: slug },
     select: { name: true },
   });
 

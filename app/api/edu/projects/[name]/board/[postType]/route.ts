@@ -1,5 +1,5 @@
-// app/api/edu/inquiries/route.ts
-// edu 사이트용 문의 게시판 목록 / 작성. 홈페이지 프로젝트의 기존 문의 게시판(posts)과 같은 글이다.
+// app/api/edu/projects/[name]/board/[postType]/route.ts
+// 외부 사이트(edu 등)용 프로젝트 게시판 목록 / 작성. 홈페이지 게시판(posts)과 같은 글이다.
 // 브라우저에서 직접 부르지 않는다. 헤더 x-edu-key 가 EDU_API_KEY 와 같아야 한다.
 import { NextRequest, NextResponse } from "next/server";
 
@@ -14,7 +14,8 @@ import {
 import {
   EDU_GUEST_EMAIL,
   INQUIRY_POST_TYPE,
-  getEduProjectName,
+  findProjectName,
+  isReadablePostType,
 } from "@/lib/edu/projectBoard";
 
 export const dynamic = "force-dynamic";
@@ -28,19 +29,28 @@ const POST_WINDOW_MS = 10 * 60 * 1000;
 const MAX_POSTS_PER_IP_PER_WINDOW = 3;
 const MAX_POSTS_PER_HOUR = 60;
 
+type Ctx = { params: Promise<{ name: string; postType: string }> };
+
 // 목록
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest, { params }: Ctx) {
   const denied = checkEduKey(req);
 
   if (denied) return denied;
 
-  const appName = await getEduProjectName();
+  const { name, postType } = await params;
 
-  if (!appName) return fail(503, "문의 게시판이 아직 준비되지 않았습니다.");
+  if (!isReadablePostType(postType))
+    return fail(404, "게시판을 찾을 수 없습니다.");
 
-  const { searchParams } = new URL(req.url);
-  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1);
-  const where = { appName, postType: INQUIRY_POST_TYPE };
+  const appName = await findProjectName(name);
+
+  if (!appName) return fail(404, "프로젝트를 찾을 수 없습니다.");
+
+  const page = Math.max(
+    1,
+    parseInt(new URL(req.url).searchParams.get("page") ?? "1", 10) || 1,
+  );
+  const where = { appName, postType };
 
   try {
     const [rows, total] = await Promise.all([
@@ -75,17 +85,23 @@ export async function GET(req: NextRequest) {
       pageSize: PAGE_SIZE,
     });
   } catch (error) {
-    console.error("[edu-api] 문의 목록 조회 실패:", error);
+    console.error("[edu-api] 게시판 목록 조회 실패:", error);
 
     return fail(500, "목록을 불러오지 못했습니다.");
   }
 }
 
-// 작성
-export async function POST(req: NextRequest) {
+// 작성 (문의 게시판만. 공지사항은 관리자만 쓸 수 있다.)
+export async function POST(req: NextRequest, { params }: Ctx) {
   const denied = checkEduKey(req);
 
   if (denied) return denied;
+
+  const { name, postType } = await params;
+
+  if (postType !== INQUIRY_POST_TYPE) {
+    return fail(403, "이 게시판에는 글을 쓸 수 없습니다.");
+  }
 
   if (
     isRateLimited(
@@ -97,9 +113,9 @@ export async function POST(req: NextRequest) {
     return fail(429, "잠시 후 다시 작성해 주세요.");
   }
 
-  const appName = await getEduProjectName();
+  const appName = await findProjectName(name);
 
-  if (!appName) return fail(503, "문의 게시판이 아직 준비되지 않았습니다.");
+  if (!appName) return fail(404, "프로젝트를 찾을 수 없습니다.");
 
   let body: Record<string, unknown>;
 
@@ -126,7 +142,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // 서버 전체 안전장치: 최근 1시간 동안 edu 에서 너무 많은 문의가 들어오면 잠시 막는다.
+    // 서버 전체 안전장치: 최근 1시간 동안 외부 사이트에서 너무 많은 글이 들어오면 잠시 막는다.
     const recent = await prisma.post.count({
       where: {
         email: EDU_GUEST_EMAIL,
@@ -143,14 +159,14 @@ export async function POST(req: NextRequest) {
 
     // 기존 게시판과 같은 방식으로 글 번호를 +1 한다.
     const last = await prisma.post.aggregate({
-      where: { appName, postType: INQUIRY_POST_TYPE },
+      where: { appName, postType },
       _max: { listNumber: true },
     });
 
     const created = await prisma.post.create({
       data: {
         appName,
-        postType: INQUIRY_POST_TYPE,
+        postType,
         listNumber: (last._max.listNumber ?? 0) + 1,
         writer: nickname,
         email: EDU_GUEST_EMAIL,
@@ -165,7 +181,7 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
-    console.error("[edu-api] 문의 작성 실패:", error);
+    console.error("[edu-api] 게시판 작성 실패:", error);
 
     return fail(500, "글을 저장하지 못했습니다.");
   }

@@ -1,11 +1,11 @@
-// app/api/edu/inquiries/[id]/route.ts — 문의 글 상세 (댓글·대댓글 포함)
+// app/api/edu/projects/[name]/board/[postType]/[id]/route.ts — 글 상세 (댓글·대댓글 포함)
 import { NextRequest, NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
 import { checkEduKey, fail } from "@/lib/edu/guard";
 import {
-  INQUIRY_POST_TYPE,
-  getEduProjectName,
+  findProjectName,
+  isReadablePostType,
   toInquiryComments,
 } from "@/lib/edu/projectBoard";
 
@@ -14,22 +14,27 @@ export const runtime = "nodejs";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  {
+    params,
+  }: { params: Promise<{ name: string; postType: string; id: string }> },
 ) {
   const denied = checkEduKey(req);
 
   if (denied) return denied;
 
-  const appName = await getEduProjectName();
+  const { name, postType, id } = await params;
 
-  if (!appName) return fail(503, "문의 게시판이 아직 준비되지 않았습니다.");
+  if (!isReadablePostType(postType))
+    return fail(404, "게시판을 찾을 수 없습니다.");
 
-  const { id } = await params;
+  const appName = await findProjectName(name);
+
+  if (!appName) return fail(404, "프로젝트를 찾을 수 없습니다.");
 
   try {
-    // 설정된 프로젝트의 문의 게시판에 속한 글만 보여 준다.
+    // 그 프로젝트의 그 게시판에 속한 글만 보여 준다.
     const post = await prisma.post.findFirst({
-      where: { id, appName, postType: INQUIRY_POST_TYPE },
+      where: { id, appName, postType },
       include: {
         comments: {
           orderBy: { createdAt: "asc" },
@@ -52,7 +57,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error("[edu-api] 문의 상세 조회 실패:", error);
+    console.error("[edu-api] 게시판 상세 조회 실패:", error);
 
     return fail(500, "글을 불러오지 못했습니다.");
   }
