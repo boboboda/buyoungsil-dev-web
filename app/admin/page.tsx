@@ -23,6 +23,7 @@ async function getStats() {
     recentProjects,
     totalWorkRequests,
     pendingWorkRequests,
+    pendingDrafts,
   ] = await Promise.all([
     prisma.project.count(),
     prisma.developNote.count(),
@@ -37,6 +38,7 @@ async function getStats() {
     }),
     prisma.workRequest.count(),
     prisma.workRequest.count({ where: { status: 'pending' } }),
+    prisma.draft.count({ where: { status: 'pending' } }).catch(() => 0), // 초안함 테이블을 만들기 전에도 대시보드가 깨지지 않게
   ]);
 
   return {
@@ -49,6 +51,7 @@ async function getStats() {
     recentProjects,
     totalWorkRequests,
     pendingWorkRequests,
+    pendingDrafts,
   };
 }
 
@@ -149,6 +152,11 @@ export default async function AdminDashboard() {
           <Link href="/admin/write">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 text-white font-medium hover:shadow-lg transition-shadow">
               + 새 개발노트
+            </button>
+          </Link>
+          <Link href="/admin/drafts">
+            <button className="w-full p-4 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 text-white font-medium hover:shadow-lg transition-shadow">
+              📥 초안함{stats.pendingDrafts > 0 ? ` (${stats.pendingDrafts})` : ""}
             </button>
           </Link>
           <Link href="/admin/stories/create">
