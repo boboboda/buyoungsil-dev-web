@@ -10,10 +10,6 @@ import { PrismaClient } from "@prisma/client";
 
 config({ path: ".env.local" });
 
-// 서버 DB 주소 (PC 의 localhost 가 아니라 서버 주소)
-const DEFAULT_SERVER_DATABASE_URL =
-  "***REMOVED***?schema=public&sslmode=no-verify";
-
 const APP_ID = "exchange-rate";
 const APP_NAME = "환율 기록 어플";
 const LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
@@ -33,8 +29,17 @@ function parseTarget(raw: string) {
 }
 
 async function main() {
-  const url =
-    process.argv[2] || process.env.SERVER_DATABASE_URL || DEFAULT_SERVER_DATABASE_URL;
+  // 서버 DB 주소는 코드에 두지 않는다 (인자 또는 .env.local 의 SERVER_DATABASE_URL)
+  const url = process.argv[2] || process.env.SERVER_DATABASE_URL;
+
+  if (!url) {
+    console.error(
+      "서버 DB 주소가 필요해요. 인자로 넘기거나 .env.local 에 SERVER_DATABASE_URL 을 설정하세요.",
+    );
+    process.exitCode = 1;
+
+    return;
+  }
 
   const target = parseTarget(url);
 
