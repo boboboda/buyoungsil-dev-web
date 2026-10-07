@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Input, 
@@ -15,6 +15,7 @@ import {
 import { toast } from "react-toastify";
 import { createProject, updateProject } from "@/serverActions/projects";
 import { generateTempSlug } from "@/lib/utils/slugify";
+import { mediaUploader } from "@/lib/utils/mediaUpload";
 import { buildPrivacyTemplate, hasUnfilledPlaceholder } from "@/lib/privacy/template";
 import PrivacyPolicyView from "@/components/project/PrivacyPolicyView";
 import type { Project, ProjectTag } from "@/types";
@@ -43,6 +44,8 @@ export default function ProjectForm({ project }: ProjectFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [tagInput, setTagInput] = useState({ name: "", color: "#3b82f6" });
+  const [isUploading, setIsUploading] = useState(false);
+  const coverFileInput = useRef<HTMLInputElement>(null);
 
   // 🔒 개인정보처리방침 템플릿 옵션 / 미리보기
   const [templateOptions, setTemplateOptions] = useState({
@@ -66,6 +69,31 @@ export default function ProjectForm({ project }: ProjectFormProps) {
     databaseId: project?.databaseId || "",
     privacyPolicy: project?.privacyPolicy || ""
   });
+
+  const handleCoverFile = async (file: File | undefined) => {
+    if (!file) return;
+
+    setIsUploading(true);
+
+    try {
+      const result = await mediaUploader.uploadImage(file);
+
+      if (result.success && result.url) {
+        setFormData(prev => ({ ...prev, coverImage: result.url as string }));
+        toast.success("이미지를 올렸습니다. 저장해야 반영됩니다");
+      } else {
+        toast.error(
+          result.error ?? "이미지 업로드에 실패했습니다 (5MB 이하 JPG/PNG/WebP/GIF)"
+        );
+      }
+    } catch (error) {
+      console.error("프로젝트 커버 이미지 업로드 실패:", error);
+      toast.error("이미지 업로드 중 오류가 발생했습니다");
+    } finally {
+      setIsUploading(false);
+      if (coverFileInput.current) coverFileInput.current.value = "";
+    }
+  };
 
   const handleLoadPrivacyTemplate = () => {
     if (!formData.title.trim()) {
@@ -328,12 +356,59 @@ export default function ProjectForm({ project }: ProjectFormProps) {
       </div>
 
       {/* 커버 이미지 */}
-      <Input
-        label="커버 이미지 URL"
-        placeholder="https://..."
-        value={formData.coverImage}
-        onValueChange={(value) => setFormData(prev => ({ ...prev, coverImage: value }))}
-      />
+      <div className="space-y-3">
+        <label className="text-sm font-medium">🖼️ 커버 이미지</label>
+
+        {formData.coverImage && (
+          <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              alt="커버 이미지 미리보기"
+              className="aspect-video w-full bg-gray-50 object-contain p-3 dark:bg-gray-800"
+              src={formData.coverImage}
+            />
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <input
+            ref={coverFileInput}
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="hidden"
+            type="file"
+            onChange={(e) => handleCoverFile(e.target.files?.[0])}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="flat"
+            color="primary"
+            isLoading={isUploading}
+            onPress={() => coverFileInput.current?.click()}
+          >
+            {formData.coverImage ? "이미지 변경" : "이미지 올리기"}
+          </Button>
+          {formData.coverImage && (
+            <Button
+              type="button"
+              size="sm"
+              variant="light"
+              color="danger"
+              onPress={() => setFormData(prev => ({ ...prev, coverImage: "" }))}
+            >
+              이미지 제거
+            </Button>
+          )}
+        </div>
+
+        <Input
+          label="커버 이미지 URL"
+          placeholder="https://... (직접 입력하거나 위에서 올리면 자동으로 채워져요)"
+          value={formData.coverImage}
+          onValueChange={(value) => setFormData(prev => ({ ...prev, coverImage: value }))}
+          description="16:9 비율(예: 1200×675), 5MB 이하 JPG/PNG/WebP/GIF"
+        />
+      </div>
 
       {/* 앱 링크 */}
       <Input
