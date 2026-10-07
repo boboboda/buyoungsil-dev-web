@@ -53,7 +53,8 @@ object Analytics {
 
     // io 스레드에서만 쓰는 값
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "analytics").apply { isDaemon = true } }
-    private val main = Handler(Looper.getMainLooper())
+    // lazy: JVM 단위 테스트(Looper 없음)에서 Analytics 를 건드려도 터지지 않게
+    private val main by lazy { Handler(Looper.getMainLooper()) }
     private val queue = ArrayDeque<JSONObject>()
     private var flushing = false
     private var retryDelayMs = 0L
