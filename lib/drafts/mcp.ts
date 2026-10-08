@@ -8,6 +8,14 @@ const MAX_PENDING = 100; // 초안함이 이 개수를 넘으면 더 받지 않�
 
 const STORY_CATEGORIES = ["삽질기", "꿀팁", "일상"];
 
+const MAX_SUB_NAME = 30; // 세부 카테고리 이름 길이 상한
+const MAX_SUB_PER_SECTION = 15; // 섹션당 세부 카테고리 상한 (난립 방지)
+
+// 중복 판정용: 공백, 가운뎃점·하이픈 등 구두점, 대소문자 차이를 무시한다.
+function normalizeName(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[\s·・\-_/.,:;!?()[\]{}'"`~]+/g, "");
+}
+
 const INSTRUCTIONS =
   "부영실 개발 홈페이지의 초안함 커넥터예요. save_draft 로 글 초안을 보내면 관리자 초안함에 '대기' 상태로 쌓이고, " +
   "관리자가 분류를 정해 비공개 글로 보내요. 보내기 전에 list_categories 로 실제 섹션/카테고리 이름을 확인하세요.";
@@ -41,6 +49,22 @@ export const TOOLS = [
       "이미 쓴 개발노트 제목(최근 80개)과 초안함에 대기 중인 초안 제목을 돌려줍니다. 같은 글감을 중복해서 쓰지 않도록 글감을 고르기 전에 확인하세요.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "create_sub_category",
+    description:
+      "개발노트 섹션 안에 세부 카테고리를 새로 만듭니다. 반드시 list_categories 로 기존 목록을 먼저 확인하고, 맞는 게 정말 없을 때만 쓰세요. " +
+      "이미 비슷한 이름(공백/대소문자/가운뎃점 차이)이 있으면 새로 만들지 않고 기존 것을 돌려줍니다. 섹션 자체는 만들 수 없어요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        section: { type: "string", description: "섹션 slug 또는 name (list_categories 의 값)" },
+        name: { type: "string", description: `새 세부 카테고리 이름 (1~${MAX_SUB_NAME}자)` },
+      },
+      required: ["section", "name"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "save_draft",
@@ -112,6 +136,43 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
         1,
       ),
     );
+  }
+
+  if (name === "create_sub_category") {
+    const sectionArg = typeof args.section === "string" ? args.section.trim() : "";
+    const cleanName = typeof args.name === "string" ? args.name.replace(/\s+/g, " ").trim() : "";
+    if (!sectionArg) return text("section 을 알려 주세요.", true);
+    if (cleanName.length < 1 || cleanName.length > MAX_SUB_NAME) {
+      return text(`이름은 1~${MAX_SUB_NAME}자여야 해요.`, true);
+    }
+    if (/[\u0000-\u001f<>]/.test(cleanName)) return text("이름에 쓸 수 없는 문자가 있어요.", true);
+
+    const section = await prisma.noteCategory.findFirst({
+      where: { OR: [{ slug: sectionArg }, { name: sectionArg }] },
+      select: { slug: true, name: true },
+    });
+    if (!section) return text(`섹션을 찾지 못했어요: ${sectionArg}. list_categories 의 slug/name 을 쓰세요.`, true);
+
+    const existing = await prisma.noteSubCategory.findMany({
+      where: { mainCategory: section.slug },
+      select: { name: true, order: true },
+    });
+    const key = normalizeName(cleanName);
+    const same = existing.find((s) => normalizeName(s.name) === key);
+    if (same) return text(`이미 있는 세부 카테고리예요: "${same.name}" (${section.name}). 새로 만들지 않았어요.`);
+
+    if (existing.length >= MAX_SUB_PER_SECTION) {
+      return text(`${section.name} 섹션에는 세부 카테고리가 이미 ${MAX_SUB_PER_SECTION}개예요. 기존 것을 쓰거나 관리자가 정리해 주세요.`, true);
+    }
+
+    const order = existing.reduce((m, s) => Math.max(m, s.order), 0) + 1;
+    try {
+      await prisma.noteSubCategory.create({ data: { mainCategory: section.slug, name: cleanName, order } });
+    } catch {
+      // 동시에 같은 이름이 만들어진 경우(unique 충돌)
+      return text(`이미 있는 세부 카테고리예요: "${cleanName}" (${section.name}).`);
+    }
+    return text(`세부 카테고리를 만들었어요: "${cleanName}" (${section.name}). save_draft 의 recommendedCategory 에 이 이름을 쓰세요.`);
   }
 
   if (name === "save_draft") {
