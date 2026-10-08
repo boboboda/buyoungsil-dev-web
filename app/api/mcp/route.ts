@@ -1,5 +1,5 @@
 // Claude 커스텀 커넥터용 MCP 엔드포인트 (Streamable HTTP, 무상태 JSON 응답)
-// 인증: Authorization: Bearer <DRAFT_API_TOKEN>  (커넥터의 "Request headers" 에 넣는다)
+// 인증: Authorization: Bearer <DRAFT_API_TOKEN> 또는 X-API-Key: <DRAFT_API_TOKEN> (커넥터의 "Request headers")
 import { NextRequest, NextResponse } from "next/server";
 
 import { isValidDraftToken } from "@/lib/drafts/auth";
@@ -11,7 +11,23 @@ export const runtime = "nodejs";
 const MAX_BODY = 300_000;
 
 export async function POST(request: NextRequest) {
-  if (!isValidDraftToken(request.headers.get("authorization"))) {
+  // 인증: Authorization: Bearer <토큰> 또는 X-API-Key: <토큰> (둘 중 하나만 맞으면 통과)
+  const authorization = request.headers.get("authorization");
+  const apiKey = request.headers.get("x-api-key");
+  const ok =
+    isValidDraftToken(authorization) || (!!apiKey && isValidDraftToken(`Bearer ${apiKey.trim()}`));
+
+  if (!ok) {
+    // 연결 문제를 찾기 위한 진단 로그. 토큰 값은 남기지 않고, 헤더가 왔는지/모양/길이만 기록한다.
+    const expectedLen = process.env.DRAFT_API_TOKEN?.length ?? 0;
+    console.warn("[mcp] 인증 실패", {
+      authorizationHeader: authorization === null ? "없음" : "있음",
+      scheme: authorization ? authorization.split(" ")[0] : null,
+      valueLength: authorization ? authorization.split(" ").slice(1).join(" ").length : null,
+      xApiKeyHeader: apiKey === null ? "없음" : `있음(길이 ${apiKey.length})`,
+      serverTokenLength: expectedLen,
+      userAgent: request.headers.get("user-agent"),
+    });
     return NextResponse.json({ message: "권한이 없습니다." }, { status: 401 });
   }
 
