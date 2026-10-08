@@ -15,6 +15,7 @@ import { RelatedNoteSummary } from "@/components/developmentNote/userNote/Relate
 import { NoteStoreProvider } from "@/components/providers/editor-provider";
 import { PageHero } from "@/components/common/PageHero";
 import { extractPlainText, noteHref } from "@/lib/note/noteUtils";
+import { lexicalToHtml } from "@/lib/note/lexicalToHtml";
 
 interface PageProps {
   params: Promise<{ slug: string; noteId: string }>;
@@ -111,6 +112,8 @@ export default async function NotePage({ params }: PageProps) {
 
   const { category, categoryNotes, current, related } = data;
   const path = noteHref(slug, current.noteId as number);
+  // 크롤러가 JS 없이도 본문을 읽도록 서버에서 본문 HTML 을 만들어 둔다
+  const serverHtml = lexicalToHtml(current.content);
 
   const jsonLd = {
     "@context": "https://schema.org",
@@ -144,6 +147,7 @@ export default async function NotePage({ params }: PageProps) {
           fetchNotes={categoryNotes}
           initialNote={current}
           relatedNotes={related}
+          serverHtml={serverHtml}
         />
       </div>
     </NoteStoreProvider>

@@ -66,10 +66,12 @@ export default function NoteItemView({
   fetchNotes,
   initialNote,
   relatedNotes = [],
+  serverHtml = "",
 }: {
   fetchNotes: Note[];
   initialNote: Note | null;
   relatedNotes?: RelatedNoteSummary[];
+  serverHtml?: string;
 }) {
   const router = useRouter();
   const { session, isAuthenticated } = useCachedSession();
@@ -427,7 +429,7 @@ export default function NoteItemView({
 
         {/* 에디터 영역 */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          <ReadLexicalEditor note={note!} relatedNotes={relatedNotes} />
+          <ReadLexicalEditor note={note!} relatedNotes={relatedNotes} serverHtml={serverHtml} />
         </div>
       </main>
 

@@ -25,7 +25,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    const [categories, stories, projects] = await Promise.all([
+    const [categories, stories, projects, notes] = await Promise.all([
       prisma.noteCategory.findMany({
         where: { isPublished: true },
         select: { slug: true, updatedAt: true },
@@ -37,7 +37,22 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       prisma.project.findMany({
         select: { name: true, updatedAt: true },
       }),
+      prisma.developNote.findMany({
+        where: { isPublished: true },
+        select: { noteId: true, mainCategory: true, updatedAt: true },
+      }),
     ]);
+
+    // 공개된 카테고리에 속한 공개 글만 (글 주소: /note/카테고리/번호)
+    const publishedSlugs = new Set(categories.map((c) => c.slug));
+    const notePages: MetadataRoute.Sitemap = notes
+      .filter((n) => n.mainCategory && publishedSlugs.has(n.mainCategory))
+      .map((n) => ({
+        url: `${BASE}/note/${n.mainCategory}/${n.noteId}`,
+        lastModified: n.updatedAt,
+        changeFrequency: "monthly" as const,
+        priority: 0.7,
+      }));
 
     const categoryPages: MetadataRoute.Sitemap = categories.map((c) => ({
       url: `${BASE}/note/${c.slug}`,
@@ -60,7 +75,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.7,
     }));
 
-    return [...staticPages, ...categoryPages, ...storyPages, ...projectPages];
+    return [...staticPages, ...categoryPages, ...notePages, ...storyPages, ...projectPages];
   } catch (error) {
     // DB 오류가 나도 사이트맵 자체는 응답하도록 정적 페이지만 반환한다.
     console.error("[sitemap] DB 조회 실패:", error);

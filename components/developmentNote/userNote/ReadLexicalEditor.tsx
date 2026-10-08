@@ -1,7 +1,7 @@
 // components/developmentNote/userNote/ReadLexicalEditor.tsx
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { ContentEditable } from '@lexical/react/LexicalContentEditable';
@@ -20,18 +20,15 @@ import RelatedNotes, { RelatedNoteSummary } from './RelatedNotes';
 interface ReadLexicalEditorProps {
   note?: Note;
   relatedNotes?: RelatedNoteSummary[];
+  // 서버가 미리 만든 본문 HTML. 에디터가 준비될 때까지 이걸 보여준다 (크롤러는 이 HTML 을 읽는다).
+  serverHtml?: string;
 }
 
-function LoadContentPlugin({ note }: { note?: Note }) {
+function LoadContentPlugin({ note, onLoaded }: { note?: Note; onLoaded?: () => void }) {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    console.log("🔍 LoadContentPlugin 실행");
-    console.log("📦 note:", note);
-    console.log("📄 content:", note?.content);
-    
     if (!note || !note.content) {
-      console.log("⚠️ note 또는 content 없음");
       return;
     }
 
@@ -40,57 +37,62 @@ function LoadContentPlugin({ note }: { note?: Note }) {
       
       // 문자열 파싱
       if (typeof content === 'string') {
-        console.log("🔄 문자열 파싱 중...");
         content = JSON.parse(content);
       }
 
-      console.log("📋 파싱된 content:", content);
-      console.log("📋 content.type:", content?.type);
-
       // 🔥 TipTap Document 형식 체크 (type: "doc")
       if (content && typeof content === 'object' && content.type === 'doc') {
-        console.log("✅ TipTap Document 형식 감지! 변환 시작!");
-        
-        editor.update(() => {
-          console.log("📝 editor.update 내부 - $prepareNoteContent 호출");
-          $prepareNoteContent(note);
-        });
+        editor.update(
+          () => {
+            $prepareNoteContent(note);
+          },
+          { onUpdate: () => onLoaded?.() },
+        );
         return;
       }
 
       // 🔥 TipTap Array 형식 (이전 버전)
       if (Array.isArray(content)) {
-        console.log("✅ TipTap Array 형식 감지! 변환 시작!");
-        
-        editor.update(() => {
-          console.log("📝 editor.update 내부 - $prepareNoteContent 호출");
-          $prepareNoteContent(note);
-        });
+        editor.update(
+          () => {
+            $prepareNoteContent(note);
+          },
+          { onUpdate: () => onLoaded?.() },
+        );
         return;
       }
 
       // 🔥 Lexical JSON 형식 (root 객체)
       if (content && typeof content === 'object' && content.root) {
-        console.log("✅ Lexical JSON 형식! 직접 로드");
         const editorState = editor.parseEditorState(content);
         editor.setEditorState(editorState);
+        onLoaded?.();
         return;
       }
-
-      console.log("⚠️ 알 수 없는 형식:", content);
-      
     } catch (error) {
-      console.error('❌ LoadContentPlugin 에러:', error);
+      // 실패하면 서버가 만든 HTML 이 계속 보인다
+      console.error('LoadContentPlugin 에러:', error);
     }
-  }, [editor, note]);
+  }, [editor, note, onLoaded]);
 
   return null;
 }
 
-export default function ReadLexicalEditor({ note, relatedNotes = [] }: ReadLexicalEditorProps) {
-  console.log("🎨 ReadLexicalEditor 렌더링");
-  console.log("📦 받은 note:", note);
-  
+export default function ReadLexicalEditor({ note, relatedNotes = [], serverHtml = "" }: ReadLexicalEditorProps) {
+  // 서버 HTML 이 있으면: 서버/첫 화면에서는 그 HTML 만 보여주고, 브라우저에서 에디터가 본문을 불러온 뒤에 바꿔 끼운다.
+  const [mounted, setMounted] = useState(false);
+  // 에디터가 본문을 불러온 글 번호. 다른 글로 이동하면 자연스럽게 "아직 안 불러옴"이 된다.
+  const [loadedId, setLoadedId] = useState<number | null | undefined>(undefined);
+  const noteIdNow = note?.noteId ?? null;
+  const loaded = loadedId === noteIdNow;
+  const handleLoaded = useCallback(() => setLoadedId(noteIdNow), [noteIdNow]);
+
+  useEffect(() => setMounted(true), []);
+
+  const useServerHtml = !!serverHtml;
+  const showServerHtml = useServerHtml && !loaded;
+  const renderEditor = !useServerHtml || mounted;
+
   const initialConfig = {
     namespace: 'ReadOnlyEditor',
     theme: PlaygroundEditorTheme,
@@ -148,7 +150,15 @@ export default function ReadLexicalEditor({ note, relatedNotes = [] }: ReadLexic
         </header>
 
         <div className="read-only-code prose prose-base lg:prose-lg dark:prose-invert max-w-none break-words [&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto">
-          <LexicalComposer initialConfig={initialConfig}>
+          {showServerHtml && (
+            <div
+              className="text-gray-800 dark:text-gray-200 leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: serverHtml }}
+            />
+          )}
+          {renderEditor && (
+          <div className={showServerHtml ? "hidden" : undefined}>
+          <LexicalComposer key={note.noteId} initialConfig={initialConfig}>
             <RichTextPlugin
               contentEditable={
                 <ContentEditable
@@ -164,10 +174,12 @@ export default function ReadLexicalEditor({ note, relatedNotes = [] }: ReadLexic
               ErrorBoundary={LexicalErrorBoundary}
             />
             <HistoryPlugin />
-            <LoadContentPlugin note={note} />
+            <LoadContentPlugin note={note} onLoaded={handleLoaded} />
             <CodeHighlightPrismPlugin />
             <CodeLanguageLabelPlugin />
           </LexicalComposer>
+          </div>
+          )}
         </div>
 
         <RelatedNotes notes={relatedNotes} />
