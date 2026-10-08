@@ -3,6 +3,9 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { fetchStoryBySlug } from "@/serverActions/stories";
 
+// 글을 고치거나 올릴 때마다 바로 반영되도록, 이전에 만든 페이지를 재사용하지 않는다
+export const dynamic = "force-dynamic";
+
 interface StoryDetailPageProps {
   params: Promise<{
     slug: string;
