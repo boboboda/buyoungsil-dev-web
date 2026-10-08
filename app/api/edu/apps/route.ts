@@ -10,7 +10,7 @@ import { checkEduKey } from "@/lib/edu/guard";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export const EDU_APP_TAG = "특수교육";
+const EDU_APP_TAG = "특수교육";
 
 export async function GET(req: NextRequest) {
   const denied = checkEduKey(req);
