@@ -2,19 +2,14 @@
 // 공개(발행) 기능은 없다: 초안을 "대기" 상태로 쌓는 것까지만 할 수 있다.
 import prisma from "@/lib/prisma";
 import { parseDraftInput } from "@/lib/drafts/validate";
+import { MAX_SUB_NAME, cleanSubName, normalizeName } from "@/lib/drafts/subCategory";
 
 const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_PENDING = 100; // 초안함이 이 개수를 넘으면 더 받지 않는다 (폭주 방지)
 
 const STORY_CATEGORIES = ["삽질기", "꿀팁", "일상"];
 
-const MAX_SUB_NAME = 30; // 세부 카테고리 이름 길이 상한
-const MAX_SUB_PER_SECTION = 15; // 섹션당 세부 카테고리 상한 (난립 방지)
-
-// 중복 판정용: 공백, 가운뎃점·하이픈 등 구두점, 대소문자 차이를 무시한다.
-function normalizeName(value: string): string {
-  return value.normalize("NFKC").toLowerCase().replace(/[\s·・\-_/.,:;!?()[\]{}'"`~]+/g, "");
-}
+const MAX_SUB_PER_SECTION = 15; // 섹션당 세부 카테고리 상한 (난립 방지, Claude 도구에만 적용)
 
 const INSTRUCTIONS =
   "부영실 개발 홈페이지의 초안함 커넥터예요. save_draft 로 글 초안을 보내면 관리자 초안함에 '대기' 상태로 쌓이고, " +
@@ -140,12 +135,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
 
   if (name === "create_sub_category") {
     const sectionArg = typeof args.section === "string" ? args.section.trim() : "";
-    const cleanName = typeof args.name === "string" ? args.name.replace(/\s+/g, " ").trim() : "";
+    const cleanName = cleanSubName(args.name);
     if (!sectionArg) return text("section 을 알려 주세요.", true);
-    if (cleanName.length < 1 || cleanName.length > MAX_SUB_NAME) {
-      return text(`이름은 1~${MAX_SUB_NAME}자여야 해요.`, true);
-    }
-    if (/[\u0000-\u001f<>]/.test(cleanName)) return text("이름에 쓸 수 없는 문자가 있어요.", true);
+    if (!cleanName) return text(`이름은 1~${MAX_SUB_NAME}자여야 하고, 쓸 수 없는 문자가 없어야 해요.`, true);
 
     const section = await prisma.noteCategory.findFirst({
       where: { OR: [{ slug: sectionArg }, { name: sectionArg }] },

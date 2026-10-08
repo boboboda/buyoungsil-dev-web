@@ -8,6 +8,7 @@ import { markdownToLexical } from "@/lib/drafts/markdownToLexical";
 import { markdownToHtml } from "@/lib/drafts/markdownToHtml";
 import { MAX_MARKDOWN_LENGTH } from "@/lib/drafts/validate";
 import { generateSlug } from "@/lib/utils/slugify";
+import { cleanSubName, findOrCreateSubCategory, MAX_SUB_NAME } from "@/lib/drafts/subCategory";
 
 const STORY_CATEGORIES = ["삽질기", "꿀팁", "일상"];
 const LEVELS = ["BEGINNER", "INTERMEDIATE", "ADVANCED"];
@@ -71,15 +72,13 @@ export async function POST(request: NextRequest, { params }: Ctx) {
         return NextResponse.json({ message: "없는 섹션이에요." }, { status: 400 });
       }
 
-      let subCategory: { id: string; name: string } | null = null;
-      if (typeof body.subCategory === "string" && body.subCategory) {
-        const sub = await prisma.noteSubCategory.findUnique({
-          where: { mainCategory_name: { mainCategory, name: body.subCategory } },
-        });
-        if (!sub) {
-          return NextResponse.json({ message: "없는 세부 카테고리예요." }, { status: 400 });
-        }
-        subCategory = { id: sub.id, name: sub.name };
+      // 세부 카테고리: 이름이 있으면 같은 뜻의 기존 것을 쓰고, 없으면 이때 만든다. (초안을 버리면 만들어지지 않는다)
+      const subName = typeof body.subCategory === "string" ? body.subCategory.trim() : "";
+      if (subName && !cleanSubName(subName)) {
+        return NextResponse.json(
+          { message: `세부 카테고리 이름은 1~${MAX_SUB_NAME}자로 써 주세요.` },
+          { status: 400 },
+        );
       }
 
       const content = markdownToLexical(markdown) as Prisma.InputJsonValue;
@@ -90,6 +89,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
           data: { status: "sent" },
         });
         if (claimed.count === 0) throw new Error("ALREADY_HANDLED");
+
+        const subCategory = subName ? await findOrCreateSubCategory(tx, mainCategory, subName) : null;
 
         const max = await tx.developNote.findFirst({
           orderBy: { noteId: "desc" },
@@ -103,7 +104,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
             noteId,
             title,
             mainCategory,
-            subCategory: subCategory ?? Prisma.DbNull,
+            subCategory: subCategory ? { id: subCategory.id, name: subCategory.name } : Prisma.DbNull,
             level,
             content,
             isPublished: false,

@@ -129,6 +129,13 @@ function DraftEditor({
   const [subCategory, setSubCategory] = useState(
     subCategories.find((s) => s.mainCategory === presetSection && s.name === draft.recommendedCategory)?.name ?? "",
   );
+  // 스킬이 추천한 세부 카테고리가 목록에 없으면 새 이름 칸에 미리 넣어 둔다 (보내면 그 이름으로 만들어진다)
+  const [newSubCategory, setNewSubCategory] = useState(() => {
+    const rec = draft.recommendedCategory?.trim();
+    if (!rec || draft.recommendedTarget === "story" || !presetSection) return "";
+    const exists = subCategories.some((s) => s.mainCategory === presetSection && s.name === rec);
+    return exists ? "" : rec.slice(0, 30);
+  });
   const [storyCategory, setStoryCategory] = useState(
     STORY_CATEGORIES.find((c) => c.value === draft.recommendedCategory)?.value ?? "",
   );
@@ -158,7 +165,7 @@ function DraftEditor({
         level,
         tags: draft.tags,
         mainCategory,
-        subCategory: subCategory || null,
+        subCategory: newSubCategory.trim() || subCategory || null,
         storyCategory,
       });
       toast.success("비공개 글로 저장했어요. 에디터에서 다듬어 주세요");
@@ -252,18 +259,31 @@ function DraftEditor({
             <Select
               label="세부 카테고리 (선택)"
               description={
-                draft.recommendedCategory && !subCategory
-                  ? `추천: ${draft.recommendedCategory}`
+                subOptions.length === 0
+                  ? "이 섹션에는 아직 없어요. 오른쪽 칸에 이름을 쓰면 새로 만들어요"
                   : undefined
               }
-              isDisabled={subOptions.length === 0}
               selectedKeys={subCategory ? [subCategory] : []}
-              onSelectionChange={(keys) => setSubCategory((Array.from(keys)[0] as string) ?? "")}
+              onSelectionChange={(keys) => {
+                setSubCategory((Array.from(keys)[0] as string) ?? "");
+                setNewSubCategory(""); // 목록에서 고르면 새 이름 입력은 비운다
+              }}
             >
               {subOptions.map((s) => (
                 <SelectItem key={s.name}>{s.name}</SelectItem>
               ))}
             </Select>
+
+            <Input
+              label="새 세부 카테고리 이름 (없으면 만들어져요)"
+              description="비워 두면 왼쪽에서 고른 것을 써요. 같은 뜻의 이름이 이미 있으면 그걸 써요."
+              maxLength={30}
+              value={newSubCategory}
+              onValueChange={(v) => {
+                setNewSubCategory(v);
+                if (v.trim()) setSubCategory("");
+              }}
+            />
           </>
         )}
       </div>
