@@ -71,6 +71,22 @@ export default function NavBar() {
     }
   };
 
+  // 다른 컴퓨터에 로그인해 둔 것까지 전부 끊는다 (이 기기도 로그아웃됨)
+  const handleLogOutAll = async () => {
+    if (!window.confirm("모든 기기에서 로그아웃할까요? 이 기기도 로그아웃됩니다.")) return;
+    try {
+      const res = await fetch("/api/account/logout-all", { method: "POST" });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+
+      await signOut({ redirect: false });
+      notifySuccessEvent("모든 기기에서 로그아웃 되었습니다.");
+      router.push("/");
+    } catch (error) {
+      notifyFailedEvent("모든 기기 로그아웃 중 오류가 발생했습니다.");
+      console.error("Logout all error:", error);
+    }
+  };
+
   return (
     <div className="w-full max-w-[1400px] flex flex-col mt-2 md:mt-[20px] md:items-center justify-end md:justify-center">
       <div className="w-full">
@@ -279,6 +295,15 @@ export default function NavBar() {
                         ) : null}
 
                         <DropdownItem
+                          key="logoutAll"
+                          color="danger"
+                          textValue="Log Out All"
+                          onPress={handleLogOutAll}
+                        >
+                          모든 기기에서 로그아웃
+                        </DropdownItem>
+
+                        <DropdownItem
                           key="logout"
                           color="danger"
                           textValue="Log Out"
@@ -461,6 +486,15 @@ export default function NavBar() {
                           </DropdownItem>
                         </>
                       ) : null}
+
+                      <DropdownItem
+                        key="logoutAll"
+                        color="danger"
+                        textValue="Log Out All"
+                        onClick={handleLogOutAll}
+                      >
+                        모든 기기에서 로그아웃
+                      </DropdownItem>
 
                       <DropdownItem
                         key="logout"

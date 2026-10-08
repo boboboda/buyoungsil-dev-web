@@ -97,7 +97,8 @@ export const authOptions: NextAuthOptions = {
       },
     }),
   ],
-  session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
+  // 7일 동안 안 쓰면 만료. 쓰는 중에는 자동으로 연장된다(SessionProvider가 주기적으로 세션을 확인).
+  session: { strategy: "jwt", maxAge: 7 * 24 * 60 * 60 },
   pages: {
     signIn: "/signin",
     signOut: "/",
@@ -212,10 +213,36 @@ export const authOptions: NextAuthOptions = {
         token.provider = "credentials";
       }
 
+      // "모든 기기에서 로그아웃" 확인: 로그인 때 세션 버전을 쿠키에 넣고, 이후에는 DB 값과 비교한다.
+      // DB 조회가 실패하면(예: 컬럼을 아직 추가하기 전) 검사를 건너뛴다 → 로그인이 막히지 않는다.
+      if (token.id) {
+        try {
+          const row = await prisma.user.findUnique({
+            where: { id: token.id as string },
+            select: { sessionVersion: true },
+          });
+          if (row) {
+            if (user && account) {
+              token.sv = row.sessionVersion; // 새 로그인: 현재 버전을 기록
+              token.revoked = false;
+            } else if ((token.sv ?? 0) !== row.sessionVersion) {
+              token.revoked = true; // 다른 곳에서 "모든 기기 로그아웃"을 눌렀다
+            }
+          }
+        } catch (error) {
+          console.error("세션 버전 확인 실패(건너뜀):", error);
+        }
+      }
+
       return token;
     },
 
     session: async ({ session, token }) => {
+      // 무효화된 로그인이면 빈 세션을 돌려준다 → 서버(auth())와 클라이언트(useSession) 모두 "로그아웃 상태"로 본다.
+      if (token?.revoked) {
+        return {} as unknown as typeof session;
+      }
+
       if (token) {
         const newUserObject = {
           id: token.id || token.sub || "",

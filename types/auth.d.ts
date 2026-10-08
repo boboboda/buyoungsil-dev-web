@@ -29,5 +29,7 @@ declare module "next-auth/jwt" {
     provider?: string;
     isFirstLogin?: boolean;
     isNewSignUp?: boolean;
+    sv?: number; // 로그인 시점의 세션 버전
+    revoked?: boolean; // "모든 기기에서 로그아웃"으로 무효화됨
   }
 }

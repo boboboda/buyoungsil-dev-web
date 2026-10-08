@@ -41,6 +41,8 @@ model User {
   image         String?
   password      String?
   role          String?   @default("user")
+  // "모든 기기에서 로그아웃"을 누를 때마다 1씩 올라간다. 쿠키 안의 값(sv)과 다르면 그 로그인은 무효.
+  sessionVersion Int      @default(0)
   accounts      Account[]
   sessions      Session[]
 }
