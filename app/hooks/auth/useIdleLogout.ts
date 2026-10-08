@@ -12,6 +12,10 @@ const ACTIVITY_EVENTS: (keyof WindowEventMap)[] = [
   "wheel",
 ];
 
+// 자동 로그아웃 사용 여부. false 면 로그인은 세션 만료(30일, lib/auth/auth.ts의 maxAge)까지 유지된다.
+// 다시 켜고 싶으면 true 로 바꾸고 아래 시간을 조절한다.
+const IDLE_LOGOUT_ENABLED = false;
+
 // 여기 숫자만 바꾸면 시간 조절됨
 const IDLE_TIMEOUT_MINUTES = 30; // 이 시간만큼 활동 없으면 로그아웃
 const WARNING_BEFORE_MINUTES = 5; // 로그아웃 몇 분 전부터 카운트다운 보여줄지
@@ -34,7 +38,7 @@ export function useIdleLogout() {
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
 
   useEffect(() => {
-    if (status !== "authenticated") {
+    if (!IDLE_LOGOUT_ENABLED || status !== "authenticated") {
       setRemainingSeconds(null);
       return;
     }
