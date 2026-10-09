@@ -564,6 +564,11 @@ export default function ClaudeStatusView({ initial }: Props) {
 
           <div className="flex flex-wrap items-end gap-4">
             <Input
+              classNames={{
+                input: "text-foreground placeholder:text-default-500",
+                label: "text-default-700",
+                inputWrapper: "border-default-400",
+              }}
               className="max-w-xs"
               description="내가 보통 한도에 닿는 5시간 사용량(토큰). 이 브라우저에만 저장돼요."
               inputMode="numeric"
@@ -571,6 +576,7 @@ export default function ClaudeStatusView({ initial }: Props) {
               placeholder="예: 5000000"
               size="sm"
               value={baseline}
+              variant="bordered"
               onValueChange={changeBaseline}
             />
             {pct !== null ? (
