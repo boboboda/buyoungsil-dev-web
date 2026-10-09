@@ -167,6 +167,11 @@ export default async function AdminDashboard() {
               🧰 도구함 게시판{stats.eduUnanswered > 0 ? ` (${stats.eduUnanswered})` : ""}
             </button>
           </Link>
+          <Link href="/admin/claude">
+            <button className="w-full p-4 rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white font-medium hover:shadow-lg transition-shadow">
+              🤖 클로드 작업 현황
+            </button>
+          </Link>
           <Link href="/admin/stories/create">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-orange-500 to-red-500 text-white font-medium hover:shadow-lg transition-shadow">
               + 새 스토리

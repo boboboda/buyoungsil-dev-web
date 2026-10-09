@@ -476,3 +476,65 @@ model Draft {
   @@index([status, createdAt])
   @@map("drafts")
 }
+
+// ========================================
+// Claude Code 작업 현황
+// 사용자 PC의 Claude Code 훅이 /api/claude-status 로 보낸 이벤트를 저장한다.
+// 프롬프트·코드 내용은 받지도 저장하지도 않는다. (세션 ID, 폴더 이름, 기기 이름, 도구 이름, 토큰 수치만)
+// ========================================
+
+// 세션 하나의 현재 상태. 같은 세션의 이벤트가 오면 이 행을 갱신한다.
+model ClaudeSession {
+  id                String   @id // Claude Code 세션 ID
+  device            String // 기기 이름 (예: homeserver, laptop)
+  project           String // 작업 폴더 이름 (cwd 의 마지막 폴더)
+  status            String   @default("idle") // working | waiting | idle | ended
+  lastEvent         String
+  lastTool          String?
+  startedAt         DateTime
+  lastEventAt       DateTime
+  // 세션 누적 토큰. 훅 스크립트가 transcript 에서 합산해 보낸 가장 최근 값
+  inputTokens       BigInt   @default(0)
+  outputTokens      BigInt   @default(0)
+  cacheCreateTokens BigInt   @default(0)
+  cacheReadTokens   BigInt   @default(0)
+
+  events ClaudeEvent[]
+
+  @@index([lastEventAt])
+  @@map("claude_sessions")
+}
+
+// 의미 있는 이벤트만 쌓는다. (도구 호출 이벤트는 세션 행만 갱신하고 여기엔 쌓지 않는다)
+// 토큰 증가분(…Delta)은 "최근 5시간 사용량" 추정에 쓴다.
+model ClaudeEvent {
+  id               Int      @id @default(autoincrement())
+  sessionId        String
+  event            String
+  at               DateTime
+  inputDelta       Int      @default(0)
+  outputDelta      Int      @default(0)
+  cacheCreateDelta Int      @default(0)
+  cacheReadDelta   Int      @default(0)
+
+  session ClaudeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, at])
+  @@index([at])
+  @@map("claude_events")
+}
+
+// 하루(한국 시간) × 기기 × 프로젝트별 토큰 사용량 합계
+model ClaudeDailyUsage {
+  date              String // yyyy-MM-dd (KST)
+  device            String
+  project           String
+  inputTokens       BigInt @default(0)
+  outputTokens      BigInt @default(0)
+  cacheCreateTokens BigInt @default(0)
+  cacheReadTokens   BigInt @default(0)
+
+  @@id([date, device, project])
+  @@index([date])
+  @@map("claude_daily_usage")
+}
