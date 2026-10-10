@@ -152,17 +152,58 @@ function readSecrets() {
 const RULES_BEGIN = "<!-- factory:begin -->";
 const RULES_END = "<!-- factory:end -->";
 
-function rulesFor(job) {
+// 이 PC의 Android SDK 위치 (Kotlin 앱의 local.properties 에 쓴다)
+function androidSdkDir() {
+  const cands = [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT, IS_WIN && process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Android", "Sdk")];
+  return cands.find((d) => d && fs.existsSync(d)) || "";
+}
+
+// 앱 종류(stack)별 만들기·검사 규칙. 서버 lib/factory/jobs.ts 의 STACKS 와 맞춘다.
+function stackRules(job) {
   const pkg = job.appSlug.replace(/-/g, "_");
+  switch (job.stack) {
+    case "flutter":
+      return `- Flutter 앱입니다. 프로젝트가 없을 때만 \`flutter create . --project-name ${pkg}\` 로 만드세요.
+- 끝내기 전에 \`flutter analyze\` 를 통과시키세요. 가능하면 \`flutter build apk --debug\` 도 시도하고, 환경 때문에 못 하면 그 이유를 결과에 적으세요.
+- 스크린샷은 위젯 테스트(골든 등)로 화면을 그려 만들 수 있습니다.`;
+    case "kotlin-compose": {
+      const sdk = androidSdkDir();
+      return `- Android 네이티브 앱(Kotlin + Jetpack Compose, Material 3, 단일 Activity)입니다. 패키지 이름은 \`com.factory.${pkg}\` 로 하세요.
+- 프로젝트가 없을 때만 Gradle Kotlin DSL(settings.gradle.kts, build.gradle.kts, gradle/libs.versions.toml) 구조로 직접 만드세요.
+- 이 PC에는 \`gradle\` 명령이 없습니다. gradlew 가 없으면 Gradle 배포판을 내려받아 \`gradle wrapper\` 로 gradlew 를 만드세요(배포판은 앱 폴더 밖 임시 폴더에).
+- Android SDK: ${sdk ? `\`${sdk.replace(/\\/g, "/")}\` (local.properties 의 sdk.dir 에 쓰고, local.properties 는 커밋하지 마세요)` : "찾지 못했어요. 빌드를 못 하면 그 이유를 결과에 적으세요."}
+- 끝내기 전에 \`./gradlew assembleDebug\` 를 통과시키세요. 단위 테스트가 있으면 \`./gradlew testDebugUnitTest\` 도 돌리세요.
+- 스크린샷은 가능하면 Compose 프리뷰 렌더링(예: Paparazzi/Roborazzi)으로 만들고, 어려우면 건너뛰세요.`;
+    }
+    case "swift-swiftui":
+      return `- iOS 네이티브 앱(SwiftUI)입니다. **이 작업 PC는 Windows라 Swift·Xcode 가 없어서 빌드와 실행을 할 수 없습니다.**
+- 소스는 \`Sources/\`(App, Views, Models)에 두고, Mac에서 바로 열 수 있게 XcodeGen 용 \`project.yml\` 을 만드세요(번들 ID \`com.factory.${job.appSlug}\`, iOS 17 이상).
+- 컴파일 확인을 못 하니 표준 SwiftUI/Foundation API 만 쓰고, 외부 패키지는 꼭 필요할 때만 Swift Package 로 적으세요.
+- README.md 에 Mac에서 여는 방법(\`brew install xcodegen && xcodegen\` → Xcode 실행)을 적으세요. 결과 요약에 "빌드 확인 안 됨"을 분명히 적으세요.
+- 스크린샷은 만들 수 없으니 건너뛰세요.`;
+    case "nextjs":
+      return `- 웹 앱(Next.js App Router, TypeScript)입니다. 프로젝트가 없을 때만 \`npx create-next-app@latest . --ts --eslint --app --src-dir --use-npm --yes\` 로 만드세요.
+- 끝내기 전에 \`npm run lint\` 와 \`npm run build\` 를 통과시키세요.
+- 스크린샷은 가능하면 \`next start\` 로 띄운 뒤 Playwright 로 주요 화면을 찍으세요. 띄운 서버는 끝내기 전에 반드시 종료하세요.`;
+    case "nestjs":
+      return `- 백엔드 API 서버(NestJS, TypeScript)입니다. 프로젝트가 없을 때만 \`npx @nestjs/cli@latest new . --package-manager npm --skip-git\` 로 만드세요.
+- 끝내기 전에 \`npm run build\` 와 \`npm test\` 를 통과시키세요. 주요 API 는 e2e 테스트(\`npm run test:e2e\`)로 확인하세요.
+- README.md 에 API 목록(메서드, 경로, 요청·응답 예)을 적으세요. DB 가 필요하면 기획서에 정해진 게 없을 때 SQLite 로 하세요.
+- 화면이 없으니 스크린샷은 건너뛰세요. 띄운 서버는 끝내기 전에 반드시 종료하세요.`;
+    default:
+      return `- 앱 종류 '${job.stack}' 에 맞는 표준 도구로 프로젝트를 만들고, 끝내기 전에 그 도구의 분석·빌드·테스트를 통과시키세요.`;
+  }
+}
+
+function rulesFor(job) {
   return `${RULES_BEGIN}
 # 앱 공장 작업 규칙 (자동 생성, 이 블록은 수정하지 마세요)
 
 - 앱 이름(폴더 이름): ${job.appSlug} / 표시 이름: ${job.title} / 종류: ${job.stack}
 - 사람에게 질문하지 마세요. 정보가 모자라면 합리적으로 가정하고 ASSUMPTIONS.md 에 한 줄씩 적으세요.
 - 새 앱이면 PLAN.md 가 기획서입니다. 수정 지시면 CHANGE_REQUEST.md 에 적힌 내용만 반영하고 나머지는 건드리지 마세요.
-- 폴더에 이미 작업물이 있으면 처음부터 다시 만들지 말고 이어서 진행하세요.
-- Flutter 앱이면: 프로젝트가 없을 때만 \`flutter create . --project-name ${pkg}\` 로 만들고, 기획서의 MVP 범위만 구현하세요. 범위 밖 기능은 추가하지 마세요.
-- 끝내기 전에 \`flutter analyze\` 를 통과시키세요. 가능하면 \`flutter build apk --debug\` 도 시도하고, 환경 때문에 못 하면 그 이유를 결과에 적으세요.
+- 폴더에 이미 작업물이 있으면 처음부터 다시 만들지 말고 이어서 진행하세요. 기획서의 MVP 범위만 구현하고 범위 밖 기능은 추가하지 마세요.
+${stackRules(job)}
 - 외부 서비스 키는 환경변수로만 읽을 수 있습니다(이 지시에 허용된 이름만). 키 값을 파일, 로그, 커밋에 쓰거나 출력하지 마세요.
 - 진행 단계가 바뀔 때마다 .factory/phase.txt 에 한 단어(scaffold, code, build, screenshots, done 중 하나)를 덮어써 주세요.
 - 화면 스크린샷을 만들 수 있으면 .factory/screenshots/ 에 png 로 저장하세요(예: home.png, result.png). 못 만들면 건너뛰세요.
@@ -178,7 +219,7 @@ function git(dir, args) {
 function ensureGitignore(dir) {
   const p = path.join(dir, ".gitignore");
   const have = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
-  const need = [".factory/", ".env", "*.keystore", "key.properties"].filter((l) => !have.split(/\r?\n/).includes(l));
+  const need = [".factory/", ".env", "*.keystore", "key.properties", "local.properties"].filter((l) => !have.split(/\r?\n/).includes(l));
   if (need.length) fs.appendFileSync(p, (have && !have.endsWith("\n") ? "\n" : "") + need.join("\n") + "\n");
 }
 

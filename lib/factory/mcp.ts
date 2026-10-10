@@ -12,6 +12,7 @@ import {
   MAX_PENDING_JOBS,
   MAX_PLAN,
   MIN_PLAN,
+  STACK_LABELS,
   STACKS,
 } from "@/lib/factory/jobs";
 
@@ -145,7 +146,9 @@ export const FACTORY_TOOLS = [
         stack: {
           type: "string",
           enum: [...STACKS],
-          description: "앱 종류 (기본 flutter)",
+          description:
+            "앱 종류 (새 앱만, 기본 flutter). 수정 지시는 원래 앱의 종류를 그대로 써요. " +
+            STACKS.map((k) => `${k}=${STACK_LABELS[k]}`).join(" / "),
         },
         requiredSecrets: {
           type: "array",
@@ -225,6 +228,7 @@ async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
       appSlug: true,
       title: true,
       kind: true,
+      stack: true,
       parentJobId: true,
       status: true,
       phase: true,
@@ -242,6 +246,7 @@ async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
       appSlug: j.appSlug,
       title: j.title,
       kind: j.kind,
+      stack: j.stack,
       parentJobId: j.parentJobId,
       status: j.status,
       phase: j.phase,
@@ -320,7 +325,7 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
   const title = clean(args.title, 80);
   const kind = args.kind === undefined ? "new" : args.kind;
   const plan = clean(args.planMarkdown, MAX_PLAN + 1, true);
-  const stack = args.stack === undefined ? "flutter" : args.stack;
+  const stackArg = args.stack;
   const source = clean(args.source, 100) || null;
   const parentArg =
     typeof args.parentJobId === "string" ? args.parentJobId.trim() : "";
@@ -335,8 +340,9 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
   if (kind !== "new" && kind !== "revision")
     return text("kind 는 new 또는 revision 이에요.", true);
   if (
-    typeof stack !== "string" ||
-    !(STACKS as readonly string[]).includes(stack)
+    stackArg !== undefined &&
+    (typeof stackArg !== "string" ||
+      !(STACKS as readonly string[]).includes(stackArg))
   ) {
     return text(`stack 은 ${STACKS.join(", ")} 만 쓸 수 있어요.`, true);
   }
@@ -437,10 +443,12 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
       const done = await tx.factoryJob.findMany({
         where: { appSlug, status: "done" },
         orderBy: { finishedAt: "desc" },
-        select: { id: true, title: true },
+        select: { id: true, title: true, stack: true },
       });
 
       let parentJobId: string | null = null;
+      // 새 앱은 고른 종류(기본 flutter), 수정 지시는 원래 앱의 종류를 그대로 쓴다.
+      let stack = typeof stackArg === "string" ? stackArg : "flutter";
 
       if (kind === "new") {
         if (done.length > 0) {
@@ -469,7 +477,7 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
         if (parentArg) {
           const parent = await tx.factoryJob.findUnique({
             where: { id: parentArg },
-            select: { appSlug: true, status: true },
+            select: { appSlug: true, status: true, stack: true },
           });
 
           if (!parent)
@@ -490,8 +498,16 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
             } as EnqueueFail;
           }
           parentJobId = parentArg;
+          stack = parent.stack;
         } else {
           parentJobId = done[0].id;
+          stack = done[0].stack;
+        }
+        if (typeof stackArg === "string" && stackArg !== stack) {
+          return {
+            ok: false,
+            message: `${appSlug} 는 ${stack} 앱이라 수정 지시도 ${stack} 이에요. stack 을 빼고 다시 보내세요.`,
+          } as EnqueueFail;
         }
       }
 

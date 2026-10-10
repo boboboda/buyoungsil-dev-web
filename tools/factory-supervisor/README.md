@@ -6,7 +6,17 @@
 ## 준비물
 - Node.js 18 이상 (`node -v`)
 - Claude Code 설치 + 로그인 완료 (`claude --version`)
-- git, 그리고 Flutter 앱을 만들 거면 Flutter
+- git, 그리고 만들 앱 종류(stack)에 맞는 도구:
+
+| stack | 필요한 것 | 비고 |
+|---|---|---|
+| flutter | Flutter SDK | 기본값 |
+| kotlin-compose | JDK 17 이상, Android SDK | gradle 명령은 없어도 돼요(Claude 가 gradlew 를 만들어요) |
+| swift-swiftui | (Windows 에서는 없음) | 코드와 XcodeGen `project.yml` 까지만. 빌드는 Mac 에서 |
+| nextjs | Node.js, npm | |
+| nestjs | Node.js, npm | |
+
+종류별 작업 규칙은 `supervisor.mjs` 의 `stackRules()` 에 있어요. 서버의 `lib/factory/jobs.ts` `STACKS` 와 맞춰야 해요.
 
 ## 처음 한 번 (Git Bash)
 ```bash

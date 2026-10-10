@@ -25,7 +25,15 @@ export const APP_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 export const MAX_PLAN = 60_000;
 export const MIN_PLAN = 50;
 export const MAX_PENDING_JOBS = 30;
-export const STACKS = ["flutter"] as const;
+// 앱 종류. 감독 프로그램(tools/factory-supervisor)이 종류별 작업 규칙을 붙인다. 늘릴 때는 거기 규칙도 같이 넣는다.
+export const STACKS = ["flutter", "kotlin-compose", "swift-swiftui", "nextjs", "nestjs"] as const;
+export const STACK_LABELS: Record<(typeof STACKS)[number], string> = {
+  flutter: "Flutter 모바일 앱 (Android 우선)",
+  "kotlin-compose": "Android 네이티브 앱 (Kotlin + Jetpack Compose)",
+  "swift-swiftui": "iOS 네이티브 앱 (SwiftUI, 이 작업 PC는 Windows라 빌드는 못 하고 코드만)",
+  nextjs: "웹 앱 (Next.js, App Router, TypeScript)",
+  nestjs: "백엔드 API 서버 (NestJS, TypeScript)",
+};
 
 export const ACTIVE_STATUSES = ["pending", "approved", "running"] as const;
 export const JOB_STATUSES = ["pending", "approved", "running", "done", "failed", "cancelled"] as const;
