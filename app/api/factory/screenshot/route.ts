@@ -1,12 +1,13 @@
 // app/api/factory/screenshot/route.ts
 // 감독 프로그램이 스크린샷 파일 하나를 올리는 주소.
-// 받은 파일을 기존 업로드 서버(FACTORY_UPLOAD_URL/upload/single)에 전달하고, 돌려받은 URL 을 지시에 저장한다.
+// 받은 파일을 기존 업로드 서버(FACTORY_UPLOAD_URL 이 없으면 config/upload.ts 의 주소 + /upload/single)에 전달하고, 돌려받은 URL 을 지시에 저장한다.
 //
 // 요청: POST multipart/form-data (jobId, label, file), 헤더 Authorization: Bearer <FACTORY_WORKER_TOKEN>
 // 응답: 200 { ok, url } / running 이 아닌 지시는 409 (취소된 경우 { cancelled: true } 포함)
 import { NextRequest, NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
+import { uploadConfig } from "@/config/upload";
 import { fail, guardWorker } from "@/lib/factory/http";
 import { ID_RE, LABEL_RE, MAX_SCREENSHOTS_PER_JOB, touchRunningJob } from "@/lib/factory/jobs";
 
@@ -20,8 +21,9 @@ export async function POST(req: NextRequest) {
   const blocked = await guardWorker(req);
   if (blocked) return blocked;
 
-  const base = process.env.FACTORY_UPLOAD_URL?.trim().replace(/\/+$/, "");
-  if (!base) return fail(500, "FACTORY_UPLOAD_URL 이 설정되지 않았습니다.");
+  // 환경변수가 없으면 사이트 이미지 업로드와 같은 업로드 서버(config/upload.ts)를 쓴다.
+  const base = (process.env.FACTORY_UPLOAD_URL?.trim() || uploadConfig.customServerUrl || "").replace(/\/+$/, "");
+  if (!base) return fail(500, "업로드 서버 주소를 알 수 없습니다.");
 
   // 본문이 너무 크면 읽기 전에 거절한다. (파일 10MB + 여유)
   const length = Number(req.headers.get("content-length") ?? "0");

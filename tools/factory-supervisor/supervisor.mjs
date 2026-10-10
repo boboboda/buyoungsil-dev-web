@@ -281,13 +281,15 @@ function readPhase(st) {
 
 const MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" };
 
+// 반환값: 아직 다시 시도할 수 있는 실패 개수
 async function uploadShots(st) {
+  let failed = 0;
   const dir = path.join(st.dir, ".factory", "screenshots");
   let names = [];
   try {
     names = fs.readdirSync(dir).sort();
   } catch {
-    return;
+    return 0;
   }
   for (const name of names) {
     const ext = path.extname(name).toLowerCase();
@@ -301,7 +303,9 @@ async function uploadShots(st) {
     }
     const key = `${name}:${stat.mtimeMs}:${stat.size}`;
     if (st.shots.has(key) || Date.now() - stat.mtimeMs < 3000 || stat.size === 0) continue;
-    st.shots.add(key);
+    const tries = (st.shotTries.get(key) ?? 0) + 1;
+    st.shotTries.set(key, tries);
+    if (tries >= 3) st.shots.add(key); // 3번째 시도 뒤에는 더 시도하지 않는다
     if (stat.size > 10 * 1024 * 1024) {
       addLog(st, "warn", `스크린샷이 10MB 를 넘어서 건너뜀: ${name}`);
       continue;
@@ -313,14 +317,24 @@ async function uploadShots(st) {
     form.append("file", new Blob([fs.readFileSync(full)], { type: MIME[ext] }), name);
     try {
       const r = await api("POST", "/api/factory/screenshot", form);
-      if (r.status === 200) addLog(st, "info", `스크린샷 올림: ${label}`);
-      else if (r.status === 409) return handleConflict(st, r);
-      else addLog(st, "warn", `스크린샷 올리기 실패(${r.status}): ${label}`);
+      if (r.status === 200) {
+        st.shots.add(key);
+        addLog(st, "info", `스크린샷 올림: ${label}`);
+      } else if (r.status === 409) return handleConflict(st, r);
+      else if (r.status >= 500 || r.status === 429) {
+        failed++;
+        addLog(st, "warn", `스크린샷 올리기 실패(${r.status}), 다시 시도해요: ${label}`);
+      }
+      else {
+        st.shots.add(key); // 400·413 같은 건 다시 해도 같으므로 포기
+        addLog(st, "warn", `스크린샷 올리기 실패(${r.status}): ${label}`);
+      }
     } catch (e) {
-      st.shots.delete(key); // 네트워크 문제면 다음에 다시
-      addLog(st, "warn", `스크린샷 올리기 오류: ${e.message}`);
+      failed++;
+      addLog(st, "warn", `스크린샷 올리기 오류, 다시 시도해요: ${e.message}`);
     }
   }
+  return failed;
 }
 
 function handleConflict(st, r) {
@@ -366,6 +380,11 @@ async function flush(st, extra = {}) {
 }
 
 async function finish(st, status, fields) {
+  // 마지막 스크린샷이 아직 안 올라갔으면 완료를 보고하기 전에 몇 번 더 시도한다
+  for (let i = 0; i < 3 && st.reportable; i++) {
+    if ((await uploadShots(st)) === 0) break;
+    await sleep(2000);
+  }
   for (let i = 0; i < 10 && st.logs.length > 0 && st.reportable; i++) await flush(st);
   if (!st.reportable) return;
   for (let attempt = 1; attempt <= 4; attempt++) {
@@ -385,7 +404,7 @@ async function finish(st, status, fields) {
 
 async function failEarly(job, reason) {
   log(`[${job.appSlug}] 시작하지 못함: ${reason}`);
-  const st = { job, logs: [], phase: null, phaseDirty: false, shots: new Set(), reportable: true, redact: (s) => s, dir: cfg.workDir };
+  const st = { job, logs: [], phase: null, phaseDirty: false, shots: new Set(), shotTries: new Map(), reportable: true, redact: (s) => s, dir: cfg.workDir };
   await finish(st, "failed", { failReason: reason });
 }
 
@@ -407,7 +426,7 @@ async function runJob(job) {
 
   const allowed = Object.fromEntries((job.requiredSecrets ?? []).map((n) => [n, secrets[n]]));
   const st = {
-    job, dir, child: null, logs: [], phase: "scaffold", phaseDirty: true, shots: new Set(),
+    job, dir, child: null, logs: [], phase: "scaffold", phaseDirty: true, shots: new Set(), shotTries: new Map(),
     reportable: true, stopped: null, result: null, stderrTail: "", lastText: "", started: Date.now(),
     redact: redactor(Object.values(allowed)),
   };
