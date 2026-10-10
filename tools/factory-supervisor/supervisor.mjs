@@ -306,6 +306,7 @@ function seedShots(st) {
 // 반환값: 아직 다시 시도할 수 있는 실패 개수
 async function uploadShots(st) {
   let failed = 0;
+  if (st.shotsFull) return 0;
   const dir = path.join(st.dir, ".factory", "screenshots");
   let names = [];
   try {
@@ -360,6 +361,12 @@ async function uploadShots(st) {
       else if (r.status >= 500 || r.status === 429) {
         failed++;
         addLog(st, "warn", `스크린샷 올리기 실패(${r.status}), 다시 시도해요: ${label}`);
+      }
+      else if (r.status === 400 && (r.data?.limit || /지시당 \d+장까지/.test(r.data?.message ?? ""))) {
+        // 지시당 장수 한도: 남은 파일도 다 같은 400 이므로 이 작업의 업로드를 멈춘다
+        st.shotsFull = true;
+        addLog(st, "warn", `스크린샷 한도(지시당 ${r.data?.limit ?? "?"}장)에 걸려 이 작업의 업로드를 멈춰요. 나머지는 앱 폴더 .factory/screenshots/ 에 있어요.`);
+        return failed;
       }
       else {
         st.shots.add(key); // 400·413 같은 건 다시 해도 같으므로 포기

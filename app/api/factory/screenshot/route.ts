@@ -4,6 +4,7 @@
 //
 // 요청: POST multipart/form-data (jobId, label, file), 헤더 Authorization: Bearer <FACTORY_WORKER_TOKEN>
 // 응답: 200 { ok, url } / running 이 아닌 지시는 409 (취소된 경우 { cancelled: true } 포함)
+//       같은 지시에 같은 label 이 있으면 새로 추가하지 않고 주소만 바꾼다. 장수 한도를 넘으면 400 { limit }.
 import { NextRequest, NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
@@ -54,8 +55,14 @@ export async function POST(req: NextRequest) {
       return fail(409, `지시가 실행 중이 아닙니다(${state.status}).`, { cancelled: state.cancelled, status: state.status });
     }
 
-    const count = await prisma.factoryJobImage.count({ where: { jobId } });
-    if (count >= MAX_SCREENSHOTS_PER_JOB) return fail(400, `스크린샷은 지시당 ${MAX_SCREENSHOTS_PER_JOB}장까지입니다.`);
+    // 같은 이름(label)이 이미 있으면 새로 늘리지 않고 주소만 바꾼다. (다시 시도·다시 찍기로 같은 화면이 쌓이지 않게)
+    const existing = await prisma.factoryJobImage.findFirst({ where: { jobId, label }, select: { id: true } });
+    if (!existing) {
+      const count = await prisma.factoryJobImage.count({ where: { jobId } });
+      if (count >= MAX_SCREENSHOTS_PER_JOB) {
+        return fail(400, `스크린샷은 지시당 ${MAX_SCREENSHOTS_PER_JOB}장까지입니다.`, { limit: MAX_SCREENSHOTS_PER_JOB });
+      }
+    }
 
     const upstream = new FormData();
     upstream.append("file", file, (file as { name?: string }).name || `${label}.png`);
@@ -71,7 +78,8 @@ export async function POST(req: NextRequest) {
     if (!result.filename || typeof result.url !== "string") return fail(502, "업로드 서버 응답이 올바르지 않습니다.");
 
     const url = `${base}${result.url}`;
-    await prisma.factoryJobImage.create({ data: { jobId, label, url } });
+    if (existing) await prisma.factoryJobImage.update({ where: { id: existing.id }, data: { url } });
+    else await prisma.factoryJobImage.create({ data: { jobId, label, url } });
 
     return NextResponse.json({ ok: true, url });
   } catch (error) {
