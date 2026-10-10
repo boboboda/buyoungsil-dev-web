@@ -17,7 +17,7 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024; // 업로드 서버의 한도와 같다
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 export async function POST(req: NextRequest) {
-  const blocked = guardWorker(req);
+  const blocked = await guardWorker(req);
   if (blocked) return blocked;
 
   const base = process.env.FACTORY_UPLOAD_URL?.trim().replace(/\/+$/, "");

@@ -7,6 +7,8 @@ import { Button, Card, CardBody, CardHeader, Chip, Input } from "@heroui/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import WorkerTokens from "./WorkerTokens";
+
 type Status =
   | "pending"
   | "approved"
@@ -383,6 +385,8 @@ export default function FactoryControl() {
           )}
         </div>
       </div>
+
+      <WorkerTokens />
 
       {/* 키 이름 */}
       <Card>

@@ -41,12 +41,12 @@ export const fail = (status: number, message: string, extra?: Record<string, unk
   NextResponse.json({ message, ...extra }, { status });
 
 // 워커 요청 공통 관문. 통과하면 null, 막히면 보낼 응답을 돌려준다.
-export function guardWorker(req: NextRequest): NextResponse | null {
+export async function guardWorker(req: NextRequest): Promise<NextResponse | null> {
   const ip = getClientIP(req);
 
   if (hit(`ip:${ip}`, MAX_PER_IP_PER_WINDOW)) return fail(429, "요청이 너무 많습니다.");
 
-  if (!isValidFactoryWorkerToken(req.headers.get("authorization"))) {
+  if (!(await isValidFactoryWorkerToken(req.headers.get("authorization")))) {
     // 토큰을 계속 틀리는 요청은 따로 세어서 막는다.
     if (hit(`fail:${ip}`, MAX_AUTH_FAILS_PER_WINDOW)) return fail(429, "요청이 너무 많습니다.");
     return fail(401, "권한이 없습니다.");

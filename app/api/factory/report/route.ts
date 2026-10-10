@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-  const blocked = guardWorker(req);
+  const blocked = await guardWorker(req);
   if (blocked) return blocked;
 
   const read = await readJson(req);

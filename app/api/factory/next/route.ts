@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  const blocked = guardWorker(req);
+  const blocked = await guardWorker(req);
   if (blocked) return blocked;
 
   const worker = req.nextUrl.searchParams.get("worker") ?? "";
