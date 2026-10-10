@@ -77,7 +77,7 @@ export default function RevisionSender() {
         ) : (
           <>
             <select
-              className="w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm"
               value={appSlug}
               onChange={(e) => setAppSlug(e.target.value)}
             >
@@ -88,7 +88,7 @@ export default function RevisionSender() {
               ))}
             </select>
             <textarea
-              className="min-h-[96px] w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-sm"
+              className="min-h-[96px] w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm"
               maxLength={5000}
               placeholder="고칠 내용만 적어 주세요. 예: 버튼 색을 주황색으로 바꾸고, 숫자를 0으로 되돌리는 초기화 버튼을 추가해 줘"
               value={instruction}
@@ -102,8 +102,9 @@ export default function RevisionSender() {
               />
               보내면 바로 승인해서 시작하기
             </label>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               <Button
+                className="min-h-11 sm:min-h-0"
                 color="primary"
                 isDisabled={busy || !appSlug || instruction.trim().length < 5}
                 size="sm"

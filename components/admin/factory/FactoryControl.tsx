@@ -244,10 +244,11 @@ export default function FactoryControl() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap">
         {FILTERS.map((f) => (
           <Button
             key={f.value || "all"}
+            className="shrink-0"
             color={filter === f.value ? "primary" : "default"}
             size="sm"
             variant={filter === f.value ? "solid" : "flat"}
@@ -261,7 +262,7 @@ export default function FactoryControl() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         {/* 지시 목록 */}
-        <div className="space-y-2">
+        <div className={`space-y-2 ${selectedId ? "hidden lg:block" : ""}`}>
           {listError && (
             <Card>
               <CardBody>
@@ -282,7 +283,10 @@ export default function FactoryControl() {
                   ? "border-primary bg-primary-50 dark:bg-primary-50/10"
                   : "border-default-200 hover:bg-default-50"
               }`}
-              onClick={() => setSelectedId(j.id)}
+              onClick={() => {
+                setSelectedId(j.id);
+                window.scrollTo({ top: 0 });
+              }}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-semibold">{j.title}</span>
@@ -305,8 +309,18 @@ export default function FactoryControl() {
 
         {/* 상세 */}
         <div>
+          {selectedId && (
+            <Button
+              className="mb-3 lg:hidden"
+              size="sm"
+              variant="flat"
+              onPress={() => setSelectedId(null)}
+            >
+              ← 목록으로
+            </Button>
+          )}
           {!selectedId && (
-            <div className="rounded-xl border-2 border-dashed border-gray-300 p-10 text-center text-gray-500 dark:border-gray-700">
+            <div className="hidden rounded-xl border-2 border-dashed border-gray-300 p-10 text-center text-gray-500 dark:border-gray-700 lg:block">
               왼쪽에서 지시를 고르면 기획서와 진행 상황이 보여요.
             </div>
           )}
@@ -371,6 +385,7 @@ function JobDetailView({
         <div className="flex flex-wrap gap-2">
           {job.status === "pending" && (
             <Button
+              className="min-h-11 flex-1 sm:flex-none"
               color="primary"
               isDisabled={busy}
               size="sm"
@@ -381,6 +396,7 @@ function JobDetailView({
           )}
           {job.status === "failed" && (
             <Button
+              className="min-h-11 flex-1 sm:flex-none"
               color="primary"
               isDisabled={busy}
               size="sm"
@@ -391,6 +407,7 @@ function JobDetailView({
           )}
           {active && (
             <Button
+              className="min-h-11 flex-1 sm:flex-none"
               color="danger"
               isDisabled={busy}
               size="sm"
@@ -409,7 +426,7 @@ function JobDetailView({
             </Button>
           )}
           {editable && (
-            <div className="flex items-center gap-1">
+            <div className="flex w-full items-center gap-1 sm:w-auto">
               <Input
                 className="w-24"
                 label="우선순위"
@@ -538,7 +555,7 @@ function JobDetailView({
           {job.logs.length === 0 ? (
             <p className="text-sm text-default-500">아직 로그가 없어요.</p>
           ) : (
-            <div className="max-h-72 overflow-y-auto rounded-lg bg-default-100 p-3 font-mono text-xs leading-relaxed">
+            <div className="max-h-72 overflow-y-auto break-words rounded-lg bg-default-100 p-3 font-mono text-xs leading-relaxed">
               {job.logs.map((l) => (
                 <div
                   key={l.id}
@@ -583,7 +600,7 @@ function Info({ label, value }: { label: string; value: string }) {
   return (
     <>
       <dt className="text-default-500">{label}</dt>
-      <dd className="truncate font-medium">{value}</dd>
+      <dd className="break-all font-medium">{value}</dd>
     </>
   );
 }

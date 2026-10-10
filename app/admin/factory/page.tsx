@@ -14,10 +14,10 @@ export const metadata: Metadata = {
 
 export default function AdminFactoryPage() {
   return (
-    <div className="container mx-auto max-w-7xl px-4 py-8">
+    <div className="container mx-auto max-w-7xl px-4 py-4 sm:py-8">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="mb-2 text-3xl font-bold">🏭 앱 공장 통제실</h1>
+          <h1 className="mb-2 text-2xl font-bold sm:text-3xl">🏭 앱 공장 통제실</h1>
           <p className="text-gray-600 dark:text-gray-400">
             기획서를 승인하면 내 PC의 감독 프로그램이 가져가서 앱을 만들어요
           </p>

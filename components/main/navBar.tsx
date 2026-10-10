@@ -252,6 +252,14 @@ export default function NavBar() {
                             </DropdownItem>
 
                             <DropdownItem
+                              key="adminFactory"
+                              textValue="adminFactory"
+                              onClick={() => router.push("/admin/factory")}
+                            >
+                              <p>🏭 앱 공장</p>
+                            </DropdownItem>
+
+                            <DropdownItem
                               key="adminStories"
                               textValue="adminStories"
                               onClick={() => router.push("/admin/stories")}
@@ -458,6 +466,14 @@ export default function NavBar() {
                             onClick={() => router.push("/admin/drafts")}
                           >
                             <p>📥 초안함</p>
+                          </DropdownItem>
+
+                          <DropdownItem
+                            key="adminFactory"
+                            textValue="adminFactory"
+                            onClick={() => router.push("/admin/factory")}
+                          >
+                            <p>🏭 앱 공장</p>
                           </DropdownItem>
 
                           <DropdownItem
