@@ -41,7 +41,8 @@ function clean(v: unknown, max: number, keepNewlines = false): string {
 export const FACTORY_INSTRUCTIONS =
   " 앱 공장: 확정된 앱 기획서는 enqueue_app_job 으로 등록해요(승인은 관리자가 통제실 /admin/factory 에서 해요). " +
   "등록 전에 list_factory_jobs 로 같은 앱 이름이 이미 있는지, list_secret_names 로 쓸 수 있는 키 이름을 확인하세요. " +
-  "이미 만든 앱을 고칠 때는 kind=revision 으로, 반드시 기존 앱 이름(appSlug)과 고칠 내용만 보내세요.";
+  "이미 만든 앱을 고칠 때는 kind=revision 으로, 반드시 기존 앱 이름(appSlug)과 고칠 내용만 보내세요. "
+  + "관리자가 통제실에서 직접 보낸 수정 지시는 source 가 '통제실'로 나와요. 결과는 get_factory_job(includePlan=true)으로 읽고 사용자와 의논하세요.";
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -228,6 +229,7 @@ async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
       phase: true,
       summary: true,
       failReason: true,
+      source: true,
       createdAt: true,
       finishedAt: true,
     },
@@ -244,6 +246,7 @@ async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
       phase: j.phase,
       summary: j.summary ? j.summary.slice(0, 300) : null,
       failReason: j.failReason ? j.failReason.slice(0, 300) : null,
+      source: j.source,
       createdAt: iso(j.createdAt),
       finishedAt: iso(j.finishedAt),
     })),
@@ -277,6 +280,7 @@ async function getJob(args: Record<string, unknown>): Promise<ToolResult> {
     parentJobId: job.parentJobId,
     stack: job.stack,
     requiredSecrets: job.requiredSecrets,
+    source: job.source,
     status: job.status,
     phase: job.phase,
     summary: job.summary,
@@ -310,7 +314,7 @@ async function listSecretNames(): Promise<ToolResult> {
 type EnqueueFail = { ok: false; message: string };
 type EnqueueOk = { ok: true; id: string; message: string };
 
-async function enqueue(args: Record<string, unknown>): Promise<ToolResult> {
+export async function enqueue(args: Record<string, unknown>): Promise<ToolResult> {
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
   const title = clean(args.title, 80);
   const kind = args.kind === undefined ? "new" : args.kind;

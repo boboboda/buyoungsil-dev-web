@@ -4,6 +4,7 @@ import { Metadata } from "next";
 import Link from "next/link";
 
 import FactoryControl from "@/components/admin/factory/FactoryControl";
+import RevisionSender from "@/components/admin/factory/RevisionSender";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,8 @@ export default function AdminFactoryPage() {
           ⚙️ 설정 (PC 연결 토큰 · 키 이름)
         </Link>
       </div>
+
+      <RevisionSender />
 
       <FactoryControl />
     </div>
