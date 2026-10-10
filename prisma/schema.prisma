@@ -538,3 +538,76 @@ model ClaudeDailyUsage {
   @@index([date])
   @@map("claude_daily_usage")
 }
+
+// ─────────────────────────────────────────────
+// 앱 공장 (factory): 기획서를 지시로 쌓고, 내 PC 의 감독 프로그램이 가져가 앱을 만든다.
+// 기존 모델과는 연결하지 않는다. (ClaudeSession 과는 appSlug = project 이름으로만 맞춘다)
+// ─────────────────────────────────────────────
+
+// 지시 대기열. 앱 하나 = 활성 지시 하나.
+model FactoryJob {
+  id              String    @id @default(cuid())
+  appSlug         String // 앱 폴더 이름(영문 소문자·숫자·하이픈). ClaudeSession.project 와 같다.
+  title           String // 표시용 앱 이름
+  kind            String    @default("new") // new | revision (수정 지시)
+  parentJobId     String? // 수정 지시가 이어받는 이전 지시
+  planMarkdown    String // 확정된 기획서 본문(수정 지시는 고칠 내용만)
+  planHash        String // 기획서 sha256. 같은 기획서 중복 등록 감지
+  stack           String    @default("flutter") // 앱 템플릿 종류
+  requiredSecrets String[]  @default([]) // 키 이름만. 값은 저장하지 않는다.
+  priority        Int       @default(0)
+  status          String    @default("pending") // pending | approved | running | done | failed | cancelled
+  phase           String? // 워커가 보고하는 현재 단계(scaffold, build, screenshots 등)
+  summary         String? // 완료 요약
+  failReason      String?
+  attempts        Int       @default(0)
+  maxAttempts     Int       @default(2)
+  workerId        String? // 가져간 감독 프로그램 이름
+  leaseUntil      DateTime? // running 상태의 임대 만료 시각
+  source          String? // 어느 기획 대화에서 왔는지(선택)
+  createdAt       DateTime  @default(now())
+  approvedAt      DateTime?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  images FactoryJobImage[]
+  logs   FactoryJobLog[]
+
+  @@index([status, priority, createdAt])
+  @@index([appSlug])
+  @@map("factory_jobs")
+}
+
+model FactoryJobImage {
+  id        String     @id @default(cuid())
+  jobId     String
+  label     String // 화면 이름(home, result 등)
+  url       String // 업로드 서버가 돌려준 전체 URL
+  createdAt DateTime   @default(now())
+  job       FactoryJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@map("factory_job_images")
+}
+
+model FactoryJobLog {
+  id      Int        @id @default(autoincrement())
+  jobId   String
+  at      DateTime   @default(now())
+  level   String     @default("info") // info | warn | error
+  message String // 2000자 이내
+  job     FactoryJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, at])
+  @@map("factory_job_logs")
+}
+
+// 키 이름 카탈로그. 값은 PC 의 마스터 파일에만 있다.
+model FactorySecretName {
+  name        String   @id // 예: PIXELLAB_TOKEN
+  description String // 어디에 쓰는 키인지
+  createdAt   DateTime @default(now())
+
+  @@map("factory_secret_names")
+}
