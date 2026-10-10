@@ -542,6 +542,8 @@ async function runJob(job) {
 }
 
 // ───────────── 대기열 확인 ─────────────
+let paused = false;
+
 async function loop() {
   let delay = cfg.pollSec * 1000;
   while (!shuttingDown) {
@@ -551,7 +553,13 @@ async function loop() {
         const r = await api("GET", `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}`);
         if (r.status === 200) {
           delay = cfg.pollSec * 1000;
-          for (const job of r.data.jobs ?? []) {
+          // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
+          const nowPaused = r.data?.paused === true;
+          if (nowPaused !== paused) {
+            paused = nowPaused;
+            log(paused ? "일시 정지됨 (홈페이지)" : "다시 시작됨");
+          }
+          for (const job of paused ? [] : r.data.jobs ?? []) {
             if ([...running.values()].some((s) => s.job.appSlug === job.appSlug)) {
               failEarly(job, "이 PC에서 같은 앱 이름의 작업이 이미 돌고 있어요.");
               continue;
