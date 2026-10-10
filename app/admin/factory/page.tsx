@@ -4,6 +4,7 @@ import { Metadata } from "next";
 import Link from "next/link";
 
 import FactoryControl from "@/components/admin/factory/FactoryControl";
+import SupervisorControl from "@/components/admin/factory/SupervisorControl";
 import RevisionSender from "@/components/admin/factory/RevisionSender";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,7 @@ export default function AdminFactoryPage() {
         </Link>
       </div>
 
+      <SupervisorControl />
       <RevisionSender />
 
       <FactoryControl />

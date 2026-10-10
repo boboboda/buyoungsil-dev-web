@@ -623,3 +623,12 @@ model FactoryWorkerToken {
 
   @@map("factory_worker_tokens")
 }
+
+// 앱 공장 통제실 설정값(간단한 key-value). 예: supervisorEnabled = "false" 면 감독 프로그램이 새 일감을 가져가지 않는다.
+model FactorySetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("factory_settings")
+}
