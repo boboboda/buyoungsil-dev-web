@@ -42,7 +42,8 @@ export async function POST(req: NextRequest) {
 
   if (typeof jobId !== "string" || !ID_RE.test(jobId)) return fail(400, "jobId 형식이 올바르지 않습니다.");
   if (typeof label !== "string" || !LABEL_RE.test(label)) return fail(400, "label 은 영문, 숫자, _, - 만 40자까지 쓸 수 있습니다.");
-  if (!(file instanceof File)) return fail(400, "file 이 필요합니다.");
+  // Node 18(서버 Docker 이미지)에는 전역 File 이 없어서 instanceof File 은 ReferenceError 가 난다. Blob 은 Node 18 에도 있다.
+  if (!(file instanceof Blob)) return fail(400, "file 이 필요합니다.");
   if (file.size === 0 || file.size > MAX_FILE_BYTES) return fail(413, "파일 크기는 10MB 이하여야 합니다.");
   if (!ALLOWED_TYPES.includes(file.type)) return fail(400, "jpeg, png, gif, webp 만 올릴 수 있습니다.");
 
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
     if (count >= MAX_SCREENSHOTS_PER_JOB) return fail(400, `스크린샷은 지시당 ${MAX_SCREENSHOTS_PER_JOB}장까지입니다.`);
 
     const upstream = new FormData();
-    upstream.append("file", file, file.name || `${label}.png`);
+    upstream.append("file", file, (file as { name?: string }).name || `${label}.png`);
 
     const response = await fetch(`${base}/upload/single`, { method: "POST", body: upstream });
     if (!response.ok) {
