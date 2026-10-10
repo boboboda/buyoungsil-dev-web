@@ -20,6 +20,12 @@ export const WORKER_RE = /^[A-Za-z0-9._-]{1,60}$/;
 export const LABEL_RE = /^[A-Za-z0-9_-]{1,40}$/;
 export const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 export const SECRET_NAME_RE = /^[A-Z][A-Z0-9_]{1,63}$/;
+// 앱 폴더 이름. 소문자·숫자·하이픈 3~40자, 양 끝은 하이픈 불가. (폴더 이름이자 Claude 훅의 project 값)
+export const APP_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
+export const MAX_PLAN = 60_000;
+export const MIN_PLAN = 50;
+export const MAX_PENDING_JOBS = 30;
+export const STACKS = ["flutter"] as const;
 
 export const ACTIVE_STATUSES = ["pending", "approved", "running"] as const;
 export const JOB_STATUSES = ["pending", "approved", "running", "done", "failed", "cancelled"] as const;
