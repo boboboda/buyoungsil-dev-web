@@ -172,6 +172,11 @@ export default async function AdminDashboard() {
               🤖 클로드 작업 현황
             </button>
           </Link>
+          <Link href="/admin/factory">
+            <button className="w-full p-4 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white font-medium hover:shadow-lg transition-shadow">
+              🏭 앱 공장 통제실
+            </button>
+          </Link>
           <Link href="/admin/stories/create">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-orange-500 to-red-500 text-white font-medium hover:shadow-lg transition-shadow">
               + 새 스토리
