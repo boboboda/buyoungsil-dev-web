@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { fail, guardWorker, readJson } from "@/lib/factory/http";
 import { parseReport, reportJob } from "@/lib/factory/jobs";
+import { notifyJobEvent } from "@/lib/factory/telegram";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,6 +32,9 @@ export async function POST(req: NextRequest) {
     if (out.kind === "conflict") {
       return fail(409, `지시가 실행 중이 아닙니다(${out.status}).`, { cancelled: out.cancelled, status: out.status });
     }
+
+    // 끝났거나 실패했으면 텔레그램으로 알린다. (실패해도 보고 응답에는 영향 없음)
+    if (out.status === "done" || out.status === "failed") void notifyJobEvent(parsed.value.jobId, out.status);
 
     return NextResponse.json({ ok: true, status: out.status, leaseUntil: out.leaseUntil });
   } catch (error) {

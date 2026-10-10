@@ -4,6 +4,7 @@ import { Metadata } from "next";
 import Link from "next/link";
 
 import SecretNames from "@/components/admin/factory/SecretNames";
+import TelegramSetup from "@/components/admin/factory/TelegramSetup";
 import WorkerTokens from "@/components/admin/factory/WorkerTokens";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +30,7 @@ export default function AdminFactorySettingsPage() {
       </div>
 
       <div className="space-y-6">
+        <TelegramSetup />
         <WorkerTokens />
         <SecretNames />
       </div>

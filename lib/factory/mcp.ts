@@ -3,6 +3,7 @@
 import { createHash } from "crypto";
 
 import prisma from "@/lib/prisma";
+import { notifyJobEvent } from "@/lib/factory/telegram";
 import {
   ACTIVE_STATUSES,
   APP_SLUG_RE,
@@ -519,6 +520,9 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
       } as EnqueueOk;
     },
   );
+
+  // 승인 대기 알림. 통제실에서 직접 보낸 지시는 보낸 사람이 이미 아니까 알리지 않는다.
+  if (result.ok && source !== "통제실") void notifyJobEvent(result.id, "pending");
 
   return result.ok ? text(result.message) : text(result.message, true);
 }
