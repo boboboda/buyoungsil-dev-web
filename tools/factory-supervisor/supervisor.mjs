@@ -205,6 +205,7 @@ function rulesFor(job) {
 - 폴더에 이미 작업물이 있으면 처음부터 다시 만들지 말고 이어서 진행하세요. 기획서의 MVP 범위만 구현하고 범위 밖 기능은 추가하지 마세요.
 ${stackRules(job)}
 - 외부 서비스 키는 환경변수로만 읽을 수 있습니다(이 지시에 허용된 이름만). 키 값을 파일, 로그, 커밋에 쓰거나 출력하지 마세요.
+- 에뮬레이터, 개발 서버, 감시 프로세스처럼 백그라운드로 띄운 것은 마지막 응답 전에 반드시 직접 끄세요. 남아 있으면 작업이 끝나지 않아 감독 프로그램이 강제로 정리해요.
 - 진행 단계가 바뀔 때마다 .factory/phase.txt 에 한 단어(scaffold, code, build, screenshots, done 중 하나)를 덮어써 주세요.
 - 화면 스크린샷을 만들 수 있으면 .factory/screenshots/ 에 png 로 저장하세요(예: home.png, result.png). 못 만들면 건너뛰세요.
 - 마지막 응답은 한국어 3~6줄 결과 요약으로 하세요: 만든 화면, 분석/빌드 결과, 사람이 해야 할 일.
@@ -275,6 +276,7 @@ function promptFor(job) {
 }
 
 // ───────────── 작업 하나 실행 ─────────────
+const RESULT_GRACE_SEC = 90; // 결과(result)를 낸 뒤 Claude 가 스스로 끝나기를 기다리는 시간
 const running = new Map(); // jobId -> state
 let shuttingDown = false;
 
@@ -552,7 +554,20 @@ async function runJob(job) {
           else if (b.name === "Write" || b.name === "Edit") addLog(st, "info", `${b.name}: ${brief(b.input?.file_path, 100)}`);
         }
       }
-    } else if (ev.type === "result") st.result = ev;
+    } else if (ev.type === "result") {
+      // 첫 정상 결과를 요약으로 쓴다. Claude 가 띄운 백그라운드 작업(에뮬레이터·개발 서버 등)이 남아 있으면
+      // claude -p 가 끝나지 않고, 그 작업이 끝날 때 새 턴을 열어 요약을 덮어쓴다. 그래서 잠시 기다렸다가 끊는다.
+      if (!st.result || st.result.is_error) st.result = ev;
+      if (!ev.is_error && !st.resultTimer) {
+        st.resultTimer = setTimeout(() => {
+          if (child.exitCode !== null || st.stopped) return;
+          st.killedAfterResult = true;
+          addLog(st, "warn", `결과를 낸 뒤 ${RESULT_GRACE_SEC}초가 지나도 Claude 가 끝나지 않아 정리해요(남은 백그라운드 작업 종료).`);
+          log(`[${st.job.appSlug}] 결과 뒤 종료되지 않아 프로세스 정리`);
+          killTree(child);
+        }, RESULT_GRACE_SEC * 1000);
+      }
+    }
   });
   child.stderr.on("data", (d) => {
     st.stderrTail = (st.stderrTail + d.toString()).slice(-2000);
@@ -570,12 +585,13 @@ async function runJob(job) {
   });
   clearInterval(beat);
   clearTimeout(timer);
+  clearTimeout(st.resultTimer);
 
   try {
     if (st.stopped) {
       if (/^시간 초과/.test(st.stopped)) await finish(st, "failed", { failReason: st.stopped });
       // 취소·종료·서버 쪽 상태 변경이면 서버가 이미 정리했거나(또는 곧 정리) 하므로 보고하지 않는다
-    } else if (st.result && !st.result.is_error && code === 0) {
+    } else if (st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
       const committed = commitResult(dir, job);
       const text = st.redact(String(st.result.result ?? st.lastText ?? "").trim());
       const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result.num_turns ? `, ${st.result.num_turns}턴` : ""}${committed ? ", 앱 폴더에 커밋함" : ""})`;
