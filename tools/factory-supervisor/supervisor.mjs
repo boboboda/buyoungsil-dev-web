@@ -774,7 +774,10 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
   // 출시 2단계 서버만 job.release.play 를 준다. 예전 서버의 일감이면 예전처럼 outbox 만 보낸다(스토어 자료 검사·Play 업로드 없음)
   const v2 = !!job.release && "play" in job.release;
   const kind = v2 ? job.release.kind : null;
+  // 고른 갱신 항목(store/project). null 이면 예전 일감(전부). 단계(stages)도 서버가 이 항목으로 걸러서 준다
+  const items = v2 && Array.isArray(job.release.items) ? job.release.items : null;
   const lines = [];
+  if (items) lines.push(`갱신 항목: ${job.release.itemsLabel || items.join(", ")} (이것만 처리)`);
   if (checkFail) {
     const f = readFailFile(dir);
     if (f) {
@@ -786,9 +789,11 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
 
   let check = null;
   if (kind === "store") {
-    check = checkStoreAssets(dir);
+    const stages = items && Array.isArray(job.release.stages) ? job.release.stages : null;
+    check = checkStoreAssets(dir, { only: stages });
     if (job.storeEnv) check.tools = [check.tools, `PC: ${envSummary(job.storeEnv)}`].filter(Boolean).join(" · ");
     for (const k of ["icon", "screenshots", "video", "listing"]) {
+      if (stages && !stages.includes(k)) continue; // 고르지 않은 항목
       const s = check.stages[k];
       lines.push(`${STAGE_NAME[k]} ${MARK[s.status]} ${s.note ?? ""}`.trim());
       if (s.status === "skipped") addLog(st, "warn", s.note);
@@ -808,15 +813,18 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
   if (from !== "homepage") {
     if (kind === "store") {
       const missing = playMissing(job.release?.play);
-      if (missing.length) {
+      const playItems = items ? items.filter((i) => ["images", "listing", "video"].includes(i)) : null;
+      if (playItems && playItems.length === 0) {
+        check.stages.upload = { status: "skipped", note: "Play 에 올릴 항목(이미지·문구·홍보 영상 링크)을 고르지 않아서 Play 는 건드리지 않았어요" };
+      } else if (missing.length) {
         check.stages.upload = { status: "skipped", note: `Play 업로드 안 함 - 부족한 것: ${missing.join(" / ")}` };
         addLog(st, "warn", check.stages.upload.note);
       } else {
         setPhase(st, "upload");
         try {
-          const r = await playUploadStore({ play: job.release.play, check, log: (m) => addLog(st, "info", m) });
+          const r = await playUploadStore({ play: job.release.play, check, items, log: (m) => addLog(st, "info", m) });
           const note =
-            `Play 등록정보(${r.langs.join(", ")})${r.video ? "·영상 링크" : ""}` +
+            `Play 등록정보(${r.langs.join(", ") || "언어 없음"})${r.listing === false ? "" : " 문구"}${r.video ? "·영상 링크" : ""}` +
             (r.imageTypes.length ? `, 이미지 ${r.imageTypes.join("·")} 교체` : "") +
             " 커밋함" +
             (r.changesNotSentForReview ? ". 자동으로 검토에 보낼 수 없는 앱이라 Console 에서 '검토를 위해 변경사항 보내기'를 직접 눌러야 해요" : "");
@@ -849,7 +857,11 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
     failures.push(...sent.map((m) => `스토어 이미지 ${m}`));
     const homepage = { status: failures.length ? "failed" : "ok", note: failures.join(" / ") || null };
     await postStoreAssets(st, { ...storeReport(check), stages: { ...check.stages, homepage } });
+  }
+  // 서버가 가진 값(대표 이미지·Play 주소)을 홈페이지 프로젝트에 넣도록 project.json 은 늘 보낸다(서버가 고른 항목의 칸만 받는다)
+  if (kind === "store" || (kind === "project" && items)) {
     const pj = path.join(dir, ".factory", "outbox", "project.json");
+    fs.mkdirSync(path.dirname(pj), { recursive: true });
     if (!fs.existsSync(pj)) fs.writeFileSync(pj, "{}\n");
   }
   failures.push(...(await sendOutbox({ dir, job, api, addLog: (level, m) => addLog(st, level, m) })).map((x) => x.message));
@@ -857,7 +869,8 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
   if (failures.length) {
     return finish(st, "failed", { failReason: st.redact(`홈페이지 반영 실패: ${failures.join(" / ")}`).slice(0, 1800), failStage: "homepage" });
   }
-  if (job.release?.overwriteProject) lines.push("홈페이지 프로젝트: 덮어쓰기(개인정보처리방침 제외)");
+  if (job.release?.overwriteProject) lines.push("홈페이지 프로젝트: 고른 항목 덮어쓰기");
+  if (items?.includes("privacy")) lines.push("개인정보처리방침: 홈페이지 방침 갱신(Play 의 방침 주소는 그대로라 Play 에서도 새 내용이 보여요)");
   const extra = lines.length ? `\n${lines.map((l) => `- ${l}`).join("\n")}` : "";
   await finish(st, "done", { summary: (summary + extra).slice(0, 3900) + (committed ? " (앱 폴더에 커밋함)" : "") });
 }
@@ -890,7 +903,8 @@ async function loop() {
           reportPcPaths(r.data?.pcPaths, api, log).catch(() => {}); // 배포 계정 키 파일이 있는지만 알린다
           // 통제실에서 등록한 키 비밀번호를 secrets.env 로(값은 로그에 남기지 않음), 키 점검 요청(한 번). 둘 다 던지지 않는다
           if (r.data?.keyPasswordsPending === true) syncKeyPasswords({ api, log, secretsFile: cfg.secretsFile }).catch(() => {});
-          if (r.data?.keyScan === true) runKeyScan({ api, log, workDir: cfg.workDir }).catch(() => {});
+          // keyScanApps 가 있으면 그 앱 폴더만(출시 카드 [키 조회])
+          if (r.data?.keyScan === true) runKeyScan({ api, log, workDir: cfg.workDir, only: Array.isArray(r.data?.keyScanApps) ? r.data.keyScanApps : null }).catch(() => {});
           // 공장 정비 지시·[배포] 요청(앱 일감과 따로. 정비는 돌던 앱 일감이 없을 때만 시작)
           onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow });
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.

@@ -63,7 +63,7 @@ export const DEFAULT_RULES: Record<RuleSectionId, string> = {
 - 마지막 응답은 한국어 3~6줄 결과 요약으로 하세요: 만든 화면, 분석/빌드 결과, 사람이 해야 할 일.`,
   release: `## 출시 준비 (이 일감은 kind=release)
 - RELEASE_REQUEST.md 가 이번 지시예요(종류: 첫 출시 / 스토어 자료 수정 / 프로젝트 업데이트). 앱 기능은 바꾸지 말고 그 종류가 허락한 것만 하세요.
-- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, icon, screenshots, video, listing, upload, homepage, done)으로 .factory/phase.txt 에 쓰고(위 공통 규칙의 단계 이름 대신),
+- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, icon, screenshots, video, listing, privacy, upload, homepage, done)으로 .factory/phase.txt 에 쓰고(위 공통 규칙의 단계 이름 대신),
   더 진행할 수 없으면 .factory/fail.json 에 {"stage": "단계", "reason": "이유"} 를 쓰고 끝내세요(비밀번호·키 값 금지).
 - 결과는 \`.factory/outbox/\` 에 JSON 파일로 저장하세요(첫 출시: 아래 두 개, 스토어 자료 수정: release.json·project.json + .factory/store/ 의 정해진 파일, 프로젝트 업데이트: project.json). 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
   - \`project.json\` (홈페이지 프로젝트의 빈 항목만 채워요. 승인 때 '덮어쓰기'를 고른 일감은 방침 말고는 바꿔요): {"description": "소개 2~3문장", "privacyPolicy": "개인정보처리방침 마크다운"}

@@ -32,7 +32,7 @@ export function releaseRules(job) {
   return `
 ## 출시 준비 (이 일감은 kind=release)
 - RELEASE_REQUEST.md 가 이번 지시예요(종류: 첫 출시 / 스토어 자료 수정 / 프로젝트 업데이트). 앱 기능은 바꾸지 말고 그 종류가 허락한 것만 하세요.
-- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, icon, screenshots, video, listing, upload, homepage, done)으로 .factory/phase.txt 에 쓰고,
+- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, icon, screenshots, video, listing, privacy, upload, homepage, done)으로 .factory/phase.txt 에 쓰고,
   더 진행할 수 없으면 .factory/fail.json 에 {"stage": "단계", "reason": "이유"} 를 쓰고 끝내세요(비밀번호·키 값 금지).
 - 결과는 \`.factory/outbox/\` 에 JSON 파일로 저장하세요(첫 출시: 아래 두 개, 스토어 자료 수정: release.json·project.json + .factory/store/ 의 정해진 파일, 프로젝트 업데이트: project.json). 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
   - \`project.json\` (홈페이지 프로젝트의 빈 항목만 채워요. 승인 때 '덮어쓰기'를 고른 일감은 방침 말고는 바꿔요): {"description": "소개 2~3문장", "privacyPolicy": "개인정보처리방침 마크다운"}
@@ -387,15 +387,25 @@ function readKeyProps(file) {
   return out;
 }
 
-/** /next 응답에 keyScan: true 가 있으면 한 번 실행. 던지지 않는다. */
-export async function runKeyScan({ api, log, workDir }) {
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/;
+
+/**
+ * /next 응답에 keyScan: true 가 있으면 한 번 실행. 던지지 않는다.
+ * only(keyScanApps: 앱 이름 목록)가 있으면 그 앱 폴더만 점검하고, 폴더가 없으면 { missing: true } 로 알린다.
+ */
+export async function runKeyScan({ api, log, workDir, only = null }) {
   try {
     const apps = [];
+    const names = Array.isArray(only) ? [...new Set(only.filter((s) => typeof s === "string" && SLUG_RE.test(s) && !SKIP_APPS.has(s)))].slice(0, 20) : null;
     let dirs = [];
     try {
       dirs = fs.readdirSync(workDir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".") && !SKIP_APPS.has(d.name));
     } catch {
       dirs = [];
+    }
+    if (names) {
+      for (const n of names) if (!dirs.some((d) => d.name === n)) apps.push({ appSlug: n, keys: [], keyProperties: [], missing: true });
+      dirs = dirs.filter((d) => names.includes(d.name));
     }
     for (const d of dirs.slice(0, 100)) {
       const appDir = path.join(workDir, d.name);
@@ -415,13 +425,13 @@ export async function runKeyScan({ api, log, workDir }) {
           } catch {
             /* 그대로 */
           }
-          return { path: rel(k), type: info.type, aliases: info.aliases, gitTracked: gitTracked(appDir, k), note: info.note };
+          return { path: rel(k), abs: path.resolve(k), type: info.type, aliases: info.aliases, gitTracked: gitTracked(appDir, k), note: info.note };
         }),
         keyProperties: found.props.slice(0, 10).map((p) => ({ path: rel(p), ...readKeyProps(p), gitTracked: gitTracked(appDir, p) })),
       });
     }
-    const r = await api("POST", "/api/factory/key-report", { apps });
-    log(r.status === 200 ? `키 점검 결과를 보냈어요(앱 ${apps.length}개).` : `키 점검 결과 보내기 거절(${r.status})`);
+    const r = await api("POST", "/api/factory/key-report", names ? { only: names, apps } : { apps });
+    log(r.status === 200 ? `키 점검 결과를 보냈어요(앱 ${apps.length}개${names ? `: ${names.join(", ")}` : ""}).` : `키 점검 결과 보내기 거절(${r.status})`);
   } catch (e) {
     log(`키 점검 오류: ${e.message}`);
   }

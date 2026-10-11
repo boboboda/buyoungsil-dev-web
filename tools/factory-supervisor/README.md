@@ -63,6 +63,8 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - 진행 단계는 `.factory/phase.txt`(key, build, sign, store, upload, homepage), 실패는 Claude 가 `.factory/fail.json`({stage, reason})으로 알려요. outbox 가 거절되면 `homepage` 단계 실패.
   재시도(`job.release.resumeFrom`)가 `homepage` 면 Claude 없이 남은 outbox 만 다시 보내요. 로그·실패 이유의 비밀번호는 가려요(`maskText`).
 - 키 점검(`/next` 의 `keyScan`): 앱 폴더들에서 .jks·.keystore 와 key.properties 를 찾아 경로·별칭·SHA-1(JKS 는 비밀번호 없이 읽음)·git 추적 여부만 `/api/factory/key-report` 로 보내요.
+- 앱 하나 키 조회(출시 카드 [🔑 키 조회]): `/next` 에 `keyScanApps: [앱 이름]` 이 함께 오면 그 앱 폴더만 점검해 `only` 와 함께 보내요(폴더가 없으면 `missing: true`). 키 파일은 절대 경로(`abs`)도 보내요(통제실의 [이 키를 이 앱 키로 지정]용).
+- 스토어 자료 수정·프로젝트 업데이트의 갱신 항목(`job.release.items`): 고른 항목의 단계만 검사하고, Play 에도 고른 것만 올려요(문구를 안 고르면 제목·설명 그대로, 영상 링크만이면 등록정보 PATCH 로 영상만, 이미지를 안 고르면 이미지 그대로). `items` 가 없으면 예전 일감이라 예전처럼 전부.
 
 ## 스토어 자료·Play 업로드 (`store.mjs`, 출시 2단계)
 - 서버가 `job.release.play`({packageName, serviceAccountKeyPath, track, videoUrl, missing})를 줄 때만 동작해요(예전 서버의 일감이면 예전처럼 outbox 만).

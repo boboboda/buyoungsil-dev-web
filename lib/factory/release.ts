@@ -37,13 +37,14 @@ export const RELEASE_STAGE_LABELS: Record<string, string> = {
   screenshots: "스크린샷",
   video: "영상",
   listing: "문구",
+  privacy: "개인정보처리방침",
   upload: "업로드",
   homepage: "홈페이지 반영",
   done: "완료",
 };
 export const stageLabel = (s: string | null | undefined) => (s ? (RELEASE_STAGE_LABELS[s] ?? s) : "-");
 // 재시도를 이 단계부터 시작할 수 있다
-const RESUMABLE = ["key", "build", "sign", "store", "icon", "screenshots", "video", "listing", "upload", "homepage"];
+const RESUMABLE = ["key", "build", "sign", "store", "icon", "screenshots", "video", "listing", "privacy", "upload", "homepage"];
 // 종류별로 감독 프로그램이 홈페이지로 보낼 수 있는 outbox 파일
 const OUTBOX_BY_KIND: Record<ReleaseKind, string[]> = {
   first: ["project.json", "release.json"],
@@ -866,19 +867,19 @@ export async function receiveReleasePackage(body: Record<string, unknown>): Prom
 
 const STAGES_BY_KIND: Record<ReleaseKind, string[]> = {
   first: ["key", "build", "sign", "store", "upload", "homepage"],
-  store: ["icon", "screenshots", "video", "listing", "upload", "homepage"], // upload·homepage 는 감독 프로그램이 한다
+  store: ["icon", "screenshots", "video", "listing", "upload", "homepage"], // upload·homepage 는 감독 프로그램이 한다(privacy 단계는 갱신 항목으로 고를 때만)
   project: ["homepage"],
 };
 
 // 스토어 자료 수정: 갱신 항목 → 단계(upload·homepage 는 늘 감독 프로그램이)
-const STORE_ITEM_STAGES: Record<string, string[]> = { images: ["icon", "screenshots"], video: ["video"], listing: ["listing"], privacy: [] };
+const STORE_ITEM_STAGES: Record<string, string[]> = { images: ["icon", "screenshots"], video: ["video"], listing: ["listing"], privacy: ["privacy"] };
 
 /** 이 일감이 거치는 단계. items 가 null 이면 예전 일감(종류의 전체 단계) */
 export function releaseStages(kind: ReleaseKind, items: string[] | null): string[] {
   if (kind !== "store" || !items) return STAGES_BY_KIND[kind];
   const wanted = new Set(items.flatMap((i) => STORE_ITEM_STAGES[i] ?? []));
 
-  return STAGES_BY_KIND.store.filter((s) => wanted.has(s) || s === "upload" || s === "homepage");
+  return ["icon", "screenshots", "video", "listing", "privacy", "upload", "homepage"].filter((s) => wanted.has(s) || s === "upload" || s === "homepage");
 }
 
 // 개인정보처리방침 갱신(store/project 공통)
@@ -993,7 +994,7 @@ export async function buildReleasePlan(
       ...(want("images") ? images : []),
       ...(want("video") ? video : []),
       ...(want("listing") ? listing : []),
-      ...(want("privacy") ? ["## 개인정보처리방침 갱신", ...PRIVACY_STEPS, ""] : []),
+      ...(want("privacy") ? ["## 단계 privacy: 개인정보처리방침 갱신", ...PRIVACY_STEPS, ""] : []),
       "## 홈페이지 프로젝트 (project.json)",
       projectFields.length
         ? `- \`.factory/outbox/project.json\` 에 {${projectFields.join(", ")}} 만 넣으세요.`

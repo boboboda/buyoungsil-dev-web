@@ -159,12 +159,16 @@ function shotProblem(m) {
  * .factory/store/ 검사. 돌려주는 값:
  *   { storeDir, stages: {icon, screenshots, video, listing: {status, note}}, images: {slot: meta}, shots: [meta], video, listing, tools, failure: {stage, reason} | null }
  * 실패: 아이콘·대표 이미지 / 스크린샷(있는데 규격이 틀림) / 문구. 스크린샷이 없거나 영상이 없으면 '건너뜀'(실패 아님).
+ * only: 이 일감이 거치는 단계 목록(서버가 고른 갱신 항목으로 정함). 빠진 단계는 검사하지 않고 '고르지 않음'(건너뜀)으로, 그 파일도 결과에 넣지 않는다.
  */
-export function checkStoreAssets(dir) {
+export function checkStoreAssets(dir, { only = null } = {}) {
   const storeDir = path.join(dir, ".factory", "store");
   const status = readJson(path.join(storeDir, "status.json")) ?? {};
   const stages = {};
   const images = {};
+
+  const on = (k) => !Array.isArray(only) || only.includes(k);
+  const off = { status: "skipped", note: "이번에 고르지 않은 항목이라 건드리지 않았어요" };
 
   // 아이콘·대표 이미지
   const iconProblems = [];
@@ -175,6 +179,11 @@ export function checkStoreAssets(dir) {
     else images[slot] = r.meta;
   }
   stages.icon = iconProblems.length ? { status: "failed", note: iconProblems.join(" / ") } : { status: "ok", note: "아이콘 512x512, 대표 이미지 1024x500" };
+  if (!on("icon")) {
+    stages.icon = off;
+    delete images.icon;
+    delete images.feature;
+  }
 
   // 스크린샷
   const shotDir = path.join(storeDir, "screenshots");
@@ -198,6 +207,10 @@ export function checkStoreAssets(dir) {
   } else if (shotProblems.length) stages.screenshots = { status: "failed", note: shotProblems.slice(0, 4).join(" / ") };
   else if (shots.length < 2 || shots.length > 8) stages.screenshots = { status: "failed", note: `스크린샷은 2~8장이어야 해요(지금 ${shots.length}장)` };
   else stages.screenshots = { status: "ok", note: `${shots.length}장` };
+  if (!on("screenshots")) {
+    stages.screenshots = off;
+    shots.length = 0;
+  }
   shots.forEach((m, i) => (images[`phone-0${i + 1}`] = m));
 
   // 영상(PC 에만)
@@ -211,10 +224,18 @@ export function checkStoreAssets(dir) {
   }
   if (video) stages.video = { status: "ok", note: video.durationSec ? `${video.durationSec}초` : "길이를 읽지 못했어요(mp4 확인 필요)" };
   else stages.video = { status: "skipped", note: `영상 단계 건너뜀: ${clip(status.video?.reason, 300) || "promo.mp4 가 없어요"}` };
+  if (!on("video")) {
+    stages.video = off;
+    video = null;
+  }
 
   // 문구
-  const { listing, problems } = checkListing(readJson(path.join(storeDir, "listing.json")));
-  stages.listing = problems.length ? { status: "failed", note: problems.slice(0, 6).join(" / ") } : { status: "ok", note: Object.keys(listing).join(", ") };
+  const { listing, problems } = on("listing") ? checkListing(readJson(path.join(storeDir, "listing.json"))) : { listing: null, problems: [] };
+  stages.listing = !on("listing")
+    ? off
+    : problems.length
+      ? { status: "failed", note: problems.slice(0, 6).join(" / ") }
+      : { status: "ok", note: Object.keys(listing).join(", ") };
 
   const order = ["icon", "screenshots", "video", "listing"];
   const bad = order.find((k) => stages[k].status === "failed");
@@ -227,6 +248,7 @@ export function checkStoreAssets(dir) {
     listing,
     tools: clip(status.tools, 600) || null,
     failure: bad ? { stage: bad, reason: stages[bad].note } : null,
+    imagesOff: !on("icon") && !on("screenshots"), // 이미지를 고르지 않음: 홈페이지의 기존 이미지 정보를 그대로 둔다
   };
 }
 
@@ -319,7 +341,7 @@ export function storeReport(check) {
   return {
     dir: check.storeDir,
     stages: check.stages,
-    images: Object.fromEntries(Object.entries(check.images).map(([k, m]) => [k, meta(m)])),
+    ...(check.imagesOff ? {} : { images: Object.fromEntries(Object.entries(check.images).map(([k, m]) => [k, meta(m)])) }),
     video: check.video,
     listing: check.listing,
     tools: check.tools,
@@ -453,24 +475,38 @@ async function withEdit(c, fn) {
 /**
  * 스토어 자료 업로드. 등록정보는 언어마다 기존 값을 읽어 제목·설명·(링크가 있으면)영상만 바꾼다.
  * 이미지는 종류별로 통째 교체(deleteall → upload): 아이콘, 대표 이미지, 폰 스크린샷(검사를 통과해 2장 이상일 때만. 아니면 기존 그대로).
+ * items(고른 갱신 항목, null 이면 예전 일감 = 전부): listing 이 없으면 제목·설명은 그대로, video 가 없으면 영상은 그대로,
+ * images 가 없으면 이미지는 그대로. 문구를 안 고르면 Play 에 이미 있는 언어마다 고른 것(영상·이미지)만 바꾼다.
  */
-export async function playUploadStore({ play, check, log }) {
+export async function playUploadStore({ play, check, log, items = null }) {
   const ctx = { packageName: play.packageName };
+  const want = (k) => !Array.isArray(items) || items.includes(k);
+  const doListing = want("listing");
+  const doVideo = want("video") && !!play.videoUrl;
   const { token } = await playToken(play.serviceAccountKeyPath);
   const c = client(token, play.packageName, ctx);
-  const langs = Object.keys(check.listing ?? {});
+  let langs = doListing ? Object.keys(check.listing ?? {}) : null;
   const types = [
     ["icon", check.images.icon ? [check.images.icon] : []],
     ["featureGraphic", check.images.feature ? [check.images.feature] : []],
     ["phoneScreenshots", check.stages.screenshots?.status === "ok" ? check.shots : []],
-  ].filter(([, files]) => files.length);
+  ].filter(([, files]) => want("images") && files.length);
   return withEdit(c, async (editId) => {
+    if (!langs) {
+      // 문구를 고르지 않았으면 Play 에 이미 있는 언어만(제목·설명은 그대로)
+      const all = await c.call("GET", `${c.base}/edits/${editId}/listings`);
+      langs = (Array.isArray(all?.listings) ? all.listings : []).map((l) => l.language).filter((l) => typeof l === "string" && LANG_RE.test(l));
+    }
     for (const lang of langs) {
-      const l = check.listing[lang];
       const url = `${c.base}/edits/${editId}/listings/${encodeURIComponent(lang)}`;
-      const cur = (await c.call("GET", url, { ok404: true })) ?? {};
-      const video = play.videoUrl || cur.video || undefined;
-      await c.call("PUT", url, { json: { language: lang, title: l.title, shortDescription: l.shortDescription, fullDescription: l.fullDescription, ...(video ? { video } : {}) } });
+      if (doListing) {
+        const l = check.listing[lang];
+        const cur = (await c.call("GET", url, { ok404: true })) ?? {};
+        const video = (want("video") ? play.videoUrl : null) || cur.video || undefined;
+        await c.call("PUT", url, { json: { language: lang, title: l.title, shortDescription: l.shortDescription, fullDescription: l.fullDescription, ...(video ? { video } : {}) } });
+      } else if (doVideo) {
+        await c.call("PATCH", url, { json: { language: lang, video: play.videoUrl } }); // 영상 링크만
+      }
       for (const [type, files] of types) {
         await c.call("DELETE", `${url}/${type}`);
         for (const f of files) {
@@ -480,9 +516,10 @@ export async function playUploadStore({ play, check, log }) {
           });
         }
       }
-      log?.(`Play 등록정보 ${lang}: 문구${play.videoUrl ? "·영상 링크" : ""}${types.length ? `, 이미지 ${types.map(([t]) => t).join("·")} 교체` : ""}`);
+      const what = [doListing ? "문구" : "", doVideo ? "영상 링크" : "", types.length ? `이미지 ${types.map(([t]) => t).join("·")} 교체` : ""].filter(Boolean);
+      log?.(`Play 등록정보 ${lang}: ${what.join(", ") || "바꿀 것 없음"}`);
     }
-    return { langs, imageTypes: types.map(([t]) => t), video: !!play.videoUrl };
+    return { langs, imageTypes: types.map(([t]) => t), video: doVideo, listing: doListing };
   });
 }
 
