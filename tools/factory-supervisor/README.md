@@ -106,7 +106,10 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - 정비 전용 체크아웃 `~/dev/factory/selfdev`(설정 `selfdevDir`)에서 Claude 를 돌려요. 같은 정비의 이어지는 지시는 같은 세션(`--resume`).
   규칙은 `CLAUDE.local.md`(커밋되지 않게 `.git/info/exclude`)에 써요. Claude 는 커밋만 하고 push·배포는 하지 않아요.
 - 감독 프로그램이 검사(감독 프로그램 `node --check`, `tsc --noEmit` 오류 0개)를 통과했을 때만 GitHub main 에 올려요. 못 통과하면 커밋은 정비 폴더에 남고 다음 지시에서 이어 해요.
-- 서버 코드가 바뀌었으면 "배포 필요". 사람이 통제실·텔레그램에서 [배포]를 누르면 그 커밋(GitHub main 에 있는 것만)을 `deployRemote`(기본 `serverpc:git-server/repo/developWeb.git`)로 push 해요. 서버는 커밋 해시만 보내요.
+  (대기열 서버에서는 같은 정비 대화가 이어갈 때만. 다른 대화의 지시면 남은 커밋을 `factory-unpushed/<지시 id>` 브랜치로 옮기고 GitHub main 최신에서 시작해요. 어느 대화 것인지는 `.git/factory-unpushed.json`)
+- 대기열: 처리 중이어도 지시는 쌓이고, 서버가 보낸 순서대로 한 번에 하나씩 줘요(맨 앞이 승인 대기면 뒤도 기다림). 앞 지시가 실패하면 대기열이 멈추고 사람이 [계속 진행]·[재시도]·[대기열 비우기]를 골라요.
+- 서버 코드가 바뀌었으면 "배포 필요". 대기열이 다 끝난 뒤 한 번 안내하고(급하면 통제실 [지금 배포]), 사람이 통제실·텔레그램에서 [배포]를 누르면 가장 최근 정비 커밋(GitHub main 에 있는 것만)을 `deployRemote`(기본 `serverpc:git-server/repo/developWeb.git`)로 push 해요. 서버는 커밋 해시만 보내요. 설정에서 "대기열 끝나면 자동 배포"를 켤 수 있어요(기본 꺼짐).
+- 서버가 `maintenance.deployBundling` 을 보내지 않으면(예전 서버) 예전 방식 그대로 해요.
 
 ## 서버 설정 도구 (`serverctl.mjs`, 공장 정비 전용)
 - 정비 Claude 는 서버 설정(nginx, 서버 `.env.local`, 재빌드)을 이 도구로만 바꿔요. ssh·scp·docker·sudo·nginx·systemctl 직접 호출, `~/.ssh` 읽기, 실행 폴더 수정은 `--settings` 권한 규칙으로 막혀 있어요.

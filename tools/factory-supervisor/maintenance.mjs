@@ -4,6 +4,9 @@
 // - Claude 는 커밋만 하고, 올리기는 감독 프로그램이 검사(node --check, tsc 0 오류)를 통과했을 때만 한다(GitHub main).
 // - /next 의 maintenanceDeploy 는 사람이 [배포]를 누른 것. 정해진 명령 하나(서버 배포 저장소로 그 커밋 push)만 실행한다.
 //   서버가 보낸 것은 커밋 해시뿐이고, 그 커밋이 GitHub main 에 있는지 확인한 뒤에만 올린다.
+// - 정비 대기열(서버가 maintenance.deployBundling 을 보낼 때): 서버가 보낸 순서대로 하나씩 준다. 앞 지시가 검사 실패 등으로
+//   로컬에만 남긴 커밋은 같은 정비 대화가 이어갈 때만 그 위에서 하고, 다른 대화의 지시면 백업 브랜치로 옮긴 뒤 origin/main 에서 시작한다.
+//   배포 안내도 서버가 대기열 끝에 묶어서 하므로 결과 문구를 그에 맞춘다. 이 필드가 없으면(예전 서버) 예전 방식 그대로.
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -96,16 +99,47 @@ async function post(ctx, body) {
   }
 }
 
-// 정비 폴더를 origin/main 최신으로(깨끗해야 함). 실패하면 이유 문자열.
-function prepare(dir, git) {
+// 로컬에만 남은(못 올린) 커밋이 어느 정비 대화 것인지 적어 두는 파일(.git 안이라 커밋되지 않음)
+const unpushedFile = (dir) => path.join(dir, ".git", "factory-unpushed.json");
+function readUnpushed(dir) {
+  try {
+    return JSON.parse(fs.readFileSync(unpushedFile(dir), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeUnpushed(dir, m, head) {
+  try {
+    if (head) fs.writeFileSync(unpushedFile(dir), JSON.stringify({ threadId: m.threadId, turnId: m.turnId, head, at: new Date().toISOString() }));
+    else fs.rmSync(unpushedFile(dir), { force: true });
+  } catch {
+    /* 기록 못 해도 정비는 계속 */
+  }
+}
+
+// 정비 폴더를 origin/main 최신으로(깨끗해야 함). 실패하면 이유 문자열. notes 에는 사람에게 알릴 것을 넣는다.
+function prepare(dir, git, m, notes = []) {
   if (!fs.existsSync(path.join(dir, ".git"))) return `정비 폴더가 없어요: ${dir} (git clone 이 필요해요)`;
   if (out(git(["rev-parse", "--abbrev-ref", "HEAD"])) !== "main") return "정비 폴더가 main 브랜치가 아니에요.";
   const dirty = git(["status", "--porcelain", "--untracked-files=no"]);
   if (dirty.stdout.trim()) return `정비 폴더에 커밋 안 된 변경이 있어요:\n${tail(dirty.stdout, 500)}`;
   const f = git(["fetch", "-q", "origin", "main"]);
   if (f.status !== 0) return `git fetch 실패: ${err(f)}`;
-  // 로컬에만 있는 커밋(검사 실패로 못 올린 것)이 있으면 그 위에서 이어서 한다
-  const ahead = out(git(["rev-list", "--count", "origin/main..HEAD"]));
+  // 로컬에만 있는 커밋(검사 실패로 못 올린 것)이 있으면 그 위에서 이어서 한다.
+  // 대기열 서버에서는 다른 정비 대화가 남긴 것이면 백업 브랜치로 옮기고 origin/main 에서 시작한다(건너뛴 실패 지시의 커밋이 섞이지 않게).
+  let ahead = out(git(["rev-list", "--count", "origin/main..HEAD"]));
+  const left = readUnpushed(dir);
+  if (m?.deployBundling && Number(ahead) > 0 && left?.threadId && left.threadId !== m.threadId) {
+    const head = out(git(["rev-parse", "HEAD"]));
+    const branch = `factory-unpushed/${String(left.turnId || Date.now()).replace(/[^A-Za-z0-9_-]/g, "")}`;
+    const b = git(["branch", "-f", branch, "HEAD"]);
+    if (b.status !== 0) return `못 올린 로컬 커밋을 백업하지 못했어요: ${err(b)}`;
+    const r = git(["reset", "-q", "--hard", "origin/main"]);
+    if (r.status !== 0) return `origin/main 으로 되돌리지 못했어요: ${err(r)}`;
+    writeUnpushed(dir, m, null);
+    notes.push(`다른 정비 대화가 못 올리고 남긴 로컬 커밋 ${ahead}개(${short(head)})는 정비 폴더의 ${branch} 브랜치로 옮겨 두고, GitHub main 최신에서 시작했어요.`);
+    ahead = "0";
+  }
   const behind = out(git(["rev-list", "--count", "HEAD..origin/main"]));
   if (Number(behind) > 0) {
     const r = Number(ahead) > 0 ? git(["rebase", "-q", "origin/main"]) : git(["merge", "-q", "--ff-only", "origin/main"]);
@@ -176,10 +210,12 @@ async function runTurn(m, ctx) {
     }
   };
 
-  const why = prepare(dir, git);
+  const prepNotes = [];
+  const why = prepare(dir, git, m, prepNotes);
   if (why) return finish({ ok: false, text: `정비를 시작하지 못했어요. ${why}` });
   const startHead = out(git(["rev-parse", "HEAD"]));
   addLog(`정비 폴더 준비: ${dir} (main ${short(startHead)})`);
+  prepNotes.forEach(addLog);
 
   // Claude 실행(같은 정비면 세션 이어서)
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", cfg.permissionMode, "--allowedTools", cfg.allowedTools, "--settings", permissionSettings()];
@@ -258,7 +294,9 @@ async function runTurn(m, ctx) {
   }
 
   // 커밋 안 된 변경은 올리지 않고 따로 보관(다음 지시가 깨끗한 폴더에서 시작하게)
-  const notes = [];
+  const notes = [...prepNotes];
+  // 로컬에만 남는 커밋이 있으면 어느 대화 것인지 적어 둔다(올리면 지운다)
+  const keepLocal = () => writeUnpushed(dir, m, out(git(["rev-parse", "HEAD"])));
   const dirty = git(["status", "--porcelain", "--untracked-files=no"]).stdout.trim();
   if (dirty) {
     git(["stash", "push", "-m", `정비 ${m.turnId} 커밋 안 된 변경`]);
@@ -269,6 +307,7 @@ async function runTurn(m, ctx) {
   const remoteBefore = out(git(["rev-parse", "origin/main"]));
   const newCommits = Number(out(git(["rev-list", "--count", "origin/main..HEAD"])) || 0);
   if (newCommits === 0) {
+    writeUnpushed(dir, m, null);
     notes.push("코드 변경(새 커밋)이 없어서 GitHub 에 올릴 것이 없어요.");
     return finish({ ok: true, text: [claudeText, "", ...notes.map((n) => `— ${n}`)].join("\n"), sessionId });
   }
@@ -278,6 +317,7 @@ async function runTurn(m, ctx) {
     const r = git(["rebase", "-q", "origin/main"]);
     if (r.status !== 0) {
       git(["rebase", "--abort"]);
+      keepLocal();
       notes.push(`GitHub main 이 그사이 바뀌어 합치다 충돌이 났어요. 올리지 않았어요(로컬 커밋 ${newCommits}개는 정비 폴더에 남아 있음). 이어서 "충돌 해결" 지시를 보내 주세요.\n${err(r)}`);
       return finish({ ok: false, text: [claudeText, "", ...notes.map((n) => `— ${n}`)].join("\n"), sessionId });
     }
@@ -287,21 +327,36 @@ async function runTurn(m, ctx) {
   await flush();
   const g = gate(dir, git, remoteBefore);
   if (g) {
+    keepLocal();
     notes.push(`검사를 통과하지 못해 GitHub 에 올리지 않았어요(커밋 ${newCommits}개는 정비 폴더에 남아 있음). 이어서 고쳐 달라고 지시하면 그 위에서 이어 해요.\n${g}`);
     return finish({ ok: false, text: [claudeText, "", ...notes.map((n) => `— ${n}`)].join("\n"), sessionId });
   }
 
   const p = git(["push", "-q", "origin", "HEAD:main"]);
   if (p.status !== 0) {
+    keepLocal();
     notes.push(`GitHub 에 올리지 못했어요: ${err(p)}`);
     return finish({ ok: false, text: [claudeText, "", ...notes.map((n) => `— ${n}`)].join("\n"), sessionId });
   }
   const pushed = out(git(["rev-parse", "HEAD"]));
+  writeUnpushed(dir, m, null);
   const files = (out(git(["diff", "--name-only", `${remoteBefore}..${pushed}`])) || "").split("\n").filter(Boolean);
   const needsDeploy = files.some((f) => !f.startsWith(SUPERVISOR_DIR));
   const supervisorChanged = files.some((f) => f.startsWith(SUPERVISOR_DIR));
   notes.push(`검사 통과, GitHub main 에 올렸어요(${short(pushed)}, 커밋 ${newCommits}개, 파일 ${files.length}개).`);
-  notes.push(needsDeploy ? "서버 코드가 바뀌어 배포가 필요해요. 통제실이나 텔레그램에서 [배포]를 눌러 주세요." : "서버 코드는 그대로라 배포는 필요 없어요.");
+  if (m.deployBundling) {
+    // 대기열 서버: 배포는 대기열이 다 끝난 뒤 한 번에 안내한다
+    const leftN = Number(m.queueLeft) || 0;
+    notes.push(
+      needsDeploy
+        ? leftN > 0
+          ? `서버 코드가 바뀌었어요. 정비 대기열(남은 ${leftN}개)이 모두 끝나면 '배포 필요'를 한 번에 안내해요.`
+          : "서버 코드가 바뀌었어요. 정비 대기열이 끝나면 '배포 필요'(또는 켜 둔 경우 자동 배포)를 안내해요."
+        : "서버 코드는 그대로라 이 지시로는 배포가 필요 없어요.",
+    );
+  } else {
+    notes.push(needsDeploy ? "서버 코드가 바뀌어 배포가 필요해요. 통제실이나 텔레그램에서 [배포]를 눌러 주세요." : "서버 코드는 그대로라 배포는 필요 없어요.");
+  }
   if (supervisorChanged) {
     notes.push("감독 프로그램 코드가 바뀌어 곧 자동 업데이트로 받아요.");
     ctx.requestUpdateNow();
