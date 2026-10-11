@@ -1,7 +1,9 @@
 // components/admin/factory/ReleasePanel.tsx
 // 통제실 "출시 패키지": 앱별 배포 계정·출시 상태·패키지 이름, 출시 준비 일감 보내기, 만들어진 패키지(스토어 문구·데이터 보안·
 // 콘텐츠 등급·체크리스트·방침 초안)와 AAB 정보(파일은 PC 에만), 비공개 테스트 일정.
-// [승인]: 종류(첫 출시 / 스토어 자료 수정 / 프로젝트 업데이트)를 고르면 일감을 만들고 바로 승인한다.
+// [승인]: 종류(첫 출시 / 스토어 수정 / 앱 업데이트(기능 추가))를 고르면 일감을 만들고 바로 승인한다. 종류마다 필요한 입력칸만 보인다.
+// 첫 출시·스토어 수정은 자료를 만든 뒤 '검토 대기'(노란색): 이미지·문구·영상·방침 초안을 보고 [이대로 진행]/[다시 만들기]/[취소].
+// 앱 업데이트는 검토 없이 빌드 결과(버전·AAB·시험·업로드 트랙)를 보여 준다. 예전 '프로젝트 업데이트' 일감은 '(예전)'으로 읽힌다.
 // 출시 일감 진행 단계, 실패 단계·이유·최근 로그(서버가 비밀번호를 가림), 실패한 단계부터 [재시도].
 // 2단계: 홍보 영상 링크(YouTube, 앱별), 스토어 자료·Play 업로드 결과, Play 업로드에 모자란 것,
 // 스토어 자료 수정·프로젝트 업데이트 승인 때 '홈페이지 프로젝트도 덮어쓰기'(기본 꺼짐, 개인정보처리방침 제외).
@@ -17,32 +19,10 @@ import Field from "./Field";
 import AppKeyLookup from "./AppKeyLookup";
 import { KeyCheckView, KeyError, UntrackView } from "./KeyVault";
 import StoreAssetsView from "./StoreAssetsView";
+import { BuildResultView, ListingCopy, ReviewPanel } from "./ReleaseReview";
 import { KEY_PASSWORD_TEXT, fmtDate, fmtSize, postRelease, type ReleaseApp, type ReleaseJobInfo, type ReleaseOverview } from "./releaseTypes";
 
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
-const LIMITS: Record<string, number> = { title: 30, shortDescription: 80, fullDescription: 4000 };
-
-function Listing({ lang, v }: { lang: string; v: Record<string, unknown> }) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs font-semibold text-default-500">{lang === "ko" ? "한국어" : lang === "en" ? "영어" : lang}</div>
-      {Object.entries(v).map(([k, val]) => {
-        const s = typeof val === "string" ? val : JSON.stringify(val);
-        const over = LIMITS[k] && s.length > LIMITS[k];
-
-        return (
-          <div key={k} className="text-sm">
-            <span className="text-default-500">
-              {k} ({s.length}
-              {LIMITS[k] ? `/${LIMITS[k]}` : ""}자{over ? " ⚠️ 초과" : ""}):{" "}
-            </span>
-            <span className="whitespace-pre-wrap">{s}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 function PackageView({ pkg }: { pkg: Record<string, unknown> }) {
   const listing = (pkg.storeListing ?? {}) as Record<string, Record<string, unknown>>;
@@ -59,11 +39,9 @@ function PackageView({ pkg }: { pkg: Record<string, unknown> }) {
     <div className="space-y-2">
       {Object.keys(listing).length > 0 && (
         <details className="rounded-lg border border-default-200 p-2" open>
-          <summary className="cursor-pointer text-sm font-medium">스토어 문구</summary>
-          <div className="mt-2 grid gap-3 sm:grid-cols-2">
-            {Object.entries(listing).map(([lang, v]) => (
-              <Listing key={lang} lang={lang} v={v ?? {}} />
-            ))}
+          <summary className="cursor-pointer text-sm font-medium">스토어 문구 (Console 에 넣을 때 [복사])</summary>
+          <div className="mt-2">
+            <ListingCopy listing={listing} />
           </div>
         </details>
       )}
@@ -92,35 +70,85 @@ function PackageView({ pkg }: { pkg: Record<string, unknown> }) {
 const REMOVE_CONFIRM = "출시 패키지 목록에서 지울까요? 앱 소스와 PC 의 파일은 지워지지 않아요";
 
 const KIND_HELP: Record<string, string> = {
-  first: "키 준비 → AAB 빌드·서명 → 스토어 문구·체크리스트 → 홈페이지 프로젝트 빈 칸 채우기",
+  first: "키 준비 → AAB 빌드·서명 → 스토어 문구·체크리스트·이미지·영상 → 검토 대기 → (이대로 진행) 홈페이지 빈 칸 채우기 + 최초 AAB 안내(Console 에 직접 올림)",
   store:
-    "고른 항목만: 이미지(아이콘·대표 이미지·스크린샷) / 문구 / 홍보 영상 / 개인정보처리방침 → (조건이 맞으면) Play 등록정보·이미지 업로드 → 홈페이지 반영",
-  project: "홈페이지 프로젝트 정보 중 고른 항목만 갱신해요. AAB·Play 업로드는 하지 않아요",
+    "고른 항목만: 이미지(아이콘·대표 이미지·스크린샷) / 문구 / 홍보 영상 / 개인정보처리방침 → 검토 대기 → (이대로 진행) Play 등록정보·이미지 업로드 → 홈페이지 반영",
+  update: "업데이트 내용대로 코드 수정·시험 → 버전 올림 → 서명 AAB → 비공개 테스트 트랙(alpha) 업로드 → (고르면) 홈페이지 반영. 프로덕션 승격은 Console 에서",
+  project: "예전 종류: 홈페이지 프로젝트 정보 중 고른 항목만 갱신해요",
+};
+
+// 카드에 보일 출시 일감 상태
+const STATE_CHIP: Record<string, { text: string; color: "default" | "primary" | "warning" | "success" | "danger" }> = {
+  pending: { text: "승인 대기", color: "default" },
+  generating: { text: "생성 중", color: "primary" },
+  review: { text: "검토 대기", color: "warning" },
+  publishing: { text: "반영 중", color: "primary" },
+  done: { text: "완료", color: "success" },
+  failed: { text: "실패", color: "danger" },
+  cancelled: { text: "취소됨", color: "default" },
+};
+
+// 지난 버전의 patch +1 (앱 업데이트 버전 이름 제안)
+const nextPatch = (v: string | null | undefined) => {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v ?? "");
+
+  return m ? `${m[1]}.${m[2]}.${Number(m[3]) + 1}` : null;
 };
 
 const JOB_STATUS: Record<string, string> = {
   pending: "승인 대기",
   approved: "대기열(작업 PC 가 곧 시작)",
   running: "진행 중",
+  review: "검토 대기",
   done: "완료",
   failed: "실패",
   cancelled: "취소됨",
 };
 
-/** 마지막 출시 일감: 진행 중 단계, 실패 단계·이유·최근 로그, 재시도 */
-function JobStatus({ job, kinds, busy, onRetry }: { job: ReleaseJobInfo; kinds: { value: string; label: string }[]; busy: boolean; onRetry: () => void }) {
+/** 마지막 출시 일감: 상태(생성 중/검토 대기/반영 중/완료/실패), 진행 중 단계, 검토 화면, 실패 단계·이유·최근 로그, 재시도, 빌드 결과 */
+function JobStatus({
+  app,
+  job,
+  kinds,
+  busy,
+  onRetry,
+  onDecision,
+}: {
+  app: ReleaseApp;
+  job: ReleaseJobInfo;
+  kinds: { value: string; label: string }[];
+  busy: boolean;
+  onRetry: () => void;
+  onDecision: (decision: "approve" | "redo" | "cancel", note?: string) => void;
+}) {
   const kind = kinds.find((k) => k.value === job.releaseKind)?.label ?? job.releaseKind;
   const failed = job.status === "failed";
+  const chip = STATE_CHIP[job.state] ?? { text: JOB_STATUS[job.status] ?? job.status, color: "default" as const };
 
   return (
-    <div className={`space-y-1 rounded-lg border p-2 text-sm ${failed ? "border-danger-200 bg-danger-50 dark:bg-danger-50/10" : "border-default-200"}`}>
-      <div>
-        최근 출시 일감({kind}
-        {job.updateItemsText ? ` · 갱신: ${job.updateItemsText}` : ""}
-        {job.overwriteProject ? " · 홈페이지 덮어쓰기" : ""}): <b>{JOB_STATUS[job.status] ?? job.status}</b>
-        {job.status === "running" && job.phase ? ` · 현재 단계: ${job.phaseLabel}` : ""}
-        {job.finishedAt ? ` · ${new Date(job.finishedAt).toLocaleString("ko-KR")}` : ""}
+    <div className={`space-y-2 rounded-lg border p-2 text-sm ${failed ? "border-danger-200 bg-danger-50 dark:bg-danger-50/10" : "border-default-200"}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span>
+          최근 출시 일감({kind}
+          {job.updateItemsText ? ` · 갱신: ${job.updateItemsText}` : ""}
+          {job.versionName ? ` · 버전 ${job.versionName}` : ""}
+          {job.overwriteProject ? (job.releaseKind === "update" ? " · 홈페이지 반영" : " · 홈페이지 덮어쓰기") : ""})
+        </span>
+        <Chip color={chip.color} size="sm" variant={job.state === "review" ? "solid" : "flat"}>
+          {chip.text}
+        </Chip>
+        {job.status === "running" && job.phase ? <span>현재 단계: {job.phaseLabel}</span> : null}
+        {job.finishedAt ? <span className="text-xs text-default-500">{new Date(job.finishedAt).toLocaleString("ko-KR")}</span> : null}
       </div>
+      {job.redoNote && job.state === "generating" && <div className="text-xs">🔁 다시 만드는 중: {job.redoNote}</div>}
+      {job.status === "review" && <ReviewPanel app={app} busy={busy} job={job} onDecision={onDecision} />}
+      {job.status === "done" && job.releaseKind === "update" && <BuildResultView job={job} />}
+      {job.status === "done" && job.summary && job.releaseKind !== "update" && (
+        <details>
+          <summary className="cursor-pointer text-xs text-default-500">결과 요약</summary>
+          <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words text-xs">{job.summary}</pre>
+        </details>
+      )}
       {failed && (
         <>
           <div>
@@ -163,8 +191,15 @@ function AppRow({
   const [first, setFirst] = useState(app.firstUploadDone);
   // 이 앱이 쓸 키(보관함 항목 id). 빈 값이면 배포 계정 기본 키
   const [keyId, setKeyId] = useState(app.keyId ?? "");
-  // 패키지가 이미 있으면 보통 고치는 일이라 스토어 자료 수정을 먼저 보여 준다
+  // 패키지가 이미 있으면 보통 고치는 일이라 스토어 수정을 먼저 보여 준다
   const [kind, setKind] = useState(app.releasePackage ? "store" : "first");
+  // 앱 업데이트(기능 추가) 입력
+  const [updateText, setUpdateText] = useState("");
+  const [versionName, setVersionName] = useState("");
+  const [releaseNotes, setReleaseNotes] = useState("");
+  const suggestedVersion = nextPatch(app.aab?.versionName);
+  const isUpdate = kind === "update";
+  const updateBlocked = isUpdate && (!app.firstUploadDone || updateText.trim().length < 10);
   const [overwrite, setOverwrite] = useState(false);
   // 갱신 항목(스토어 자료 수정·프로젝트 업데이트). 종류를 바꾸면 비운다
   const [items, setItems] = useState<string[]>([]);
@@ -337,16 +372,19 @@ function AppRow({
               setItems([]);
             }}
           >
-            {data.kinds.map((k) => (
-              <option key={k.value} value={k.value}>
-                {k.label}
-              </option>
-            ))}
+            {data.kinds
+              .filter((k) => k.selectable)
+              .map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
           </select>
+          <span className="text-xs text-default-500 sm:max-w-xs">{data.kinds.find((k) => k.value === kind)?.hint}</span>
           <Button
             className="min-h-11 sm:min-h-0"
             color="primary"
-            isDisabled={busy || !app.releaseAccountId || !app.done || app.active || needItems}
+            isDisabled={busy || !app.releaseAccountId || !app.done || app.active || needItems || updateBlocked}
             size="sm"
             onPress={() => {
               const label = data.kinds.find((k) => k.value === kind)?.label ?? kind;
@@ -357,13 +395,18 @@ function AppRow({
                 : "";
 
               const ow = canOverwrite && overwrite;
-              const owText = canOverwrite
+              const owText = isUpdate
                 ? ow
-                  ? "\n\n⚠️ 고른 항목의 홈페이지 프로젝트 기존 값(설명·대표 이미지·앱 링크·기술 스택)을 덮어써요."
-                  : "\n\n홈페이지 프로젝트는 고른 항목 중 빈 칸만 채워요."
-                : "";
+                  ? "\n\n홈페이지 프로젝트(설명·기술 스택)도 새 버전에 맞게 바꿔요."
+                  : "\n\n홈페이지 프로젝트는 그대로 둬요."
+                : canOverwrite
+                  ? ow
+                    ? "\n\n⚠️ 고른 항목의 홈페이지 프로젝트 기존 값(설명·대표 이미지·앱 링크·기술 스택)을 덮어써요."
+                    : "\n\n홈페이지 프로젝트는 고른 항목 중 빈 칸만 채워요."
+                  : "";
+              const updText = isUpdate ? `\n\n버전: ${versionName.trim() || `${suggestedVersion ?? "patch +1"}(자동)`} · 버전 코드 +1` : "";
 
-              if (window.confirm(`${app.title}: '${label}' 일감을 만들고 바로 승인할까요?\n\n${KIND_HELP[kind] ?? ""}${itemText}${owText}`)) {
+              if (window.confirm(`${app.title}: '${label}' 일감을 만들고 바로 승인할까요?\n\n${KIND_HELP[kind] ?? ""}${itemText}${updText}${owText}`)) {
                 call({
                   action: "enqueueRelease",
                   appSlug: app.appSlug,
@@ -371,6 +414,7 @@ function AppRow({
                   runNow: true,
                   overwriteProject: ow,
                   ...(kindItems.length ? { updateItems: picked.map((i) => i.value) } : {}),
+                  ...(isUpdate ? { updateText, versionName: versionName.trim(), releaseNotes: releaseNotes.trim() } : {}),
                 });
               }
             }}
@@ -391,7 +435,12 @@ function AppRow({
           </Button>
           {!app.releaseAccountId && <span className="text-xs text-default-500">계정을 골라 저장하면 승인할 수 있어요</span>}
           {app.releaseAccountId && needItems && <span className="text-xs text-warning-600">갱신할 항목을 하나 이상 고르면 승인할 수 있어요</span>}
-          {app.active && <span className="text-xs text-default-500">진행 중 일감이 있어요(삭제할 수 없어요)</span>}
+          {app.active && (
+            <span className="text-xs text-default-500">
+              {app.lastReleaseJob?.status === "review" ? "검토 대기 중인 일감이 있어요(먼저 아래에서 결정하세요)" : "진행 중 일감이 있어요(삭제할 수 없어요)"}
+            </span>
+          )}
+          {isUpdate && !app.firstUploadDone && <span className="text-xs text-warning-600">먼저 첫 출시를 끝내세요(최초 AAB 를 Console 에 올리고 &apos;최초 AAB 업로드 완료&apos; 체크)</span>}
         </div>
         {kindItems.length > 0 && (
           <fieldset className="space-y-1 rounded-lg border border-default-200 p-2">
@@ -420,10 +469,25 @@ function AppRow({
             ))}
           </fieldset>
         )}
+        {isUpdate && (
+          <div className="grid grid-cols-1 gap-3 rounded-lg border border-default-200 p-2 sm:grid-cols-2">
+            <Field className="sm:col-span-2" help="무엇을 추가·수정할지(수정 지시처럼 구체적으로, 10자 이상). 이 내용만 고쳐요." label="업데이트 내용 (필수)">
+              <textarea className={input} rows={4} value={updateText} onChange={(e) => setUpdateText(e.target.value)} />
+            </Field>
+            <Field help={`비우면 patch +1${suggestedVersion ? `(제안: ${suggestedVersion})` : ""}. 버전 코드는 자동으로 +1.`} label="버전 이름 (선택)">
+              <input className={input} placeholder={suggestedVersion ?? "예: 1.2.4"} value={versionName} onChange={(e) => setVersionName(e.target.value)} />
+            </Field>
+            <Field help="Play 의 '새로운 기능'(500자 이내). 비우면 공장이 업데이트 내용으로 초안을 써요." label="출시 노트 (선택)">
+              <textarea className={input} rows={2} value={releaseNotes} onChange={(e) => setReleaseNotes(e.target.value)} />
+            </Field>
+          </div>
+        )}
         {canOverwrite && (
           <label className="flex items-center gap-2 text-sm">
             <input checked={overwrite} type="checkbox" onChange={(e) => setOverwrite(e.target.checked)} />
-            홈페이지 프로젝트도 덮어쓰기 (고른 항목의 설명·대표 이미지·앱 링크·기술 스택. 끄면 빈 칸만 채움. 개인정보처리방침은 위 항목으로 따로)
+            {isUpdate
+              ? "홈페이지 프로젝트도 반영 (새 기능이 들어간 설명·기술 스택으로 바꿔요. 끄면 홈페이지는 그대로)"
+              : "홈페이지 프로젝트도 덮어쓰기 (고른 항목의 설명·대표 이미지·앱 링크·기술 스택. 끄면 빈 칸만 채움. 개인정보처리방침은 위 항목으로 따로)"}
           </label>
         )}
         <p className="text-xs text-default-500">{KIND_HELP[kind]}</p>
@@ -442,13 +506,13 @@ function AppRow({
           </Button>
         </div>
         <p className="text-xs text-default-500">
-          영상은 YouTube 에 직접 올리고 링크만 넣어요(공개 또는 일부 공개, 퍼가기 허용, 광고 끔). 다음 &apos;스토어 자료 수정&apos; 업로드 때 Play 등록정보 영상에
+          영상은 YouTube 에 직접 올리고 링크만 넣어요(공개 또는 일부 공개, 퍼가기 허용, 광고 끔). 다음 &apos;스토어 수정&apos;(홍보 영상 링크)에서 Play 등록정보 영상에
           들어가요.
         </p>
         {app.playMissing.length > 0 ? (
           <p className="text-xs text-warning-600">Play 업로드 안 됨(스토어 자료·업데이트 AAB) — 부족한 것: {app.playMissing.join(" / ")}</p>
         ) : (
-          <p className="text-xs text-success-600">Play 업로드 조건 충족: 스토어 자료 수정은 등록정보·이미지를, 첫 출시는 업데이트 AAB 를 비공개 테스트 트랙에 올려요.</p>
+          <p className="text-xs text-success-600">Play 업로드 조건 충족: 스토어 수정은 등록정보·이미지를, 앱 업데이트는 새 AAB 를 비공개 테스트 트랙에 올려요.</p>
         )}
         {account?.playConsoleUrl && (
           <a className="text-sm text-primary underline" href={account.playConsoleUrl} rel="noopener noreferrer" target="_blank">
@@ -458,9 +522,11 @@ function AppRow({
         {notice && <p className="text-sm text-default-600">{notice}</p>}
         {app.lastReleaseJob && (
           <JobStatus
+            app={app}
             busy={busy}
             job={app.lastReleaseJob}
             kinds={data.kinds}
+            onDecision={(decision, note) => app.lastReleaseJob && call({ action: "reviewDecision", jobId: app.lastReleaseJob.id, decision, note })}
             onRetry={() => app.lastReleaseJob && call({ action: "retryRelease", jobId: app.lastReleaseJob.id })}
           />
         )}

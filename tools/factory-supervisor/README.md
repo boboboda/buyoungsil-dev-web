@@ -76,6 +76,16 @@ node supervisor.mjs      # 끄려면 Ctrl+C
   key.properties 를 찾아 경로(`abs` 포함)·별칭·SHA-1·git 추적 여부만 `/api/factory/key-report` 로 보내요(폴더가 없으면 `missing: true`).
 - 스토어 자료 수정·프로젝트 업데이트의 갱신 항목(`job.release.items`): 고른 항목의 단계만 검사하고, Play 에도 고른 것만 올려요(문구를 안 고르면 제목·설명 그대로, 영상 링크만이면 등록정보 PATCH 로 영상만, 이미지를 안 고르면 이미지 그대로). `items` 가 없으면 예전 일감이라 예전처럼 전부.
 
+## 출시 검토 대기·앱 업데이트 (`job.release.review`, 출시 3단계)
+- 첫 출시·스토어 수정(`review.required`)은 자료를 만든 뒤 검사하고, 검토에 필요한 것만 올린 뒤 `status: "review"` 로 보고해요(작업 PC 는 놓아줌):
+  스토어 이미지(검토 화면용), 스토어 자료 결과, `release.json`(+ project.json 의 방침을 `privacyPolicyDraft` 로), 검토 영상(`/api/factory/review-video`, 8MB 조각,
+  50MB 가 넘으면 ffmpeg 로 줄인 `review-preview.mp4`, 그래도 크면 'PC 에서 직접 확인'). project.json 은 보내지 않고 PC 에 둬요.
+- `review.approved` 가 true 일 때만 반영 단계(Play 업로드·홈페이지·완료)를 해요. 서버가 upload 부터라고 줘도 승인 전이면 검토 대기로만 보내요.
+- `review.redoNote`(다시 만들기 메모)는 RELEASE_REQUEST.md 끝에 붙여 그 항목만 다시 만들어요(.factory/store/status.json 은 남김).
+- 검토가 있는 첫 출시는 Play 에 올리지 않아요(최초 AAB 는 사람이 Console 에). 승인 뒤 홈페이지 빈 칸 채우기와 AAB 위치 안내.
+- 앱 업데이트(`kind: "update"`): 키 준비 → Claude 가 코드 수정·시험·버전·서명 AAB → AAB 를 비공개 테스트 트랙에(출시 노트 포함) → `build` 결과 보고.
+  홈페이지 반영(`overwriteProject`)을 고르지 않았으면 project.json 을 보내지 않아요.
+
 ## 스토어 자료·Play 업로드 (`store.mjs`, 출시 2단계)
 - 서버가 `job.release.play`({packageName, serviceAccountKeyPath, track, videoUrl, missing})를 줄 때만 동작해요(예전 서버의 일감이면 예전처럼 outbox 만).
 - 스토어 자료 수정(`store`): Claude 가 앱 폴더 `.factory/store/` 에 `icon-512.png`, `feature-1024x500.png`, `screenshots/phone-01..08.png|jpg`, `promo.mp4`(HyperFrames),

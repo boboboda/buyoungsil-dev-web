@@ -1,8 +1,9 @@
 // components/admin/factory/StoreAssetsView.tsx
 // 출시 패키지 카드의 "스토어 자료"(출시 2단계): 단계별 결과(아이콘·대표 이미지 / 스크린샷 / 영상 / 문구 / 업로드 / 홈페이지 반영),
-// 홈페이지에 올라온 이미지(아이콘·대표 이미지·폰 스크린샷), 영상은 PC 경로·크기·길이만, Play 업로드·업데이트 AAB 업로드 결과.
+// 홈페이지에 올라온 이미지(아이콘·대표 이미지·폰 스크린샷: 누르면 크게, [다운로드]), 영상은 PC 경로·크기·길이만, Play 업로드·업데이트 AAB 업로드 결과.
 "use client";
 
+import { ImageGallery } from "./ReleaseReview";
 import { fmtSize, type StoreAssets } from "./releaseTypes";
 
 const STAGES: [keyof StoreAssets["stages"], string][] = [
@@ -10,6 +11,7 @@ const STAGES: [keyof StoreAssets["stages"], string][] = [
   ["screenshots", "스크린샷"],
   ["video", "영상"],
   ["listing", "문구"],
+  ["review", "검토"],
   ["upload", "업로드"],
   ["homepage", "홈페이지 반영"],
 ];
@@ -38,22 +40,7 @@ export default function StoreAssetsView({ assets }: { assets: StoreAssets }) {
             );
           })}
         </ul>
-        {(icon || feature || shots.length > 0) && (
-          <div className="flex flex-wrap items-end gap-2">
-            {icon && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img alt="아이콘" className="h-16 w-16 rounded-lg border border-default-200" src={icon} />
-            )}
-            {feature && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img alt="대표 이미지" className="h-16 rounded border border-default-200" src={feature} />
-            )}
-            {shots.map(([k, v]) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={k} alt={k} className="h-24 rounded border border-default-200" src={v.url as string} />
-            ))}
-          </div>
-        )}
+        {(icon || feature || shots.length > 0) && <ImageGallery assets={assets} />}
         {assets.video && (
           <p>
             🎬 홍보 영상(PC 에만): <code className="break-all text-xs">{assets.video.path}</code> · {fmtSize(assets.video.size)}

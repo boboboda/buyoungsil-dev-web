@@ -115,7 +115,30 @@ export interface ReleaseJobInfo {
   overwriteProject: boolean;
   updateItems: string[] | null; // 고른 갱신 항목(null: 예전 일감·첫 출시)
   updateItemsText: string | null;
+  // 카드 표시 상태: pending | generating(생성 중) | review(검토 대기) | publishing(반영 중) | done | failed | cancelled
+  state: string;
+  reviewRequired: boolean;
+  reviewAt: string | null;
+  reviewApprovedAt: string | null;
+  redoNote: string | null;
+  summary: string | null; // 검토 대기·완료일 때 결과 요약(비밀번호 가림)
+  reviewVideo: { size: number; expiresAt: string } | null; // 통제실에서 재생할 검토 영상(관리자만)
+  versionName: string | null; // 앱 업데이트 입력
+  releaseNotes: string | null;
+  buildResult: BuildResult | null;
   logs: { at: string; level: string; message: string }[];
+}
+
+// 앱 업데이트 빌드 결과
+export interface BuildResult {
+  versionName: string | null;
+  versionCode: number | null;
+  aabPath: string | null;
+  aabSize: number | null;
+  tests: string | null;
+  track: string | null;
+  uploaded: boolean;
+  uploadNote: string | null;
 }
 
 export interface PcPathItem {
@@ -174,7 +197,7 @@ export interface StoreAssets {
   at: string;
   jobId: string;
   dir: string | null;
-  stages: Partial<Record<"icon" | "screenshots" | "video" | "listing" | "upload" | "homepage", { status: StoreStageStatus; note: string | null }>>;
+  stages: Partial<Record<"icon" | "screenshots" | "video" | "listing" | "review" | "upload" | "homepage", { status: StoreStageStatus; note: string | null }>>;
   images: Record<string, { width: number | null; height: number | null; size: number | null; url: string | null }>;
   video: { path: string; size: number | null; durationSec: number | null } | null;
   listing: Record<string, { title: string; shortDescription: string; fullDescription: string }> | null;
@@ -185,7 +208,7 @@ export interface StoreAssets {
 
 export interface ReleaseOverview {
   statuses: { value: string; label: string }[];
-  kinds: { value: string; label: string; canOverwrite: boolean; items: UpdateItem[] }[];
+  kinds: { value: string; label: string; hint: string; canOverwrite: boolean; items: UpdateItem[]; selectable: boolean; review: boolean }[];
   testingDays: number;
   accounts: ReleaseAccount[];
   pcStatus: { at: string; items: PcPathItem[] } | null;
