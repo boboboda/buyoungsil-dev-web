@@ -1,5 +1,5 @@
 // components/admin/factory/SupervisorControl.tsx
-// 감독 프로그램 상태(연결/꺼짐)와 일시 정지·재개 스위치.
+// 감독 프로그램 상태(연결/꺼짐)와 일시 정지·재개, 자동 업데이트 켜고 끄기, 지금 업데이트.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -10,11 +10,13 @@ interface State {
   autoUpdate: boolean;
   commit: string | null;
   updateNote: string | null;
+  updateNowRequestedAt: string | null;
   online: boolean;
   lastSeenAt: string | null;
   workerName: string | null;
   running: number;
   approved: number;
+  pending: number;
 }
 
 export default function SupervisorControl() {
@@ -59,6 +61,28 @@ export default function SupervisorControl() {
       setNotice(
         data.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."),
       );
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    }
+    setBusy(false);
+  };
+
+  // 1회성 신호: 감독 프로그램이 다음 확인(15초 안) 때 받아 가서, 돌고 있는 일감이 없으면 바로 새 버전을 확인한다
+  const updateNow = async () => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/factory/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updateNow: true }),
+      });
+      const data = (await res.json().catch(() => ({}))) as State & {
+        message?: string;
+      };
+
+      if (res.ok) setS(data);
+      setNotice(data.message ?? (res.ok ? "요청했어요." : "요청하지 못했어요."));
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     }
@@ -119,7 +143,7 @@ export default function SupervisorControl() {
             <div className="font-semibold">🤖 감독 프로그램: {badge}</div>
             {s && (
               <div className="text-xs text-default-500">
-                진행 중 {s.running}개 · 승인 대기열 {s.approved}개
+                진행 중 {s.running}개 · 승인 대기열 {s.approved}개 · 승인 기다림 {s.pending}개
                 {s.lastSeenAt
                   ? ` · 마지막 응답 ${new Date(s.lastSeenAt).toLocaleTimeString("ko-KR")}`
                   : ""}
@@ -147,17 +171,29 @@ export default function SupervisorControl() {
               <span className="mt-1 block text-xs text-default-500">
                 {s.commit ? `현재 버전 ${s.commit}` : "버전 정보 없음"}
                 {s.updateNote ? ` · ${s.updateNote}` : ""}
+                {s.updateNowRequestedAt ? " · 지금 업데이트 요청됨(PC가 받아 가는 중)" : ""}
               </span>
             </span>
-            <Button
-              className="min-h-11 w-full sm:min-h-0 sm:w-auto"
-              isDisabled={busy}
-              size="sm"
-              variant="flat"
-              onPress={toggleAuto}
-            >
-              {s.autoUpdate ? "끄기" : "켜기"}
-            </Button>
+            <div className="flex w-full gap-2 sm:w-auto">
+              <Button
+                className="min-h-11 flex-1 sm:min-h-0 sm:flex-none"
+                isDisabled={busy || !!s.updateNowRequestedAt}
+                size="sm"
+                variant="flat"
+                onPress={updateNow}
+              >
+                ⬇️ 지금 업데이트
+              </Button>
+              <Button
+                className="min-h-11 flex-1 sm:min-h-0 sm:flex-none"
+                isDisabled={busy}
+                size="sm"
+                variant="flat"
+                onPress={toggleAuto}
+              >
+                {s.autoUpdate ? "끄기" : "켜기"}
+              </Button>
+            </div>
           </div>
         )}
         {notice && <p className="text-sm text-default-600">{notice}</p>}

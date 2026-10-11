@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 
 import prisma from "@/lib/prisma";
 import { notifyJobEvent } from "@/lib/factory/telegram";
+import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
 import {
   ACTIVE_STATUSES,
   APP_SLUG_RE,
@@ -44,7 +45,10 @@ export const FACTORY_INSTRUCTIONS =
   " 앱 공장: 확정된 앱 기획서는 enqueue_app_job 으로 등록해요(승인은 관리자가 통제실 /admin/factory 에서 해요). " +
   "등록 전에 list_factory_jobs 로 같은 앱 이름이 이미 있는지, list_secret_names 로 쓸 수 있는 키 이름을 확인하세요. " +
   "이미 만든 앱을 고칠 때는 kind=revision 으로, 반드시 기존 앱 이름(appSlug)과 고칠 내용만 보내세요. "
-  + "관리자가 통제실에서 직접 보낸 수정 지시는 source 가 '통제실'로 나와요. 결과는 get_factory_job(includePlan=true)으로 읽고 사용자와 의논하세요.";
+  + "관리자가 통제실에서 직접 보낸 수정 지시는 source 가 '통제실'로 나와요. 결과는 get_factory_job(includePlan=true)으로 읽고 사용자와 의논하세요. "
+  + "작업 PC 감독 프로그램은 supervisor_control 로 봐요: action=status(연결·버전·일시 정지·자동 업데이트·진행/대기 일감 수), "
+  + "update_now(GitHub main 의 새 감독 프로그램 코드를 지금 받게 함. 15초~1분 뒤 status 의 commit 으로 확인), pause/resume(새 일감 받기 멈춤/재개), "
+  + "auto_update_on/off. 사용자가 요청한 경우에만 상태를 바꾸세요.";
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -182,6 +186,33 @@ export const FACTORY_TOOLS = [
       openWorldHint: false,
     },
   },
+  {
+    name: "supervisor_control",
+    description:
+      "작업 PC 의 감독 프로그램 상태를 보거나 정해진 명령을 보냅니다. 명령은 홈페이지에 신호로 남고, 감독 프로그램이 15초마다 확인할 때 가져가요. " +
+      "status=연결 여부·현재 버전(commit)·최근 업데이트 소식·일시 정지/자동 업데이트 상태·진행/대기 일감 수, " +
+      "update_now=GitHub main 의 새 감독 프로그램 코드를 지금 확인해 받게 함(돌고 있는 일감이 있으면 끝난 뒤. 새 버전이면 30초쯤 뒤 다시 켜짐), " +
+      "pause=새 일감 받기 멈춤(진행 중 작업은 끝까지), resume=다시 받기, auto_update_on/off=10분마다 하는 자동 업데이트 켜고 끄기. " +
+      "상태를 바꾸는 명령은 사용자가 요청했을 때만 쓰세요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: [...SUPERVISOR_ACTIONS],
+          description: "status | update_now | pause | resume | auto_update_on | auto_update_off",
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
 ];
 
 const FACTORY_NAMES = new Set(FACTORY_TOOLS.map((t) => t.name));
@@ -201,9 +232,36 @@ export async function callFactoryTool(
       return listSecretNames();
     case "enqueue_app_job":
       return enqueue(args);
+    case "supervisor_control":
+      return supervisorControl(args);
     default:
       return text(`알 수 없는 도구예요: ${name}`, true);
   }
+}
+
+async function supervisorControl(args: Record<string, unknown>): Promise<ToolResult> {
+  const action = args.action;
+
+  if (typeof action !== "string" || !(SUPERVISOR_ACTIONS as readonly string[]).includes(action)) {
+    return text(`action 은 ${SUPERVISOR_ACTIONS.join(", ")} 중 하나예요.`, true);
+  }
+  const { message, snapshot: s } = await runSupervisorAction(action as SupervisorAction);
+
+  return json({
+    ...(message ? { 결과: message } : {}),
+    연결: s.online ? "연결됨" : "응답 없음(PC 꺼짐 또는 감독 프로그램 멈춤)",
+    작업PC: s.workerName,
+    마지막응답: iso(s.lastSeenAt),
+    현재버전: s.commit,
+    최근업데이트소식: s.updateNote,
+    최근업데이트소식시각: s.updateNoteAt,
+    지금업데이트요청대기: s.updateNowRequestedAt,
+    일시정지: !s.enabled,
+    자동업데이트: s.autoUpdate,
+    진행중: s.running,
+    승인됨_대기열: s.approved,
+    승인기다림: s.pending,
+  });
 }
 
 async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
