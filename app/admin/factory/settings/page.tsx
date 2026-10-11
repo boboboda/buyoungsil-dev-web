@@ -7,6 +7,7 @@ import ReleaseAccounts from "@/components/admin/factory/ReleaseAccounts";
 import SecretNames from "@/components/admin/factory/SecretNames";
 import TelegramSetup from "@/components/admin/factory/TelegramSetup";
 import WorkerTokens from "@/components/admin/factory/WorkerTokens";
+import WorkRules from "@/components/admin/factory/WorkRules";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,7 @@ export default function AdminFactorySettingsPage() {
         <WorkerTokens />
         <SecretNames />
         <ReleaseAccounts />
+        <WorkRules />
       </div>
     </div>
   );

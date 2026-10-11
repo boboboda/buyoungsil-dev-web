@@ -163,6 +163,19 @@ function androidSdkDir() {
   return cands.find((d) => d && fs.existsSync(d)) || "";
 }
 
+// 규칙의 Android SDK 줄(PC 마다 다르다). 홈페이지가 보낸 규칙의 {{ANDROID_SDK}} 도 이걸로 채운다.
+function sdkLine() {
+  const sdk = androidSdkDir();
+  return sdk ? `\`${sdk.replace(/\\/g, "/")}\` (local.properties 의 sdk.dir 에 쓰고, local.properties 는 커밋하지 마세요)` : "찾지 못했어요. 빌드를 못 하면 그 이유를 결과에 적으세요.";
+}
+
+// 홈페이지가 일감과 같이 보낸 작업 규칙(job.rules). 없거나 이상하면 null → 코드 안 기본값(rulesFor)을 쓴다.
+function serverRules(job) {
+  const t = job.rules;
+  if (typeof t !== "string" || !t.trim() || t.length > 60_000 || t.includes("<!-- factory:")) return null;
+  return `${RULES_BEGIN}\n${t.trim().replace(/\{\{ANDROID_SDK\}\}/g, sdkLine())}\n${RULES_END}\n`;
+}
+
 // 앱 종류(stack)별 만들기·검사 규칙. 서버 lib/factory/jobs.ts 의 STACKS 와 맞춘다.
 function stackRules(job) {
   const pkg = job.appSlug.replace(/-/g, "_");
@@ -172,11 +185,10 @@ function stackRules(job) {
 - 끝내기 전에 \`flutter analyze\` 를 통과시키세요. 가능하면 \`flutter build apk --debug\` 도 시도하고, 환경 때문에 못 하면 그 이유를 결과에 적으세요.
 - 스크린샷은 위젯 테스트(골든 등)로 화면을 그려 만들 수 있습니다.`;
     case "kotlin-compose": {
-      const sdk = androidSdkDir();
       return `- Android 네이티브 앱(Kotlin + Jetpack Compose, Material 3, 단일 Activity)입니다. 패키지 이름은 \`com.factory.${pkg}\` 로 하세요.
 - 프로젝트가 없을 때만 Gradle Kotlin DSL(settings.gradle.kts, build.gradle.kts, gradle/libs.versions.toml) 구조로 직접 만드세요.
 - 이 PC에는 \`gradle\` 명령이 없습니다. gradlew 가 없으면 Gradle 배포판을 내려받아 \`gradle wrapper\` 로 gradlew 를 만드세요(배포판은 앱 폴더 밖 임시 폴더에).
-- Android SDK: ${sdk ? `\`${sdk.replace(/\\/g, "/")}\` (local.properties 의 sdk.dir 에 쓰고, local.properties 는 커밋하지 마세요)` : "찾지 못했어요. 빌드를 못 하면 그 이유를 결과에 적으세요."}
+- Android SDK: ${sdkLine()}
 - 끝내기 전에 \`./gradlew assembleDebug\` 를 통과시키세요. 단위 테스트가 있으면 \`./gradlew testDebugUnitTest\` 도 돌리세요.
 - 스크린샷은 가능하면 Compose 프리뷰 렌더링(예: Paparazzi/Roborazzi)으로 만들고, 어려우면 건너뛰세요.`;
     }
@@ -255,7 +267,9 @@ function prepareDir(job) {
 
   // CLAUDE.md: 우리 블록만 갈아 끼우고 나머지는 그대로 둔다
   const claudeMd = path.join(dir, "CLAUDE.md");
-  const block = rulesFor(job);
+  const fromServer = serverRules(job);
+  const block = fromServer ?? rulesFor(job);
+  job.rulesSource = fromServer ? "홈페이지" : "기본값(감독 프로그램 코드)";
   let text = fs.existsSync(claudeMd) ? fs.readFileSync(claudeMd, "utf8") : "";
   const b = text.indexOf(RULES_BEGIN);
   const e = text.indexOf(RULES_END);
@@ -278,6 +292,8 @@ function commitResult(dir, job) {
 }
 
 function promptFor(job) {
+  // 홈페이지가 보낸 첫 지시문이 있으면 그걸 쓴다
+  if (typeof job.prompt === "string" && job.prompt.trim() && job.prompt.length <= 4000) return job.prompt.trim();
   if (job.kind === "release") {
     return "RELEASE_REQUEST.md 에 적힌 출시 준비를 하세요. 앱 기능은 바꾸지 말고, CLAUDE.md 작업 규칙의 '출시 준비' 형식대로 .factory/outbox/ 에 결과를 저장하세요.";
   }
@@ -531,7 +547,7 @@ async function runJob(job) {
   };
   running.set(job.id, st);
   seedShots(st);
-  addLog(st, "info", `앱 폴더 준비 완료: ${dir}`);
+  addLog(st, "info", `앱 폴더 준비 완료: ${dir} (작업 규칙: ${job.rulesSource})`);
 
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", cfg.permissionMode, "--allowedTools", cfg.allowedTools];
   if (cfg.model) args.push("--model", cfg.model);
