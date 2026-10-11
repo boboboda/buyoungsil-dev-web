@@ -150,9 +150,23 @@ export interface PcPathItem {
   mtime: string | null;
 }
 
+// 종류별 필요한 준비 한 줄. ok: true ✅ / false ⬜(부족: 승인 막음) / null ⏳(확인 전, 막지 않음)
+export interface ReadyItem {
+  label: string;
+  ok: boolean | null;
+  note?: string | null;
+}
+
 export interface ReleaseApp {
   appSlug: string;
-  title: string;
+  title: string; // 작업 이름
+  displayName: string; // 카드 제목(앱 이름): 직접 정한 이름 → 스토어 문구 앱 이름 → 홈페이지 프로젝트 제목 → 작업 이름
+  nameSource: "manual" | "store" | "project" | "job";
+  nameSourceLabel: string;
+  appName: string | null; // 직접 정한 앱 이름
+  alreadyReleased: boolean; // 이미 첫 업로드를 마친 앱
+  requiresTesting: boolean; // 비공개 테스트가 필요한 계정(개인 계정)
+  readiness: Record<"first" | "store" | "update", ReadyItem[]>;
   stack: string;
   done: boolean;
   active: boolean;

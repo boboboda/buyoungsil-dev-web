@@ -671,6 +671,7 @@ model FactoryApp {
   customKeyAlias     String? // 그 키의 별칭
   promoVideoUrl      String? // 홍보 영상 YouTube 링크(사람이 직접 올리고 붙여 넣음). 스토어 자료 업로드 때 Play 등록정보 영상으로
   storeAssets        Json? // 스토어 자료(.factory/store/) 단계별 결과·파일 정보(경로·크기·길이)·올린 이미지 URL·Play 업로드 결과
+  appName            String? // 사람이 출시 카드에서 정한 앱 이름(스토어·홈페이지에 보일 이름, 30자). 비우면 스토어 문구 제목 → 홈페이지 프로젝트 제목 → 작업 이름
   keyId              String? // 이 앱이 쓸 키(키 보관함). 없으면 배포 계정 기본 키. customKeystorePath·customKeyAlias 는 예전 값(호환용 사본)
   releaseAccount   FactoryReleaseAccount? @relation(fields: [releaseAccountId], references: [id], onDelete: SetNull)
   key              FactoryKey?            @relation(fields: [keyId], references: [id], onDelete: SetNull)

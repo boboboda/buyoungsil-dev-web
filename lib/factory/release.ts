@@ -15,6 +15,7 @@ import { maskSecrets } from "@/lib/factory/mask";
 import { KEY_KINDS, listVault } from "@/lib/factory/keyVault";
 import { deleteReviewVideo, reviewVideoInfo } from "@/lib/factory/reviewVideo";
 import { readStoreAssets } from "@/lib/factory/storeAssets";
+import { APP_NAME_SOURCE_LABELS, cleanAppName, pickAppName, storeTitleOf } from "@/lib/factory/appName";
 
 // 출시 일감 종류. 종류마다 서버가 만드는 지시문과 허용 동작(outbox 파일·키 준비)이 다르다.
 // project(프로젝트 업데이트)는 예전 종류: 예전 일감 기록이 읽히고 커넥터 호환으로만 받는다(통제실에서는 고르지 않음. 홈페이지만 고치려면 store + 덮어쓰기)
@@ -579,6 +580,70 @@ export function playUploadMissing(
 
 // ───────── 앱별 출시 상태 ─────────
 
+// ───────── 종류별 '필요한 준비' (출시 카드 체크 목록, 승인 전 확인) ─────────
+
+/** ok: true ✅ / false ⬜(부족: 승인 막음) / null ⏳(확인 전·직접 확인: 막지 않음) */
+export interface ReadyItem {
+  label: string;
+  ok: boolean | null;
+  note?: string | null;
+}
+
+type ReadyInput = {
+  app: { packageName: string | null; firstUploadDone: boolean; releaseAccountId: string | null } | null;
+  account: { label: string; serviceAccountKeyPath: string | null } | null;
+  accountSecretsRegistered: boolean; // 예전 방식(계정 라벨 이름)으로 비밀번호 이름을 등록해 둔 계정
+  key: { source: string; keyId: string | null; name: string | null; path: string } | null;
+  keyCheckExists: boolean | null; // 보관함 조회 결과(파일 있음). 모르면 null
+  keyPassword: string; // none | waiting | delivered
+  ownKeyProperties: boolean; // 앱 폴더에 key.properties 가 있음(키 후보 찾기 결과)
+  serviceAccountExists: boolean | null; // PC 에 서비스 계정 키 파일이 있는지(감독 프로그램 확인). 모르면 null
+};
+
+/** 종류마다 승인 전에 필요한 준비. 저장된 값 기준(카드에서 고친 뒤 [저장]해야 반영) */
+export function releaseReadiness(r: ReadyInput): Record<"first" | "store" | "update", ReadyItem[]> {
+  const account: ReadyItem = { label: "배포 계정 선택", ok: !!r.app?.releaseAccountId && !!r.account, note: r.account ? `계정 ${r.account.label}` : "카드에서 계정을 골라 [저장]" };
+  const pkg: ReadyItem = { label: "패키지 이름", ok: !!r.app?.packageName, note: r.app?.packageName ?? "카드에서 패키지 이름을 넣고 [저장]" };
+  const own = r.ownKeyProperties;
+  const key: ReadyItem = own
+    ? { label: "이 앱이 쓸 키", ok: true, note: "앱 자체 key.properties 를 그대로 써요" }
+    : { label: "이 앱이 쓸 키", ok: !!r.key, note: r.key ? `${r.key.name ?? r.key.path}${r.key.source === "custom" ? "(이 앱에 고른 키)" : "(계정 기본 키)"}` : "키 보관함에서 고르거나 계정 기본 키를 정하세요" };
+  const password: ReadyItem = own
+    ? { label: "키 비밀번호 등록", ok: true, note: "앱 자체 key.properties 의 비밀번호를 써요" }
+    : !r.key
+      ? { label: "키 비밀번호 등록", ok: false, note: "키를 먼저 정하세요" }
+      : r.keyPassword !== "none"
+        ? { label: "키 비밀번호 등록", ok: true, note: r.keyPassword === "delivered" ? "작업 PC 에 저장됨" : "작업 PC 가 가져가기 대기" }
+        : r.key.source === "account" && r.accountSecretsRegistered
+          ? { label: "키 비밀번호 등록", ok: null, note: "통제실에 등록된 비밀번호는 없어요. PC secrets.env 에 예전 이름으로 직접 넣었다면 괜찮아요" }
+          : { label: "키 비밀번호 등록", ok: false, note: "설정 → 키 보관함에서 이 키의 비밀번호를 등록하세요" };
+  const keyFile: ReadyItem | null = own || !r.key
+    ? null
+    : { label: "키 파일 있음", ok: r.keyCheckExists, note: r.keyCheckExists === null ? "아직 조회하지 않았어요([🔍 조회])" : r.keyCheckExists ? null : `파일이 없어요: ${r.key.path}` };
+  const sa: ReadyItem = { label: "서비스 계정 키(Play API)", ok: !!r.account?.serviceAccountKeyPath, note: r.account?.serviceAccountKeyPath ?? "설정 → 배포 계정에 서비스 계정 키 경로를 넣으세요" };
+  const saFile: ReadyItem | null = r.account?.serviceAccountKeyPath
+    ? { label: "서비스 계정 키 파일 있음", ok: r.serviceAccountExists, note: r.serviceAccountExists === null ? "작업 PC 확인 전" : r.serviceAccountExists ? null : "작업 PC 에 파일이 없어요" }
+    : null;
+  const firstUpload: ReadyItem = { label: "최초 AAB 업로드 완료", ok: !!r.app?.firstUploadDone, note: r.app?.firstUploadDone ? null : "먼저 첫 출시를 끝내고 Console 에 최초 AAB 를 올린 뒤 체크하세요" };
+  const keep = (xs: (ReadyItem | null)[]) => xs.filter((x): x is ReadyItem => !!x);
+
+  return {
+    // 첫 출시는 Play API 를 쓰지 않아 서비스 계정·최초 업로드가 필요 없다
+    first: keep([account, pkg, key, password, keyFile]),
+    // 스토어 수정은 AAB 를 만들지 않아 키가 필요 없다(갱신 항목 1개 이상은 카드에서 고를 때 확인)
+    store: keep([account, pkg, sa, saFile, firstUpload]),
+    // 앱 업데이트(업데이트 내용은 카드에서 입력할 때 확인)
+    update: keep([account, pkg, key, password, keyFile, sa, saFile, firstUpload]),
+  };
+}
+
+/** 부족한 준비(⬜)만 한 줄로. 없으면 null */
+export function readinessProblem(items: ReadyItem[] | undefined): string | null {
+  const bad = (items ?? []).filter((i) => i.ok === false);
+
+  return bad.length ? bad.map((i) => `${i.label}${i.note ? `(${i.note})` : ""}`).join(", ") : null;
+}
+
 /** 출시 일감의 카드 표시 상태 */
 function jobState(j: { status: string; reviewRequired: boolean; reviewApprovedAt: Date | null }): string {
   if (j.status === "review") return "review";
@@ -629,6 +694,11 @@ export async function releaseOverview() {
   ]);
   const appBySlug = new Map(apps.map((a) => [a.appSlug, a]));
   const names = new Set(secretNames.map((s) => s.name));
+  // 카드 제목(앱 이름)용 홈페이지 프로젝트 제목
+  const projectIds = apps.map((a) => a.projectId).filter((x): x is string => !!x);
+  const projectTitle = new Map(
+    (projectIds.length ? await prisma.project.findMany({ where: { id: { in: projectIds } }, select: { id: true, title: true } }) : []).map((p) => [p.id, p.title]),
+  );
   // 앱별 키 조회 결과. 예전 결과에 시각이 없으면 전체 점검 시각. 전체 점검에 없던 앱은 PC 에 앱 폴더가 없는 것
   const keyScanOf = (slug: string): KeyScanApp | null => {
     const s = keyScan.apps.find((x) => x.appSlug === slug);
@@ -669,10 +739,35 @@ export async function releaseOverview() {
     const account = accounts.find((a) => a.id === app?.releaseAccountId) ?? null;
     const key = effectiveKey(app ?? null, account);
     const pw = key ? pwByRef.get(key.ref) : undefined;
+    const jobTitle = mine.find((x) => x.kind === "new")?.title ?? j.title;
+    const display = pickAppName({ appName: app?.appName, storeTitle: storeTitleOf(app), projectTitle: app?.projectId ? projectTitle.get(app.projectId) : null, jobTitle });
+    const scan = keyScanOf(j.appSlug);
+    const vk = key?.keyId ? vaultById.get(key.keyId) : undefined;
+    const legacyKeyPc = key && !key.keyId ? pcStatus?.items.find((i) => i.path === key.path && (i.key.endsWith(".keystore"))) : undefined;
+    const saPc = account?.serviceAccountKeyPath ? pcStatus?.items.find((i) => i.key === `${account.label}.serviceAccount` && i.path === account.serviceAccountKeyPath) : undefined;
 
     rows.push({
       appSlug: j.appSlug,
-      title: mine.find((x) => x.kind === "new")?.title ?? j.title,
+      title: jobTitle, // 작업 이름(예전 값 그대로)
+      // 카드 제목: 직접 정한 이름 → 스토어 문구 앱 이름 → 홈페이지 프로젝트 제목 → 작업 이름
+      displayName: display.name,
+      nameSource: display.source,
+      nameSourceLabel: APP_NAME_SOURCE_LABELS[display.source],
+      appName: app?.appName ?? null,
+      // 이미 첫 업로드를 마친 앱(비공개 테스트·출시 상태이거나 최초 AAB 체크): 카드 기본 종류를 스토어 수정으로
+      alreadyReleased: !!app?.firstUploadDone || ["testing", "released"].includes(app?.releaseStatus ?? ""),
+      requiresTesting: account?.requiresTesting ?? false,
+      // 종류별 필요한 준비(✅/⬜/⏳). 부족(⬜)하면 승인을 막는다(서버도 다시 확인)
+      readiness: releaseReadiness({
+        app: app ? { packageName: app.packageName, firstUploadDone: app.firstUploadDone, releaseAccountId: app.releaseAccountId } : null,
+        account,
+        accountSecretsRegistered: !!account && names.has(keystorePasswordName(account.label)) && names.has(keyPasswordName(account.label)),
+        key: key ? { source: key.source, keyId: key.keyId, name: key.name, path: key.path } : null,
+        keyCheckExists: vk ? (vk.check ? vk.check.exists : null) : legacyKeyPc ? legacyKeyPc.exists : null,
+        keyPassword: pw?.state ?? "none",
+        ownKeyProperties: !!scan && !scan.missing && scan.keyProperties.length > 0,
+        serviceAccountExists: saPc ? saPc.exists : null,
+      }),
       stack: j.stack,
       done: mine.some((x) => x.status === "done"),
       // 검토 대기도 진행 중으로 본다(같은 앱의 새 출시 일감·삭제를 막는다)
@@ -800,6 +895,7 @@ export interface AppReleaseInput {
   customKeystorePath?: unknown;
   customKeyAlias?: unknown;
   keyId?: unknown; // 이 앱이 쓸 키(키 보관함 항목 id). 빈 값이면 배포 계정 기본 키
+  appName?: unknown; // 사람이 정한 앱 이름(30자). 빈 값이면 자동
 }
 
 const PACKAGE_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
@@ -833,6 +929,11 @@ export async function updateAppRelease(appSlug: string, input: AppReleaseInput):
     data.keyId = null; // 예전 방식으로 바꾸면 다음 로드 때 보관함으로 가져온다
   }
   if (input.customKeyAlias !== undefined) data.customKeyAlias = cleanStr(input.customKeyAlias, 80);
+  // 앱 이름(카드 제목·스토어 문구·홈페이지 빈 제목에 쓴다)
+  const nameIn = cleanAppName(input.appName);
+
+  if ("message" in nameIn) return { ok: false, status: 400, message: nameIn.message };
+  if (nameIn.value !== undefined) data.appName = nameIn.value;
   // 키 보관함에서 고른 키. 예전 '다른 키' 열은 호환용 사본으로 맞춘다(비우면 같이 비움 → 계정 기본 키)
   if (input.keyId !== undefined) {
     const id = typeof input.keyId === "string" && input.keyId ? input.keyId : null;
@@ -1147,6 +1248,10 @@ export async function buildReleasePlan(
     `- 연락 이메일: ${acc.contactEmail ?? "(미정: 체크리스트에 남기기)"}`,
     `- 비공개 테스트 필요: ${acc.requiresTesting ? "예(테스터 12명·14일). 체크리스트에 넣기" : "아니요"}`,
     `- 패키지 이름(applicationId): ${app?.packageName ?? "(미정: 지금 앱 설정의 applicationId 를 쓰고 release.json notes 에 적기)"}`,
+    // 사람이 카드에서 정한 앱 이름: 스토어 문구 제목은 이것으로
+    ...(app?.appName
+      ? [`- 앱 이름(스토어·홈페이지에 보일 이름, 사람이 정함): **${app.appName}** — 스토어 문구를 만들면 title(ko-KR)은 정확히 이 이름으로 쓰세요(다른 언어는 이 이름을 그 언어 표기로).`]
+      : []),
     "",
   ];
 
@@ -1412,10 +1517,10 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
  * fields: 고른 갱신 항목으로 받을 수 있는 칸(null 이면 예전 일감: 전부, 개인정보처리방침은 빈 칸만)
  * privacyOverwrite: '개인정보처리방침 갱신'을 고른 일감(덮어쓰기 선택과 상관없이 방침을 바꾼다)
  */
-export type ProjectField = "description" | "techStack" | "coverImage" | "appLink" | "privacyPolicy";
+export type ProjectField = "title" | "description" | "techStack" | "coverImage" | "appLink" | "privacyPolicy";
 const ITEM_FIELDS: Record<string, ProjectField[]> = {
-  listing: ["description", "techStack", "appLink"], // store: 문구
-  description: ["description", "techStack", "appLink"], // project: 설명
+  listing: ["title", "description", "techStack", "appLink"], // store: 문구(앱 이름 포함)
+  description: ["title", "description", "techStack", "appLink"], // project: 설명
   images: ["coverImage"],
   cover: ["coverImage"],
   privacy: ["privacyPolicy"],

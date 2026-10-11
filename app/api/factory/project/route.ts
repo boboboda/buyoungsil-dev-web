@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
     if (allowed.ok === false) return fail(400, allowed.message);
     const server = allowed.release ? await storeProjectValues(body.appSlug) : {};
     const fill: ProjectFill = {
+      title: server.title, // 앱 이름은 서버 값만(카드에서 사람이 정한 이름)
       description: str(body.description, 2000),
       coverImage: str(body.coverImage, 500) ?? server.coverImage,
       appLink: str(body.appLink, 500) ?? server.appLink,

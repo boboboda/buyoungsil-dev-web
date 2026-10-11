@@ -280,16 +280,18 @@ export async function storeImageJob(jobId: unknown): Promise<FoundJob> {
 }
 
 /**
- * 홈페이지 프로젝트에 넣을 서버 쪽 값: 대표 이미지(올린 feature) → coverImage, 출시된 앱이면 Play 주소 → appLink.
+ * 홈페이지 프로젝트에 넣을 서버 쪽 값: 대표 이미지(올린 feature) → coverImage, 출시된 앱이면 Play 주소 → appLink, 사람이 정한 앱 이름 → title.
  * Project 에는 영상·스크린샷 갤러리 칸이 없어서 영상 링크와 스크린샷은 넣지 않는다.
  */
-export async function storeProjectValues(appSlug: string): Promise<{ coverImage?: string; appLink?: string }> {
-  const app = await prisma.factoryApp.findUnique({ where: { appSlug }, select: { storeAssets: true, packageName: true, releaseStatus: true } });
+export async function storeProjectValues(appSlug: string): Promise<{ coverImage?: string; appLink?: string; title?: string }> {
+  const app = await prisma.factoryApp.findUnique({ where: { appSlug }, select: { storeAssets: true, packageName: true, releaseStatus: true, appName: true } });
   const assets = readStoreAssets(app?.storeAssets);
-  const out: { coverImage?: string; appLink?: string } = {};
+  const out: { coverImage?: string; appLink?: string; title?: string } = {};
   const cover = assets?.images?.feature?.url;
 
   if (cover) out.coverImage = cover;
+  // 사람이 출시 카드에서 정한 앱 이름 → 홈페이지 프로젝트 제목(빈 칸일 때만, 덮어쓰기를 고르면 바꿈)
+  if (app?.appName) out.title = app.appName;
   if (app?.packageName && app.releaseStatus === "released") out.appLink = `https://play.google.com/store/apps/details?id=${app.packageName}`;
 
   return out;

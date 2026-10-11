@@ -65,6 +65,7 @@ export async function ensureProjectForJob(job: {
 }
 
 export interface ProjectFill {
+  title?: string; // 사람이 출시 카드에서 정한 앱 이름(서버 값만. 빈 칸일 때만, 덮어쓰기면 바꿈)
   description?: string;
   coverImage?: string;
   appLink?: string;
@@ -128,6 +129,7 @@ export async function fillProjectIfEmpty(
     filled.push(key);
   };
 
+  pick("title", !project.title.trim(), fill.title?.trim());
   pick("description", !project.description.trim() || project.description === PLACEHOLDER_DESCRIPTION, fill.description?.trim());
   pick("coverImage", !project.coverImage, fill.coverImage?.trim());
   pick("appLink", !project.appLink, fill.appLink?.trim());

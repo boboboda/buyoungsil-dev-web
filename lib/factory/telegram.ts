@@ -11,6 +11,7 @@ import prisma from "@/lib/prisma";
 import { ID_RE, KIND_LABELS } from "@/lib/factory/jobs";
 import { runApproval } from "@/lib/factory/approvals"; // 통제실 버튼과 같은 입구
 import { maskSecrets } from "@/lib/factory/mask";
+import { releaseAppName } from "@/lib/factory/appName";
 
 const API_TIMEOUT_MS = 5000;
 // lib/factory/release.ts 의 라벨과 같게(그 파일이 이 파일을 불러서, 순환을 피하려고 여기 따로 둔다)
@@ -101,17 +102,19 @@ export async function notifyJobEvent(
 
     const kind = (KIND_LABELS[job.kind] ?? "수정") + (job.kind === "release" ? `(${RELEASE_KIND_TEXT[job.releaseKind ?? "first"] ?? "첫 출시"})` : "");
     const stage = job.failStage ?? job.phase;
+    // 출시 일감은 앱 이름(출시 카드 제목과 같은 이름)으로 알린다
+    const name = job.kind === "release" ? await releaseAppName(job.appSlug, job.title) : job.title;
     let text: string;
 
     if (event === "pending") {
-      text = `📥 승인 대기\n${job.title} (${job.appSlug}) · ${kind}${job.source ? `\n출처: ${cut(job.source, 60)}` : ""}`;
+      text = `📥 승인 대기\n${name} (${job.appSlug}) · ${kind}${job.source ? `\n출처: ${cut(job.source, 60)}` : ""}`;
     } else if (event === "review") {
-      text = `👀 검토 대기: ${job.title} (${job.appSlug}) 스토어 자료가 준비됐어요
+      text = `👀 검토 대기: ${name} (${job.appSlug}) 스토어 자료가 준비됐어요
 통제실 출시 패키지에서 확인하고 [이대로 진행]·[다시 만들기]·[취소] 중에 골라 주세요.`;
     } else if (event === "done") {
-      text = `✅ 완료\n${job.title} (${job.appSlug}) · ${kind}\n${cut(job.summary, 200) || "(요약 없음)"}`;
+      text = `✅ 완료\n${name} (${job.appSlug}) · ${kind}\n${cut(job.summary, 200) || "(요약 없음)"}`;
     } else {
-      text = `❌ 실패\n${job.title} (${job.appSlug}) · ${kind}${job.kind === "release" && stage ? `\n실패 단계: ${STAGE_TEXT[stage] ?? stage}` : ""}\n${cut(maskSecrets(job.failReason), 200) || "(사유 없음)"}`;
+      text = `❌ 실패\n${name} (${job.appSlug}) · ${kind}${job.kind === "release" && stage ? `\n실패 단계: ${STAGE_TEXT[stage] ?? stage}` : ""}\n${cut(maskSecrets(job.failReason), 200) || "(사유 없음)"}`;
     }
 
     const row: Record<string, string>[] = [

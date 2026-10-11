@@ -14,6 +14,7 @@ import {
   normalizeUpdateItems,
   releaseOverview,
   stageLabel,
+  readinessProblem,
   updateItemsText,
 } from "@/lib/factory/release";
 import { readStoreAssets } from "@/lib/factory/storeAssets";
@@ -379,7 +380,8 @@ async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResu
     }),
     앱: apps.map((a) => ({
       appSlug: a.appSlug,
-      이름: a.title,
+      이름: a.displayName, // 출시 카드 제목과 같은 앱 이름
+      작업이름: a.title,
       종류: a.stack,
       출시상태: label(a.releaseStatus),
       배포계정: o.accounts.find((x) => x.id === a.releaseAccountId)?.label ?? null,
@@ -445,6 +447,10 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
   const app = o.apps.find((a) => a.appSlug === appSlug);
 
   if (!app?.done) return text(`${appSlug} 는 완성된 앱이 아니에요.`, true);
+  // 종류별 필요한 준비가 부족하면 등록하지 않는다(출시 카드의 체크 목록과 같다. 예전 종류 project 는 예전처럼)
+  const lack = kind === "project" ? null : readinessProblem(app.readiness[kind]);
+
+  if (lack) return text(`${app.displayName}: ${RELEASE_KIND_LABELS[kind]} 준비가 부족해요 — ${lack}`, true);
   if (kind === "update" && !app.firstUploadDone) {
     return text("먼저 첫 출시를 끝내세요(최초 AAB 를 Console 에 올리고 출시 카드에서 '최초 AAB 업로드 완료'를 체크).", true);
   }
@@ -454,7 +460,7 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
 
   return enqueue({
     appSlug,
-    title: `${app.title} (${RELEASE_KIND_LABELS[kind]}${items.items.length ? `: ${updateItemsText(kind, items.items)}` : ""}${versionName ? ` ${versionName}` : ""})`,
+    title: `${app.displayName} (${RELEASE_KIND_LABELS[kind]}${items.items.length ? `: ${updateItemsText(kind, items.items)}` : ""}${versionName ? ` ${versionName}` : ""})`,
     kind: "release",
     releaseKind: kind,
     overwriteProject,
