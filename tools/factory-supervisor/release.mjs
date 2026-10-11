@@ -82,10 +82,10 @@ export function realAab(dir, aab) {
 
 // 일감이 끝날 때(완료 보고 전에) 부른다. 보낸 파일은 .factory/outbox/sent/ 로 옮긴다.
 // 돌려주는 값: 실패 목록 [{ name, status, message }]. (홈페이지에 연결된 프로젝트가 없어 project.json 이 404 인 것은 실패로 보지 않는다)
-// job.release.outbox 가 있으면(서버가 출시 종류별로 정함) 그 파일만 보낸다.
-export async function sendOutbox({ dir, job, api, addLog }) {
+// job.release.outbox 가 있으면(서버가 출시 종류별로 정함) 그 파일만 보낸다. only 를 주면 그중 이 이름만(나머지는 그대로 둠)
+export async function sendOutbox({ dir, job, api, addLog, only = null }) {
   const box = path.join(dir, ".factory", "outbox");
-  const allowed = Array.isArray(job.release?.outbox) ? job.release.outbox.filter((n) => OUTBOX[n]) : Object.keys(OUTBOX);
+  const allowed = (Array.isArray(job.release?.outbox) ? job.release.outbox.filter((n) => OUTBOX[n]) : Object.keys(OUTBOX)).filter((n) => !only || only.includes(n));
   const failures = [];
   let names = [];
   try {
@@ -95,6 +95,7 @@ export async function sendOutbox({ dir, job, api, addLog }) {
   }
   for (const name of names) {
     const endpoint = OUTBOX[name];
+    if (only && OUTBOX[name] && !only.includes(name)) continue; // 이번에는 보내지 않는 파일(승인 뒤에 보냄)
     if (!endpoint || !allowed.includes(name)) {
       addLog("warn", `outbox 의 ${name} 은 이 일감에서 보낼 수 있는 파일이 아니라서 건너뛰어요(허용: ${allowed.join(", ")}).`);
       continue;
@@ -136,6 +137,39 @@ export async function sendOutbox({ dir, job, api, addLog }) {
     }
   }
   return failures;
+}
+
+// 검토용: project.json 의 개인정보처리방침을 release.json 의 privacyPolicyDraft 로도 넣어 검토 화면에 보이게 한다
+// (project.json 은 승인 뒤에만 보낸다). release.json 이 없으면 방침만 담아 새로 만든다. 넣었으면 true
+export function mergePrivacyDraft(dir) {
+  const box = path.join(dir, ".factory", "outbox");
+  let policy;
+  try {
+    policy = JSON.parse(fs.readFileSync(path.join(box, "project.json"), "utf8"))?.privacyPolicy;
+  } catch {
+    return false;
+  }
+  if (typeof policy !== "string" || !policy.trim()) return false;
+  const rel = path.join(box, "release.json");
+  let data = {};
+  try {
+    data = fs.existsSync(rel) ? JSON.parse(fs.readFileSync(rel, "utf8")) : {};
+  } catch {
+    return false; // 깨진 release.json 은 sendOutbox 가 알린다
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data) || data.privacyPolicyDraft) return false;
+  data.privacyPolicyDraft = policy;
+  fs.writeFileSync(rel, JSON.stringify(data, null, 2));
+  return true;
+}
+
+// 이 일감이 보낸 release.json(.factory/outbox/sent/<jobId>-release.json). 없으면 null
+export function sentRelease(dir, jobId) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, ".factory", "outbox", "sent", `${jobId}-release.json`), "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 // Claude 가 남긴 .factory/fail.json (출시 일감에서 단계 실패를 알리는 파일). 없으면 null
@@ -191,7 +225,7 @@ export function findKeytool() {
  */
 export function prepareReleaseKey({ job, dir, secrets, log }) {
   const k = job.release?.key;
-  if (job.release?.kind !== "first" || !k) return { ok: true, env: {}, secrets: [], note: null };
+  if (!["first", "update"].includes(job.release?.kind) || !k) return { ok: true, env: {}, secrets: [], note: null };
   const own = appKeyProperties(dir);
   if (own) return { ok: true, env: {}, secrets: [], note: `앱 자체 키 설정(${path.relative(dir, own)})을 그대로 써요(건드리지 않음).` };
 

@@ -348,6 +348,52 @@ export function storeReport(check) {
   };
 }
 
+// ───────── 검토용 홍보 영상 (통제실에서 재생, 관리자만) ─────────
+
+export const REVIEW_VIDEO_MAX = 50 * 1024 * 1024;
+const REVIEW_CHUNK = 8 * 1024 * 1024;
+
+/**
+ * 검토용 영상을 서버에 조각으로 올린다. 50MB 가 넘으면 ffmpeg 로 줄인 사본(.factory/store/review-preview.mp4)을 올리고,
+ * 그래도 크거나 ffmpeg 가 없으면 올리지 않고 'PC 에서 직접 확인' 안내를 돌려준다. 원본 promo.mp4 는 건드리지 않는다.
+ * 돌려주는 값: { ok, note }
+ */
+export async function uploadReviewVideo({ video, job, api, log }) {
+  if (!video?.path) return { ok: false, note: "영상 없음(영상 단계 건너뜀)" };
+  let file = video.path;
+  let size = fs.statSync(file).size;
+  if (size > REVIEW_VIDEO_MAX) {
+    const ffmpeg = onPath("ffmpeg");
+    const out = path.join(path.dirname(file), "review-preview.mp4");
+    if (!ffmpeg) return { ok: false, note: `영상이 ${Math.round(size / 1024 / 1024)}MB 라 너무 커요(50MB 이하만). ffmpeg 가 없어 줄이지 못했어요. PC 에서 직접 확인: ${file}` };
+    log?.(`검토 영상이 ${Math.round(size / 1024 / 1024)}MB 라 ffmpeg 로 줄여요`);
+    const r = spawnSync(ffmpeg, ["-y", "-i", file, "-vf", "scale='min(1280,iw)':-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", out], {
+      encoding: "utf8",
+      shell: false,
+      timeout: 10 * 60_000,
+      windowsHide: true,
+    });
+    if (r.status !== 0 || !fs.existsSync(out)) return { ok: false, note: `영상을 줄이지 못했어요(ffmpeg). PC 에서 직접 확인: ${file}` };
+    file = out;
+    size = fs.statSync(out).size;
+    if (size > REVIEW_VIDEO_MAX) return { ok: false, note: `줄여도 ${Math.round(size / 1024 / 1024)}MB 라 너무 커요. PC 에서 직접 확인: ${video.path}` };
+  }
+  const count = Math.ceil(size / REVIEW_CHUNK);
+  const fd = fs.openSync(file, "r");
+  try {
+    for (let idx = 0; idx < count; idx++) {
+      const len = Math.min(REVIEW_CHUNK, size - idx * REVIEW_CHUNK);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, idx * REVIEW_CHUNK);
+      const r = await api("PUT", `/api/factory/review-video?jobId=${encodeURIComponent(job.id)}&idx=${idx}&count=${count}&size=${size}`, buf);
+      if (r.status !== 200) return { ok: false, note: `검토 영상 올리기 거절(${r.status}): ${r.data?.message ?? ""}. PC 에서 직접 확인: ${video.path}` };
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return { ok: true, note: `검토 영상을 올렸어요(${Math.round(size / 1024 / 1024 * 10) / 10}MB${file !== video.path ? ", 줄인 사본" : ""}). 통제실에서 재생할 수 있어요(결정 뒤·7일 뒤 지워져요).` };
+}
+
 // ───────── Play Developer API ─────────
 
 const API = () => (process.env.FACTORY_PLAY_API_BASE || "https://androidpublisher.googleapis.com").replace(/\/+$/, "");
@@ -523,8 +569,11 @@ export async function playUploadStore({ play, check, log, items = null }) {
   });
 }
 
-/** 업데이트 AAB → 비공개 테스트 트랙. 초안 앱이면 초안(draft)으로 한 번 더 */
-export async function playUploadAab({ play, aabPath, log }) {
+/**
+ * 업데이트 AAB → 비공개 테스트 트랙. 초안 앱이면 초안(draft)으로 한 번 더.
+ * releaseNotes: { "ko-KR": "출시 노트" } (앱 업데이트의 What's new, 언어별 500자 이내. 없으면 넣지 않음)
+ */
+export async function playUploadAab({ play, aabPath, log, releaseNotes = null }) {
   const ctx = { packageName: play.packageName, track: play.track };
   const { token } = await playToken(play.serviceAccountKeyPath);
   const c = client(token, play.packageName, ctx);
@@ -536,9 +585,12 @@ export async function playUploadAab({ play, aabPath, log }) {
     });
     const versionCode = b.versionCode;
     log?.(`AAB 올림(버전 코드 ${versionCode}) → ${play.track} 트랙에 출시 등록`);
+    const notes = Object.entries(releaseNotes && typeof releaseNotes === "object" ? releaseNotes : {})
+      .filter(([lang, text]) => LANG_RE.test(lang) && typeof text === "string" && text.trim())
+      .map(([language, text]) => ({ language, text: [...text.trim()].slice(0, 500).join("") }));
     const put = (status) =>
       c.call("PUT", `${c.base}/edits/${editId}/tracks/${encodeURIComponent(play.track)}`, {
-        json: { track: play.track, releases: [{ versionCodes: [String(versionCode)], status }] },
+        json: { track: play.track, releases: [{ versionCodes: [String(versionCode)], status, ...(notes.length ? { releaseNotes: notes } : {}) }] },
       });
     let status = "completed";
     try {
