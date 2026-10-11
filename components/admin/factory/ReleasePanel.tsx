@@ -78,7 +78,21 @@ function PackageView({ pkg }: { pkg: Record<string, unknown> }) {
   );
 }
 
-function AppRow({ app, data, onSaved }: { app: ReleaseApp; data: ReleaseOverview; onSaved: (d: Partial<ReleaseOverview>) => void }) {
+const REMOVE_CONFIRM = "출시 패키지 목록에서 지울까요? 앱 소스와 PC 의 파일은 지워지지 않아요";
+
+function AppRow({
+  app,
+  data,
+  selected,
+  onSelect,
+  onSaved,
+}: {
+  app: ReleaseApp;
+  data: ReleaseOverview;
+  selected: boolean;
+  onSelect: (v: boolean) => void;
+  onSaved: (d: Partial<ReleaseOverview>) => void;
+}) {
   const [acc, setAcc] = useState(app.releaseAccountId ?? "");
   const [status, setStatus] = useState(app.releaseStatus);
   const [pkgName, setPkgName] = useState(app.packageName ?? "");
@@ -103,11 +117,20 @@ function AppRow({ app, data, onSaved }: { app: ReleaseApp; data: ReleaseOverview
   return (
     <Card>
       <CardHeader className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate font-semibold">{app.title}</div>
-          <div className="text-xs text-default-500">
-            {app.appSlug} · {app.stack}
-            {account ? ` · 계정 ${account.label}(${account.name})` : " · 계정 미정"}
+        <div className="flex min-w-0 items-center gap-2">
+          <input
+            aria-label={`${app.appSlug} 선택`}
+            checked={selected}
+            disabled={app.active}
+            type="checkbox"
+            onChange={(e) => onSelect(e.target.checked)}
+          />
+          <div className="min-w-0">
+            <div className="truncate font-semibold">{app.title}</div>
+            <div className="text-xs text-default-500">
+              {app.appSlug} · {app.stack}
+              {account ? ` · 계정 ${account.label}(${account.name})` : " · 계정 미정"}
+            </div>
           </div>
         </div>
         <Chip color={app.releaseStatus === "released" ? "success" : app.releaseStatus === "testing" ? "warning" : "default"} size="sm" variant="flat">
@@ -160,8 +183,20 @@ function AppRow({ app, data, onSaved }: { app: ReleaseApp; data: ReleaseOverview
             <input checked={runNow} type="checkbox" onChange={(e) => setRunNow(e.target.checked)} />
             바로 승인
           </label>
+          <Button
+            className="min-h-11 sm:min-h-0"
+            color="danger"
+            isDisabled={busy || app.active}
+            size="sm"
+            variant="light"
+            onPress={() => {
+              if (window.confirm(`이 앱을 ${REMOVE_CONFIRM}`)) call({ action: "removeApps", appSlugs: [app.appSlug] });
+            }}
+          >
+            삭제
+          </Button>
           {!app.releaseAccountId && <span className="text-xs text-default-500">계정을 골라 저장하면 보낼 수 있어요</span>}
-          {app.active && <span className="text-xs text-default-500">이 앱에 진행 중인 일감이 있어요</span>}
+          {app.active && <span className="text-xs text-default-500">진행 중 일감이 있어요(삭제할 수 없어요)</span>}
         </div>
         {notice && <p className="text-sm text-default-600">{notice}</p>}
 
@@ -198,6 +233,9 @@ function AppRow({ app, data, onSaved }: { app: ReleaseApp; data: ReleaseOverview
 
 export default function ReleasePanel() {
   const [data, setData] = useState<ReleaseOverview | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -216,9 +254,36 @@ export default function ReleasePanel() {
   if (!data) return <p className="text-sm text-default-500">읽는 중…</p>;
 
   const apps = data.apps.filter((a) => a.done);
+  const picked = apps.filter((a) => selected.includes(a.appSlug) && !a.active).map((a) => a.appSlug);
+  const onSaved = (d: Partial<ReleaseOverview>) => {
+    if (d.apps && d.accounts) {
+      setData(d as ReleaseOverview);
+      setSelected((s) => s.filter((x) => d.apps?.some((a) => a.appSlug === x)));
+    } else load();
+    // 지운 앱의 행은 사라지니, 그 결과는 목록 위에 보여 준다
+    if (d.apps && apps.some((a) => !d.apps?.some((x) => x.appSlug === a.appSlug))) setNotice(d.message ?? null);
+  };
+  const removePicked = async () => {
+    if (!picked.length || !window.confirm(`${picked.length}개 앱을 ${REMOVE_CONFIRM}\n\n${picked.join(", ")}`)) return;
+    setBusy(true);
+    const { data: d } = await postRelease({ action: "removeApps", appSlugs: picked });
+
+    onSaved(d);
+    setNotice(d.message ?? "처리하지 못했어요.");
+    setBusy(false);
+  };
 
   return (
     <div className="space-y-4">
+      {apps.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button color="danger" isDisabled={busy || picked.length === 0} size="sm" variant="flat" onPress={removePicked}>
+            선택 삭제{picked.length ? ` (${picked.length})` : ""}
+          </Button>
+          <span className="text-xs text-default-500">출시 패키지 목록에서만 빠져요. 앱 소스·지시 기록·PC 의 AAB·키 파일은 그대로예요.</span>
+          {notice && <span className="text-sm text-default-600">{notice}</span>}
+        </div>
+      )}
       {data.accounts.length === 0 && (
         <Card>
           <CardBody className="text-sm">
@@ -234,10 +299,9 @@ export default function ReleasePanel() {
             key={a.appSlug}
             app={a}
             data={data}
-            onSaved={(d) => {
-              if (d.apps && d.accounts) setData(d as ReleaseOverview);
-              else load();
-            }}
+            selected={selected.includes(a.appSlug)}
+            onSaved={onSaved}
+            onSelect={(v) => setSelected((s) => (v ? [...s, a.appSlug] : s.filter((x) => x !== a.appSlug)))}
           />
         ))
       )}

@@ -5,7 +5,7 @@
 // - 앱별 출시 상태와, 출시 준비 일감(kind=release)이 만든 패키지(스토어 문구·데이터 보안·콘텐츠 등급·체크리스트·방침 초안·AAB 정보).
 // - AAB 파일은 PC 에만 있고, 여기에는 경로·크기·버전·빌드 시각만 남는다.
 // - 계정이 비공개 테스트가 필요하면(requiresTesting) 테스트 시작일·완료 예정일(14일)을 기록하고 텔레그램으로 알린다.
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { notifyText } from "@/lib/factory/telegram";
@@ -175,7 +175,7 @@ export async function releaseOverview() {
     prisma.factoryApp.findMany(),
     prisma.factoryJob.findMany({
       orderBy: { createdAt: "desc" },
-      select: { id: true, appSlug: true, title: true, kind: true, stack: true, status: true, finishedAt: true },
+      select: { id: true, appSlug: true, title: true, kind: true, stack: true, status: true, createdAt: true, finishedAt: true },
     }),
     getPcPathStatus(),
     prisma.factorySecretName.findMany({ select: { name: true } }),
@@ -190,7 +190,11 @@ export async function releaseOverview() {
     seen.add(j.appSlug);
     const mine = jobs.filter((x) => x.appSlug === j.appSlug);
     const app = appBySlug.get(j.appSlug);
-    const lastRelease = mine.find((x) => x.kind === "release") ?? null;
+    const removedAt = app?.releaseRemovedAt ?? null;
+
+    // 목록에서 지운 앱은 그 뒤에 새 일감이 생기기 전까지 숨긴다(지시 기록은 그대로 남아 있다)
+    if (removedAt && !mine.some((x) => x.createdAt > removedAt)) continue;
+    const lastRelease = mine.find((x) => x.kind === "release" && (!removedAt || x.createdAt > removedAt)) ?? null;
 
     rows.push({
       appSlug: j.appSlug,
@@ -285,6 +289,42 @@ export async function updateAppRelease(appSlug: string, input: AppReleaseInput):
   }
 
   return { ok: true, status: 200, message: startedTesting ? `저장했어요. 비공개 테스트 완료 예정일: ${TESTING_DAYS}일 뒤` : "저장했어요." };
+}
+
+/**
+ * 출시 패키지 목록에서 지운다. 출시 쪽 데이터(상태·배포 계정·패키지 이름·테스트 일정·패키지·AAB 정보)만 비우고
+ * 숨김 표시를 남긴다. 공장 지시 기록·홈페이지 프로젝트 연결·앱 소스·PC 파일(AAB·키)은 건드리지 않는다.
+ */
+export async function removeAppRelease(appSlugs: string[]): Promise<{ ok: boolean; status: number; message: string }> {
+  const slugs = [...new Set(appSlugs)];
+
+  if (slugs.length === 0) return { ok: false, status: 400, message: "지울 앱을 고르세요." };
+  const jobs = await prisma.factoryJob.findMany({ where: { appSlug: { in: slugs } }, select: { appSlug: true, status: true } });
+  const missing = slugs.filter((s) => !jobs.some((j) => j.appSlug === s));
+
+  if (missing.length) return { ok: false, status: 404, message: `그런 공장 앱이 없어요: ${missing.join(", ")}` };
+  const busy = slugs.filter((s) => jobs.some((j) => j.appSlug === s && ["pending", "approved", "running"].includes(j.status)));
+
+  if (busy.length) return { ok: false, status: 409, message: `진행 중 일감이 있어요: ${busy.join(", ")}` };
+
+  const data = {
+    releaseAccountId: null,
+    releaseStatus: "preparing",
+    packageName: null,
+    firstUploadDone: false,
+    testingStartedAt: null,
+    testingDueAt: null,
+    testingNotifiedAt: null,
+    releasePackage: Prisma.DbNull,
+    releasePackageAt: null,
+    releasePackageJob: null,
+    aab: Prisma.DbNull,
+    releaseRemovedAt: new Date(),
+  };
+
+  await prisma.$transaction(slugs.map((appSlug) => prisma.factoryApp.upsert({ where: { appSlug }, create: { appSlug, ...data }, update: data })));
+
+  return { ok: true, status: 200, message: `출시 패키지 목록에서 지웠어요: ${slugs.join(", ")}` };
 }
 
 /** 완료 예정일이 지난 비공개 테스트를 한 번씩 알린다. /next 에서 가끔 부른다. 던지지 않는다. */

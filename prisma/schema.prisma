@@ -653,7 +653,8 @@ model FactoryApp {
   releasePackageAt  DateTime?
   releasePackageJob String? // 그 패키지를 만든 일감 id
   aab               Json? // { path, size, versionName, versionCode, builtAt } (파일은 PC 에만 있다)
-  releaseAccount    FactoryReleaseAccount? @relation(fields: [releaseAccountId], references: [id], onDelete: SetNull)
+  releaseRemovedAt  DateTime? // 출시 패키지 목록에서 지운 시각. 이후 새 일감이 생기면 다시 보인다
+  releaseAccount   FactoryReleaseAccount? @relation(fields: [releaseAccountId], references: [id], onDelete: SetNull)
 
   @@map("factory_apps")
 }
