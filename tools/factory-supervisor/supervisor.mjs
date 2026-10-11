@@ -12,6 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { Readable } from "node:stream";
 import { createInterface } from "node:readline/promises";
 import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard } from "./update.mjs";
 import {
@@ -125,10 +126,18 @@ async function init() {
 // ───────────── 홈페이지 호출 ─────────────
 let cfg;
 
-async function api(method, pathname, body) {
+async function api(method, pathname, body, { timeoutMs = 60_000 } = {}) {
   const headers = { Authorization: `Bearer ${cfg.token}` };
+  const extra = {};
   let payload;
   if (body instanceof FormData) payload = body;
+  else if (body && typeof body === "object" && typeof body.streamFile === "string") {
+    // 큰 파일(검토 영상): 메모리에 통째로 올리지 않고 파일에서 흘려 보낸다
+    headers["Content-Type"] = body.type || "application/octet-stream";
+    headers["Content-Length"] = String(body.size);
+    payload = Readable.toWeb(fs.createReadStream(body.streamFile));
+    extra.duplex = "half";
+  }
   else if (body instanceof Uint8Array) {
     headers["Content-Type"] = "application/octet-stream"; // 검토 영상 조각
     payload = body;
@@ -136,7 +145,7 @@ async function api(method, pathname, body) {
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
-  const res = await fetch(cfg.serverUrl + pathname, { method, headers, body: payload, signal: AbortSignal.timeout(60_000) });
+  const res = await fetch(cfg.serverUrl + pathname, { method, headers, body: payload, ...extra, signal: AbortSignal.timeout(timeoutMs) });
   let data = null;
   try {
     data = await res.json();

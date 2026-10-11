@@ -1,7 +1,8 @@
 // 앱 공장 감독 프로그램: 출시 2단계(스토어 자료·Play 업로드)
 // - 스토어 자료 기준 폴더: 앱 폴더 .factory/store/ (icon-512.png, feature-1024x500.png, screenshots/phone-01..08.png|jpg, promo.mp4, listing.json, status.json)
-//   Claude 가 만든 파일을 여기서 검사한다(크기·비율·알파·글자 수). 영상은 길이만 읽고 서버로 보내지 않는다.
-// - 홈페이지로는 고정 이미지 칸(아이콘, 대표 이미지, 폰 스크린샷 png/jpg)만 /api/factory/store-image 로, 검사 결과는 /api/factory/store-assets 로 보낸다.
+//   Claude 가 만든 파일을 여기서 검사한다(크기·비율·알파·글자 수). 영상은 길이를 읽고, 검토 단계가 있으면 검토용 사본만 올린다.
+// - 홈페이지로는 고정 이미지 칸(아이콘, 대표 이미지, 폰 스크린샷 png/jpg)만 /api/factory/store-image 로, 검토용 영상은 /api/factory/store-video 로
+//   (둘 다 홈페이지가 업로드 서버 /upload/single 에 전달), 검사 결과는 /api/factory/store-assets 로 보낸다.
 // - Play Developer API(androidpublisher v3): 서비스 계정 키(JSON, PC 경로)로 토큰을 받아
 //   스토어 자료 수정 = edits 열기 → 등록정보(제목·짧은/긴 설명·영상 URL) → 이미지 종류별 통째 교체(deleteall → upload) → 커밋,
 //   첫 출시(최초 업로드 뒤) = 업데이트 AAB 를 비공개 테스트 트랙(alpha)에 올림. 프로덕션 트랙은 건드리지 않는다.
@@ -348,36 +349,84 @@ export function storeReport(check) {
   };
 }
 
-// ───────── 검토용 홍보 영상 (통제실에서 재생, 관리자만) ─────────
+// ───────── 검토용 홍보 영상 (통제실에서 재생) ─────────
 
+// 서버 app/api/factory/store-video 의 MAX_VIDEO 와 같다(업로드 서버로 전달)
+export const STORE_VIDEO_MAX = 120 * 1024 * 1024;
+// 예전 방식(홈페이지 DB 에 8MB 조각, /api/factory/review-video): 홈페이지가 아직 store-video 를 모를 때만
 export const REVIEW_VIDEO_MAX = 50 * 1024 * 1024;
 const REVIEW_CHUNK = 8 * 1024 * 1024;
+const MB = (n) => Math.round((n / 1024 / 1024) * 10) / 10;
 
 /**
- * 검토용 영상을 서버에 조각으로 올린다. 50MB 가 넘으면 ffmpeg 로 줄인 사본(.factory/store/review-preview.mp4)을 올리고,
- * 그래도 크거나 ffmpeg 가 없으면 올리지 않고 'PC 에서 직접 확인' 안내를 돌려준다. 원본 promo.mp4 는 건드리지 않는다.
- * 돌려주는 값: { ok, note }
+ * limit 이 넘으면 ffmpeg 로 줄인 사본(.factory/store/review-preview.mp4)을 만든다. 원본 promo.mp4 는 건드리지 않는다.
+ * 돌려주는 값: { file, size } 또는 { note }(못 줄임)
+ */
+function fitVideo(src, limit, log) {
+  const size = fs.statSync(src).size;
+  if (size <= limit) return { file: src, size };
+  const out = path.join(path.dirname(src), "review-preview.mp4");
+  if (fs.existsSync(out)) {
+    const s = fs.statSync(out);
+    if (s.mtimeMs >= fs.statSync(src).mtimeMs && s.size > 0 && s.size <= limit) return { file: out, size: s.size };
+  }
+  const ffmpeg = onPath("ffmpeg");
+  if (!ffmpeg) return { note: `영상이 ${MB(size)}MB 라 너무 커요(${MB(limit)}MB 이하만). ffmpeg 가 없어 줄이지 못했어요. 너무 커서 PC 에서 직접 확인: ${src}` };
+  log?.(`검토 영상이 ${MB(size)}MB 라 ffmpeg 로 줄여요`);
+  const r = spawnSync(ffmpeg, ["-y", "-i", src, "-vf", "scale='min(1280,iw)':-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", out], {
+    encoding: "utf8",
+    shell: false,
+    timeout: 10 * 60_000,
+    windowsHide: true,
+  });
+  if (r.status !== 0 || !fs.existsSync(out)) return { note: `영상을 줄이지 못했어요(ffmpeg). PC 에서 직접 확인: ${src}` };
+  const small = fs.statSync(out).size;
+  if (small > limit) return { note: `줄여도 ${MB(small)}MB 라 너무 커요. PC 에서 직접 확인: ${src}` };
+  return { file: out, size: small };
+}
+
+/** mp4 인지(4~8바이트 'ftyp'). 서버도 같은 검사를 한다 */
+function isMp4(file) {
+  const fd = fs.openSync(file, "r");
+  try {
+    const b = Buffer.alloc(12);
+    return fs.readSync(fd, b, 0, 12, 0) === 12 && b.toString("latin1", 4, 8) === "ftyp";
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * 검토용 영상을 올린다: 홈페이지 /api/factory/store-video 가 업로드 서버(이미지와 같은 곳)에 전달하고 주소를 저장한다(120MB 이하,
+ * 넘으면 ffmpeg 로 줄인 사본). 홈페이지가 아직 예전 버전이라 store-video 가 없으면 예전 방식(DB 조각, 50MB 이하)으로 올린다.
+ * 못 올리면 'PC 에서 직접 확인' 안내를 돌려준다. 돌려주는 값: { ok, note }
  */
 export async function uploadReviewVideo({ video, job, api, log }) {
   if (!video?.path) return { ok: false, note: "영상 없음(영상 단계 건너뜀)" };
-  let file = video.path;
-  let size = fs.statSync(file).size;
-  if (size > REVIEW_VIDEO_MAX) {
-    const ffmpeg = onPath("ffmpeg");
-    const out = path.join(path.dirname(file), "review-preview.mp4");
-    if (!ffmpeg) return { ok: false, note: `영상이 ${Math.round(size / 1024 / 1024)}MB 라 너무 커요(50MB 이하만). ffmpeg 가 없어 줄이지 못했어요. PC 에서 직접 확인: ${file}` };
-    log?.(`검토 영상이 ${Math.round(size / 1024 / 1024)}MB 라 ffmpeg 로 줄여요`);
-    const r = spawnSync(ffmpeg, ["-y", "-i", file, "-vf", "scale='min(1280,iw)':-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", out], {
-      encoding: "utf8",
-      shell: false,
-      timeout: 10 * 60_000,
-      windowsHide: true,
-    });
-    if (r.status !== 0 || !fs.existsSync(out)) return { ok: false, note: `영상을 줄이지 못했어요(ffmpeg). PC 에서 직접 확인: ${file}` };
-    file = out;
-    size = fs.statSync(out).size;
-    if (size > REVIEW_VIDEO_MAX) return { ok: false, note: `줄여도 ${Math.round(size / 1024 / 1024)}MB 라 너무 커요. PC 에서 직접 확인: ${video.path}` };
+  if (!isMp4(video.path)) return { ok: false, note: `mp4 형식이 아니라 올리지 않았어요. PC 에서 직접 확인: ${video.path}` };
+  const fit = fitVideo(video.path, STORE_VIDEO_MAX, log);
+  if (fit.note) return { ok: false, note: fit.note };
+  let r;
+  try {
+    r = await api("POST", `/api/factory/store-video?jobId=${encodeURIComponent(job.id)}`, { streamFile: fit.file, size: fit.size, type: "video/mp4" }, { timeoutMs: 15 * 60_000 });
+  } catch (e) {
+    return { ok: false, note: `검토 영상 올리기 오류: ${e.message}. PC 에서 직접 확인: ${video.path}` };
   }
+  const shrunk = fit.file !== video.path ? ", 줄인 사본" : "";
+  if (r.status === 200) return { ok: true, note: `검토 영상을 업로드 서버에 올렸어요(${MB(fit.size)}MB${shrunk}). 통제실에서 재생할 수 있어요(업로드 서버에 남아요).` };
+  // 홈페이지 응답이 아닌 404·413(라우트 없음·프록시 용량 제한): 예전 방식으로
+  if (!((r.status === 404 || r.status === 413) && !r.data?.message)) {
+    return { ok: false, note: `검토 영상 올리기 거절(${r.status}): ${r.data?.message ?? ""}. PC 에서 직접 확인: ${video.path}` };
+  }
+  log?.(`홈페이지가 store-video 를 받지 못해(${r.status}) 예전 방식(조각)으로 올려요`);
+  return uploadReviewVideoChunks({ video, job, api, log });
+}
+
+// 예전 방식: 홈페이지 DB 에 8MB 조각으로(관리자만 재생, 결정 뒤·7일 뒤 삭제)
+async function uploadReviewVideoChunks({ video, job, api, log }) {
+  const fit = fitVideo(video.path, REVIEW_VIDEO_MAX, log);
+  if (fit.note) return { ok: false, note: fit.note };
+  const { file, size } = fit;
   const count = Math.ceil(size / REVIEW_CHUNK);
   const fd = fs.openSync(file, "r");
   try {
@@ -391,7 +440,7 @@ export async function uploadReviewVideo({ video, job, api, log }) {
   } finally {
     fs.closeSync(fd);
   }
-  return { ok: true, note: `검토 영상을 올렸어요(${Math.round(size / 1024 / 1024 * 10) / 10}MB${file !== video.path ? ", 줄인 사본" : ""}). 통제실에서 재생할 수 있어요(결정 뒤·7일 뒤 지워져요).` };
+  return { ok: true, note: `검토 영상을 올렸어요(${MB(size)}MB${file !== video.path ? ", 줄인 사본" : ""}). 통제실에서 재생할 수 있어요(결정 뒤·7일 뒤 지워져요).` };
 }
 
 // ───────── Play Developer API ─────────

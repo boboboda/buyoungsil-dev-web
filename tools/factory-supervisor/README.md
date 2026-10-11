@@ -78,8 +78,10 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 
 ## 출시 검토 대기·앱 업데이트 (`job.release.review`, 출시 3단계)
 - 첫 출시·스토어 수정(`review.required`)은 자료를 만든 뒤 검사하고, 검토에 필요한 것만 올린 뒤 `status: "review"` 로 보고해요(작업 PC 는 놓아줌):
-  스토어 이미지(검토 화면용), 스토어 자료 결과, `release.json`(+ project.json 의 방침을 `privacyPolicyDraft` 로), 검토 영상(`/api/factory/review-video`, 8MB 조각,
-  50MB 가 넘으면 ffmpeg 로 줄인 `review-preview.mp4`, 그래도 크면 'PC 에서 직접 확인'). project.json 은 보내지 않고 PC 에 둬요.
+  스토어 이미지(검토 화면용), 스토어 자료 결과, `release.json`(+ project.json 의 방침을 `privacyPolicyDraft` 로), 검토 영상(`/api/factory/store-video`, mp4 원본 바이트를 흘려 보냄 →
+  홈페이지가 이미지와 같은 업로드 서버 `/upload/single` 에 전달. 120MB 가 넘으면 ffmpeg 로 줄인 `review-preview.mp4`, ffmpeg 가 없거나 그래도 크면 'PC 에서 직접 확인'.
+  업로드 서버에 삭제 API 가 없어 검토 영상은 서버에 남아요(주소를 아는 사람만 접근). 홈페이지가 아직 store-video 를 모르면 예전 방식 `/api/factory/review-video`(8MB 조각, 50MB)).
+  project.json 은 보내지 않고 PC 에 둬요.
 - `review.approved` 가 true 일 때만 반영 단계(Play 업로드·홈페이지·완료)를 해요. 서버가 upload 부터라고 줘도 승인 전이면 검토 대기로만 보내요.
 - `review.redoNote`(다시 만들기 메모)는 RELEASE_REQUEST.md 끝에 붙여 그 항목만 다시 만들어요(.factory/store/status.json 은 남김).
 - 검토가 있는 첫 출시는 Play 에 올리지 않아요(최초 AAB 는 사람이 Console 에). 승인 뒤 홈페이지 빈 칸 채우기와 AAB 위치 안내.
@@ -92,7 +94,7 @@ node supervisor.mjs      # 끄려면 Ctrl+C
   `listing.json`, `status.json`(건너뜀 이유·확인한 도구)을 만들어요. 지시문 끝에 이 PC 환경(Android SDK·emulator·adb·AVD·Node·ffmpeg·Chrome)을 붙여 줘요.
 - 끝나면 감독 프로그램이 검사해요(크기·비율·알파·용량·글자 수, 영상은 mp4 길이만). 단계: 아이콘·대표 이미지(icon) / 스크린샷(screenshots) / 영상(video) / 문구(listing) / 업로드(upload) / 홈페이지 반영(homepage).
   스크린샷이 없으면 '스크린샷 단계 건너뜀 - 직접 올려야 함', 영상이 없으면 '영상 단계 건너뜀'(실패 아님).
-- 홈페이지로는 고정 칸 이미지만 `/api/factory/store-image`(icon, feature, phone-01..08, png/jpg)로, 검사 결과는 `/api/factory/store-assets` 로 보내요. 영상 파일은 보내지 않아요(경로·크기·길이만).
+- 홈페이지로는 고정 칸 이미지만 `/api/factory/store-image`(icon, feature, phone-01..08, png/jpg)로, 검사 결과는 `/api/factory/store-assets` 로 보내요. 영상 원본은 보내지 않아요(경로·크기·길이만. 검토 단계가 있으면 검토용 사본만 위처럼).
 - Play Developer API: 서비스 계정 JSON 으로 토큰(JWT) → edits 열기 → 언어별 등록정보(제목·짧은/긴 설명·영상 링크) → 이미지 종류별 통째 교체(deleteall → upload) → 커밋.
   커밋은 `changesInReviewBehavior=ERROR_IF_IN_REVIEW`(진행 중인 검토를 취소하지 않음). "자동으로 검토에 보낼 수 없음"이면 `changesNotSentForReview=true` 로 다시 커밋하고 Console 에서 검토 보내기를 하라고 알려요.
 - 첫 출시(`first`): 최초 업로드를 마친 앱이면 outbox release.json 의 서명 AAB 를 비공개 테스트 트랙(`alpha`)에 올려요(초안 앱이면 draft). 프로덕션 트랙은 건드리지 않아요.
