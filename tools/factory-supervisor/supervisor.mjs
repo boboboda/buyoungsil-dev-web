@@ -333,7 +333,7 @@ function promptFor(job) {
   // 홈페이지가 보낸 첫 지시문이 있으면 그걸 쓴다
   if (typeof job.prompt === "string" && job.prompt.trim() && job.prompt.length <= 4000) return job.prompt.trim();
   if (job.kind === "release") {
-    return "RELEASE_REQUEST.md 에 적힌 출시 준비를 하세요. 앱 기능은 바꾸지 말고, CLAUDE.md 작업 규칙의 '출시 준비' 형식대로 .factory/outbox/ 에 결과를 저장하세요.";
+    return "RELEASE_REQUEST.md 에 적힌 출시 일감을 하세요. '앱 업데이트'가 아니면 앱 기능은 바꾸지 말고, CLAUDE.md 작업 규칙의 '출시 준비' 형식대로 .factory/outbox/ 에 결과를 저장하세요.";
   }
   if (job.kind === "revision") {
     return "CHANGE_REQUEST.md 에 적힌 수정 내용만 이 앱에 반영하세요. 기존 기획은 PLAN.md 를 참고하되 요청 밖의 부분은 바꾸지 마세요. CLAUDE.md 의 작업 규칙을 따르세요.";

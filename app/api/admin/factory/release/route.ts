@@ -28,6 +28,7 @@ import {
   removeAppRelease,
   requestKeyScan,
   retryRelease,
+  reviewDecision,
   saveReleaseAccount,
   updateAppRelease,
 } from "@/lib/factory/release";
@@ -61,11 +62,13 @@ async function keyTarget(body: Record<string, unknown>) {
 }
 
 // 본문: { action: "saveAccount", ...계정 } | { action: "updateApp", appSlug, releaseAccountId?, releaseStatus?, packageName?, firstUploadDone?, customKeystorePath?, customKeyAlias? }
-//       | { action: "enqueueRelease", appSlug, kind?: first|store|project, runNow?, overwriteProject? }  (통제실 '승인'은 runNow: true 로 일감 생성 + 승인.
+//       | { action: "enqueueRelease", appSlug, kind?: first|store|update(|project 예전), runNow?, overwriteProject? }  (통제실 '승인'은 runNow: true 로 일감 생성 + 승인.
 //         overwriteProject: store/project 만, 홈페이지 프로젝트 기존 값도 덮어쓰기. 기본 꺼짐.
 //         updateItems: store/project 는 필수(1개 이상). store=images|listing|video|privacy, project=description|cover|privacy)
 //       | { action: "savePromoVideo", appSlug, url }  (홍보 영상 YouTube 링크. 빈 값이면 지움)
 //       | { action: "retryRelease", jobId }  (실패한 단계부터 다시)
+//       | { action: "reviewDecision", jobId, decision: approve|redo|cancel, note? }  (검토 대기 결정. redo 는 note 필수)
+//       enqueueRelease 의 kind=update(앱 업데이트)는 updateText(필수)·versionName·releaseNotes 를 함께 보낸다
 //       | { action: "setKeyPassword", keyId | accountId | appSlug, storePassword, keyPassword? }
 //       키 보관함: { action: "vaultCreate", name, keystorePath?, keyAlias?, dname?, description?, password, password2 }  (PC 가 keytool 로 만듦, 있으면 덮어쓰지 않음)
 //                | { action: "vaultRegister", name, kind?, keystorePath, keyAlias?, description?, production?, storePassword, keyPassword? }  (등록만)
@@ -107,6 +110,8 @@ export async function POST(req: NextRequest) {
       source: "통제실 출시 패키지",
       overwriteProject: body?.overwriteProject === true,
       ...(UPDATE_ITEMS[kind] ? { updateItems: body?.updateItems } : {}),
+      // 앱 업데이트(기능 추가) 입력
+      ...(kind === "update" ? { updateText: body?.updateText, versionName: body?.versionName, releaseNotes: body?.releaseNotes } : {}),
     });
     const message = r.content[0]?.text ?? "";
 
@@ -123,6 +128,11 @@ export async function POST(req: NextRequest) {
   } else if (action === "savePromoVideo") {
     if (!APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 가 올바르지 않아요." }, { status: 400 });
     res = await savePromoVideoUrl(appSlug, body?.url ?? null);
+  } else if (action === "reviewDecision") {
+    const jobId = typeof body?.jobId === "string" ? body.jobId : "";
+
+    if (!ID_RE.test(jobId)) return NextResponse.json({ message: "jobId 가 올바르지 않아요." }, { status: 400 });
+    res = await reviewDecision(jobId, body?.decision, body?.note);
   } else if (action === "retryRelease") {
     const jobId = typeof body?.jobId === "string" ? body.jobId : "";
 
@@ -160,7 +170,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         message:
-          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
+          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, reviewDecision, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
       },
       { status: 400 },
     );

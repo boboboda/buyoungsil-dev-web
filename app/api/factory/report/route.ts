@@ -5,6 +5,8 @@
 //   { "jobId": "cm…", "phase": "build", "logs": [ { "level": "info", "message": "빌드 시작" } ] }
 //   { "jobId": "cm…", "status": "done", "summary": "홈, 결과 화면 완료. 빌드 통과." }
 //   { "jobId": "cm…", "status": "failed", "failReason": "빌드 오류: …" }
+//   { "jobId": "cm…", "status": "review", "summary": "…" }   (출시 일감: 자료를 만들고 검토 대기로. 검토가 필요한 일감은 승인 전 done 도 review 로 둔다)
+//   완료 때 "build": { versionName, versionCode, aabPath, aabSize, tests, track, uploaded, uploadNote } (앱 업데이트 빌드 결과, 선택)
 // 응답: 200 { ok, status } / running 이 아닌 지시는 409 (취소된 경우 { cancelled: true 포함 })
 import { NextRequest, NextResponse } from "next/server";
 
@@ -34,7 +36,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 끝났거나 실패했으면 텔레그램으로 알린다. (실패해도 보고 응답에는 영향 없음)
-    if (out.status === "done" || out.status === "failed") void notifyJobEvent(parsed.value.jobId, out.status);
+    if (out.status === "done" || out.status === "failed" || out.status === "review") void notifyJobEvent(parsed.value.jobId, out.status);
 
     return NextResponse.json({ ok: true, status: out.status, leaseUntil: out.leaseUntil });
   } catch (error) {

@@ -1,12 +1,14 @@
 // 앱 공장 지시 처리 로직. 상태 전환은 모두 여기서만 한다.
 //
 // 상태: pending(등록됨) → approved(승인) → running(실행 중) → done | failed, 어느 단계에서든 cancelled.
+// 출시 일감(첫 출시·스토어 수정)은 running → review(검토 대기, 임대 없음) → 사람의 결정: 진행·다시 만들기면 approved, 취소면 cancelled.
 // running 은 임대(leaseUntil)로 관리한다. 가져갈 때와 보고할 때마다 10분씩 연장하고,
 // 만료되면 시도 횟수가 남았을 때 approved 로 되돌리고 아니면 failed 로 바꾼다.
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { ensureProjectForJob } from "@/lib/factory/project";
+import { deleteReviewVideo } from "@/lib/factory/reviewVideo";
 import { maskSecrets } from "@/lib/factory/mask";
 
 export const LEASE_MS = 10 * 60 * 1000;
@@ -42,7 +44,8 @@ export const JOB_KINDS = ["new", "revision", "release"] as const;
 export const KIND_LABELS: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비" };
 
 export const ACTIVE_STATUSES = ["pending", "approved", "running"] as const;
-export const JOB_STATUSES = ["pending", "approved", "running", "done", "failed", "cancelled"] as const;
+// review = 출시 일감(첫 출시·스토어 수정)이 자료를 만든 뒤 사람의 검토를 기다리는 중. 작업 PC 를 붙잡지 않는다(ACTIVE 아님, 임대 없음, 자동 취소 없음)
+export const JOB_STATUSES = ["pending", "approved", "running", "review", "done", "failed", "cancelled"] as const;
 export const LOG_LEVELS = ["info", "warn", "error"] as const;
 
 // 제어문자를 지우고(줄바꿈·탭은 둔다) 길이를 자른다.
@@ -127,8 +130,9 @@ export interface ReportInput {
   jobId: string;
   phase?: string | null; // undefined 이면 그대로 둔다
   logs: { level: string; message: string }[];
-  status?: "done" | "failed";
+  status?: "done" | "failed" | "review";
   summary?: string | null;
+  build?: Prisma.InputJsonObject | null; // 앱 업데이트 빌드 결과(완료 때)
   failReason?: string | null;
   failStage?: string | null; // 실패한 단계(출시 일감: key, build, sign, upload, homepage, store …)
 }
@@ -144,10 +148,10 @@ export function parseReport(body: unknown): ParseResult {
   const jobId = typeof b.jobId === "string" ? b.jobId : "";
   if (!ID_RE.test(jobId)) return { ok: false, reason: "jobId 형식이 올바르지 않습니다." };
 
-  let status: "done" | "failed" | undefined;
+  let status: "done" | "failed" | "review" | undefined;
   if (b.status !== undefined) {
-    if (b.status !== "done" && b.status !== "failed") {
-      return { ok: false, reason: "status 는 done 또는 failed 만 보낼 수 있습니다." };
+    if (b.status !== "done" && b.status !== "failed" && b.status !== "review") {
+      return { ok: false, reason: "status 는 done, failed, review 만 보낼 수 있습니다." };
     }
     status = b.status;
   }
@@ -182,7 +186,26 @@ export function parseReport(body: unknown): ParseResult {
       summary: maskSecrets(cleanText(b.summary, MAX_SUMMARY, true)),
       failReason: maskSecrets(cleanText(b.failReason, MAX_FAIL_REASON, true)),
       failStage: typeof b.failStage === "string" && /^[a-z_-]{1,40}$/.test(b.failStage) ? b.failStage : null,
+      build: cleanBuild(b.build),
     },
+  };
+}
+
+// 앱 업데이트 빌드 결과(숫자·짧은 글만)
+function cleanBuild(v: unknown): Prisma.InputJsonObject | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) && x >= 0 ? x : null);
+
+  return {
+    versionName: cleanText(r.versionName, 40),
+    versionCode: num(r.versionCode),
+    aabPath: cleanText(r.aabPath, 300),
+    aabSize: num(r.aabSize),
+    tests: maskSecrets(cleanText(r.tests, 600, true)),
+    track: cleanText(r.track, 20),
+    uploaded: r.uploaded === true,
+    uploadNote: maskSecrets(cleanText(r.uploadNote, 600, true)),
   };
 }
 
@@ -205,12 +228,27 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   const data: Prisma.FactoryJobUpdateManyMutationInput = { leaseUntil: lease };
   if (input.phase !== undefined) data.phase = input.phase;
 
-  if (input.status === "done") {
+  // 검토가 필요한 출시 일감은 [이대로 진행] 전에는 완료가 될 수 없다(완료 보고가 와도 검토 대기로 둔다)
+  let status = input.status;
+  if (status === "done" || status === "review") {
+    const job = await prisma.factoryJob.findUnique({ where: { id: input.jobId }, select: { reviewRequired: true, reviewApprovedAt: true } });
+    if (job?.reviewRequired && !job.reviewApprovedAt) status = "review";
+    else if (status === "review") status = "done"; // 검토가 없거나 이미 승인된 일감
+  }
+
+  if (status === "review") {
+    data.status = "review";
+    data.summary = input.summary ?? null;
+    data.reviewAt = now;
+    data.phase = "review";
+    data.leaseUntil = null;
+  } else if (status === "done") {
     data.status = "done";
     data.summary = input.summary ?? null;
     data.finishedAt = now;
     data.leaseUntil = null;
-  } else if (input.status === "failed") {
+    if (input.build) data.buildResult = input.build;
+  } else if (status === "failed") {
     data.status = "failed";
     data.failReason = input.failReason ?? "실패(사유 없음)";
     data.failStage = input.failStage ?? input.phase ?? null;
@@ -229,7 +267,7 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
     await trimLogs(input.jobId);
   }
 
-  return { kind: "ok", status: input.status ?? "running", leaseUntil: data.leaseUntil === null ? null : lease };
+  return { kind: "ok", status: status ?? "running", leaseUntil: data.leaseUntil === null ? null : lease };
 }
 
 // 지시당 로그는 최근 500줄만 남긴다.
@@ -297,10 +335,12 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
     }
 
     case "cancel": {
+      // 검토 대기(review) 일감도 취소할 수 있다(검토 영상은 지운다. PC 의 자료는 그대로)
       const res = await prisma.factoryJob.updateMany({
-        where: { id, status: { in: [...ACTIVE_STATUSES] } },
+        where: { id, status: { in: [...ACTIVE_STATUSES, "review"] } },
         data: { status: "cancelled", finishedAt: now, leaseUntil: null },
       });
+      if (res.count > 0) await deleteReviewVideo(id).catch(() => {});
       return res.count > 0 ? done("취소했어요.") : explainNoChange(id, "취소");
     }
 

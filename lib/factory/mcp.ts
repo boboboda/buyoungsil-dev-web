@@ -8,6 +8,7 @@ import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "
 import {
   OVERWRITE_KINDS,
   RELEASE_KIND_LABELS,
+  REVIEW_KINDS,
   buildReleasePlan,
   isReleaseKind,
   normalizeUpdateItems,
@@ -221,8 +222,10 @@ export const FACTORY_TOOLS = [
       "완성된 앱에 출시 일감을 등록합니다(승인 대기, 승인은 관리자). 지시문은 서버가 그 앱의 배포 계정 정보로 종류(kind)별로 만들어요. " +
       "first(기본, 첫 출시): 키 준비, 개인정보처리방침 초안, 스토어 문구(한/영), 데이터 보안·콘텐츠 등급 답안, 체크리스트, 서명 AAB, 홈페이지 프로젝트 빈 칸 채우기, " +
       "(최초 업로드 뒤 서비스 계정 키가 있으면) 감독 프로그램이 업데이트 AAB 를 비공개 테스트 트랙에 업로드. " +
-      "store(스토어 자료 수정): 아이콘·대표 이미지·스크린샷(에뮬레이터)·홍보 영상(HyperFrames, PC 에만)·스토어 문구를 만들고, 조건이 맞으면 Play 등록정보·이미지 업로드, 홈페이지 프로젝트 반영. " +
-      "project(프로젝트 업데이트): 홈페이지 프로젝트 정보만(AAB·Play 업로드 없음). 먼저 통제실 출시 패키지에서 배포 계정을 골라 둬야 해요. " +
+      "first 와 store 는 자료를 만든 뒤 '검토 대기'에서 관리자가 통제실에서 확인해야([이대로 진행]) Play 업로드·홈페이지 반영·완료가 돼요. " +
+      "store(스토어 수정): 고른 항목(이미지·문구·영상 링크·개인정보처리방침)을 만들고, 승인 뒤 조건이 맞으면 Play 등록정보·이미지 업로드, (overwriteProject 면) 홈페이지 프로젝트도 덮어쓰기. " +
+      "update(앱 업데이트, 기능 추가): updateText(필수) 대로 코드 수정·시험 → 버전 올림 → 서명 AAB → 최초 업로드한 앱이면 비공개 테스트 트랙 업로드(프로덕션 아님). 최초 AAB 업로드 완료가 체크된 앱만. " +
+      "project(프로젝트 업데이트)는 예전 종류(호환용). 먼저 통제실 출시 패키지에서 배포 계정을 골라 둬야 해요. " +
       "끝나면 get_factory_job 과 get_release_status 로 확인하세요.",
     inputSchema: {
       type: "object",
@@ -230,8 +233,8 @@ export const FACTORY_TOOLS = [
         appSlug: { type: "string", description: "완성된 앱 이름 (list_factory_jobs 의 appSlug)" },
         kind: {
           type: "string",
-          enum: ["first", "store", "project"],
-          description: "first=첫 출시(기본) | store=스토어 자료 수정 | project=프로젝트 업데이트",
+          enum: ["first", "store", "update", "project"],
+          description: "first=첫 출시(기본) | store=스토어 수정 | update=앱 업데이트(기능 추가) | project=프로젝트 업데이트(예전, 호환용)",
         },
         overwriteProject: {
           type: "boolean",
@@ -244,6 +247,9 @@ export const FACTORY_TOOLS = [
             "store/project 만: 갱신할 항목(고른 것만 만들고·올리고·반영). store = images(아이콘·대표 이미지·폰 스크린샷), listing(제목·짧은/긴 설명), video(홍보 영상 링크), privacy(개인정보처리방침 갱신: 홈페이지 방침 덮어쓰기). " +
             "project = description(설명·기술 스택), cover(대표 이미지), privacy. 빼면 store=images·listing·video, project=description·cover(방침은 안 건드림). 빈 배열은 안 돼요",
         },
+        updateText: { type: "string", description: "update 만(필수): 무엇을 추가·수정할지(수정 지시처럼 구체적으로)" },
+        versionName: { type: "string", description: "update 만(선택): 새 버전 이름(예: 1.3.0). 비우면 patch +1, 버전 코드는 늘 +1" },
+        releaseNotes: { type: "string", description: "update 만(선택): 출시 노트(What's new, 500자 이내). 비우면 공장이 업데이트 내용으로 초안" },
         source: { type: "string", description: "어느 대화에서 온 건지 짧게 (선택, 100자 이내)" },
       },
       required: ["appSlug"],
@@ -412,29 +418,47 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
 
   if (!APP_SLUG_RE.test(appSlug)) return text("appSlug 가 올바르지 않아요.", true);
-  if (args.kind !== undefined && !isReleaseKind(args.kind)) return text("kind 는 first, store, project 중 하나예요.", true);
+  if (args.kind !== undefined && !isReleaseKind(args.kind)) return text("kind 는 first, store, update 중 하나예요(project 는 예전 종류).", true);
   const kind = isReleaseKind(args.kind) ? args.kind : "first";
   if (args.overwriteProject !== undefined && typeof args.overwriteProject !== "boolean") return text("overwriteProject 는 true/false 예요.", true);
-  // 홈페이지 프로젝트 덮어쓰기는 스토어 자료 수정·프로젝트 업데이트만(기본 꺼짐)
+  // 홈페이지 프로젝트 덮어쓰기(앱 업데이트는 '홈페이지 프로젝트도 반영')는 store/project/update 만(기본 꺼짐)
   const overwriteProject = args.overwriteProject === true && OVERWRITE_KINDS.includes(kind);
   const items = normalizeUpdateItems(kind, args.updateItems);
 
   if ("message" in items) return text(items.message, true);
-  const plan = await buildReleasePlan(appSlug, kind, { overwriteProject, updateItems: items.items });
+  // 앱 업데이트(기능 추가): 업데이트 내용 필수, 버전 이름·출시 노트는 선택
+  let updateText = "";
+  let versionName: string | null = null;
+  let releaseNotes: string | null = null;
 
-  if ("message" in plan) return text(plan.message, true);
+  if (kind === "update") {
+    updateText = clean(args.updateText, 8000, true);
+    if (updateText.length < 10) return text("앱 업데이트는 업데이트 내용(무엇을 추가·수정할지, 10자 이상)이 필요해요.", true);
+    versionName = clean(args.versionName, 40) || null;
+    if (versionName && !/^\d+(\.\d+){1,3}([-+][0-9A-Za-z.-]+)?$/.test(versionName)) return text("버전 이름은 1.2.3 같은 형식이에요(비우면 patch +1).", true);
+    releaseNotes = clean(args.releaseNotes, 500, true) || null;
+  }
   const o = await releaseOverview();
   const app = o.apps.find((a) => a.appSlug === appSlug);
 
   if (!app?.done) return text(`${appSlug} 는 완성된 앱이 아니에요.`, true);
+  if (kind === "update" && !app.firstUploadDone) {
+    return text("먼저 첫 출시를 끝내세요(최초 AAB 를 Console 에 올리고 출시 카드에서 '최초 AAB 업로드 완료'를 체크).", true);
+  }
+  const plan = await buildReleasePlan(appSlug, kind, { overwriteProject, updateItems: items.items, updateText, versionName, releaseNotes });
+
+  if ("message" in plan) return text(plan.message, true);
 
   return enqueue({
     appSlug,
-    title: `${app.title} (${RELEASE_KIND_LABELS[kind]}${items.items.length ? `: ${updateItemsText(kind, items.items)}` : ""})`,
+    title: `${app.title} (${RELEASE_KIND_LABELS[kind]}${items.items.length ? `: ${updateItemsText(kind, items.items)}` : ""}${versionName ? ` ${versionName}` : ""})`,
     kind: "release",
     releaseKind: kind,
     overwriteProject,
     updateItems: items.items,
+    reviewRequired: REVIEW_KINDS.includes(kind),
+    versionName,
+    releaseNotes,
     planMarkdown: plan.plan,
     requiredSecrets: plan.requiredSecrets,
     source: clean(args.source, 100) || "채팅",
@@ -682,7 +706,8 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
       }
 
       const active = await tx.factoryJob.findFirst({
-        where: { appSlug, status: { in: [...ACTIVE_STATUSES] } },
+        // 검토 대기(review) 출시 일감이 있어도 막는다(검토 중인 자료·AAB 를 PC 에 보존)
+        where: { appSlug, status: { in: [...ACTIVE_STATUSES, "review"] } },
         select: { id: true, status: true, kind: true, planHash: true },
       });
 
@@ -788,6 +813,10 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
           overwriteProject: kind === "release" && args.overwriteProject === true,
           // 갱신 항목(enqueueReleaseJob 이 normalizeUpdateItems 로 확인한 값만 넘긴다)
           updateItems: kind === "release" && Array.isArray(args.updateItems) ? (args.updateItems as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 10) : [],
+          // 검토 단계·앱 업데이트 입력(enqueueReleaseJob 이 확인한 값만 넘긴다)
+          reviewRequired: kind === "release" && args.reviewRequired === true,
+          versionName: kind === "release" && typeof args.versionName === "string" ? args.versionName.slice(0, 40) : null,
+          releaseNotes: kind === "release" && typeof args.releaseNotes === "string" ? args.releaseNotes.slice(0, 500) : null,
         },
         select: { id: true },
       });

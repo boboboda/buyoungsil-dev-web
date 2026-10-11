@@ -33,10 +33,12 @@ export function releaseRules(job) {
   if (job.kind !== "release") return "";
   return `
 ## 출시 준비 (이 일감은 kind=release)
-- RELEASE_REQUEST.md 가 이번 지시예요(종류: 첫 출시 / 스토어 자료 수정 / 프로젝트 업데이트). 앱 기능은 바꾸지 말고 그 종류가 허락한 것만 하세요.
-- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, icon, screenshots, video, listing, privacy, upload, homepage, done)으로 .factory/phase.txt 에 쓰고,
+- RELEASE_REQUEST.md 가 이번 지시예요(종류: 첫 출시 / 스토어 수정 / 앱 업데이트(기능 추가) / 프로젝트 업데이트(예전)). 그 종류가 허락한 것만 하세요.
+  '앱 업데이트'만 RELEASE_REQUEST.md 의 업데이트 내용대로 앱 코드를 고치고, 다른 종류는 앱 기능을 바꾸지 마세요.
+- 첫 출시·스토어 수정은 끝나면 사람이 통제실에서 검토해요(검토 대기). Play 업로드·홈페이지 반영은 승인 뒤 감독 프로그램이 해요. 만든 파일은 지우지 마세요.
+- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, icon, screenshots, video, listing, privacy, code, test, version, done. review·upload·homepage 는 감독 프로그램이)으로 .factory/phase.txt 에 쓰고,
   더 진행할 수 없으면 .factory/fail.json 에 {"stage": "단계", "reason": "이유"} 를 쓰고 끝내세요(비밀번호·키 값 금지).
-- 결과는 \`.factory/outbox/\` 에 JSON 파일로 저장하세요(첫 출시: 아래 두 개, 스토어 자료 수정: release.json·project.json + .factory/store/ 의 정해진 파일, 프로젝트 업데이트: project.json). 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
+- 결과는 \`.factory/outbox/\` 에 JSON 파일로 저장하세요(첫 출시: 아래 두 개 + .factory/store/ 의 정해진 파일, 스토어 수정: release.json·project.json + .factory/store/ 의 정해진 파일, 앱 업데이트: release.json(aab·releaseNotes·tests) + 홈페이지 반영을 골랐으면 project.json, 프로젝트 업데이트: project.json). 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
   - \`project.json\` (홈페이지 프로젝트의 빈 항목만 채워요. 승인 때 '덮어쓰기'를 고른 일감은 방침 말고는 바꿔요): {"description": "소개 2~3문장", "privacyPolicy": "개인정보처리방침 마크다운"}
     - 방침에 [[ ... ]] 자리표시자를 남기지 마세요(남으면 거절돼요). 모르는 값은 release.json 의 checklist 에 적으세요.
   - \`release.json\`:
@@ -47,11 +49,12 @@ export function releaseRules(job) {
      "privacyPolicyDraft": "project.json 과 같은 방침 마크다운",
      "sdks": ["코드에서 찾은 광고·분석·오류 수집 SDK 이름"],
      "notes": "사람이 알아야 할 것",
-     "aab": {"path": "build/app/outputs/bundle/release/app-release.aab", "versionName": "1.0.0", "versionCode": 1}}
+     "aab": {"path": "build/app/outputs/bundle/release/app-release.aab", "versionName": "1.0.0", "versionCode": 1},
+     "releaseNotes": {"ko-KR": "앱 업데이트만: 출시 노트 500자 이내"}, "tests": "앱 업데이트만: 분석·시험 결과 한두 줄"}
   - aab 는 실제로 서명 빌드를 만든 경우에만 넣으세요. 경로는 앱 폴더 기준. 파일은 PC 에만 두고 서버로 올리지 않아요(크기·시각은 감독 프로그램이 채워요).
 - 서명 키 파일은 RELEASE_REQUEST.md 에 적힌 PC 경로에서 읽기만 하세요(서비스 계정 키 파일은 읽지 마세요). 앱 폴더로 복사하거나 커밋하지 마세요.
 - 비밀번호는 환경변수로만 읽고, 파일·로그·커밋·JSON 에 쓰지 마세요.
-- Play 업로드(업데이트 AAB → 비공개 테스트 트랙, 스토어 등록정보·이미지)는 감독 프로그램이 해요. 직접 올리지 마세요(fastlane·API 호출 금지). 프로덕션 트랙은 절대 건드리지 마세요.
+- Play 업로드(앱 업데이트 AAB → 비공개 테스트 트랙, 스토어 등록정보·이미지)는 감독 프로그램이 해요. 직접 올리지 마세요(fastlane·API 호출 금지). 프로덕션 트랙은 절대 건드리지 마세요.
 `;
 }
 

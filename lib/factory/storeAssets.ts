@@ -9,7 +9,7 @@ import prisma from "@/lib/prisma";
 import { maskSecrets } from "@/lib/factory/mask";
 
 // lib/factory/release.ts 의 releaseKindOf 와 같다(서로 가져오지 않게 따로 둔다)
-const releaseKindOf = (v: string | null | undefined) => (v === "store" || v === "project" ? v : "first");
+const releaseKindOf = (v: string | null | undefined) => (v === "store" || v === "update" || v === "project" ? v : "first");
 
 // 서버로 올릴 수 있는 이미지 칸. 이름·크기·형식이 고정돼 있다(감독 프로그램 store.mjs 의 STORE_SLOTS 와 같다)
 export const STORE_IMAGE_SLOTS: Record<string, { maxBytes: number; label: string }> = {
@@ -98,13 +98,13 @@ export function readStoreAssets(v: unknown): StoreAssets | null {
 
 type FoundJob =
   | { error: { status: number; message: string }; job?: undefined }
-  | { error?: undefined; job: { id: string; appSlug: string; releaseKind: "first" | "store" | "project"; images: boolean } };
+  | { error?: undefined; job: { id: string; appSlug: string; releaseKind: "first" | "store" | "update" | "project"; images: boolean; review: boolean } };
 const refuse = (status: number, message: string): FoundJob => ({ error: { status, message } });
 
 // 감독 프로그램이 보낼 수 있는 일감인지: 실행 중인 출시 일감이어야 하고, 이미지·자료는 '스토어 자료 수정' 일감만
 async function runningReleaseJob(jobId: unknown): Promise<FoundJob> {
   if (typeof jobId !== "string" || !/^[A-Za-z0-9_-]{1,40}$/.test(jobId)) return refuse(400, "jobId 가 올바르지 않아요.");
-  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { id: true, appSlug: true, kind: true, status: true, releaseKind: true, updateItems: true } });
+  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { id: true, appSlug: true, kind: true, status: true, releaseKind: true, updateItems: true, reviewRequired: true } });
 
   if (!job) return refuse(404, "없는 지시입니다.");
   if (job.kind !== "release") return refuse(400, "출시 일감만 보낼 수 있어요.");
@@ -113,7 +113,7 @@ async function runningReleaseJob(jobId: unknown): Promise<FoundJob> {
   // images: '이미지'를 고른 일감인지(갱신 항목이 없는 예전 일감은 true)
   const images = job.updateItems.length === 0 || job.updateItems.includes("images");
 
-  return { job: { id: job.id, appSlug: job.appSlug, releaseKind: releaseKindOf(job.releaseKind), images } };
+  return { job: { id: job.id, appSlug: job.appSlug, releaseKind: releaseKindOf(job.releaseKind), images, review: job.reviewRequired } };
 }
 
 // 같은 일감이면 이어서 합치고, 새 일감이면 새로 시작한다(이전 일감의 올린 이미지 URL 은 남긴다: 홈페이지 cover 로 쓰고 있을 수 있음)
@@ -157,10 +157,11 @@ export async function receiveStoreReport(body: Record<string, unknown>): Promise
   const cur = readStoreAssets((await prisma.factoryApp.findUnique({ where: { appSlug: job.appSlug }, select: { storeAssets: true } }))?.storeAssets);
   const next = baseFor(cur, job.id);
 
-  if (job.releaseKind === "first") {
+  // 검토 단계가 있는 첫 출시 일감은 스토어 자료(검토용)를 보낼 수 있다. 그 밖의 첫 출시·앱 업데이트는 AAB 업로드 결과만
+  if ((job.releaseKind === "first" && !(job.review && body.aabUpload === undefined)) || job.releaseKind === "update") {
     const a = body.aabUpload as Record<string, unknown> | undefined;
 
-    if (!a || typeof a !== "object") return { ok: false, status: 400, message: "첫 출시 일감은 aabUpload 만 보낼 수 있어요." };
+    if (!a || typeof a !== "object") return { ok: false, status: 400, message: "이 일감은 aabUpload 만 보낼 수 있어요." };
     next.aabUpload = {
       at: new Date().toISOString(),
       ok: a.ok === true,
@@ -175,7 +176,7 @@ export async function receiveStoreReport(body: Record<string, unknown>): Promise
 
     return { ok: true, status: 200, message: "AAB 업로드 결과를 저장했어요." };
   }
-  if (job.releaseKind !== "store") return { ok: false, status: 400, message: "스토어 자료 수정 일감만 스토어 자료를 보낼 수 있어요." };
+  if (job.releaseKind !== "store" && !(job.releaseKind === "first" && job.review)) return { ok: false, status: 400, message: "스토어 수정·첫 출시 일감만 스토어 자료를 보낼 수 있어요." };
 
   if (body.dir !== undefined) next.dir = text(body.dir, 300);
   if (body.tools !== undefined) next.tools = text(body.tools, 1500);
@@ -249,7 +250,7 @@ export async function storeImageJob(jobId: unknown): Promise<FoundJob> {
   const found = await runningReleaseJob(jobId);
 
   if (found.error) return found;
-  if (found.job.releaseKind !== "store") return refuse(400, "스토어 자료 수정 일감만 스토어 이미지를 올릴 수 있어요.");
+  if (found.job.releaseKind !== "store" && !(found.job.releaseKind === "first" && found.job.review)) return refuse(400, "스토어 수정·첫 출시 일감만 스토어 이미지를 올릴 수 있어요.");
   if (!found.job.images) return refuse(400, "이 일감은 '이미지' 갱신을 고르지 않아서 스토어 이미지를 올릴 수 없어요.");
 
   return found;

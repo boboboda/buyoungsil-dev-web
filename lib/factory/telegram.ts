@@ -14,8 +14,8 @@ import { maskSecrets } from "@/lib/factory/mask";
 
 const API_TIMEOUT_MS = 5000;
 // lib/factory/release.ts 의 라벨과 같게(그 파일이 이 파일을 불러서, 순환을 피하려고 여기 따로 둔다)
-const RELEASE_KIND_TEXT: Record<string, string> = { first: "첫 출시", store: "스토어 자료 수정", project: "프로젝트 업데이트" };
-const STAGE_TEXT: Record<string, string> = { key: "키", build: "빌드", sign: "서명", store: "스토어 자료", upload: "업로드", homepage: "홈페이지 반영", scaffold: "준비" };
+const RELEASE_KIND_TEXT: Record<string, string> = { first: "첫 출시", store: "스토어 수정", update: "앱 업데이트(기능 추가)", project: "프로젝트 업데이트(예전)" };
+const STAGE_TEXT: Record<string, string> = { key: "키", build: "빌드", sign: "서명", store: "스토어 자료", upload: "업로드", homepage: "홈페이지 반영", scaffold: "준비", review: "검토 대기", code: "코드 수정", test: "시험", version: "버전 올림" };
 const MAX_BUTTON_AGE_SEC = 24 * 60 * 60; // 24시간이 지난 알림의 버튼은 무시한다
 
 const token = () => process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
@@ -70,7 +70,7 @@ const cut = (v: string | null | undefined, max: number) => {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 };
 
-export type JobEvent = "pending" | "done" | "failed";
+export type JobEvent = "pending" | "done" | "failed" | "review";
 
 // 일감 상태가 바뀐 것을 알린다. 절대 던지지 않는다.
 export async function notifyJobEvent(
@@ -105,6 +105,9 @@ export async function notifyJobEvent(
 
     if (event === "pending") {
       text = `📥 승인 대기\n${job.title} (${job.appSlug}) · ${kind}${job.source ? `\n출처: ${cut(job.source, 60)}` : ""}`;
+    } else if (event === "review") {
+      text = `👀 검토 대기: ${job.title} (${job.appSlug}) 스토어 자료가 준비됐어요
+통제실 출시 패키지에서 확인하고 [이대로 진행]·[다시 만들기]·[취소] 중에 골라 주세요.`;
     } else if (event === "done") {
       text = `✅ 완료\n${job.title} (${job.appSlug}) · ${kind}\n${cut(job.summary, 200) || "(요약 없음)"}`;
     } else {
@@ -112,7 +115,7 @@ export async function notifyJobEvent(
     }
 
     const row: Record<string, string>[] = [
-      { text: "통제실 열기", url: `${publicUrl()}/admin/factory` },
+      { text: event === "review" ? "검토하러 가기" : "통제실 열기", url: `${publicUrl()}${event === "review" ? "/admin/factory/release" : "/admin/factory"}` },
     ];
 
     if (event === "pending" && approveEnabled() && secret()) {

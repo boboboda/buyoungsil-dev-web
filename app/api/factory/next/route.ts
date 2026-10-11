@@ -26,6 +26,7 @@ import { fail, guardWorker } from "@/lib/factory/http";
 import { consumeKeyScan, notifyTestingDue, pcPathsToCheck, releaseJobExtras } from "@/lib/factory/release";
 import { keyPasswordsPending } from "@/lib/factory/keyPasswords";
 import { keyTasksForNext } from "@/lib/factory/keyVault";
+import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { maintenanceForNext, maintenanceHold } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
 import { consumeUpdateNow, isAutoUpdateEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
@@ -61,6 +62,7 @@ export async function GET(req: NextRequest) {
     const keyPw = await keyPasswordsPending().catch(() => false);
     const keyScan = await consumeKeyScan().catch(() => false);
     const keyTasks = await keyTasksForNext();
+    void sweepReviewVideos(); // 7일 지난 검토 영상 정리(가끔)
     const extra = {
       ...(updateNow ? { updateNow: true } : {}),
       ...(pcPaths.length ? { pcPaths } : {}),

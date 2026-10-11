@@ -556,7 +556,7 @@ model FactoryJob {
   stack           String    @default("flutter") // 앱 템플릿 종류
   requiredSecrets String[]  @default([]) // 키 이름만. 값은 저장하지 않는다.
   priority        Int       @default(0)
-  status          String    @default("pending") // pending | approved | running | done | failed | cancelled
+  status          String    @default("pending") // pending | approved | running | review(출시 검토 대기) | done | failed | cancelled
   phase           String? // 워커가 보고하는 현재 단계(scaffold, build, screenshots 등)
   summary         String? // 완료 요약
   failReason      String?
@@ -571,6 +571,13 @@ model FactoryJob {
   resumeNote      String? // 재시도 때 넘기는 이전 실패 이유(마스킹됨)
   overwriteProject Boolean  @default(false) // 출시 일감(store/project): 홈페이지 프로젝트의 기존 값도 덮어쓰기(개인정보처리방침 제외)
   updateItems     String[]  @default([]) // 출시 일감(store/project): 갱신할 항목(images, listing, video, privacy / description, cover, privacy). 빈 배열은 예전 일감(예전 동작)
+  reviewRequired  Boolean   @default(false) // 출시 일감(첫 출시·스토어 수정): 생성 뒤 '검토 대기'(status=review)에서 사람이 확인해야 반영
+  reviewAt        DateTime? // 검토 대기가 된 시각
+  reviewApprovedAt DateTime? // [이대로 진행] 누른 시각. 이 뒤에만 Play 업로드·홈페이지 반영·완료
+  redoNote        String?   @db.Text // [다시 만들기] 수정 요청 메모(이 항목만 다시)
+  versionName     String? // 앱 업데이트: 원하는 버전 이름(비우면 patch +1)
+  releaseNotes    String?   @db.Text // 앱 업데이트: 출시 노트(What's new, 비우면 공장이 초안)
+  buildResult     Json? // 앱 업데이트 결과: 버전 이름·코드, AAB 크기, 시험 요약, 업로드 트랙
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
   startedAt       DateTime?
@@ -811,4 +818,30 @@ model FactorySupervisorEvent {
 
   @@index([at])
   @@map("factory_supervisor_events")
+}
+
+// 출시 검토용 홍보 영상(관리자만 재생). 감독 프로그램이 8MB 조각으로 올리고, 결정 뒤 또는 7일 뒤 지운다(임시).
+model FactoryReviewVideo {
+  jobId      String   @id
+  appSlug    String
+  size       Int // 전체 바이트
+  chunkCount Int
+  received   Int      @default(0) // 받은 조각 수
+  complete   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime // 만든 뒤 7일
+  chunks     FactoryReviewVideoChunk[]
+
+  @@index([expiresAt])
+  @@map("factory_review_videos")
+}
+
+model FactoryReviewVideoChunk {
+  jobId String
+  idx   Int
+  data  Bytes
+  video FactoryReviewVideo @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+
+  @@id([jobId, idx])
+  @@map("factory_review_video_chunks")
 }
