@@ -6,7 +6,7 @@
 //   감독 프로그램이 정해진 명령 하나(서버 배포 저장소로 그 커밋 푸시)를 실행한다. 서버가 PC 로 코드를 보내지는 않는다.
 // - 통제실에서 보낸 지시는 바로 대기열에, 채팅(커넥터)에서 보낸 지시는 승인을 기다린다. 채팅에서는 배포할 수 없다.
 import prisma from "@/lib/prisma";
-import { notifyMaintenance } from "@/lib/factory/telegram";
+import { notifyMaintenance, notifyText } from "@/lib/factory/telegram";
 
 export const TURN_ACTIVE = ["queued", "running"] as const;
 const MAX_TEXT = 8000;
@@ -274,4 +274,21 @@ export async function maintenanceOverview(opts: { threadId?: string; limit?: num
       };
     }),
   };
+}
+
+/** serverctl(정비 전용 서버 설정 도구)가 서버 설정을 바꿀 때마다: 진행 중인 지시가 있으면 그 정비 대화에, 그리고 텔레그램으로. 값은 오지 않는다. */
+export async function noteServerChange(turnId: string | null, text: string): Promise<Result> {
+  const t = clean(text, 1500);
+
+  if (!t) return fail(400, "내용이 없어요.");
+  if (turnId) {
+    const turn = await prisma.factoryMaintenanceMessage.findUnique({ where: { id: turnId } });
+
+    if (turn?.role === "user" && turn.status === "running") {
+      await prisma.factoryMaintenanceMessage.create({ data: { maintenanceId: turn.maintenanceId, role: "system", text: `🔧 서버 설정 변경\n${t}` } });
+    }
+  }
+  await notifyText(`🔧 서버 설정 변경(공장 정비)\n${t}`, "/admin/factory");
+
+  return { ok: true, status: 200, message: "기록" };
 }
