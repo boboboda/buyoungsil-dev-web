@@ -5,7 +5,8 @@ import { createHash } from "crypto";
 import prisma from "@/lib/prisma";
 import { notifyJobEvent } from "@/lib/factory/telegram";
 import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
-import { RELEASE_KIND_LABELS, buildReleasePlan, isReleaseKind, releaseOverview } from "@/lib/factory/release";
+import { OVERWRITE_KINDS, RELEASE_KIND_LABELS, buildReleasePlan, isReleaseKind, releaseOverview, stageLabel } from "@/lib/factory/release";
+import { readStoreAssets } from "@/lib/factory/storeAssets";
 import {
   ACTIVE_STATUSES,
   APP_SLUG_RE,
@@ -210,7 +211,8 @@ export const FACTORY_TOOLS = [
     description:
       "완성된 앱에 출시 일감을 등록합니다(승인 대기, 승인은 관리자). 지시문은 서버가 그 앱의 배포 계정 정보로 종류(kind)별로 만들어요. " +
       "first(기본, 첫 출시): 키 준비, 개인정보처리방침 초안, 스토어 문구(한/영), 데이터 보안·콘텐츠 등급 답안, 체크리스트, 서명 AAB, 홈페이지 프로젝트 빈 칸 채우기, " +
-      "(최초 업로드 뒤 서비스 계정 키가 있으면) 비공개 테스트 트랙 업로드. store(스토어 자료 수정): 스크린샷·스토어 문구·체크리스트만 다시. " +
+      "(최초 업로드 뒤 서비스 계정 키가 있으면) 감독 프로그램이 업데이트 AAB 를 비공개 테스트 트랙에 업로드. " +
+      "store(스토어 자료 수정): 아이콘·대표 이미지·스크린샷(에뮬레이터)·홍보 영상(HyperFrames, PC 에만)·스토어 문구를 만들고, 조건이 맞으면 Play 등록정보·이미지 업로드, 홈페이지 프로젝트 반영. " +
       "project(프로젝트 업데이트): 홈페이지 프로젝트 정보만(AAB·Play 업로드 없음). 먼저 통제실 출시 패키지에서 배포 계정을 골라 둬야 해요. " +
       "끝나면 get_factory_job 과 get_release_status 로 확인하세요.",
     inputSchema: {
@@ -221,6 +223,10 @@ export const FACTORY_TOOLS = [
           type: "string",
           enum: ["first", "store", "project"],
           description: "first=첫 출시(기본) | store=스토어 자료 수정 | project=프로젝트 업데이트",
+        },
+        overwriteProject: {
+          type: "boolean",
+          description: "store/project 만: true 면 홈페이지 프로젝트의 기존 값(설명·대표 이미지·앱 링크·기술 스택)도 덮어써요(개인정보처리방침 제외). 기본 false(빈 칸만 채움). 사용자가 원할 때만",
         },
         source: { type: "string", description: "어느 대화에서 온 건지 짧게 (선택, 100자 이내)" },
       },
@@ -293,6 +299,22 @@ export async function callFactoryTool(
   }
 }
 
+// 스토어 자료 결과 요약(단계별 상태·Play 업로드). 영상은 경로·크기·길이만
+function storeSummary(v: unknown) {
+  const s = readStoreAssets(v);
+
+  if (!s) return null;
+
+  return {
+    시각: s.at,
+    단계: Object.fromEntries(Object.entries(s.stages ?? {}).map(([k, x]) => [stageLabel(k), x ? `${x.status}${x.note ? `: ${x.note.slice(0, 200)}` : ""}` : null])),
+    이미지: Object.keys(s.images ?? {}),
+    영상: s.video,
+    Play업로드: s.upload,
+    AAB업로드: s.aabUpload,
+  };
+}
+
 // 출시 상태. 키 값은 없다(경로·이름·존재 여부만). 패키지는 요약만(전문은 통제실 출시 패키지 화면).
 async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResult> {
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
@@ -362,6 +384,9 @@ async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResu
       패키지생성: iso(a.releasePackageAt),
       패키지: summarize(a.releasePackage as Record<string, unknown> | null),
       AAB: a.aab,
+      홍보영상링크: a.promoVideoUrl,
+      Play업로드: a.playMissing.length ? { 가능: false, 부족한것: a.playMissing } : { 가능: true },
+      스토어자료: storeSummary(a.storeAssets),
     })),
   });
 }
@@ -373,7 +398,10 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
   if (!APP_SLUG_RE.test(appSlug)) return text("appSlug 가 올바르지 않아요.", true);
   if (args.kind !== undefined && !isReleaseKind(args.kind)) return text("kind 는 first, store, project 중 하나예요.", true);
   const kind = isReleaseKind(args.kind) ? args.kind : "first";
-  const plan = await buildReleasePlan(appSlug, kind);
+  if (args.overwriteProject !== undefined && typeof args.overwriteProject !== "boolean") return text("overwriteProject 는 true/false 예요.", true);
+  // 홈페이지 프로젝트 덮어쓰기는 스토어 자료 수정·프로젝트 업데이트만(기본 꺼짐)
+  const overwriteProject = args.overwriteProject === true && OVERWRITE_KINDS.includes(kind);
+  const plan = await buildReleasePlan(appSlug, kind, { overwriteProject });
 
   if ("message" in plan) return text(plan.message, true);
   const o = await releaseOverview();
@@ -386,6 +414,7 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
     title: `${app.title} (${RELEASE_KIND_LABELS[kind]})`,
     kind: "release",
     releaseKind: kind,
+    overwriteProject,
     planMarkdown: plan.plan,
     requiredSecrets: plan.requiredSecrets,
     source: clean(args.source, 100) || "채팅",
@@ -736,6 +765,7 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
           source,
           // 출시 일감 종류(enqueueReleaseJob 만 넘긴다. enqueue_app_job 은 kind=release 를 막는다)
           releaseKind: kind === "release" && typeof args.releaseKind === "string" ? args.releaseKind : null,
+          overwriteProject: kind === "release" && args.overwriteProject === true,
         },
         select: { id: true },
       });

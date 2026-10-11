@@ -569,6 +569,7 @@ model FactoryJob {
   failStage       String? // 실패한 단계(key, build, sign, upload, homepage, store 등)
   resumeFrom      String? // 재시도 때 이 단계부터 다시
   resumeNote      String? // 재시도 때 넘기는 이전 실패 이유(마스킹됨)
+  overwriteProject Boolean  @default(false) // 출시 일감(store/project): 홈페이지 프로젝트의 기존 값도 덮어쓰기(개인정보처리방침 제외)
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
   startedAt       DateTime?
@@ -660,6 +661,8 @@ model FactoryApp {
   releaseRemovedAt  DateTime? // 출시 패키지 목록에서 지운 시각. 이후 새 일감이 생기면 다시 보인다
   customKeystorePath String? // 앱별 '다른 키 사용': 공용(배포 계정) 키 대신 쓸 업로드 키 경로
   customKeyAlias     String? // 그 키의 별칭
+  promoVideoUrl      String? // 홍보 영상 YouTube 링크(사람이 직접 올리고 붙여 넣음). 스토어 자료 업로드 때 Play 등록정보 영상으로
+  storeAssets        Json? // 스토어 자료(.factory/store/) 단계별 결과·파일 정보(경로·크기·길이)·올린 이미지 URL·Play 업로드 결과
   releaseAccount   FactoryReleaseAccount? @relation(fields: [releaseAccountId], references: [id], onDelete: SetNull)
 
   @@map("factory_apps")

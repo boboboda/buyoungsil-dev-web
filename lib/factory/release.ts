@@ -33,20 +33,27 @@ export const RELEASE_STAGE_LABELS: Record<string, string> = {
   build: "빌드",
   sign: "서명",
   store: "스토어 자료",
+  icon: "아이콘·대표 이미지",
   screenshots: "스크린샷",
+  video: "영상",
+  listing: "문구",
   upload: "업로드",
   homepage: "홈페이지 반영",
   done: "완료",
 };
 export const stageLabel = (s: string | null | undefined) => (s ? (RELEASE_STAGE_LABELS[s] ?? s) : "-");
 // 재시도를 이 단계부터 시작할 수 있다
-const RESUMABLE = ["key", "build", "sign", "store", "upload", "homepage"];
+const RESUMABLE = ["key", "build", "sign", "store", "icon", "screenshots", "video", "listing", "upload", "homepage"];
 // 종류별로 감독 프로그램이 홈페이지로 보낼 수 있는 outbox 파일
 const OUTBOX_BY_KIND: Record<ReleaseKind, string[]> = {
   first: ["project.json", "release.json"],
-  store: ["release.json"],
+  store: ["release.json", "project.json"],
   project: ["project.json"],
 };
+// 홈페이지 프로젝트 '덮어쓰기'를 고를 수 있는 종류(첫 출시는 늘 빈 칸만 채운다)
+export const OVERWRITE_KINDS: ReleaseKind[] = ["store", "project"];
+// Play 업로드 트랙: 비공개 테스트(closed testing) 기본 트랙. 프로덕션은 사람이 Console 에서 '라이브러리에서 추가'로
+export const PLAY_TEST_TRACK = "alpha";
 
 export const RELEASE_STATUSES = ["preparing", "package", "review", "testing", "released"] as const;
 export type ReleaseStatus = (typeof RELEASE_STATUSES)[number];
@@ -338,6 +345,32 @@ export function effectiveKey(app: AppKeyRow | null, acc: AccountRow | null) {
   return null;
 }
 
+// ───────── Play 업로드 전제 조건 ─────────
+
+/**
+ * Play Developer API 업로드(스토어 자료·업데이트 AAB) 전에 필요한 것. 모자란 것을 한국어로 돌려준다(비면 업로드 가능).
+ * 서비스 계정 키는 경로만 본다. 파일이 PC 에 있는지는 감독 프로그램이 마지막으로 알려 준 결과(pcStatus)와, 업로드 직전 감독 프로그램이 다시 확인한다.
+ */
+export function playUploadMissing(
+  app: { packageName: string | null; firstUploadDone: boolean } | null,
+  acc: { label: string; serviceAccountKeyPath: string | null } | null,
+  pcItems?: PcPathItem[] | null,
+): string[] {
+  const missing: string[] = [];
+
+  if (!acc) missing.push("배포 계정이 정해지지 않았어요");
+  else if (!acc.serviceAccountKeyPath) missing.push(`배포 계정 ${acc.label} 에 서비스 계정 키(JSON) 경로가 없어요`);
+  else {
+    const pc = pcItems?.find((i) => i.key === `${acc.label}.serviceAccount` && i.path === acc.serviceAccountKeyPath);
+
+    if (pc && !pc.exists) missing.push(`서비스 계정 키 파일이 작업 PC 에 없어요(${acc.serviceAccountKeyPath})`);
+  }
+  if (!app?.packageName) missing.push("패키지 이름이 없어요");
+  if (!app?.firstUploadDone) missing.push("'최초 AAB 업로드 완료'가 체크되지 않았어요(최초 업로드는 Play Console 에서 직접)");
+
+  return missing;
+}
+
 // ───────── 앱별 출시 상태 ─────────
 
 /** 통제실 "출시 패키지" 화면에 필요한 것 전부. 키 값은 없다(경로·이름·존재 여부만). */
@@ -361,6 +394,7 @@ export async function releaseOverview() {
         failStage: true,
         failReason: true,
         resumeFrom: true,
+        overwriteProject: true,
       },
     }),
     getPcPathStatus(),
@@ -420,6 +454,10 @@ export async function releaseOverview() {
       aab: app?.aab ?? null,
       customKeystorePath: app?.customKeystorePath ?? null,
       customKeyAlias: app?.customKeyAlias ?? null,
+      promoVideoUrl: app?.promoVideoUrl ?? null,
+      storeAssets: app?.storeAssets ?? null,
+      // Play 업로드(스토어 자료·업데이트 AAB)에 모자란 것. 비면 업로드 가능
+      playMissing: playUploadMissing(app ?? null, account, pcStatus?.items),
       // 이 앱이 쓸 업로드 키(앱 폴더에 key.properties 가 있으면 PC 가 그걸 먼저 쓴다)와 비밀번호 등록 상태(값 없음)
       key: key ? { source: key.source, path: key.path, alias: key.alias, password: pw?.state ?? "none" } : null,
       keyScan: keyScan.apps.find((s) => s.appSlug === j.appSlug) ?? null,
@@ -435,6 +473,7 @@ export async function releaseOverview() {
             failStageLabel: lastRelease.status === "failed" ? stageLabel(lastRelease.failStage ?? lastRelease.phase) : null,
             failReason: lastRelease.status === "failed" ? maskSecrets(lastRelease.failReason)?.slice(0, 1500) ?? null : null,
             resumeFrom: lastRelease.resumeFrom,
+            overwriteProject: lastRelease.overwriteProject,
             logs: logs.get(lastRelease.id) ?? [],
           }
         : null,
@@ -443,7 +482,7 @@ export async function releaseOverview() {
 
   return {
     statuses: RELEASE_STATUSES.map((s) => ({ value: s, label: RELEASE_STATUS_LABELS[s] })),
-    kinds: RELEASE_KINDS.map((k) => ({ value: k, label: RELEASE_KIND_LABELS[k] })),
+    kinds: RELEASE_KINDS.map((k) => ({ value: k, label: RELEASE_KIND_LABELS[k], canOverwrite: OVERWRITE_KINDS.includes(k) })),
     testingDays: TESTING_DAYS,
     accounts: accounts.map((a) => {
       const key = effectiveKey(null, a);
@@ -685,13 +724,15 @@ function stageSection(kind: ReleaseKind): string {
 /**
  * 출시 일감(kind=release)에 넣을 지시문. 계정·경로·이름만 들어가고 값은 없다.
  * - first(첫 출시): 키 준비, AAB 빌드, 스토어 문구·체크리스트, 홈페이지 프로젝트 빈 칸 채우기(+기존 조건의 비공개 테스트 업로드)
- * - store(스토어 자료 수정): 스크린샷·문구 등 스토어 자료만 다시. (Play 업로드·홈페이지 덮어쓰기는 2단계)
+ * - store(스토어 자료 수정): .factory/store/ 에 아이콘·대표 이미지·스크린샷·영상·문구. Play 업로드·홈페이지 반영은 감독 프로그램이
  * - project(프로젝트 업데이트): 홈페이지 프로젝트 정보만. Play 업로드·AAB 금지
+ * store/project 는 opts.overwriteProject 면 홈페이지 프로젝트 기존 값도 덮어쓴다(개인정보처리방침 제외).
  * 키 비밀번호는 requiredSecrets 로 넘기지 않는다. 감독 프로그램이 /next 의 job.release.key 를 보고 필요할 때만 secrets.env 에서 읽는다.
  */
 export async function buildReleasePlan(
   appSlug: string,
   kindArg: ReleaseKind = "first",
+  opts: { overwriteProject?: boolean } = {},
 ): Promise<{ ok: true; plan: string; requiredSecrets: string[] } | { ok: false; message: string }> {
   const kind = releaseKindOf(kindArg);
   const app = await prisma.factoryApp.findUnique({ where: { appSlug }, include: { releaseAccount: true } });
@@ -711,20 +752,47 @@ export async function buildReleasePlan(
     "",
   ];
 
+  const overwrite = opts.overwriteProject === true && OVERWRITE_KINDS.includes(kind);
+  const projectRule = overwrite
+    ? "홈페이지 프로젝트 **덮어쓰기**가 선택됐어요: description·techStack(그리고 서버가 가진 대표 이미지→coverImage, 출시된 앱이면 Play 주소→appLink)이 기존 값을 바꿔요. 개인정보처리방침은 빈 칸일 때만 채워요."
+    : "홈페이지 프로젝트는 **빈 칸만** 채워져요(이미 있는 값은 그대로).";
+
   if (kind === "store") {
     const lines = [
       ...head,
-      "이 지시는 **스토어 자료만** 다시 만드는 일이에요. 앱 코드·빌드 설정은 바꾸지 마세요.",
+      "이 지시는 **스토어 자료만** 다시 만드는 일이에요. 앱 코드·빌드 설정은 바꾸지 마세요(스크린샷용 디버그 빌드는 괜찮아요).",
+      "기준 폴더는 앱 폴더의 `.factory/store/` 예요. 파일 이름은 아래 그대로 쓰세요(감독 프로그램이 이 이름만 검사·업로드해요).",
       "",
-      "## 만들 것",
-      "1. 스크린샷: 주요 화면을 다시 찍어 `.factory/screenshots/` 에 png 로(가능할 때만).",
-      "2. 스토어 문구 한국어/영어: 제목(30자), 짧은 설명(80자), 자세한 설명(4000자 이내).",
-      "3. 출시 체크리스트 갱신(그래픽: 아이콘 512, 그래픽 이미지 1024x500, 스크린샷 준비 여부 포함).",
-      "4. `.factory/outbox/release.json` 에 storeListing, checklist, notes 만 넣으세요(보낸 항목만 바뀌고 나머지 패키지는 그대로 남아요).",
+      "## 단계 icon: 아이콘·대표 이미지 (코드로 생성)",
+      "- `icon-512.png`: 512x512 PNG(투명 허용), 1MB 이하. 앱의 기존 런처 아이콘(android/app/src/main/res/mipmap-*/ic_launcher*.png, assets 의 아이콘, flutter_launcher_icons 설정)이 있으면 그걸 키워서/다듬어 쓰세요.",
+      "- `feature-1024x500.png`: 1024x500, **투명(알파) 없는 PNG**. 앱 이름·한 줄 소개·아이콘을 앱의 테마 색(ThemeData/colors.xml/tailwind 등)으로 배치.",
+      "- 이미지는 이 PC 에 있는 도구로 코드로 만드세요(예: Python Pillow, Node + 헤드리스 Chrome 스크린샷, ffmpeg). 설치가 필요하면 앱 폴더 밖 임시 폴더에.",
+      "",
+      "## 단계 screenshots: 스크린샷 (에뮬레이터의 실제 앱 화면)",
+      "- `screenshots/phone-01.png` ~ `phone-08.png`: 2~8장, 세로 9:16(또는 가로 16:9) 비율, 변 길이 320~3840px, **알파 없는 PNG**(또는 .jpg).",
+      "- 에뮬레이터를 띄워 디버그 빌드를 설치하고 주요 화면을 `adb exec-out screencap -p` 로 찍은 뒤 9:16 으로 자르고 알파를 없애세요.",
+      "- 에뮬레이터·adb 경로와 AVD 목록은 RELEASE_REQUEST.md 아래 '이 PC 환경'에 있어요. 띄운 에뮬레이터는 끝내기 전에 반드시 끄세요(`adb emu kill`).",
+      '- 에뮬레이터를 쓸 수 없으면(AVD 없음, 가속 없음, 빌드 실패, 시간 부족) **실패로 끝내지 말고** `.factory/store/status.json` 에 `"screenshots": {"skipped": true, "reason": "이유"}` 를 쓰고 다음 단계로 가세요. 화면을 그림으로 지어내지 마세요.',
+      "",
+      "## 단계 video: 홍보 영상 (HyperFrames)",
+      "- HyperFrames(HeyGen 오픈소스 HTML→MP4, npm 패키지 `hyperframes`, Apache-2.0)로 15~30초 앱 소개 영상 `promo.mp4`(1920x1080 또는 1080x1920)를 만드세요: 스크린샷과 스토어 문구가 움직이게.",
+      "- 필요 환경: Node 22 이상, ffmpeg·ffprobe, Chrome(`npx hyperframes doctor` 로 확인). 앱 폴더 밖 임시 폴더에서 `npx hyperframes init` → 구성 HTML 작성 → `npx hyperframes render -c <html> -o <앱 폴더>/.factory/store/promo.mp4`.",
+      '- 환경이 안 되거나 렌더가 실패하면 실패로 끝내지 말고 status.json 에 `"video": {"skipped": true, "reason": "이유"}` 를 쓰고 넘어가세요. 확인한 환경(Node·ffmpeg·Chrome·버전·라이선스)을 status.json 의 `"tools": "한두 줄"` 에 적으세요.',
+      "- 영상은 PC 에만 둬요(서버로 보내지 않음). YouTube 업로드도 하지 마세요(사람이 직접 올리고 링크만 통제실에 넣어요).",
+      "",
+      "## 단계 listing: 스토어 문구",
+      '- `listing.json`: {"ko-KR": {"title": "30자 이내", "shortDescription": "80자 이내", "fullDescription": "4000자 이내"}, "en-US": {...같은 형식}}. 언어 코드는 Play 형식(ko-KR, en-US).',
+      "- 영상 링크는 이 폴더에 두지 마세요(통제실에 저장된 링크를 감독 프로그램이 넣어요).",
+      "- `.factory/outbox/release.json` 에 storeListing(같은 내용, 키는 ko/en), checklist, notes 만 넣으세요(보낸 항목만 바뀌어요).",
+      '- `.factory/outbox/project.json` 에 {"description": "홈페이지 소개 2~3문장", "techStack": [...]} (선택).',
+      "",
+      "## 업로드·홈페이지 (감독 프로그램이 해요. 직접 하지 마세요)",
+      "- 끝나면 감독 프로그램이 파일을 검사하고, 아이콘·대표 이미지·스크린샷(png/jpg)만 홈페이지로 올려요.",
+      "- Play 업로드 조건이 맞으면(서비스 계정 키, 패키지 이름, 최초 AAB 업로드 완료) Play Developer API 로 등록정보(제목·설명·영상 링크)와 이미지(종류별 통째 교체)를 올려요.",
+      `- ${projectRule}`,
       "",
       "## 하지 말 것",
-      "- AAB 빌드·서명, Play 업로드, `project.json`(홈페이지 프로젝트). 이 종류에서는 감독 프로그램이 보내지도 않아요.",
-      "- (Play 스토어 자료 업로드와 홈페이지 덮어쓰기는 다음 단계에서 지원 예정)",
+      "- AAB 빌드·서명, Play 업로드·Play Console 조작, YouTube 업로드. 키·비밀번호 파일 읽기.",
       "",
       stageSection(kind),
     ];
@@ -740,10 +808,11 @@ export async function buildReleasePlan(
       "## 만들 것",
       "1. 지금 앱의 기능을 읽고 홈페이지 소개(description, 2~3문장)와 기술 스택(techStack)을 정리.",
       "2. 개인정보처리방침: 코드에서 광고·분석·오류 수집 SDK 를 찾아 판별하고 작성([[ ... ]] 자리표시자 금지).",
-      '3. `.factory/outbox/project.json` 에 {"description", "techStack", "privacyPolicy"} 로 저장. 지금은 홈페이지 프로젝트의 **빈 칸만** 채워져요(이미 있는 값 덮어쓰기는 다음 단계).',
+      '3. `.factory/outbox/project.json` 에 {"description", "techStack", "privacyPolicy"} 로 저장.',
+      `- ${projectRule}`,
       "",
       "## 하지 말 것",
-      "- AAB 빌드·서명, Play 업로드, `release.json`. 이 종류에서는 서명 키·비밀번호도 넘기지 않아요.",
+      "- AAB 빌드·서명, Play 업로드(Play 는 건드리지 않아요), `release.json`. 이 종류에서는 서명 키·비밀번호도 넘기지 않아요.",
       "",
       stageSection(kind),
     ];
@@ -752,7 +821,7 @@ export async function buildReleasePlan(
   }
 
   const key = effectiveKey(app, acc);
-  const upload = !!key && !!acc.serviceAccountKeyPath && app?.firstUploadDone === true && !!app?.packageName;
+  const upload = !!key && playUploadMissing(app, acc).length === 0;
   const lines = [
     ...head,
     "이 지시는 스토어 첫 출시에 필요한 자료를 만드는 일이에요. 앱 기능은 바꾸지 마세요(출시에 꼭 필요한 설정 변경만).",
@@ -783,9 +852,9 @@ export async function buildReleasePlan(
     "## 스토어 업로드",
     upload
       ? [
-          `- 최초 업로드를 마친 앱이라 Play Developer API 로 **비공개 테스트 트랙(alpha)** 에만 올리세요. 서비스 계정 키: \`${acc.serviceAccountKeyPath}\`.`,
-          "- fastlane supply 또는 google-api-python-client 중 이 PC 에 쉽게 쓸 수 있는 것을 쓰세요. 설치가 필요하면 앱 폴더 밖 임시 위치에.",
-          "- 프로덕션 트랙에는 절대 올리지 마세요(프로덕션은 사람이 '라이브러리에서 추가'로 진행). 결과를 release.json notes 에 적으세요.",
+          `- 최초 업로드를 마친 앱이라, 서명 AAB 를 release.json 의 aab 에 적으면 **감독 프로그램이** Play Developer API 로 비공개 테스트 트랙(${PLAY_TEST_TRACK})에 올려요.`,
+          "- 직접 올리지 마세요(fastlane·python 등 금지). 서비스 계정 키 파일도 읽지 마세요. 버전 코드는 이전 업로드보다 커야 해요(pubspec version 의 + 뒤 숫자 / versionCode).",
+          "- 프로덕션 트랙은 사람이 Play Console 에서 '라이브러리에서 추가'로 진행해요.",
         ].join("\n")
       : "- 이번에는 업로드하지 않아요(최초 업로드는 사람이 Play Console 에 직접). 체크리스트에 '최초 AAB 직접 업로드'를 넣으세요.",
     "",
@@ -809,9 +878,10 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
 
   if (rel.length === 0) return out;
   const [rows, apps] = await Promise.all([
-    prisma.factoryJob.findMany({ where: { id: { in: rel.map((j) => j.id) } }, select: { id: true, releaseKind: true, resumeFrom: true, resumeNote: true } }),
+    prisma.factoryJob.findMany({ where: { id: { in: rel.map((j) => j.id) } }, select: { id: true, releaseKind: true, resumeFrom: true, resumeNote: true, overwriteProject: true } }),
     prisma.factoryApp.findMany({ where: { appSlug: { in: rel.map((j) => j.appSlug) } }, include: { releaseAccount: true } }),
   ]);
+  const pcStatus = await getPcPathStatus().catch(() => null);
 
   for (const j of rel) {
     const r = rows.find((x) => x.id === j.id);
@@ -828,6 +898,19 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
       outbox: OUTBOX_BY_KIND[kind],
       resumeFrom: r?.resumeFrom && RESUMABLE.includes(r.resumeFrom) ? r.resumeFrom : null,
       resumeNote: r?.resumeNote ?? null,
+      overwriteProject: OVERWRITE_KINDS.includes(kind) && r?.overwriteProject === true,
+      // Play Developer API 업로드(감독 프로그램이 직접): 스토어 자료 수정 = 등록정보·이미지, 첫 출시 = 업데이트 AAB → 비공개 테스트 트랙.
+      // 서비스 계정 키는 경로만 준다(감독 프로그램이 읽어 토큰을 받고, 내용은 어디에도 보내지 않는다). missing 이 있으면 업로드하지 않는다.
+      play:
+        kind === "project"
+          ? null
+          : {
+              packageName: app?.packageName ?? null,
+              serviceAccountKeyPath: acc?.serviceAccountKeyPath ?? null,
+              track: PLAY_TEST_TRACK,
+              videoUrl: kind === "store" ? (app?.promoVideoUrl ?? null) : null,
+              missing: playUploadMissing(app, acc, pcStatus?.items),
+            },
       key:
         key && names && acc
           ? {
@@ -849,17 +932,22 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
   return out;
 }
 
-/** project.json 을 받아도 되는 일감인지. jobId 가 없으면(예전 감독 프로그램) 예전처럼 받는다 */
-export async function projectFillAllowed(jobId: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (typeof jobId !== "string" || !jobId) return { ok: true };
-  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { kind: true, releaseKind: true } });
+/**
+ * project.json 을 받아도 되는 일감인지. jobId 가 없으면(예전 감독 프로그램) 예전처럼 빈 칸만 채운다.
+ * release: 출시 일감이면 그 종류. overwrite: 덮어쓰기를 고른 store/project 일감(개인정보처리방침은 여전히 빈 칸만)
+ */
+export async function projectFillAllowed(
+  jobId: unknown,
+): Promise<{ ok: true; release: ReleaseKind | null; overwrite: boolean } | { ok: false; message: string }> {
+  if (typeof jobId !== "string" || !jobId) return { ok: true, release: null, overwrite: false };
+  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { kind: true, releaseKind: true, overwriteProject: true } });
 
-  if (!job || job.kind !== "release") return { ok: true };
+  if (!job || job.kind !== "release") return { ok: true, release: null, overwrite: false };
   const kind = releaseKindOf(job.releaseKind);
 
   if (!OUTBOX_BY_KIND[kind].includes("project.json")) return { ok: false, message: `${RELEASE_KIND_LABELS[kind]} 일감은 홈페이지 프로젝트를 바꿀 수 없어요.` };
 
-  return { ok: true };
+  return { ok: true, release: kind, overwrite: OVERWRITE_KINDS.includes(kind) && job.overwriteProject };
 }
 
 // ───────── 재시도 (실패한 단계부터) ─────────

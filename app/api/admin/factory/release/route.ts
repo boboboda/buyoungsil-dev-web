@@ -8,6 +8,7 @@ import { APP_SLUG_RE, ID_RE, adminAction } from "@/lib/factory/jobs";
 import { registerKeyPassword } from "@/lib/factory/keyPasswords";
 import { enqueueReleaseJob } from "@/lib/factory/mcp";
 import prisma from "@/lib/prisma";
+import { savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import {
   RELEASE_KIND_LABELS,
   effectiveKey,
@@ -49,7 +50,9 @@ async function keyTarget(body: Record<string, unknown>) {
 }
 
 // 본문: { action: "saveAccount", ...계정 } | { action: "updateApp", appSlug, releaseAccountId?, releaseStatus?, packageName?, firstUploadDone?, customKeystorePath?, customKeyAlias? }
-//       | { action: "enqueueRelease", appSlug, kind?: first|store|project, runNow? }  (통제실 '승인'은 runNow: true 로 일감 생성 + 승인)
+//       | { action: "enqueueRelease", appSlug, kind?: first|store|project, runNow?, overwriteProject? }  (통제실 '승인'은 runNow: true 로 일감 생성 + 승인.
+//         overwriteProject: store/project 만, 홈페이지 프로젝트 기존 값도 덮어쓰기. 기본 꺼짐)
+//       | { action: "savePromoVideo", appSlug, url }  (홍보 영상 YouTube 링크. 빈 값이면 지움)
 //       | { action: "retryRelease", jobId }  (실패한 단계부터 다시)
 //       | { action: "setKeyPassword", accountId | appSlug, storePassword, keyPassword? }
 //       | { action: "requestKeyScan" }
@@ -76,7 +79,7 @@ export async function POST(req: NextRequest) {
     }
     const kind = isReleaseKind(body?.kind) ? body.kind : "first";
     // 커넥터 도구(enqueue_release_job)와 같은 함수: 지시문은 배포 계정 정보로 서버가 만든다
-    const r = await enqueueReleaseJob({ appSlug, kind, source: "통제실 출시 패키지" });
+    const r = await enqueueReleaseJob({ appSlug, kind, source: "통제실 출시 패키지", overwriteProject: body?.overwriteProject === true });
     const message = r.content[0]?.text ?? "";
 
     if (r.isError) return NextResponse.json({ message }, { status: 409 });
@@ -89,6 +92,9 @@ export async function POST(req: NextRequest) {
     } else {
       res = { ok: true, status: 200, message: `${RELEASE_KIND_LABELS[kind]} 일감을 보냈어요. 승인하면 시작해요.` };
     }
+  } else if (action === "savePromoVideo") {
+    if (!APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 가 올바르지 않아요." }, { status: 400 });
+    res = await savePromoVideoUrl(appSlug, body?.url ?? null);
   } else if (action === "retryRelease") {
     const jobId = typeof body?.jobId === "string" ? body.jobId : "";
 
@@ -108,7 +114,7 @@ export async function POST(req: NextRequest) {
     res = await removeAppRelease(slugs);
   } else {
     return NextResponse.json(
-      { message: "action 은 saveAccount, updateApp, enqueueRelease, retryRelease, setKeyPassword, requestKeyScan, removeApps 중 하나예요." },
+      { message: "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, setKeyPassword, requestKeyScan, removeApps 중 하나예요." },
       { status: 400 },
     );
   }

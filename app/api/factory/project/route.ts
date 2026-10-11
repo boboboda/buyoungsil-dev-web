@@ -2,13 +2,16 @@
 // 감독 프로그램이 출시 단계에서 홈페이지 프로젝트의 빈 항목을 채우는 주소. 이미 있는 값은 건드리지 않는다.
 //
 // 요청: POST JSON { appSlug, jobId?, description?, coverImage?, appLink?, techStack?, privacyPolicy? }, 헤더 Authorization: Bearer <토큰>
-//   jobId 가 출시 일감이면 그 종류가 홈페이지 반영을 허락할 때만 받는다(스토어 자료 수정 일감은 거절).
+//   jobId 가 출시 일감이면 그 종류가 홈페이지 반영을 허락할 때만 받는다.
+//   출시 일감이면 서버가 가진 값(스토어 자료의 대표 이미지 → coverImage, 출시된 앱의 Play 주소 → appLink)을 보낸 값이 없을 때 더한다.
+//   승인 때 '홈페이지 프로젝트도 덮어쓰기'를 고른 store/project 일감은 기존 값도 바꾼다(개인정보처리방침 제외).
 // 응답: 200 { ok, message, filled: [...], skipped: [...] } / 연결된 프로젝트가 없으면 404 / 방침에 [[ ]] 가 남아 있으면 400
 import { NextRequest, NextResponse } from "next/server";
 
 import { fail, guardWorker } from "@/lib/factory/http";
 import { fillProjectIfEmpty } from "@/lib/factory/project";
 import { projectFillAllowed } from "@/lib/factory/release";
+import { storeProjectValues } from "@/lib/factory/storeAssets";
 import { APP_SLUG_RE } from "@/lib/factory/jobs";
 
 export const dynamic = "force-dynamic";
@@ -34,13 +37,18 @@ export async function POST(req: NextRequest) {
     const allowed = await projectFillAllowed(body.jobId);
 
     if (allowed.ok === false) return fail(400, allowed.message);
-    const r = await fillProjectIfEmpty(body.appSlug, {
-      description: str(body.description, 2000),
-      coverImage: str(body.coverImage, 500),
-      appLink: str(body.appLink, 500),
-      techStack: tech,
-      privacyPolicy: str(body.privacyPolicy, 60000),
-    });
+    const server = allowed.release ? await storeProjectValues(body.appSlug) : {};
+    const r = await fillProjectIfEmpty(
+      body.appSlug,
+      {
+        description: str(body.description, 2000),
+        coverImage: str(body.coverImage, 500) ?? server.coverImage,
+        appLink: str(body.appLink, 500) ?? server.appLink,
+        techStack: tech,
+        privacyPolicy: str(body.privacyPolicy, 60000),
+      },
+      { overwrite: allowed.overwrite },
+    );
 
     if (!r.ok) return fail(r.status, r.message);
 
