@@ -1,12 +1,24 @@
 // app/api/admin/factory/release/route.ts
-// 통제실 "출시 패키지": 배포 계정 A/B, 앱별 출시 상태, 출시 준비 일감 보내기. 관리자만.
-// 키·비밀번호 값은 여기로 오가지 않는다(PC 경로와 키 "이름"만).
+// 통제실 "출시 패키지": 배포 계정 A/B, 앱별 출시 상태, 출시 일감 보내기(+승인), 재시도, 키 비밀번호 등록, 키 점검. 관리자만.
+// 키 비밀번호는 setKeyPassword 로 들어오기만 하고, 어떤 응답에도 다시 나가지 않는다(등록 상태만).
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
-import { APP_SLUG_RE, adminAction } from "@/lib/factory/jobs";
+import { APP_SLUG_RE, ID_RE, adminAction } from "@/lib/factory/jobs";
+import { registerKeyPassword } from "@/lib/factory/keyPasswords";
 import { enqueueReleaseJob } from "@/lib/factory/mcp";
-import { releaseOverview, removeAppRelease, saveReleaseAccount, updateAppRelease } from "@/lib/factory/release";
+import prisma from "@/lib/prisma";
+import {
+  RELEASE_KIND_LABELS,
+  effectiveKey,
+  isReleaseKind,
+  releaseOverview,
+  removeAppRelease,
+  requestKeyScan,
+  retryRelease,
+  saveReleaseAccount,
+  updateAppRelease,
+} from "@/lib/factory/release";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,8 +31,28 @@ export async function GET() {
   return NextResponse.json(await releaseOverview());
 }
 
-// 본문: { action: "saveAccount", ...계정 } | { action: "updateApp", appSlug, releaseAccountId?, releaseStatus?, packageName?, firstUploadDone? }
-//       | { action: "enqueueRelease", appSlug, runNow? }
+// 키 비밀번호를 받을 키: 배포 계정 공용 키(accountId) 또는 앱별 다른 키(appSlug)
+async function keyTarget(body: Record<string, unknown>) {
+  if (typeof body.accountId === "string") {
+    const acc = await prisma.factoryReleaseAccount.findUnique({ where: { id: body.accountId } });
+
+    return acc ? effectiveKey(null, acc) : null;
+  }
+  if (typeof body.appSlug === "string" && APP_SLUG_RE.test(body.appSlug)) {
+    const app = await prisma.factoryApp.findUnique({ where: { appSlug: body.appSlug } });
+    const key = app ? effectiveKey(app, null) : null;
+
+    return key?.source === "custom" ? key : null;
+  }
+
+  return null;
+}
+
+// 본문: { action: "saveAccount", ...계정 } | { action: "updateApp", appSlug, releaseAccountId?, releaseStatus?, packageName?, firstUploadDone?, customKeystorePath?, customKeyAlias? }
+//       | { action: "enqueueRelease", appSlug, kind?: first|store|project, runNow? }  (통제실 '승인'은 runNow: true 로 일감 생성 + 승인)
+//       | { action: "retryRelease", jobId }  (실패한 단계부터 다시)
+//       | { action: "setKeyPassword", accountId | appSlug, storePassword, keyPassword? }
+//       | { action: "requestKeyScan" }
 //       | { action: "removeApps", appSlugs: string[] }  (출시 패키지 목록에서만 지움. 지시 기록·앱 소스·PC 파일은 그대로)
 export async function POST(req: NextRequest) {
   const denied = await requireAdmin();
@@ -39,8 +71,12 @@ export async function POST(req: NextRequest) {
     res = await updateAppRelease(appSlug, body ?? {});
   } else if (action === "enqueueRelease") {
     if (!APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 가 올바르지 않아요." }, { status: 400 });
+    if (body?.kind !== undefined && !isReleaseKind(body.kind)) {
+      return NextResponse.json({ message: "kind 는 first, store, project 중 하나예요." }, { status: 400 });
+    }
+    const kind = isReleaseKind(body?.kind) ? body.kind : "first";
     // 커넥터 도구(enqueue_release_job)와 같은 함수: 지시문은 배포 계정 정보로 서버가 만든다
-    const r = await enqueueReleaseJob({ appSlug, source: "통제실 출시 패키지" });
+    const r = await enqueueReleaseJob({ appSlug, kind, source: "통제실 출시 패키지" });
     const message = r.content[0]?.text ?? "";
 
     if (r.isError) return NextResponse.json({ message }, { status: 409 });
@@ -49,17 +85,32 @@ export async function POST(req: NextRequest) {
     if (body?.runNow === true && id) {
       const approved = await adminAction(id, { action: "approve" });
 
-      res = { ok: true, status: 200, message: approved.ok ? "출시 준비 일감을 보내고 바로 승인했어요." : message };
+      res = { ok: true, status: 200, message: approved.ok ? `${RELEASE_KIND_LABELS[kind]} 일감을 만들고 승인했어요.` : message };
     } else {
-      res = { ok: true, status: 200, message: "출시 준비 일감을 보냈어요. 승인하면 시작해요." };
+      res = { ok: true, status: 200, message: `${RELEASE_KIND_LABELS[kind]} 일감을 보냈어요. 승인하면 시작해요.` };
     }
+  } else if (action === "retryRelease") {
+    const jobId = typeof body?.jobId === "string" ? body.jobId : "";
+
+    if (!ID_RE.test(jobId)) return NextResponse.json({ message: "jobId 가 올바르지 않아요." }, { status: 400 });
+    res = await retryRelease(jobId);
+  } else if (action === "setKeyPassword") {
+    const key = await keyTarget(body ?? {});
+
+    if (!key) return NextResponse.json({ message: "비밀번호를 등록할 키 경로가 없어요. 먼저 키 경로를 저장하세요." }, { status: 400 });
+    res = await registerKeyPassword(key.path, key.alias, body?.storePassword, body?.keyPassword);
+  } else if (action === "requestKeyScan") {
+    res = await requestKeyScan();
   } else if (action === "removeApps") {
     const slugs = Array.isArray(body?.appSlugs) ? body.appSlugs.filter((s): s is string => typeof s === "string").map((s) => s.trim()) : [];
 
     if (slugs.length > 50 || slugs.some((s) => !APP_SLUG_RE.test(s))) return NextResponse.json({ message: "appSlugs 가 올바르지 않아요." }, { status: 400 });
     res = await removeAppRelease(slugs);
   } else {
-    return NextResponse.json({ message: "action 은 saveAccount, updateApp, enqueueRelease, removeApps 중 하나예요." }, { status: 400 });
+    return NextResponse.json(
+      { message: "action 은 saveAccount, updateApp, enqueueRelease, retryRelease, setKeyPassword, requestKeyScan, removeApps 중 하나예요." },
+      { status: 400 },
+    );
   }
 
   return NextResponse.json({ message: res.message, ...(res.ok ? await releaseOverview() : {}) }, { status: res.status });

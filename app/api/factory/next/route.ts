@@ -12,12 +12,16 @@
 //   공장 정비: 대기 중인 정비 지시가 있으면 maintenance: { turnId, threadId, title, text, sessionId } 가 붙고(진행 중인 게 없을 때),
 //   사람이 [배포]를 눌렀으면 maintenanceDeploy: { threadId, commit } 이 붙는다. 정비가 대기·진행 중이면 새 앱 일감은 내주지 않는다(maintenanceHold: true).
 //   배포 계정의 키 파일 경로가 등록돼 있으면 pcPaths: [{ key, path }] 가 붙는다. 감독 프로그램은 "있는지"만 확인해 /api/factory/pc-status 로 알린다.
+//   통제실에서 키 비밀번호를 등록했고 아직 안 가져갔으면 keyPasswordsPending: true(값은 /api/factory/key-passwords 에서 따로).
+//   통제실 [키 점검]을 누르면 다음 응답 한 번에 keyScan: true 가 붙는다(결과는 /api/factory/key-report).
+//   출시 일감(kind=release)에는 release: { kind, stages, outbox, resumeFrom, resumeNote, key } 가 붙는다(lib/factory/release.ts releaseJobExtras).
 //   만료된 running 을 먼저 정리하고, approved 중 우선순위 높은 순으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 import { NextRequest, NextResponse } from "next/server";
 
 import { claimJobs, MAX_SLOTS, releaseExpiredLeases, WORKER_RE } from "@/lib/factory/jobs";
 import { fail, guardWorker } from "@/lib/factory/http";
-import { notifyTestingDue, pcPathsToCheck } from "@/lib/factory/release";
+import { consumeKeyScan, notifyTestingDue, pcPathsToCheck, releaseJobExtras } from "@/lib/factory/release";
+import { keyPasswordsPending } from "@/lib/factory/keyPasswords";
 import { maintenanceForNext, maintenanceHold } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
 import { consumeUpdateNow, isAutoUpdateEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
@@ -50,7 +54,15 @@ export async function GET(req: NextRequest) {
     const updateNow = await consumeUpdateNow().catch(() => false);
     const pcPaths = await pcPathsToCheck().catch(() => []);
     const maint = await maintenanceForNext().catch(() => ({}));
-    const extra = { ...(updateNow ? { updateNow: true } : {}), ...(pcPaths.length ? { pcPaths } : {}), ...maint };
+    const keyPw = await keyPasswordsPending().catch(() => false);
+    const keyScan = await consumeKeyScan().catch(() => false);
+    const extra = {
+      ...(updateNow ? { updateNow: true } : {}),
+      ...(pcPaths.length ? { pcPaths } : {}),
+      ...(keyPw ? { keyPasswordsPending: true } : {}),
+      ...(keyScan ? { keyScan: true } : {}),
+      ...maint,
+    };
 
     void notifyTestingDue(); // 비공개 테스트 완료 예정일 알림(10분에 한 번만 확인, 기다리지 않음)
 
@@ -66,11 +78,14 @@ export async function GET(req: NextRequest) {
     const claimed = await claimJobs(worker, slots);
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
     const overrides = claimed.length ? await getRuleOverrides().catch(() => ({})) : {};
+    const releases = await releaseJobExtras(claimed).catch(() => new Map<string, Record<string, unknown>>());
     const jobs = claimed.map((j) => {
+      const release = releases.get(j.id);
+
       try {
-        return { ...j, ...renderRules(j, overrides) };
+        return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}) };
       } catch {
-        return j;
+        return { ...j, ...(release ? { release } : {}) };
       }
     });
 

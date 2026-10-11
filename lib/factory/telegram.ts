@@ -10,8 +10,12 @@
 import prisma from "@/lib/prisma";
 import { ID_RE, KIND_LABELS } from "@/lib/factory/jobs";
 import { runApproval } from "@/lib/factory/approvals"; // 통제실 버튼과 같은 입구
+import { maskSecrets } from "@/lib/factory/mask";
 
 const API_TIMEOUT_MS = 5000;
+// lib/factory/release.ts 의 라벨과 같게(그 파일이 이 파일을 불러서, 순환을 피하려고 여기 따로 둔다)
+const RELEASE_KIND_TEXT: Record<string, string> = { first: "첫 출시", store: "스토어 자료 수정", project: "프로젝트 업데이트" };
+const STAGE_TEXT: Record<string, string> = { key: "키", build: "빌드", sign: "서명", store: "스토어 자료", upload: "업로드", homepage: "홈페이지 반영", scaffold: "준비" };
 const MAX_BUTTON_AGE_SEC = 24 * 60 * 60; // 24시간이 지난 알림의 버튼은 무시한다
 
 const token = () => process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
@@ -87,12 +91,16 @@ export async function notifyJobEvent(
         failReason: true,
         source: true,
         status: true,
+        releaseKind: true,
+        failStage: true,
+        phase: true,
       },
     });
 
     if (!job) return;
 
-    const kind = KIND_LABELS[job.kind] ?? "수정";
+    const kind = (KIND_LABELS[job.kind] ?? "수정") + (job.kind === "release" ? `(${RELEASE_KIND_TEXT[job.releaseKind ?? "first"] ?? "첫 출시"})` : "");
+    const stage = job.failStage ?? job.phase;
     let text: string;
 
     if (event === "pending") {
@@ -100,7 +108,7 @@ export async function notifyJobEvent(
     } else if (event === "done") {
       text = `✅ 완료\n${job.title} (${job.appSlug}) · ${kind}\n${cut(job.summary, 200) || "(요약 없음)"}`;
     } else {
-      text = `❌ 실패\n${job.title} (${job.appSlug}) · ${kind}\n${cut(job.failReason, 200) || "(사유 없음)"}`;
+      text = `❌ 실패\n${job.title} (${job.appSlug}) · ${kind}${job.kind === "release" && stage ? `\n실패 단계: ${STAGE_TEXT[stage] ?? stage}` : ""}\n${cut(maskSecrets(job.failReason), 200) || "(사유 없음)"}`;
     }
 
     const row: Record<string, string>[] = [

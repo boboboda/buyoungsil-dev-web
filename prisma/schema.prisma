@@ -565,6 +565,10 @@ model FactoryJob {
   workerId        String? // 가져간 감독 프로그램 이름
   leaseUntil      DateTime? // running 상태의 임대 만료 시각
   source          String? // 어느 기획 대화에서 왔는지(선택)
+  releaseKind     String? // 출시 일감 종류: first(첫 출시) | store(스토어 자료 수정) | project(프로젝트 업데이트). NULL 은 예전 일감(first)
+  failStage       String? // 실패한 단계(key, build, sign, upload, homepage, store 등)
+  resumeFrom      String? // 재시도 때 이 단계부터 다시
+  resumeNote      String? // 재시도 때 넘기는 이전 실패 이유(마스킹됨)
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
   startedAt       DateTime?
@@ -654,6 +658,8 @@ model FactoryApp {
   releasePackageJob String? // 그 패키지를 만든 일감 id
   aab               Json? // { path, size, versionName, versionCode, builtAt } (파일은 PC 에만 있다)
   releaseRemovedAt  DateTime? // 출시 패키지 목록에서 지운 시각. 이후 새 일감이 생기면 다시 보인다
+  customKeystorePath String? // 앱별 '다른 키 사용': 공용(배포 계정) 키 대신 쓸 업로드 키 경로
+  customKeyAlias     String? // 그 키의 별칭
   releaseAccount   FactoryReleaseAccount? @relation(fields: [releaseAccountId], references: [id], onDelete: SetNull)
 
   @@map("factory_apps")
@@ -670,12 +676,30 @@ model FactoryReleaseAccount {
   keystorePath          String? // PC 의 업로드 키(서명 키) 파일 경로
   keyAlias              String? // 키 별칭
   serviceAccountKeyPath String? // PC 의 Play Developer API 서비스 계정 JSON 경로
+  developerAccountId    String? // Play Console 개발자 계정 ID(19자리 숫자, 문자열)
+  accountType           String? // personal(개인) | organization(조직)
+  loginEmail            String? // Play Console 로그인 구글 이메일
   notes                 String?      @db.Text
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
   apps                  FactoryApp[]
 
   @@map("factory_release_accounts")
+}
+
+// 업로드 키 비밀번호 임시 보관. 통제실에서 입력한 값을 암호화해 두었다가, PC 감독 프로그램이 가져가 secrets.env 에 저장하면 sealed 를 비운다.
+// 키 단위(경로+별칭)로 구분한다. 값은 어떤 화면·API 응답에도 다시 나오지 않는다(등록됨 표시만).
+model FactoryKeyPassword {
+  keyRef       String    @id // 경로+별칭으로 만든 구분값
+  keystorePath String
+  keyAlias     String
+  storeName    String // PC secrets.env 의 키 저장소 비밀번호 이름
+  keyName      String // PC secrets.env 의 키 비밀번호 이름
+  sealed       String?   @db.Text // 암호화한 값. PC 가 가져가면 null
+  registeredAt DateTime  @default(now())
+  deliveredAt  DateTime? // PC 에 저장된 시각
+
+  @@map("factory_key_passwords")
 }
 
 // ── 공장 정비(공장 자체를 고치는 대화형 스레드). 앱 일감(FactoryJob)과 따로 둔다 ──

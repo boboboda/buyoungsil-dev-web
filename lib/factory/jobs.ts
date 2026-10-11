@@ -7,6 +7,7 @@ import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { ensureProjectForJob } from "@/lib/factory/project";
+import { maskSecrets } from "@/lib/factory/mask";
 
 export const LEASE_MS = 10 * 60 * 1000;
 export const MAX_LOGS_PER_JOB = 500;
@@ -94,7 +95,7 @@ export async function claimJobs(worker: string, slots: number): Promise<ClaimedJ
     UPDATE "factory_jobs"
     SET "status" = 'running', "workerId" = ${worker}, "leaseUntil" = ${ts(lease)},
         "attempts" = "attempts" + 1, "startedAt" = COALESCE("startedAt", ${ts(now)}),
-        "phase" = NULL, "failReason" = NULL, "updatedAt" = ${ts(now)}
+        "phase" = NULL, "failReason" = NULL, "failStage" = NULL, "updatedAt" = ${ts(now)}
     WHERE "id" IN (
       SELECT "id" FROM "factory_jobs"
       WHERE "status" = 'approved'
@@ -129,6 +130,7 @@ export interface ReportInput {
   status?: "done" | "failed";
   summary?: string | null;
   failReason?: string | null;
+  failStage?: string | null; // 실패한 단계(출시 일감: key, build, sign, upload, homepage, store …)
 }
 
 export type ParseResult = { ok: true; value: ReportInput } | { ok: false; reason: string };
@@ -162,7 +164,8 @@ export function parseReport(body: unknown): ParseResult {
     for (const item of b.logs) {
       if (typeof item !== "object" || item === null) return { ok: false, reason: "logs 항목 형식이 올바르지 않습니다." };
       const rec = item as Record<string, unknown>;
-      const message = cleanText(rec.message, MAX_LOG_MESSAGE, true);
+      // 비밀번호가 섞여 들어와도 저장 전에 가린다(감독 프로그램이 먼저 가리고, 여기서 한 번 더)
+      const message = maskSecrets(cleanText(rec.message, MAX_LOG_MESSAGE, true));
       if (!message) continue;
       const level = typeof rec.level === "string" && (LOG_LEVELS as readonly string[]).includes(rec.level) ? rec.level : "info";
       logs.push({ level, message });
@@ -176,8 +179,9 @@ export function parseReport(body: unknown): ParseResult {
       phase,
       logs,
       status,
-      summary: cleanText(b.summary, MAX_SUMMARY, true),
-      failReason: cleanText(b.failReason, MAX_FAIL_REASON, true),
+      summary: maskSecrets(cleanText(b.summary, MAX_SUMMARY, true)),
+      failReason: maskSecrets(cleanText(b.failReason, MAX_FAIL_REASON, true)),
+      failStage: typeof b.failStage === "string" && /^[a-z_-]{1,40}$/.test(b.failStage) ? b.failStage : null,
     },
   };
 }
@@ -209,6 +213,7 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   } else if (input.status === "failed") {
     data.status = "failed";
     data.failReason = input.failReason ?? "실패(사유 없음)";
+    data.failStage = input.failStage ?? input.phase ?? null;
     data.finishedAt = now;
     data.leaseUntil = null;
   }
@@ -316,6 +321,9 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
           attempts: 0,
           approvedAt: now,
           failReason: null,
+          failStage: null,
+          resumeFrom: null, // 일반 재시도는 처음부터(단계 재시도는 출시 패키지 화면의 재시도)
+          resumeNote: null,
           phase: null,
           workerId: null,
           leaseUntil: null,

@@ -1,12 +1,14 @@
 // app/api/factory/project/route.ts
 // 감독 프로그램이 출시 단계에서 홈페이지 프로젝트의 빈 항목을 채우는 주소. 이미 있는 값은 건드리지 않는다.
 //
-// 요청: POST JSON { appSlug, description?, coverImage?, appLink?, techStack?, privacyPolicy? }, 헤더 Authorization: Bearer <토큰>
+// 요청: POST JSON { appSlug, jobId?, description?, coverImage?, appLink?, techStack?, privacyPolicy? }, 헤더 Authorization: Bearer <토큰>
+//   jobId 가 출시 일감이면 그 종류가 홈페이지 반영을 허락할 때만 받는다(스토어 자료 수정 일감은 거절).
 // 응답: 200 { ok, message, filled: [...], skipped: [...] } / 연결된 프로젝트가 없으면 404 / 방침에 [[ ]] 가 남아 있으면 400
 import { NextRequest, NextResponse } from "next/server";
 
 import { fail, guardWorker } from "@/lib/factory/http";
 import { fillProjectIfEmpty } from "@/lib/factory/project";
+import { projectFillAllowed } from "@/lib/factory/release";
 import { APP_SLUG_RE } from "@/lib/factory/jobs";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +31,9 @@ export async function POST(req: NextRequest) {
     : undefined;
 
   try {
+    const allowed = await projectFillAllowed(body.jobId);
+
+    if (allowed.ok === false) return fail(400, allowed.message);
     const r = await fillProjectIfEmpty(body.appSlug, {
       description: str(body.description, 2000),
       coverImage: str(body.coverImage, 500),

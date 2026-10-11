@@ -5,7 +5,7 @@ import { createHash } from "crypto";
 import prisma from "@/lib/prisma";
 import { notifyJobEvent } from "@/lib/factory/telegram";
 import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
-import { buildReleasePlan, releaseOverview } from "@/lib/factory/release";
+import { RELEASE_KIND_LABELS, buildReleasePlan, isReleaseKind, releaseOverview } from "@/lib/factory/release";
 import {
   ACTIVE_STATUSES,
   APP_SLUG_RE,
@@ -51,7 +51,7 @@ export const FACTORY_INSTRUCTIONS =
   + "update_now(GitHub main 의 새 감독 프로그램 코드를 지금 받게 함. 15초~1분 뒤 status 의 commit 으로 확인), pause/resume(새 일감 받기 멈춤/재개), "
   + "auto_update_on/off. 사용자가 요청한 경우에만 상태를 바꾸세요. "
   + "출시: get_release_status 로 앱별 출시 상태·배포 계정·패키지(스토어 문구·체크리스트)·AAB 정보·테스트 일정을 보고, "
-  + "enqueue_release_job(appSlug) 으로 출시 준비 일감을 등록해요(지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
+  + "enqueue_release_job(appSlug, kind) 으로 출시 일감을 등록해요(kind: first=첫 출시, store=스토어 자료 수정, project=프로젝트 업데이트. 지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
   + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 결과는 get_factory_job 과 get_release_status 로 확인하세요.";
 
 const READ_ONLY = {
@@ -194,8 +194,8 @@ export const FACTORY_TOOLS = [
     name: "get_release_status",
     description:
       "완성된 앱들의 출시 상태를 돌려줍니다: 출시 단계(준비중/패키지 생성/검토/비공개 테스트/출시), 배포 계정(A/B)과 키 준비 상태(경로·PC 에 있는지만), " +
-      "패키지 이름, 최초 업로드 여부, 비공개 테스트 시작·완료 예정일, 출시 패키지 요약(스토어 제목·짧은 설명·체크리스트 남은 할 일·찾은 SDK), AAB 정보(경로·크기·버전, 파일은 PC 에만). " +
-      "키 값은 담지 않아요.",
+      "패키지 이름, 최초 업로드 여부, 비공개 테스트 시작·완료 예정일, 출시 패키지 요약(스토어 제목·짧은 설명·체크리스트 남은 할 일·찾은 SDK), AAB 정보(경로·크기·버전, 파일은 PC 에만), " +
+      "최근 출시 일감의 종류·현재 단계와 실패했으면 마지막 오류 요약(실패 단계·이유). 키 값·비밀번호는 담지 않아요.",
     inputSchema: {
       type: "object",
       properties: {
@@ -208,14 +208,20 @@ export const FACTORY_TOOLS = [
   {
     name: "enqueue_release_job",
     description:
-      "완성된 앱에 출시 준비 일감을 등록합니다(승인 대기, 승인은 관리자). 지시문은 서버가 그 앱의 배포 계정 정보로 만들어요: " +
-      "개인정보처리방침 초안, 스토어 문구(한/영), 데이터 보안·콘텐츠 등급 답안, 체크리스트, (서명 키가 있으면) 서명 AAB, " +
-      "(최초 업로드 뒤 서비스 계정 키가 있으면) 비공개 테스트 트랙 업로드. 먼저 통제실 출시 패키지에서 배포 계정을 골라 둬야 해요. " +
+      "완성된 앱에 출시 일감을 등록합니다(승인 대기, 승인은 관리자). 지시문은 서버가 그 앱의 배포 계정 정보로 종류(kind)별로 만들어요. " +
+      "first(기본, 첫 출시): 키 준비, 개인정보처리방침 초안, 스토어 문구(한/영), 데이터 보안·콘텐츠 등급 답안, 체크리스트, 서명 AAB, 홈페이지 프로젝트 빈 칸 채우기, " +
+      "(최초 업로드 뒤 서비스 계정 키가 있으면) 비공개 테스트 트랙 업로드. store(스토어 자료 수정): 스크린샷·스토어 문구·체크리스트만 다시. " +
+      "project(프로젝트 업데이트): 홈페이지 프로젝트 정보만(AAB·Play 업로드 없음). 먼저 통제실 출시 패키지에서 배포 계정을 골라 둬야 해요. " +
       "끝나면 get_factory_job 과 get_release_status 로 확인하세요.",
     inputSchema: {
       type: "object",
       properties: {
         appSlug: { type: "string", description: "완성된 앱 이름 (list_factory_jobs 의 appSlug)" },
+        kind: {
+          type: "string",
+          enum: ["first", "store", "project"],
+          description: "first=첫 출시(기본) | store=스토어 자료 수정 | project=프로젝트 업데이트",
+        },
         source: { type: "string", description: "어느 대화에서 온 건지 짧게 (선택, 100자 이내)" },
       },
       required: ["appSlug"],
@@ -334,7 +340,25 @@ async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResu
       최초업로드완료: a.firstUploadDone,
       비공개테스트: a.testingStartedAt ? { 시작: iso(a.testingStartedAt), 완료예정: iso(a.testingDueAt) } : null,
       진행중일감: a.active,
-      최근출시준비일감: a.lastReleaseJob,
+      최근출시준비일감: a.lastReleaseJob
+        ? {
+            id: a.lastReleaseJob.id,
+            상태: a.lastReleaseJob.status,
+            종류: RELEASE_KIND_LABELS[a.lastReleaseJob.releaseKind],
+            현재단계: a.lastReleaseJob.status === "running" ? a.lastReleaseJob.phaseLabel : null,
+            끝난시각: iso(a.lastReleaseJob.finishedAt),
+          }
+        : null,
+      // 마지막 오류 요약(실패했을 때만). 이유는 서버에서 비밀번호를 가린 값
+      마지막오류:
+        a.lastReleaseJob?.status === "failed"
+          ? {
+              실패단계: a.lastReleaseJob.failStageLabel,
+              이유: a.lastReleaseJob.failReason?.slice(0, 400) ?? null,
+              재시도: "통제실 출시 패키지의 [재시도]로 실패한 단계부터 다시 할 수 있어요",
+            }
+          : null,
+      키: a.key ? { 출처: a.key.source === "custom" ? "앱별 다른 키" : "배포 계정 공용 키", 경로: a.key.path, 별칭: a.key.alias, 비밀번호: a.key.password === "none" ? "미등록" : "등록됨" } : null,
       패키지생성: iso(a.releasePackageAt),
       패키지: summarize(a.releasePackage as Record<string, unknown> | null),
       AAB: a.aab,
@@ -347,7 +371,9 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
 
   if (!APP_SLUG_RE.test(appSlug)) return text("appSlug 가 올바르지 않아요.", true);
-  const plan = await buildReleasePlan(appSlug);
+  if (args.kind !== undefined && !isReleaseKind(args.kind)) return text("kind 는 first, store, project 중 하나예요.", true);
+  const kind = isReleaseKind(args.kind) ? args.kind : "first";
+  const plan = await buildReleasePlan(appSlug, kind);
 
   if ("message" in plan) return text(plan.message, true);
   const o = await releaseOverview();
@@ -357,8 +383,9 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
 
   return enqueue({
     appSlug,
-    title: `${app.title} (출시 준비)`,
+    title: `${app.title} (${RELEASE_KIND_LABELS[kind]})`,
     kind: "release",
+    releaseKind: kind,
     planMarkdown: plan.plan,
     requiredSecrets: plan.requiredSecrets,
     source: clean(args.source, 100) || "채팅",
@@ -707,6 +734,8 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
           requiredSecrets: secrets,
           priority,
           source,
+          // 출시 일감 종류(enqueueReleaseJob 만 넘긴다. enqueue_app_job 은 kind=release 를 막는다)
+          releaseKind: kind === "release" && typeof args.releaseKind === "string" ? args.releaseKind : null,
         },
         select: { id: true },
       });
