@@ -5,7 +5,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
 import { requireAdmin } from "@/lib/factory/admin";
-import { isSupervisorEnabled, setSupervisorEnabled } from "@/lib/factory/settings";
+import {
+  isAutoUpdateEnabled,
+  isSupervisorEnabled,
+  setAutoUpdateEnabled,
+  setSupervisorEnabled,
+} from "@/lib/factory/settings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,8 +18,9 @@ export const runtime = "nodejs";
 const ONLINE_MS = 90_000;
 
 async function snapshot() {
-  const [enabled, last, running, approved] = await Promise.all([
+  const [enabled, autoUpdate, last, running, approved] = await Promise.all([
     isSupervisorEnabled(),
+    isAutoUpdateEnabled(),
     prisma.factoryWorkerToken.findFirst({
       where: { lastUsedAt: { not: null } },
       orderBy: { lastUsedAt: "desc" },
@@ -27,6 +33,7 @@ async function snapshot() {
 
   return {
     enabled,
+    autoUpdate,
     online: !!lastSeen && Date.now() - lastSeen.getTime() < ONLINE_MS,
     lastSeenAt: lastSeen,
     workerName: last?.name ?? null,
@@ -50,16 +57,30 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json().catch(() => null)) as {
     enabled?: unknown;
+    autoUpdate?: unknown;
   } | null;
+  const hasEnabled = typeof body?.enabled === "boolean";
+  const hasAuto = typeof body?.autoUpdate === "boolean";
 
-  if (!body || typeof body.enabled !== "boolean") {
+  if (!body || (!hasEnabled && !hasAuto)) {
     return NextResponse.json(
-      { message: "enabled 는 true/false 여야 해요." },
+      { message: "enabled 또는 autoUpdate 는 true/false 여야 해요." },
       { status: 400 },
     );
   }
 
-  await setSupervisorEnabled(body.enabled);
+  if (hasAuto) {
+    await setAutoUpdateEnabled(body.autoUpdate as boolean);
+
+    return NextResponse.json({
+      ...(await snapshot()),
+      message: body.autoUpdate
+        ? "자동 업데이트를 켰어요. 다음 확인 때부터 적용돼요."
+        : "자동 업데이트를 껐어요. PC 프로그램은 지금 코드 그대로 실행돼요.",
+    });
+  }
+
+  await setSupervisorEnabled(body.enabled as boolean);
 
   return NextResponse.json({
     ...(await snapshot()),

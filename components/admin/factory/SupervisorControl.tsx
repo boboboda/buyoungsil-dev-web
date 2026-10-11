@@ -7,6 +7,7 @@ import { Button, Card, CardBody } from "@heroui/react";
 
 interface State {
   enabled: boolean;
+  autoUpdate: boolean;
   online: boolean;
   lastSeenAt: string | null;
   workerName: string | null;
@@ -37,6 +38,30 @@ export default function SupervisorControl() {
 
     return () => clearInterval(t);
   }, [load]);
+
+  const toggleAuto = async () => {
+    if (!s) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/factory/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoUpdate: !s.autoUpdate }),
+      });
+      const data = (await res.json().catch(() => ({}))) as State & {
+        message?: string;
+      };
+
+      if (res.ok) setS(data);
+      setNotice(
+        data.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."),
+      );
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    }
+    setBusy(false);
+  };
 
   const toggle = async () => {
     if (!s) return;
@@ -110,6 +135,25 @@ export default function SupervisorControl() {
           </Button>
         </div>
         {hint && <p className="text-sm text-default-600">{hint}</p>}
+        {s && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-default-200 pt-2 text-sm">
+            <span>
+              🔄 자동 업데이트: {s.autoUpdate ? "켜짐" : "꺼짐"}
+              <span className="ml-1 text-xs text-default-500">
+                (PC 프로그램이 새 코드를 스스로 받아요)
+              </span>
+            </span>
+            <Button
+              className="min-h-11 w-full sm:min-h-0 sm:w-auto"
+              isDisabled={busy}
+              size="sm"
+              variant="flat"
+              onPress={toggleAuto}
+            >
+              {s.autoUpdate ? "끄기" : "켜기"}
+            </Button>
+          </div>
+        )}
         {notice && <p className="text-sm text-default-600">{notice}</p>}
       </CardBody>
     </Card>

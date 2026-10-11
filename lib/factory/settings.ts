@@ -19,3 +19,22 @@ export async function setSupervisorEnabled(enabled: boolean): Promise<void> {
     update: { value },
   });
 }
+
+const AUTO_UPDATE_KEY = "autoUpdate";
+
+/** 감독 프로그램 자동 업데이트 허용 여부. 값이 없으면 켜짐. */
+export async function isAutoUpdateEnabled(): Promise<boolean> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: AUTO_UPDATE_KEY } });
+
+  return row?.value !== "false";
+}
+
+export async function setAutoUpdateEnabled(enabled: boolean): Promise<void> {
+  const value = enabled ? "true" : "false";
+
+  await prisma.factorySetting.upsert({
+    where: { key: AUTO_UPDATE_KEY },
+    create: { key: AUTO_UPDATE_KEY, value },
+    update: { value },
+  });
+}
