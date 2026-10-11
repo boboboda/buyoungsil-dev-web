@@ -19,6 +19,42 @@ export interface ReleaseAccount {
   secretNames: { keystore: string; key: string };
   secretNamesRegistered: boolean;
   keyPassword: KeyPasswordState | null; // 공용 키 비밀번호 등록 상태(키 경로가 없으면 null)
+  defaultKeyId: string | null; // 기본 키(키 보관함)
+}
+
+// 키 보관함: PC 에서 확인된 정보(값·개인키 없음)
+export interface KeyCheck {
+  at: string;
+  exists: boolean;
+  size: number | null;
+  mtime: string | null;
+  type: string | null;
+  aliases: { alias: string; sha1: string | null }[];
+  aliasFound: boolean | null;
+  passwordOk: boolean | null;
+  inApp: string | null;
+  gitTracked: boolean | null;
+  note: string | null;
+}
+
+export interface VaultKey {
+  id: string;
+  name: string;
+  kind: "shared" | "app";
+  kindLabel: string;
+  keystorePath: string;
+  keyAlias: string;
+  description: string | null;
+  production: boolean;
+  dname: string | null;
+  createState: string | null; // requested | creating | done | failed | null(등록한 키)
+  check: KeyCheck | null;
+  checking: "requested" | "taken" | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  password: KeyPasswordState;
+  usedBy: { accounts: string[]; apps: string[] };
+  createdAt: string;
 }
 
 // none: 미등록, waiting: 서버에 암호화 보관 중(PC 가져가기 대기), delivered: PC secrets.env 에 저장됨(서버 값 삭제)
@@ -91,7 +127,20 @@ export interface ReleaseApp {
   promoVideoUrl: string | null;
   storeAssets: StoreAssets | null;
   playMissing: string[]; // Play 업로드에 모자란 것(비면 가능)
-  key: { source: "custom" | "account"; path: string; alias: string; password: KeyPasswordState } | null;
+  keyId: string | null; // 이 앱이 고른 보관함 키(없으면 계정 기본 키)
+  key: {
+    source: "custom" | "account";
+    path: string;
+    alias: string;
+    password: KeyPasswordState;
+    keyId: string | null;
+    name: string | null;
+    kind: string | null;
+    production: boolean;
+    check: KeyCheck | null;
+    checking: "requested" | "taken" | null;
+    lastError: string | null;
+  } | null;
   keyScan: KeyScanApp | null;
   keyScanRequest: { requestedAt: string; takenAt: string | null } | null; // [키 조회] 진행 중
   lastReleaseJob: ReleaseJobInfo | null;
@@ -119,6 +168,8 @@ export interface ReleaseOverview {
   accounts: ReleaseAccount[];
   pcStatus: { at: string; items: PcPathItem[] } | null;
   keyScan: { at: string | null; apps: KeyScanApp[]; requestedAt: string | null };
+  keys: VaultKey[];
+  keyKinds: { value: string; label: string }[];
   apps: ReleaseApp[];
   message?: string;
 }

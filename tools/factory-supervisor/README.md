@@ -62,8 +62,13 @@ node supervisor.mjs      # 끄려면 Ctrl+C
   `RELEASE_KEY_<구분값>_STORE_PASSWORD`/`_KEY_PASSWORD` 로 저장 → 저장했다고 알리면 서버 값은 지워져요. 값은 로그에 남기지 않아요.
 - 진행 단계는 `.factory/phase.txt`(key, build, sign, store, upload, homepage), 실패는 Claude 가 `.factory/fail.json`({stage, reason})으로 알려요. outbox 가 거절되면 `homepage` 단계 실패.
   재시도(`job.release.resumeFrom`)가 `homepage` 면 Claude 없이 남은 outbox 만 다시 보내요. 로그·실패 이유의 비밀번호는 가려요(`maskText`).
-- 키 점검(`/next` 의 `keyScan`): 앱 폴더들에서 .jks·.keystore 와 key.properties 를 찾아 경로·별칭·SHA-1(JKS 는 비밀번호 없이 읽음)·git 추적 여부만 `/api/factory/key-report` 로 보내요.
-- 앱 하나 키 조회(출시 카드 [🔑 키 조회]): `/next` 에 `keyScanApps: [앱 이름]` 이 함께 오면 그 앱 폴더만 점검해 `only` 와 함께 보내요(폴더가 없으면 `missing: true`). 키 파일은 절대 경로(`abs`)도 보내요(통제실의 [이 키를 이 앱 키로 지정]용).
+- 키 보관함(`keyvault.mjs`, `/next` 의 `keyTasks`): 결과는 `/api/factory/key-vault` 로 보내요.
+  - `check`: 지정한 키 파일 하나를 직접 확인(확장자 없어도 됨, 1MB 이하 일반 파일만, 심볼릭 링크는 따라가지 않음). 형식·별칭·SHA-1(JKS 는 비밀번호 없이),
+    secrets.env 에 비밀번호가 있으면 keytool 로 비밀번호·별칭 확인(PKCS12 는 이때만 지문, 없으면 형식만). 작업 폴더의 앱 폴더 안이고 git 추적 중이면 경고.
+  - `create`: [새 공용 키 만들기]. keytool 로 JKS·RSA 2048·10000일. 경로에 무엇이든 있으면 덮어쓰지 않고 '이미 있어요'. 비밀번호가 아직 없으면 `pending`.
+  - 출시 일감은 키를 만들지 않아요(`job.release.key.generate` 가 false 면 파일이 없을 때 `missingMessage` 로 키 단계 실패).
+- 키 파일 후보 찾기(보조, `/next` 의 `keyScan` + `keyScanApps`): 그 앱 폴더에서 .jks·.keystore·.p12 와 확장자 없는 JKS(2KB~100KB, 매직 0xFEEDFEED),
+  key.properties 를 찾아 경로(`abs` 포함)·별칭·SHA-1·git 추적 여부만 `/api/factory/key-report` 로 보내요(폴더가 없으면 `missing: true`).
 - 스토어 자료 수정·프로젝트 업데이트의 갱신 항목(`job.release.items`): 고른 항목의 단계만 검사하고, Play 에도 고른 것만 올려요(문구를 안 고르면 제목·설명 그대로, 영상 링크만이면 등록정보 PATCH 로 영상만, 이미지를 안 고르면 이미지 그대로). `items` 가 없으면 예전 일감이라 예전처럼 전부.
 
 ## 스토어 자료·Play 업로드 (`store.mjs`, 출시 2단계)

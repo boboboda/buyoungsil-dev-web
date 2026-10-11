@@ -27,7 +27,7 @@ export default function AdminFactorySettingsPage() {
         </Link>
         <h1 className="mb-2 mt-2 text-3xl font-bold">⚙️ 앱 공장 설정</h1>
         <p className="text-gray-600 dark:text-gray-400">
-          작업 PC 연결 토큰, 사용할 수 있는 키 이름, 배포 계정을 관리해요
+          작업 PC 연결 토큰, 사용할 수 있는 키 이름, 키 보관함(서명 키), 배포 계정을 관리해요
         </p>
       </div>
 

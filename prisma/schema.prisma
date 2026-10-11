@@ -664,7 +664,9 @@ model FactoryApp {
   customKeyAlias     String? // 그 키의 별칭
   promoVideoUrl      String? // 홍보 영상 YouTube 링크(사람이 직접 올리고 붙여 넣음). 스토어 자료 업로드 때 Play 등록정보 영상으로
   storeAssets        Json? // 스토어 자료(.factory/store/) 단계별 결과·파일 정보(경로·크기·길이)·올린 이미지 URL·Play 업로드 결과
+  keyId              String? // 이 앱이 쓸 키(키 보관함). 없으면 배포 계정 기본 키. customKeystorePath·customKeyAlias 는 예전 값(호환용 사본)
   releaseAccount   FactoryReleaseAccount? @relation(fields: [releaseAccountId], references: [id], onDelete: SetNull)
+  key              FactoryKey?            @relation(fields: [keyId], references: [id], onDelete: SetNull)
 
   @@map("factory_apps")
 }
@@ -684,11 +686,39 @@ model FactoryReleaseAccount {
   accountType           String? // personal(개인) | organization(조직)
   loginEmail            String? // Play Console 로그인 구글 이메일
   notes                 String?      @db.Text
+  defaultKeyId          String? // 기본 키(키 보관함). keystorePath·keyAlias 는 예전 값(호환용 사본)
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
   apps                  FactoryApp[]
+  defaultKey            FactoryKey?  @relation(fields: [defaultKeyId], references: [id], onDelete: SetNull)
 
   @@map("factory_release_accounts")
+}
+
+// 키 보관함: 업로드(서명) 키 항목. PC 파일 경로·별칭만 저장한다(파일 내용·비밀번호는 저장하지 않음. 비밀번호는 FactoryKeyPassword 방식).
+// 공용 키는 [새 공용 키 만들기]로만 PC 감독 프로그램이 keytool 로 만든다(파일이 있으면 절대 덮어쓰지 않음).
+model FactoryKey {
+  id               String                  @id @default(cuid())
+  name             String                  @unique // 별명
+  kind             String                  @default("shared") // shared(공용 키) | app(기존 앱 키)
+  keystorePath     String // PC 의 키 파일 경로(확장자 없어도 됨)
+  keyAlias         String                  @default("upload")
+  description      String?                 @db.Text
+  production       Boolean                 @default(false) // 운영 키(프로덕션 배포에 쓰임): 경로·별칭 변경·삭제 불가
+  dname            String? // 공용 키 만들 때 인증서 이름(CN)
+  createState      String? // 공용 키 만들기: requested | creating | done | failed (기존 키 등록은 null)
+  createTakenAt    DateTime? // PC 가 만들기를 가져간 시각
+  checkRequestedAt DateTime? // [조회] 요청 시각(PC 가 가져가면 checkTakenAt)
+  checkTakenAt     DateTime?
+  check            Json? // PC 에서 확인된 정보(있음·크기·수정 시각·형식·별칭·SHA-1·git 추적·확인 시각)
+  lastError        String?                 @db.Text // 마지막 만들기·조회 오류(비밀번호 가림)
+  lastErrorAt      DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  accounts         FactoryReleaseAccount[]
+  apps             FactoryApp[]
+
+  @@map("factory_keys")
 }
 
 // 업로드 키 비밀번호 임시 보관. 통제실에서 입력한 값을 암호화해 두었다가, PC 감독 프로그램이 가져가 secrets.env 에 저장하면 sealed 를 비운다.

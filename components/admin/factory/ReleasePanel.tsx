@@ -6,17 +6,18 @@
 // 2단계: 홍보 영상 링크(YouTube, 앱별), 스토어 자료·Play 업로드 결과, Play 업로드에 모자란 것,
 // 스토어 자료 수정·프로젝트 업데이트 승인 때 '홈페이지 프로젝트도 덮어쓰기'(기본 꺼짐, 개인정보처리방침 제외).
 // 스토어 자료 수정·프로젝트 업데이트는 승인 전에 갱신할 항목을 고른다(1개 이상. 고른 것만 만들고·올리고·반영).
-// 앱마다 [🔑 키 조회]: 그 앱 폴더 하나만 키 점검(결과는 카드에), 앱 자체 키를 '다른 키 사용'에 채우기.
+// '이 앱이 쓸 키'는 키 보관함에서 고른다(기본: 계정 기본 키). 고른 키를 [조회]하면 작업 PC 가 그 파일을 직접 확인한다.
+// 보조: '이 앱 폴더에서 키 파일 후보 찾기'(확장자 없는 JKS 도 찾음) → 보관함 [기존 키 등록]으로 넘긴다.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Chip } from "@heroui/react";
 
 import Field from "./Field";
-import KeyPasswordForm from "./KeyPasswordForm";
 import AppKeyLookup from "./AppKeyLookup";
+import { KeyCheckView, KeyError } from "./KeyVault";
 import StoreAssetsView from "./StoreAssetsView";
-import { fmtDate, fmtSize, postRelease, type ReleaseApp, type ReleaseJobInfo, type ReleaseOverview } from "./releaseTypes";
+import { KEY_PASSWORD_TEXT, fmtDate, fmtSize, postRelease, type ReleaseApp, type ReleaseJobInfo, type ReleaseOverview } from "./releaseTypes";
 
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
 const LIMITS: Record<string, number> = { title: 30, shortDescription: 80, fullDescription: 4000 };
@@ -160,14 +161,13 @@ function AppRow({
   const [status, setStatus] = useState(app.releaseStatus);
   const [pkgName, setPkgName] = useState(app.packageName ?? "");
   const [first, setFirst] = useState(app.firstUploadDone);
-  const [customPath, setCustomPath] = useState(app.customKeystorePath ?? "");
-  const [customAlias, setCustomAlias] = useState(app.customKeyAlias ?? "");
+  // 이 앱이 쓸 키(보관함 항목 id). 빈 값이면 배포 계정 기본 키
+  const [keyId, setKeyId] = useState(app.keyId ?? "");
   // 패키지가 이미 있으면 보통 고치는 일이라 스토어 자료 수정을 먼저 보여 준다
   const [kind, setKind] = useState(app.releasePackage ? "store" : "first");
   const [overwrite, setOverwrite] = useState(false);
   // 갱신 항목(스토어 자료 수정·프로젝트 업데이트). 종류를 바꾸면 비운다
   const [items, setItems] = useState<string[]>([]);
-  const [keyOpen, setKeyOpen] = useState(!!app.customKeystorePath);
   const kindItems = data.kinds.find((k) => k.value === kind)?.items ?? [];
   const needItems = kindItems.length > 0 && items.length === 0;
   const [video, setVideo] = useState(app.promoVideoUrl ?? "");
@@ -176,6 +176,7 @@ function AppRow({
   const [notice, setNotice] = useState<string | null>(null);
   const label = data.statuses.find((s) => s.value === app.releaseStatus)?.label ?? app.releaseStatus;
   const account = data.accounts.find((a) => a.id === app.releaseAccountId);
+  const accDefault = data.keys.find((k) => k.id === data.accounts.find((a) => a.id === acc)?.defaultKeyId) ?? null;
   const dDay = app.testingDueAt ? Math.ceil((new Date(app.testingDueAt).getTime() - Date.now()) / 86400000) : null;
 
   const call = async (body: Record<string, unknown>) => {
@@ -240,41 +241,55 @@ function AppRow({
           <input checked={first} type="checkbox" onChange={(e) => setFirst(e.target.checked)} />
           최초 AAB 를 Play Console 에 직접 올렸어요(이후 첫 출시 일감이 비공개 테스트 트랙에 자동 업로드)
         </label>
-        <AppKeyLookup
-          busy={busy}
-          request={app.keyScanRequest}
-          scan={app.keyScan}
-          onLookup={() => call({ action: "requestKeyScan", appSlug: app.appSlug })}
-          onUseKey={(path, alias) => {
-            setCustomPath(path);
-            setCustomAlias(alias);
-            setKeyOpen(true);
-            setNotice("'다른 키 경로'·'키 별칭'을 채웠어요. [저장]을 눌러야 반영돼요(비밀번호는 아래에서 따로 등록).");
-          }}
-        />
-        <details
-          className="rounded-lg border border-default-200 p-2 text-sm"
-          open={keyOpen}
-          onToggle={(e) => setKeyOpen((e.currentTarget as HTMLDetailsElement).open)}
-        >
-          <summary className="cursor-pointer">🔑 업로드 키 {app.key ? `· ${app.key.source === "custom" ? "이 앱 전용 키" : "배포 계정 공용 키"}: ${app.key.path} (${app.key.alias})` : "· 없음"}</summary>
-          <div className="mt-2 space-y-2">
-            <p className="text-xs text-default-500">
-              앱 폴더에 key.properties 가 이미 있으면 작업 PC 는 그 키를 그대로 써요(건드리지 않음). 없을 때만 아래 키를 써요. 공용 키 대신 다른 키를 쓰려면
-              경로와 별칭을 넣고 저장하세요(비우면 공용 키).
-            </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field help="이 앱에만 쓸 업로드 키(.jks) 파일의 PC 경로. 비우면 배포 계정 공용 키." label="다른 키 경로">
-                <input className={input} placeholder="예: ~/keys/my-app.jks" value={customPath} onChange={(e) => setCustomPath(e.target.value)} />
-              </Field>
-              <Field help=".jks 안의 키 이름. 비우면 upload." label="키 별칭">
-                <input className={input} placeholder="예: upload" value={customAlias} onChange={(e) => setCustomAlias(e.target.value)} />
-              </Field>
+        <div className="space-y-2 rounded-lg border border-default-200 p-2 text-sm">
+          <Field
+            help="키 보관함(설정)에서 만들거나 등록한 키 중에서 골라요. 바꾼 뒤 [저장]. 앱 폴더에 key.properties 가 이미 있으면 그 키를 그대로 써요(건드리지 않음)."
+            label="🔑 이 앱이 쓸 키"
+          >
+            <select className={input} value={keyId} onChange={(e) => setKeyId(e.target.value)}>
+              <option value="">계정 기본 키{accDefault ? ` (${accDefault.name})` : acc ? " (계정에 기본 키 없음)" : ""}</option>
+              {data.keys.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.name} · {k.kindLabel}
+                  {k.production ? " · 운영 키" : ""} ({k.keystorePath})
+                </option>
+              ))}
+            </select>
+          </Field>
+          {app.key ? (
+            <div className="space-y-1">
+              <div className="text-xs">
+                지금 쓰는 키: <b>{app.key.name ?? app.key.path}</b> ({app.key.source === "custom" ? "이 앱에 고른 키" : "계정 기본 키"}
+                {app.key.production ? " · 🛡 운영 키" : ""}) · <code className="break-all">{app.key.path}</code> · 별칭 {app.key.alias} · 비밀번호{" "}
+                {KEY_PASSWORD_TEXT[app.key.password]}
+              </div>
+              <KeyError text={app.key.lastError} />
+              <KeyCheckView alias={app.key.alias} check={app.key.check} />
+              {app.key.keyId && (
+                <Button
+                  className="min-h-11 sm:min-h-0"
+                  isDisabled={busy || !!app.key.checking}
+                  size="sm"
+                  variant="flat"
+                  onPress={() => app.key?.keyId && call({ action: "vaultCheck", keyId: app.key.keyId })}
+                >
+                  {app.key.checking ? "조회 중…" : "🔍 조회"}
+                </Button>
+              )}
             </div>
-            {app.key?.source === "custom" && <KeyPasswordForm state={app.key.password} target={{ appSlug: app.appSlug }} onSaved={onSaved} />}
-            {app.key?.source === "account" && <p className="text-xs">공용 키 비밀번호는 설정 화면의 배포 계정에서 등록해요.</p>}
-          </div>
-        </details>
+          ) : (
+            <p className="text-xs text-warning-600">
+              쓸 키가 없어요. 설정 → 키 보관함에서 만들거나 등록한 뒤, 계정 기본 키로 고르거나 여기서 고르세요(첫 출시는 키 파일이 없으면 만들지 않고 멈춰요).
+            </p>
+          )}
+          <AppKeyLookup
+            appSlug={app.appSlug}
+            busy={busy}
+            request={app.keyScanRequest}
+            scan={app.keyScan}
+            onLookup={() => call({ action: "requestKeyScan", appSlug: app.appSlug })}
+          />
+        </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <Button
             className="min-h-11 sm:min-h-0"
@@ -289,8 +304,7 @@ function AppRow({
                 releaseStatus: status,
                 packageName: pkgName,
                 firstUploadDone: first,
-                customKeystorePath: customPath,
-                customKeyAlias: customAlias,
+                keyId,
               })
             }
           >
@@ -482,7 +496,7 @@ export default function ReleasePanel() {
   // 진행 중이거나 대기 중인 출시 일감이 있으면 15초마다 단계를 새로 읽는다
   // [키 조회] 결과를 기다리는 앱이 있어도 새로 읽는다
   const live = !!data?.apps.some(
-    (a) => (a.lastReleaseJob && ["pending", "approved", "running"].includes(a.lastReleaseJob.status)) || a.keyScanRequest,
+    (a) => (a.lastReleaseJob && ["pending", "approved", "running"].includes(a.lastReleaseJob.status)) || a.keyScanRequest || a.key?.checking,
   );
 
   useEffect(() => {

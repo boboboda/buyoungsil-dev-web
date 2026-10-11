@@ -16,7 +16,7 @@ export default function KeyPasswordForm({
   state,
   onSaved,
 }: {
-  target: { accountId: string } | { appSlug: string };
+  target: { keyId: string } | { accountId: string } | { appSlug: string };
   state: KeyPasswordState;
   onSaved: (d: Partial<ReleaseOverview>) => void;
 }) {
@@ -61,8 +61,8 @@ export default function KeyPasswordForm({
             등록
           </Button>
           <p className="text-xs text-default-500 sm:col-span-3">
-            키 파일이 아직 없으면 첫 출시 때 작업 PC 가 이 비밀번호로 한 번만 만들어요. 이미 있는 키라면 그 키의 실제 비밀번호를 넣으세요. 등록한 값은
-            다시 볼 수 없으니 비밀번호 관리자에도 꼭 따로 적어 두세요.
+            그 키의 실제 비밀번호를 넣으세요(키를 새로 만들지 않아요. 새 키는 키 보관함의 [새 공용 키 만들기]에서만). 등록한 값은 다시 볼 수
+            없으니 비밀번호 관리자에도 꼭 따로 적어 두세요.
           </p>
         </div>
       )}

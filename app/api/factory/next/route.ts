@@ -15,6 +15,8 @@
 //   통제실에서 키 비밀번호를 등록했고 아직 안 가져갔으면 keyPasswordsPending: true(값은 /api/factory/key-passwords 에서 따로).
 //   통제실 [키 점검]을 누르면 다음 응답 한 번에 keyScan: true 가 붙는다(결과는 /api/factory/key-report).
 //   출시 카드 [키 조회](앱 하나)면 keyScan: true 와 keyScanApps: [appSlug] 가 함께 붙는다(감독 프로그램은 그 앱만 점검. 예전 감독 프로그램은 전체 점검).
+//   키 보관함 일(공용 키 만들기·키 파일 조회)이 있으면 keyTasks: [{ id, op: create|check, path, alias, dname, storeName, keyName }] 가 붙는다
+//   (비밀번호는 이름만. 결과는 /api/factory/key-vault).
 //   출시 일감(kind=release)에는 release: { kind, stages, outbox, resumeFrom, resumeNote, key } 가 붙는다(lib/factory/release.ts releaseJobExtras).
 //   만료된 running 을 먼저 정리하고, approved 중 우선순위 높은 순으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 import { NextRequest, NextResponse } from "next/server";
@@ -23,6 +25,7 @@ import { claimJobs, MAX_SLOTS, releaseExpiredLeases, WORKER_RE } from "@/lib/fac
 import { fail, guardWorker } from "@/lib/factory/http";
 import { consumeKeyScan, notifyTestingDue, pcPathsToCheck, releaseJobExtras } from "@/lib/factory/release";
 import { keyPasswordsPending } from "@/lib/factory/keyPasswords";
+import { keyTasksForNext } from "@/lib/factory/keyVault";
 import { maintenanceForNext, maintenanceHold } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
 import { consumeUpdateNow, isAutoUpdateEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
@@ -57,12 +60,14 @@ export async function GET(req: NextRequest) {
     const maint = await maintenanceForNext().catch(() => ({}));
     const keyPw = await keyPasswordsPending().catch(() => false);
     const keyScan = await consumeKeyScan().catch(() => false);
+    const keyTasks = await keyTasksForNext();
     const extra = {
       ...(updateNow ? { updateNow: true } : {}),
       ...(pcPaths.length ? { pcPaths } : {}),
       ...(keyPw ? { keyPasswordsPending: true } : {}),
       ...(keyScan ? { keyScan: true } : {}),
       ...(Array.isArray(keyScan) ? { keyScanApps: keyScan } : {}),
+      ...(keyTasks.length ? { keyTasks } : {}),
       ...maint,
     };
 

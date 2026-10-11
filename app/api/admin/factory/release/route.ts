@@ -10,6 +10,15 @@ import { enqueueReleaseJob } from "@/lib/factory/mcp";
 import prisma from "@/lib/prisma";
 import { savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import {
+  createSharedKey,
+  deleteKey,
+  registerExistingKey,
+  requestKeyCheck,
+  retryCreateKey,
+  setVaultKeyPassword,
+  updateKey,
+} from "@/lib/factory/keyVault";
+import {
   RELEASE_KIND_LABELS,
   UPDATE_ITEMS,
   effectiveKey,
@@ -36,12 +45,12 @@ export async function GET() {
 // 키 비밀번호를 받을 키: 배포 계정 공용 키(accountId) 또는 앱별 다른 키(appSlug)
 async function keyTarget(body: Record<string, unknown>) {
   if (typeof body.accountId === "string") {
-    const acc = await prisma.factoryReleaseAccount.findUnique({ where: { id: body.accountId } });
+    const acc = await prisma.factoryReleaseAccount.findUnique({ where: { id: body.accountId }, include: { defaultKey: true } });
 
     return acc ? effectiveKey(null, acc) : null;
   }
   if (typeof body.appSlug === "string" && APP_SLUG_RE.test(body.appSlug)) {
-    const app = await prisma.factoryApp.findUnique({ where: { appSlug: body.appSlug } });
+    const app = await prisma.factoryApp.findUnique({ where: { appSlug: body.appSlug }, include: { key: true } });
     const key = app ? effectiveKey(app, null) : null;
 
     return key?.source === "custom" ? key : null;
@@ -56,7 +65,11 @@ async function keyTarget(body: Record<string, unknown>) {
 //         updateItems: store/project 는 필수(1개 이상). store=images|listing|video|privacy, project=description|cover|privacy)
 //       | { action: "savePromoVideo", appSlug, url }  (홍보 영상 YouTube 링크. 빈 값이면 지움)
 //       | { action: "retryRelease", jobId }  (실패한 단계부터 다시)
-//       | { action: "setKeyPassword", accountId | appSlug, storePassword, keyPassword? }
+//       | { action: "setKeyPassword", keyId | accountId | appSlug, storePassword, keyPassword? }
+//       키 보관함: { action: "vaultCreate", name, keystorePath?, keyAlias?, dname?, description?, password, password2 }  (PC 가 keytool 로 만듦, 있으면 덮어쓰지 않음)
+//                | { action: "vaultRegister", name, kind?, keystorePath, keyAlias?, description?, production?, storePassword, keyPassword? }  (등록만)
+//                | { action: "vaultUpdate", keyId, name?, kind?, description?, production? } | { action: "vaultDelete", keyId }  (보관함 항목만, PC 파일은 그대로)
+//                | { action: "vaultCheck", keyId }  (PC 가 그 파일을 확인) | { action: "vaultRetry", keyId }  (실패한 공용 키 만들기 다시)
 //       | { action: "requestKeyScan", appSlug? }  (appSlug 를 주면 그 앱 하나만 점검)
 //       | { action: "removeApps", appSlugs: string[] }  (출시 패키지 목록에서만 지움. 지시 기록·앱 소스·PC 파일은 그대로)
 export async function POST(req: NextRequest) {
@@ -113,6 +126,20 @@ export async function POST(req: NextRequest) {
 
     if (!ID_RE.test(jobId)) return NextResponse.json({ message: "jobId 가 올바르지 않아요." }, { status: 400 });
     res = await retryRelease(jobId);
+  } else if (typeof action === "string" && action.startsWith("vault")) {
+    const keyId = typeof body?.keyId === "string" ? body.keyId : "";
+
+    if (action === "vaultCreate") res = await createSharedKey(body ?? {});
+    else if (action === "vaultRegister") res = await registerExistingKey(body ?? {});
+    else if (!ID_RE.test(keyId)) return NextResponse.json({ message: "keyId 가 올바르지 않아요." }, { status: 400 });
+    else if (action === "vaultUpdate") res = await updateKey(keyId, body ?? {});
+    else if (action === "vaultDelete") res = await deleteKey(keyId);
+    else if (action === "vaultCheck") res = await requestKeyCheck(keyId);
+    else if (action === "vaultRetry") res = await retryCreateKey(keyId);
+    else return NextResponse.json({ message: "알 수 없는 키 보관함 동작이에요." }, { status: 400 });
+  } else if (action === "setKeyPassword" && typeof body?.keyId === "string") {
+    if (!ID_RE.test(body.keyId)) return NextResponse.json({ message: "keyId 가 올바르지 않아요." }, { status: 400 });
+    res = await setVaultKeyPassword(body.keyId, body.storePassword, body.keyPassword);
   } else if (action === "setKeyPassword") {
     const key = await keyTarget(body ?? {});
 
@@ -128,7 +155,10 @@ export async function POST(req: NextRequest) {
     res = await removeAppRelease(slugs);
   } else {
     return NextResponse.json(
-      { message: "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, setKeyPassword, requestKeyScan, removeApps 중 하나예요." },
+      {
+        message:
+          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry 중 하나예요.",
+      },
       { status: 400 },
     );
   }

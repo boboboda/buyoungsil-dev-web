@@ -27,6 +27,7 @@ import {
   syncKeyPasswords,
 } from "./release.mjs";
 import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
+import { runKeyTasks } from "./keyvault.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport } from "./store.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
@@ -902,7 +903,14 @@ async function loop() {
           if (r.data?.updateNow === true) requestUpdateNow(); // 1회성 "지금 업데이트": 다음 루프에서 바로 확인
           reportPcPaths(r.data?.pcPaths, api, log).catch(() => {}); // 배포 계정 키 파일이 있는지만 알린다
           // 통제실에서 등록한 키 비밀번호를 secrets.env 로(값은 로그에 남기지 않음), 키 점검 요청(한 번). 둘 다 던지지 않는다
-          if (r.data?.keyPasswordsPending === true) syncKeyPasswords({ api, log, secretsFile: cfg.secretsFile }).catch(() => {});
+          // 키 보관함 일(공용 키 만들기·키 파일 조회): 비밀번호를 먼저 받아 둔 뒤 처리한다
+          const keyTasks = Array.isArray(r.data?.keyTasks) ? r.data.keyTasks : [];
+          if (r.data?.keyPasswordsPending === true || keyTasks.length) {
+            (async () => {
+              if (r.data?.keyPasswordsPending === true) await syncKeyPasswords({ api, log, secretsFile: cfg.secretsFile });
+              if (keyTasks.length) await runKeyTasks({ tasks: keyTasks, api, log, workDir: cfg.workDir, readSecrets });
+            })().catch(() => {});
+          }
           // keyScanApps 가 있으면 그 앱 폴더만(출시 카드 [키 조회])
           if (r.data?.keyScan === true) runKeyScan({ api, log, workDir: cfg.workDir, only: Array.isArray(r.data?.keyScanApps) ? r.data.keyScanApps : null }).catch(() => {});
           // 공장 정비 지시·[배포] 요청(앱 일감과 따로. 정비는 돌던 앱 일감이 없을 때만 시작)

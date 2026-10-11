@@ -1,16 +1,14 @@
 // components/admin/factory/ReleaseAccounts.tsx
-// 배포 계정 A/B 프로필과 키 준비 상태 체크리스트. 키 파일은 PC 경로만 저장하고, PC 에 파일이 "있는지"는 감독 프로그램이 알려 준다.
-// 키 비밀번호는 전용 칸(KeyPasswordForm)으로 보내기만 하고, 다시 받아 오지 않는다(등록 상태만).
-// [키 점검]: 작업 PC 가 앱 폴더의 .jks·key.properties 를 찾아 경로·별칭·SHA-1 지문만 알려 준다.
+// 키 보관함(KeyVault)과 배포 계정 A/B 프로필·준비 상태 체크리스트. 계정의 서명 키는 '기본 키: 보관함에서 선택'으로 고른다
+// (예전 서명 키 경로·별칭은 서버가 첫 로드 때 보관함 항목으로 가져온다). 키 비밀번호는 보관함 항목마다 보내기만 하고 다시 받지 않는다.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, CardHeader } from "@heroui/react";
 
 import Field from "./Field";
-import KeyPasswordForm from "./KeyPasswordForm";
-import KeyScanTable from "./KeyScanTable";
-import { fmtDate, postRelease, type ReleaseAccount, type ReleaseOverview } from "./releaseTypes";
+import KeyVault, { KeyCheckView, KeyError } from "./KeyVault";
+import { KEY_PASSWORD_TEXT, postRelease, type ReleaseAccount, type ReleaseOverview } from "./releaseTypes";
 
 type Form = {
   label: string;
@@ -18,8 +16,7 @@ type Form = {
   requiresTesting: boolean;
   developerName: string;
   contactEmail: string;
-  keystorePath: string;
-  keyAlias: string;
+  defaultKeyId: string;
   serviceAccountKeyPath: string;
   developerAccountId: string;
   accountType: string;
@@ -35,8 +32,7 @@ const toForm = (label: string, a?: ReleaseAccount): Form => ({
   requiresTesting: a?.requiresTesting ?? label === "A",
   developerName: a?.developerName ?? "",
   contactEmail: a?.contactEmail ?? "",
-  keystorePath: a?.keystorePath ?? "",
-  keyAlias: a?.keyAlias ?? "",
+  defaultKeyId: a?.defaultKeyId ?? "",
   serviceAccountKeyPath: a?.serviceAccountKeyPath ?? "",
   developerAccountId: a?.developerAccountId ?? "",
   accountType: a?.accountType ?? "",
@@ -81,19 +77,33 @@ export default function ReleaseAccounts() {
     setBusy(false);
   };
 
-  // 비밀번호 등록·키 점검 뒤: 화면 데이터만 바꾸고 입력 중인 계정 칸은 그대로 둔다
+  // 키 보관함·비밀번호 등록 뒤: 화면 데이터만 바꾸고 입력 중인 계정 칸은 그대로 둔다(보관함에서 지운 기본 키만 비움)
   const onSaved = (d: Partial<ReleaseOverview>) => {
-    if (d.accounts && d.apps) setData(d as ReleaseOverview);
-  };
-  const keyScan = async () => {
-    setBusy(true);
-    setNotice(null);
-    const { ok, data: d } = await postRelease({ action: "requestKeyScan" });
+    if (!d.accounts || !d.apps || !d.keys) return;
+    const ids = new Set(d.keys.map((k) => k.id));
 
-    onSaved(d);
-    setNotice(d.message ?? (ok ? "요청했어요." : "요청하지 못했어요."));
-    setBusy(false);
+    setData(d as ReleaseOverview);
+    setForms((fs) => Object.fromEntries(Object.entries(fs).map(([l, f]) => [l, f.defaultKeyId && !ids.has(f.defaultKeyId) ? { ...f, defaultKeyId: "" } : f])));
   };
+
+  // 키 만들기·조회를 기다리는 동안 10초마다 새로 읽는다(입력 중인 계정 칸은 그대로)
+  const waiting = !!data?.keys.some((k) => k.checking || k.createState === "requested" || k.createState === "creating");
+
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setInterval(async () => {
+      try {
+        const res = await fetch("/api/admin/factory/release", { cache: "no-store" });
+
+        if (res.ok) onSaved((await res.json()) as ReleaseOverview);
+      } catch {
+        /* 그대로 */
+      }
+    }, 10_000);
+
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting]);
 
   const set = (label: string, patch: Partial<Form>) => setForms((f) => ({ ...f, [label]: { ...f[label], ...patch } }));
   const pc = (key: string) => data?.pcStatus?.items.find((i) => i.key === key) ?? null;
@@ -106,26 +116,23 @@ export default function ReleaseAccounts() {
   );
 
   return (
+    <>
+    {data && <KeyVault data={data} onSaved={onSaved} />}
     <Card>
       <CardHeader className="flex flex-col items-start gap-1">
         <span className="font-semibold">🚀 배포 계정 (출시)</span>
         <span className="text-xs text-default-500">
-          앱마다 어느 계정으로 낼지 출시 패키지 화면에서 골라요. 키 파일은 PC 경로만 적고, 비밀번호는 PC 의 secrets.env 에만 넣어요.
+          앱마다 어느 계정으로 낼지 출시 패키지 화면에서 골라요. 서명 키는 위 키 보관함에서 골라요(비밀번호는 PC 의 secrets.env 에만).
         </span>
       </CardHeader>
       <CardBody className="space-y-6">
-        <div className="rounded-lg border border-warning-200 bg-warning-50 p-3 text-sm dark:bg-warning-50/10">
-          <b>⚠️ 서명 키 백업은 꼭 해 두세요.</b> 업로드 키(.jks)와 비밀번호를 잃으면 앱 업데이트를 올릴 수 없어요(Play App Signing 을
-          쓰면 업로드 키는 Play Console 에서 재설정을 요청할 수 있지만 며칠 걸려요). 키 파일을 PC 밖 안전한 곳(암호화한 USB, 비밀번호
-          관리자 등) 두 군데 이상에 복사하고, 앱 폴더·git·홈페이지에는 절대 두지 마세요.
-        </div>
         {!data ? (
           <p className="text-sm text-default-500">읽는 중…</p>
         ) : (
           LABELS.map((label) => {
             const f = forms[label];
             const acc = data.accounts.find((a) => a.label === label);
-            const ks = pc(`${label}.keystore`);
+            const dk = data.keys.find((k) => k.id === acc?.defaultKeyId) ?? null;
             const sa = pc(`${label}.serviceAccount`);
 
             if (!f) return null;
@@ -140,7 +147,7 @@ export default function ReleaseAccounts() {
                   <Check ok={!!acc?.developerAccountId} text="Play Console 개발자 계정 ID" />
                   <Check ok={!!acc?.accountType} text="계정 유형(개인/조직)" />
                   <Check ok={!!acc?.loginEmail} text="Play Console 로그인 구글 이메일" />
-                  <Check ok={!!acc?.keystorePath} text={`서명 키 경로 등록${acc?.keystorePath ? `: ${acc.keystorePath}` : ""}`} />
+                  <Check ok={!!dk} text={`기본 키 선택${dk ? `: ${dk.name}` : " (키 보관함에서)"}`} />
                   <Check
                     ok={!!acc?.serviceAccountKeyPath}
                     text={`서비스 계정 키 경로 등록${acc?.serviceAccountKeyPath ? `: ${acc.serviceAccountKeyPath}` : " (비공개 테스트 자동 업로드에 필요)"}`}
@@ -186,13 +193,19 @@ export default function ReleaseAccounts() {
                     <input className={input} placeholder="예: me@gmail.com" type="email" value={f.loginEmail} onChange={(e) => set(label, { loginEmail: e.target.value })} />
                   </Field>
                   <Field
-                    help="PC 에 있는 업로드 키(.jks) 파일 경로. 비워 두면 공장이 공용 키를 새로 만들 곳을 정함. 비밀번호는 여기 말고 아래 '비밀번호 등록'에."
-                    label="서명 키 경로"
+                    className="sm:col-span-2"
+                    help="이 계정의 앱이 따로 고르지 않으면 쓰는 업로드 키. 위 키 보관함에서 만들거나 등록한 키 중에서 골라요(비밀번호도 보관함에서)."
+                    label="기본 키: 보관함에서 선택"
                   >
-                    <input className={input} placeholder="예: ~/keys/upload.jks" value={f.keystorePath} onChange={(e) => set(label, { keystorePath: e.target.value })} />
-                  </Field>
-                  <Field help=".jks 안의 키 이름." label="키 별칭">
-                    <input className={input} placeholder="예: upload" value={f.keyAlias} onChange={(e) => set(label, { keyAlias: e.target.value })} />
+                    <select className={input} value={f.defaultKeyId} onChange={(e) => set(label, { defaultKeyId: e.target.value })}>
+                      <option value="">없음</option>
+                      {data.keys.map((k) => (
+                        <option key={k.id} value={k.id}>
+                          {k.name} · {k.kindLabel}
+                          {k.production ? " · 운영 키" : ""} ({k.keystorePath})
+                        </option>
+                      ))}
+                    </select>
                   </Field>
                   <Field
                     className="sm:col-span-2"
@@ -219,22 +232,18 @@ export default function ReleaseAccounts() {
                     {acc.loginEmail ? ` · ${acc.loginEmail} 로 로그인` : ""})
                   </a>
                 )}
-                {acc && (acc.keystorePath || acc.serviceAccountKeyPath) && (
+                {acc && (dk || acc.serviceAccountKeyPath) && (
                   <ul className="space-y-1 text-sm">
-                    {acc.keystorePath && (
-                      <Check
-                        ok={!!ks?.exists}
-                        text={ks ? (ks.exists ? `PC 에 서명 키 파일 있음 (${fmtDate(ks.mtime)} 수정)` : "PC 에 서명 키 파일이 없어요") : "PC 확인 기다리는 중(감독 프로그램이 15초 안에 확인)"}
-                        unknown={!ks}
-                      />
-                    )}
-                    {acc.keystorePath && acc.keyPassword && (
-                      <li>
-                        <KeyPasswordForm state={acc.keyPassword} target={{ accountId: acc.id }} onSaved={onSaved} />
-                        <p className="mt-1 text-xs text-default-500">
-                          공용 키는 키 파일이 없는 새 앱에만 쓰여요. 앱 폴더에 key.properties 가 이미 있는 앱은 자기 키를 그대로 써요. (예전처럼
-                          secrets.env 에 <code>{acc.secretNames.keystore}</code>, <code>{acc.secretNames.key}</code> 를 직접 넣어 둔 것도 계속 쓸 수
-                          있어요)
+                    {dk && (
+                      <li className="space-y-1 rounded-lg border border-default-200 p-2">
+                        <div>
+                          기본 키 <b>{dk.name}</b> · 비밀번호 {KEY_PASSWORD_TEXT[dk.password]}
+                        </div>
+                        <KeyError text={dk.lastError} />
+                        <KeyCheckView alias={dk.keyAlias} check={dk.check} />
+                        <p className="text-xs text-default-500">
+                          조회·비밀번호는 위 키 보관함에서 해요. 앱 폴더에 key.properties 가 이미 있는 앱은 자기 키를 그대로 써요. (예전처럼 secrets.env
+                          에 <code>{acc.secretNames.keystore}</code>, <code>{acc.secretNames.key}</code> 를 직접 넣어 둔 것도 계속 쓸 수 있어요)
                         </p>
                       </li>
                     )}
@@ -252,29 +261,9 @@ export default function ReleaseAccounts() {
           })
         )}
         {data?.pcStatus && <p className="text-xs text-default-500">PC 확인 시각: {new Date(data.pcStatus.at).toLocaleString("ko-KR")}</p>}
-        {data && (
-          <div className="space-y-2 border-t border-default-200 pt-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold">🔑 키 점검</span>
-              <Button isDisabled={busy} size="sm" variant="flat" onPress={keyScan}>
-                키 점검 요청
-              </Button>
-              <span className="text-xs text-default-500">
-                {data.keyScan.requestedAt
-                  ? "작업 PC 가 가져가기를 기다리는 중… (잠시 뒤 새로고침)"
-                  : data.keyScan.at
-                    ? `마지막 점검: ${new Date(data.keyScan.at).toLocaleString("ko-KR")}`
-                    : "아직 점검한 적 없어요"}
-              </span>
-            </div>
-            <p className="text-xs text-default-500">
-              작업 PC 가 기존 앱 폴더에서 .jks·.keystore 와 key.properties 를 찾아 경로·별칭·SHA-1 지문, git 추적 여부만 알려 줘요. 비밀번호는 읽지 않아요.
-            </p>
-            <KeyScanTable apps={data.keyScan.apps} />
-          </div>
-        )}
         {notice && <p className="text-sm text-default-600">{notice}</p>}
       </CardBody>
     </Card>
+    </>
   );
 }

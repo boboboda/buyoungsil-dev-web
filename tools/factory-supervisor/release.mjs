@@ -4,8 +4,10 @@
 // - 배포 계정 키 파일이 PC 에 "있는지"만 확인해 알린다(파일 내용은 읽지 않는다)
 // - 통제실에서 등록한 키 비밀번호를 받아 secrets.env 에 저장하고, 저장했다고 알려 서버 값을 지우게 한다
 // - 첫 출시 일감의 업로드 키 준비: 앱에 key.properties 가 있으면 그대로 두고, 없으면 공용/지정 키를 환경변수로 넘긴다.
-//   공용 키 파일이 없을 때만 keytool 로 한 번 만든다(있으면 절대 덮어쓰거나 새로 만들지 않는다)
-// - 키 점검: 앱 폴더의 .jks·.keystore 와 key.properties 를 찾아 경로·별칭·SHA-1·git 추적 여부만 보고(비밀번호는 읽지 않는다)
+//   키 파일이 없으면 만들지 않고 키 단계 실패(키는 설정 → 키 보관함의 [새 공용 키 만들기]에서만 만든다. keyvault.mjs).
+//   예전 서버가 generate: true 를 주면 예전처럼 공용 키 파일이 없을 때만 한 번 만든다(있으면 절대 덮어쓰지 않는다)
+// - 키 파일 후보 찾기(보조): 앱 폴더의 .jks·.keystore·.p12, 확장자 없는 JKS 파일(2KB~100KB, 매직 0xFEEDFEED)과 key.properties 를 찾아
+//   경로·별칭·SHA-1·git 추적 여부만 보고(비밀번호는 읽지 않는다)
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -155,14 +157,14 @@ export function resumeSection(job) {
 
 // ───────── 업로드 키 준비 (첫 출시) ─────────
 
-const expandHome = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
+export const expandHome = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
 
 /** 앱 자체 키 설정 파일(Flutter: android/key.properties, 그 밖: key.properties) */
 export function appKeyProperties(dir) {
   return ["android/key.properties", "key.properties"].map((r) => path.join(dir, r)).find((p) => fs.existsSync(p)) ?? null;
 }
 
-function findKeytool() {
+export function findKeytool() {
   const exe = process.platform === "win32" ? "keytool.exe" : "keytool";
   const cands = [
     process.env.JAVA_HOME && path.join(process.env.JAVA_HOME, "bin", exe),
@@ -195,14 +197,17 @@ export function prepareReleaseKey({ job, dir, secrets, log }) {
   if (!storePass) {
     return { ok: false, reason: `키 비밀번호가 이 PC 에 없어요(${k.storeName}). 통제실에서 ${k.source === "custom" ? "이 앱의 다른 키" : "배포 계정"} 비밀번호를 등록한 뒤 재시도하세요.` };
   }
-  if (typeof k.path !== "string" || !/\.(jks|keystore)$/i.test(k.path)) return { ok: false, reason: "키 경로가 .jks/.keystore 가 아니에요." };
+  // 보관함 키는 확장자가 없을 수 있다(예: Untitled). 새로 만드는 예전 방식만 확장자를 본다
+  if (typeof k.path !== "string" || !k.path.trim()) return { ok: false, reason: "키 경로가 없어요." };
+  if (k.generate && !/\.(jks|keystore)$/i.test(k.path)) return { ok: false, reason: "키 경로가 .jks/.keystore 가 아니에요." };
   const abs = path.resolve(expandHome(k.path));
   let note;
 
   if (fs.existsSync(abs)) {
     note = `업로드 키 사용: ${k.path} (${k.alias}, 기존 파일 그대로)`;
   } else if (!k.generate) {
-    return { ok: false, reason: `지정한 키 파일이 없어요: ${k.path}. 경로를 확인하세요(앱별 다른 키는 새로 만들지 않아요).` };
+    // 운영 키 보호: 출시 일감은 키를 만들지 않는다
+    return { ok: false, reason: typeof k.missingMessage === "string" && k.missingMessage ? k.missingMessage : `키 파일이 없어요(${k.path}). 설정 → 키 보관함에서 만들거나 등록하세요.` };
   } else {
     const kt = findKeytool();
     if (!kt) return { ok: false, reason: "keytool 을 찾지 못해 공용 키를 만들 수 없어요(JDK 나 Android Studio 를 설치하거나 JAVA_HOME 을 지정하세요)." };
@@ -346,6 +351,24 @@ export function jksInfo(buf) {
   return { type, aliases, note: null };
 }
 
+// 확장자 없는 파일 중 2KB~100KB 이고 머리가 JKS/JCEKS 매직이면 키 파일 후보
+function looksLikeJks(file) {
+  let fd;
+  try {
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size < 2 * 1024 || st.size > 100 * 1024) return false;
+    fd = fs.openSync(file, "r");
+    const b = Buffer.alloc(4);
+    fs.readSync(fd, b, 0, 4, 0);
+    const m = b.readUInt32BE(0);
+    return m === 0xfeedfeed || m === 0xcececece;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 function walk(root, depth, out, budget) {
   if (depth > 5 || budget.n <= 0) return;
   let ents = [];
@@ -361,8 +384,9 @@ function walk(root, depth, out, budget) {
       if (!SKIP_DIRS.has(e.name)) walk(full, depth + 1, out, budget);
     } else if (e.isFile()) {
       const low = e.name.toLowerCase();
-      if (low.endsWith(".jks") || low.endsWith(".keystore")) out.keys.push(full);
+      if (low.endsWith(".jks") || low.endsWith(".keystore") || low.endsWith(".p12") || low.endsWith(".pfx")) out.keys.push(full);
       else if (low === "key.properties") out.props.push(full);
+      else if (!e.name.includes(".") && out.keys.length < 20 && looksLikeJks(full)) out.keys.push(full); // 확장자 없는 키 파일(예: Untitled)
     }
   }
 }

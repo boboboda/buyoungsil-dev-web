@@ -12,6 +12,7 @@ import { notifyText } from "@/lib/factory/telegram";
 import { ACTIVE_STATUSES } from "@/lib/factory/jobs";
 import { DEFAULT_KEY_ALIAS, keyPasswordStatuses, keyRefOf, keySecretNames } from "@/lib/factory/keyPasswords";
 import { maskSecrets } from "@/lib/factory/mask";
+import { KEY_KINDS, listVault } from "@/lib/factory/keyVault";
 
 // 출시 일감 종류. 종류마다 서버가 만드는 지시문과 허용 동작(outbox 파일·키 준비)이 다르다.
 export const RELEASE_KINDS = ["first", "store", "project"] as const;
@@ -148,6 +149,7 @@ export interface AccountInput {
   contactEmail?: unknown;
   keystorePath?: unknown;
   keyAlias?: unknown;
+  defaultKeyId?: unknown; // 기본 키(키 보관함 항목 id, 빈 값이면 없음). 주면 keystorePath·keyAlias 는 무시하고 그 키의 값으로 맞춘다
   serviceAccountKeyPath?: unknown;
   developerAccountId?: unknown;
   accountType?: unknown;
@@ -184,9 +186,22 @@ export async function saveReleaseAccount(input: AccountInput): Promise<{ ok: boo
   if (accountType !== null && !(ACCOUNT_TYPES as readonly unknown[]).includes(accountType)) {
     return { ok: false, status: 400, message: "계정 유형은 개인 또는 조직이에요." };
   }
-  const ks = checkPath(input.keystorePath, [".jks", ".keystore"], "서명 키");
+  // 서명 키: 보관함에서 고른 기본 키(새 화면) → 예전 경로 칸(예전 호출) → 안 보냈으면 그대로
+  let keyData: { defaultKeyId?: string | null; keystorePath?: string | null; keyAlias?: string | null } = {};
 
-  if ("message" in ks) return { ok: false, status: 400, message: ks.message };
+  if (input.defaultKeyId !== undefined) {
+    const id = typeof input.defaultKeyId === "string" && input.defaultKeyId ? input.defaultKeyId : null;
+    const k = id ? await prisma.factoryKey.findUnique({ where: { id } }) : null;
+
+    if (id && !k) return { ok: false, status: 400, message: "키 보관함에 없는 키예요." };
+    // 예전 열은 호환용 사본(예전 감독 프로그램·화면이 읽음)
+    keyData = { defaultKeyId: k?.id ?? null, keystorePath: k?.keystorePath ?? null, keyAlias: k?.keyAlias ?? null };
+  } else if (input.keystorePath !== undefined) {
+    const ks = checkPath(input.keystorePath, [".jks", ".keystore"], "서명 키");
+
+    if ("message" in ks) return { ok: false, status: 400, message: ks.message };
+    keyData = { defaultKeyId: null, keystorePath: ks.value, keyAlias: cleanStr(input.keyAlias, 80) }; // 다음 로드 때 보관함으로 가져온다
+  }
   const sa = checkPath(input.serviceAccountKeyPath, [".json"], "서비스 계정 키");
 
   if ("message" in sa) return { ok: false, status: 400, message: sa.message };
@@ -196,8 +211,7 @@ export async function saveReleaseAccount(input: AccountInput): Promise<{ ok: boo
     requiresTesting: input.requiresTesting === true,
     developerName: cleanStr(input.developerName, 80),
     contactEmail: email,
-    keystorePath: ks.value,
-    keyAlias: cleanStr(input.keyAlias, 80),
+    ...keyData,
     serviceAccountKeyPath: sa.value,
     developerAccountId: devId,
     accountType: accountType as string | null,
@@ -208,7 +222,7 @@ export async function saveReleaseAccount(input: AccountInput): Promise<{ ok: boo
   await prisma.factoryReleaseAccount.upsert({ where: { label }, create: { label, ...data }, update: data });
 
   // 서명 키를 쓰는 계정이면 비밀번호 키 "이름"을 등록해 둔다(값은 PC secrets.env 에만). 출시 준비 일감이 이 이름으로 받는다.
-  if (data.keystorePath) {
+  if (keyData.keystorePath) {
     for (const [n, d] of [
       [keystorePasswordName(label), `배포 계정 ${label} 업로드 키(keystore) 비밀번호`],
       [keyPasswordName(label), `배포 계정 ${label} 업로드 키 별칭(key) 비밀번호`],
@@ -464,21 +478,45 @@ async function getKeyScan(): Promise<{ at: string | null; apps: KeyScanApp[]; re
 
 // ───────── 앱이 쓸 업로드 키 ─────────
 
-type AccountRow = { label: string; name: string; developerName: string | null; keystorePath: string | null; keyAlias: string | null };
-type AppKeyRow = { customKeystorePath: string | null; customKeyAlias: string | null };
+// 키 보관함 항목(필요한 칸만)
+type VaultKeyRow = { id: string; name: string; kind: string; keystorePath: string; keyAlias: string; production: boolean; createState: string | null };
+type AccountRow = {
+  label: string;
+  name: string;
+  developerName: string | null;
+  keystorePath: string | null;
+  keyAlias: string | null;
+  defaultKey?: VaultKeyRow | null;
+};
+type AppKeyRow = { customKeystorePath: string | null; customKeyAlias: string | null; key?: VaultKeyRow | null };
 
-/** 앱별 '다른 키'가 있으면 그것, 없으면 배포 계정 공용 키. 둘 다 없으면 null */
+const fromVault = (source: "custom" | "account", k: VaultKeyRow) => ({
+  source,
+  path: k.keystorePath,
+  alias: k.keyAlias,
+  ref: keyRefOf(k.keystorePath, k.keyAlias),
+  keyId: k.id as string | null,
+  name: k.name as string | null,
+  kind: k.kind as string | null,
+  production: k.production,
+  createState: k.createState,
+});
+
+/**
+ * 앱이 쓸 업로드 키: 앱이 고른 보관함 키 → (예전 값) 앱별 '다른 키' → 배포 계정 기본 키(보관함) → (예전 값) 계정 서명 키. 없으면 null.
+ * 예전 값은 보관함으로 가져오기 전에만 쓰인다(importLegacyKeys).
+ */
 export function effectiveKey(app: AppKeyRow | null, acc: AccountRow | null) {
-  if (app?.customKeystorePath) {
-    const alias = app.customKeyAlias || DEFAULT_KEY_ALIAS;
+  const legacy = (source: "custom" | "account", path: string, aliasIn: string | null) => {
+    const alias = aliasIn || DEFAULT_KEY_ALIAS;
 
-    return { source: "custom" as const, path: app.customKeystorePath, alias, ref: keyRefOf(app.customKeystorePath, alias) };
-  }
-  if (acc?.keystorePath) {
-    const alias = acc.keyAlias || DEFAULT_KEY_ALIAS;
+    return { source, path, alias, ref: keyRefOf(path, alias), keyId: null, name: null, kind: null, production: false, createState: null };
+  };
 
-    return { source: "account" as const, path: acc.keystorePath, alias, ref: keyRefOf(acc.keystorePath, alias) };
-  }
+  if (app?.key) return fromVault("custom", app.key);
+  if (app?.customKeystorePath) return legacy("custom", app.customKeystorePath, app.customKeyAlias);
+  if (acc?.defaultKey) return fromVault("account", acc.defaultKey);
+  if (acc?.keystorePath) return legacy("account", acc.keystorePath, acc.keyAlias);
 
   return null;
 }
@@ -513,9 +551,12 @@ export function playUploadMissing(
 
 /** 통제실 "출시 패키지" 화면에 필요한 것 전부. 키 값은 없다(경로·이름·존재 여부만). */
 export async function releaseOverview() {
+  // 키 보관함(예전 키 경로를 먼저 보관함 항목으로 가져온다)
+  const vault = await listVault();
+  const vaultById = new Map(vault.map((k) => [k.id, k]));
   const [accounts, apps, jobs, pcStatus, secretNames, keyPasswords, keyScan] = await Promise.all([
-    prisma.factoryReleaseAccount.findMany({ orderBy: { label: "asc" } }),
-    prisma.factoryApp.findMany(),
+    prisma.factoryReleaseAccount.findMany({ orderBy: { label: "asc" }, include: { defaultKey: true } }),
+    prisma.factoryApp.findMany({ include: { key: true } }),
     prisma.factoryJob.findMany({
       orderBy: { createdAt: "desc" },
       select: {
@@ -606,7 +647,23 @@ export async function releaseOverview() {
       // Play 업로드(스토어 자료·업데이트 AAB)에 모자란 것. 비면 업로드 가능
       playMissing: playUploadMissing(app ?? null, account, pcStatus?.items),
       // 이 앱이 쓸 업로드 키(앱 폴더에 key.properties 가 있으면 PC 가 그걸 먼저 쓴다)와 비밀번호 등록 상태(값 없음)
-      key: key ? { source: key.source, path: key.path, alias: key.alias, password: pw?.state ?? "none" } : null,
+      keyId: app?.keyId ?? null,
+      key: key
+        ? {
+            source: key.source,
+            path: key.path,
+            alias: key.alias,
+            password: pw?.state ?? "none",
+            keyId: key.keyId,
+            name: key.name,
+            kind: key.kind,
+            production: key.production,
+            // 보관함에서 PC 가 확인한 정보·조회 중·마지막 오류
+            check: key.keyId ? (vaultById.get(key.keyId)?.check ?? null) : null,
+            checking: key.keyId ? (vaultById.get(key.keyId)?.checking ?? null) : null,
+            lastError: key.keyId ? (vaultById.get(key.keyId)?.lastError ?? null) : null,
+          }
+        : null,
       keyScan: keyScanOf(j.appSlug),
       // 출시 카드 [키 조회] 진행 상태(요청·가져간 시각). 결과가 오면 사라진다
       keyScanRequest: keyScan.appRequests[j.appSlug] ?? null,
@@ -640,8 +697,8 @@ export async function releaseOverview() {
     statuses: RELEASE_STATUSES.map((s) => ({ value: s, label: RELEASE_STATUS_LABELS[s] })),
     kinds: RELEASE_KINDS.map((k) => ({ value: k, label: RELEASE_KIND_LABELS[k], canOverwrite: OVERWRITE_KINDS.includes(k), items: UPDATE_ITEMS[k] ?? [] })),
     testingDays: TESTING_DAYS,
-    accounts: accounts.map((a) => {
-      const key = effectiveKey(null, a);
+    accounts: accounts.map(({ defaultKey: _dk, ...a }) => {
+      const key = effectiveKey(null, { ...a, defaultKey: _dk });
 
       return {
         ...a,
@@ -654,6 +711,8 @@ export async function releaseOverview() {
     pcStatus,
     keyPasswords,
     keyScan: { at: keyScan.at, apps: keyScan.apps.filter((a) => !a.missing), requestedAt: keyScan.requestedAt },
+    keys: vault,
+    keyKinds: Object.entries(KEY_KINDS).map(([value, label]) => ({ value, label })),
     apps: rows,
   };
 }
@@ -665,6 +724,7 @@ export interface AppReleaseInput {
   firstUploadDone?: unknown;
   customKeystorePath?: unknown;
   customKeyAlias?: unknown;
+  keyId?: unknown; // 이 앱이 쓸 키(키 보관함 항목 id). 빈 값이면 배포 계정 기본 키
 }
 
 const PACKAGE_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
@@ -695,8 +755,19 @@ export async function updateAppRelease(appSlug: string, input: AppReleaseInput):
 
     if ("message" in ks) return { ok: false, status: 400, message: ks.message };
     data.customKeystorePath = ks.value;
+    data.keyId = null; // 예전 방식으로 바꾸면 다음 로드 때 보관함으로 가져온다
   }
   if (input.customKeyAlias !== undefined) data.customKeyAlias = cleanStr(input.customKeyAlias, 80);
+  // 키 보관함에서 고른 키. 예전 '다른 키' 열은 호환용 사본으로 맞춘다(비우면 같이 비움 → 계정 기본 키)
+  if (input.keyId !== undefined) {
+    const id = typeof input.keyId === "string" && input.keyId ? input.keyId : null;
+    const k = id ? await prisma.factoryKey.findUnique({ where: { id } }) : null;
+
+    if (id && !k) return { ok: false, status: 400, message: "키 보관함에 없는 키예요." };
+    data.keyId = k?.id ?? null;
+    data.customKeystorePath = k?.keystorePath ?? null;
+    data.customKeyAlias = k?.keyAlias ?? null;
+  }
 
   let startedTesting = false;
 
@@ -915,7 +986,7 @@ export async function buildReleasePlan(
   opts: { overwriteProject?: boolean; updateItems?: string[] } = {},
 ): Promise<{ ok: true; plan: string; requiredSecrets: string[] } | { ok: false; message: string }> {
   const kind = releaseKindOf(kindArg);
-  const app = await prisma.factoryApp.findUnique({ where: { appSlug }, include: { releaseAccount: true } });
+  const app = await prisma.factoryApp.findUnique({ where: { appSlug }, include: { key: true, releaseAccount: { include: { defaultKey: true } } } });
   const acc = app?.releaseAccount ?? null;
 
   if (!acc) return { ok: false, message: "먼저 출시 패키지 화면에서 이 앱의 배포 계정을 고르세요." };
@@ -1059,8 +1130,8 @@ export async function buildReleasePlan(
     "- 앱 폴더에 `android/key.properties`(또는 `key.properties`)가 이미 있으면 그 키를 그대로 쓰세요. key.properties 와 그 키 파일은 수정·이동·재생성하지 마세요.",
     key
       ? [
-          `- 없으면 ${key.source === "custom" ? "이 앱에 지정된 다른 키" : `배포 계정 ${acc.label} 공용 키`}를 써요: \`${key.path}\` (별칭 ${key.alias}).`,
-          "  감독 프로그램이 시작 전에 준비해서(파일이 없을 때만 한 번 만들고, 있으면 절대 건드리지 않음) 환경변수로 넘겨요:",
+          `- 없으면 ${key.source === "custom" ? "이 앱에 고른 키" : `배포 계정 ${acc.label} 기본 키`}${key.name ? `(키 보관함: ${key.name})` : ""}를 써요: \`${key.path}\` (별칭 ${key.alias}).`,
+          "  감독 프로그램이 시작 전에 확인해서(키 파일을 만들거나 바꾸지 않음. 파일이 없으면 키 단계 실패) 환경변수로 넘겨요:",
           "  FACTORY_KEYSTORE_PATH, FACTORY_KEY_ALIAS, FACTORY_KEYSTORE_PASSWORD, FACTORY_KEY_PASSWORD.",
           "- 서명 설정은 빌드 스크립트가 이 환경변수를 읽게 하세요(Flutter: android/app/build.gradle(.kts) 의 signingConfigs.release 에서 System.getenv).",
           "  key.properties 를 새로 만들 때는 storeFile·keyAlias 만 쓰고 비밀번호는 쓰지 마세요. 비밀번호를 파일·로그·커밋·JSON 에 쓰지 마세요.",
@@ -1100,7 +1171,7 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
   if (rel.length === 0) return out;
   const [rows, apps] = await Promise.all([
     prisma.factoryJob.findMany({ where: { id: { in: rel.map((j) => j.id) } }, select: { id: true, releaseKind: true, resumeFrom: true, resumeNote: true, overwriteProject: true, updateItems: true } }),
-    prisma.factoryApp.findMany({ where: { appSlug: { in: rel.map((j) => j.appSlug) } }, include: { releaseAccount: true } }),
+    prisma.factoryApp.findMany({ where: { appSlug: { in: rel.map((j) => j.appSlug) } }, include: { key: true, releaseAccount: { include: { defaultKey: true } } } }),
   ]);
   const pcStatus = await getPcPathStatus().catch(() => null);
 
@@ -1147,7 +1218,14 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
               // 예전 방식(계정 라벨별 이름)도 있으면 쓴다
               legacyStoreName: key.source === "account" ? keystorePasswordName(acc.label) : null,
               legacyKeyName: key.source === "account" ? keyPasswordName(acc.label) : null,
-              generate: key.source === "account",
+              // 출시 일감은 키를 만들지 않는다(운영 키 보호). 키는 설정 → 키 보관함의 [새 공용 키 만들기]에서만 만든다
+              generate: false,
+              keyId: key.keyId,
+              vaultName: key.name, // 보관함 이름(표시용)
+              missingMessage:
+                key.keyId && (key.createState === "requested" || key.createState === "creating")
+                  ? `키 '${key.name}' 를 작업 PC 가 아직 만드는 중이에요. 설정 → 키 보관함에서 만들기가 끝난 뒤 재시도하세요.`
+                  : `키 파일이 없어요(${key.path}). 설정 → 키 보관함에서 만들거나 등록하세요.`,
               dname: `CN=${dnamePart(acc.developerName) || dnamePart(acc.name) || "App Factory"}, C=KR`,
             }
           : null,
