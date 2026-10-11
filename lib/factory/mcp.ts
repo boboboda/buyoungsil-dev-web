@@ -63,7 +63,8 @@ export const FACTORY_INSTRUCTIONS =
   "이미 만든 앱을 고칠 때는 kind=revision 으로, 반드시 기존 앱 이름(appSlug)과 고칠 내용만 보내세요. "
   + "관리자가 통제실에서 직접 보낸 수정 지시는 source 가 '통제실'로 나와요. 결과는 get_factory_job(includePlan=true)으로 읽고 사용자와 의논하세요. "
   + "작업 PC 감독 프로그램은 supervisor_control 로 봐요: action=status(연결·버전·일시 정지·자동 업데이트·진행/대기 일감 수), "
-  + "update_now(GitHub main 의 새 감독 프로그램 코드를 지금 받게 함. 15초~1분 뒤 status 의 commit 으로 확인), pause/resume(새 일감 받기 멈춤/재개), "
+  + "update_now(GitHub main 의 새 감독 프로그램 코드를 지금 받게 함. 15초~1분 뒤 status 의 commit 으로 확인), "
+  + "restart(감독 프로그램 재시작: 진행 중 작업이 끝난 뒤 껐다 켜며 윈도우 PATH 를 새로 읽음. 1분쯤 뒤 status 의 시작시각·재시작 으로 확인), pause/resume(새 일감 받기 멈춤/재개), "
   + "auto_update_on/off. 사용자가 요청한 경우에만 상태를 바꾸세요. "
   + "출시: get_release_status 로 앱별 출시 상태·배포 계정·패키지(스토어 문구·체크리스트)·AAB 정보·테스트 일정을 보고, "
   + "enqueue_release_job(appSlug, kind) 으로 출시 일감을 등록해요(kind: first=첫 출시, store=스토어 자료 수정, project=프로젝트 업데이트. 지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
@@ -273,6 +274,7 @@ export const FACTORY_TOOLS = [
       "작업 PC 의 감독 프로그램 상태를 보거나 정해진 명령을 보냅니다. 명령은 홈페이지에 신호로 남고, 감독 프로그램이 15초마다 확인할 때 가져가요. " +
       "status=연결 여부·현재 버전(commit)·최근 업데이트 소식·일시 정지/자동 업데이트 상태·진행/대기 일감 수, " +
       "update_now=GitHub main 의 새 감독 프로그램 코드를 지금 확인해 받게 함(돌고 있는 일감이 있으면 끝난 뒤. 새 버전이면 30초쯤 뒤 다시 켜짐), " +
+      "restart=감독 프로그램 재시작(새 일감 받기를 멈추고 진행 중 작업이 끝나면 종료 → 실행기가 30초쯤 뒤 다시 켬. 윈도우 레지스트리 PATH 를 새로 읽어 새로 설치한 ffmpeg 등을 찾음), " +
       "pause=새 일감 받기 멈춤(진행 중 작업은 끝까지), resume=다시 받기, auto_update_on/off=10분마다 하는 자동 업데이트 켜고 끄기. " +
       "상태를 바꾸는 명령은 사용자가 요청했을 때만 쓰세요.",
     inputSchema: {
@@ -281,7 +283,7 @@ export const FACTORY_TOOLS = [
         action: {
           type: "string",
           enum: [...CONNECTOR_SUPERVISOR_ACTIONS],
-          description: "status | update_now | pause | resume | auto_update_on | auto_update_off",
+          description: "status | update_now | restart | pause | resume | auto_update_on | auto_update_off",
         },
       },
       required: ["action"],
@@ -504,6 +506,12 @@ async function supervisorControl(args: Record<string, unknown>): Promise<ToolRes
     최근업데이트소식: s.updateNote,
     최근업데이트소식시각: s.updateNoteAt,
     지금업데이트요청대기: s.updateNowRequestedAt,
+    시작시각: s.startedAt,
+    재시작으로켜짐: s.restartedBoot,
+    재시작: s.restartNote,
+    재시작요청대기: s.restartRequestedAt,
+    ffmpeg: s.ffmpeg ?? "알 수 없음(예전 감독 프로그램)",
+    ffprobe: s.ffprobe ?? "알 수 없음(예전 감독 프로그램)",
     일시정지: !s.enabled,
     자동업데이트: s.autoUpdate,
     정비대기열끝나면자동배포: s.autoDeploy,

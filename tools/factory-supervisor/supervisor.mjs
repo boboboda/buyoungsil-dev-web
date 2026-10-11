@@ -32,6 +32,8 @@ import {
 import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
 import { runKeyTasks } from "./keyvault.mjs";
 import { runUploadTest } from "./uploadtest.mjs";
+import { refreshPathFromRegistry, toolLabel } from "./pcenv.mjs";
+import { maybeRestart, onRestartSignal, readRestartMark, restartPending, restartQuery } from "./restart.mjs";
 import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
 
@@ -1068,18 +1070,28 @@ async function loop() {
     } catch (e) {
       log(`자동 업데이트 확인 중 오류: ${e.message}`);
     }
+    // 통제실 [감독 재시작]: 일감·정비가 다 끝났으면 여기서 종료(실행기가 다시 띄움)
+    if (maybeRestart({ busy: running.size > 0 || maintenanceBusy(), shutdown, log })) break;
     try {
       const free = cfg.slots - running.size;
       if (free > 0) {
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
+        // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
+        const extra = new URLSearchParams({ ...restartQuery(), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe") });
         const r = await api(
           "GET",
-          `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}&subject=${encodeURIComponent(info.subject ?? "")}`,
+          `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}&subject=${encodeURIComponent(info.subject ?? "")}&${extra}`,
         );
         notePoll(r.status === 200); // 새 버전 건강 확인(200 이면 확인됨)
         if (r.status === 200) {
           delay = cfg.pollSec * 1000;
           autoUpdate = r.data?.autoUpdate !== false;
+          if (r.data?.restart === true) onRestartSignal(log); // 1회성 "감독 재시작"(실행기 밖이면 이유만 알리고 하지 않음)
+          // 재시작 대기 중에는 아무것도 받지 않는다(홈페이지도 hold=1 이면 일감·신호를 넘기지 않음). 진행 중인 작업은 끝까지
+          if (restartPending()) {
+            await sleep(delay);
+            continue;
+          }
           if (r.data?.updateNow === true) requestUpdateNow(); // 1회성 "지금 업데이트": 다음 루프에서 바로 확인
           reportPcPaths(r.data?.pcPaths, api, log).catch(() => {}); // 배포 계정 키 파일이 있는지만 알린다
           // 통제실에서 등록한 키 비밀번호를 secrets.env 로(값은 로그에 남기지 않음), 키 점검 요청(한 번). 둘 다 던지지 않는다
@@ -1130,7 +1142,7 @@ async function loop() {
 function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
-  log("종료합니다. 돌던 작업은 멈추고, 서버가 10분 안에 대기열로 되돌려요.");
+  log(running.size ? "종료합니다. 돌던 작업은 멈추고, 서버가 10분 안에 대기열로 되돌려요." : "종료합니다.");
   for (const st of running.values()) {
     st.stopped = "감독 프로그램 종료";
     killTree(st.child);
@@ -1149,6 +1161,11 @@ if (command === "init") {
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
     fs.mkdirSync(cfg.workDir, { recursive: true });
+    readRestartMark(log); // [감독 재시작]으로 다시 켜진 것인지
+    // 실행기·작업 스케줄러가 쥔 옛 PATH 대신 레지스트리 Path 를 다시 읽는다(그 뒤 설치한 ffmpeg 등). 자식 프로세스도 물려받는다
+    const added = refreshPathFromRegistry();
+    if (added.length) log(`PATH 에 레지스트리 폴더 ${added.length}개를 붙였어요: ${added.join("; ")}`);
+    log(`ffmpeg: ${toolLabel("ffmpeg")} · ffprobe: ${toolLabel("ffprobe")}`);
     log(`감독 프로그램 시작: ${cfg.worker} → ${cfg.serverUrl} (동시 ${cfg.slots}개, ${cfg.pollSec}초마다 확인)`);
     log(`앱 폴더: ${cfg.workDir}`);
     await loop();

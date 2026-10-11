@@ -14,6 +14,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { findTool } from "./pcenv.mjs";
+
 const IS_WIN = process.platform === "win32";
 const expandHome = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
 const clip = (s, n) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -286,8 +288,8 @@ export function storeEnv() {
     avds,
     node: process.versions.node,
     nodeOkForHyperframes: nodeMajor >= 22,
-    ffmpeg: onPath("ffmpeg"),
-    ffprobe: onPath("ffprobe"),
+    ffmpeg: findTool("ffmpeg"),
+    ffprobe: findTool("ffprobe"),
     chrome: chrome ?? null,
   };
 }
@@ -374,7 +376,7 @@ function fitVideo(src, limit, log) {
     const s = fs.statSync(out);
     if (s.mtimeMs >= fs.statSync(src).mtimeMs && s.size > 0 && s.size <= limit) return { file: out, size: s.size };
   }
-  const ffmpeg = onPath("ffmpeg");
+  const ffmpeg = findTool("ffmpeg");
   if (!ffmpeg) return { note: `영상이 ${MB(size)}MB 라 너무 커요(${MB(limit)}MB 이하만). ffmpeg 가 없어 줄이지 못했어요. 너무 커서 PC 에서 직접 확인: ${src}` };
   log?.(`검토 영상이 ${MB(size)}MB 라 ffmpeg 로 줄여요`);
   const r = spawnSync(ffmpeg, ["-y", "-i", src, "-vf", "scale='min(1280,iw)':-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", out], {

@@ -153,3 +153,66 @@ export async function setSettingValue(key: string, value: string | null): Promis
   }
   await prisma.factorySetting.upsert({ where: { key }, create: { key, value }, update: { value } });
 }
+
+const RESTART_KEY = "restartRequestedAt";
+
+/** "감독 재시작" 요청을 남긴다(통제실 버튼·커넥터). 감독 프로그램이 다음 /next 에서 한 번 받아 간다. */
+export async function requestRestart(): Promise<void> {
+  const value = new Date().toISOString();
+
+  await prisma.factorySetting.upsert({ where: { key: RESTART_KEY }, create: { key: RESTART_KEY, value }, update: { value } });
+}
+
+/** 아직 감독 프로그램이 받아 가지 않은 재시작 요청 시각. 없으면 null. */
+export async function getPendingRestart(): Promise<string | null> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: RESTART_KEY } });
+
+  return row?.value ?? null;
+}
+
+/** /next 에서 부른다. 요청이 있었으면 지우고 true(1회성). */
+export async function consumeRestart(): Promise<boolean> {
+  const { count } = await prisma.factorySetting.deleteMany({ where: { key: RESTART_KEY } });
+
+  return count > 0;
+}
+
+const RUNTIME_KEY = "supervisorRuntime";
+
+// 감독 프로그램 실행 정보(/next 로 알려 줌): 시작 시각·어떻게 켜졌는지·ffmpeg·재시작 진행 상황
+export interface SupervisorRuntime {
+  startedAt?: string; // 이 프로세스가 시작한 시각
+  boot?: string; // restart(재시작 요청으로 다시 켜짐) | start
+  ffmpeg?: string; // "버전 | 경로" 또는 "없음"
+  ffprobe?: string;
+  restartWait?: boolean; // 재시작 요청을 받았고 진행 중 작업이 끝나길 기다리는 중
+  restartFail?: string; // PC 가 알려 준 재시작 실패 이유
+  restartTakenAt?: string; // 감독 프로그램이 재시작 요청을 받아 간 시각(새로 켜지면 지운다)
+  restartedAt?: string; // 마지막으로 재시작이 끝난 시각
+  restartFailNotified?: string; // 텔레그램으로 알린 실패 이유(같은 이유를 두 번 보내지 않게)
+}
+
+export async function getSupervisorRuntime(): Promise<SupervisorRuntime> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: RUNTIME_KEY } });
+
+  if (!row) return {};
+  try {
+    return JSON.parse(row.value) as SupervisorRuntime;
+  } catch {
+    return {};
+  }
+}
+
+/** 바뀐 경우만 쓴다(15초마다 오는 요청이 DB 를 두드리지 않게). 바뀌었으면 true. */
+export async function saveSupervisorRuntime(next: SupervisorRuntime, cur?: SupervisorRuntime): Promise<boolean> {
+  const before = cur ?? (await getSupervisorRuntime());
+  // 빈 값은 빼고 키 순서를 맞춰 비교한다
+  const stable = (o: object) =>
+    JSON.stringify(Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== "" && v !== false).sort(([a], [b]) => a.localeCompare(b))));
+  const value = stable(next);
+
+  if (value === stable(before)) return false;
+  await prisma.factorySetting.upsert({ where: { key: RUNTIME_KEY }, create: { key: RUNTIME_KEY, value }, update: { value } });
+
+  return true;
+}

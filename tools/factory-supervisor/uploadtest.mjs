@@ -11,15 +11,11 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 
+import { findTool } from "./pcenv.mjs"; // PATH·레지스트리·winget 위치까지 찾는다
 import { postImageFile, postVideoFile } from "./store.mjs";
 
 const MB = 1024 * 1024;
 const BIG_SIZES = [10, 50, 120];
-
-function onPath(cmd) {
-  const r = spawnSync(process.platform === "win32" ? "where" : "which", [cmd], { encoding: "utf8", shell: false, timeout: 10_000, windowsHide: true });
-  return r.status === 0 ? r.stdout.split(/\r?\n/)[0].trim() : null;
-}
 
 // mp4 머리(ftyp) + 'free' 상자 채움. 재생은 안 되지만 서버의 mp4 검사(ftyp)는 통과한다
 export function writeSyntheticMp4(file, size) {
@@ -85,7 +81,7 @@ export function writeTestPng(file) {
 
 // ffmpeg 로 2초짜리 시험 영상. 글자는 한글 글꼴이 있으면 '업로드 시험', 없으면 'UPLOAD TEST', 글자 넣기가 안 되면 색 막대만. 실패하면 null
 function makeRealVideo(file) {
-  const ffmpeg = onPath("ffmpeg");
+  const ffmpeg = findTool("ffmpeg");
   if (!ffmpeg) return null;
   const font = ["C:/Windows/Fonts/malgun.ttf", "/System/Library/Fonts/AppleSDGothicNeo.ttc", "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"].find((f) => fs.existsSync(f));
   const text = font

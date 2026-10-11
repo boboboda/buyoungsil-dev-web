@@ -1,5 +1,5 @@
 // components/admin/factory/SupervisorControl.tsx
-// 감독 프로그램 상태(연결/꺼짐)와 일시 정지·재개, 자동 업데이트 켜고 끄기, 지금 업데이트, 정비 대기열 끝나면 자동 배포 켜고 끄기.
+// 감독 프로그램 상태(연결/꺼짐)와 일시 정지·재개, 자동 업데이트 켜고 끄기, 지금 업데이트, 재시작, 정비 대기열 끝나면 자동 배포 켜고 끄기.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -16,6 +16,14 @@ interface State {
   updateNote: string | null;
   updateNoteAt: string | null;
   updateNowRequestedAt: string | null;
+  // 예전 서버에는 없다
+  startedAt?: string | null;
+  restartedBoot?: boolean;
+  ffmpeg?: string | null;
+  ffprobe?: string | null;
+  restartRequestedAt?: string | null;
+  restartState?: "requested" | "waiting" | "restarting" | "failed" | null;
+  restartNote?: string | null;
   online: boolean;
   lastSeenAt: string | null;
   workerName: string | null;
@@ -87,6 +95,36 @@ export default function SupervisorControl() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ updateNow: true }),
+      });
+      const data = (await res.json().catch(() => ({}))) as State & {
+        message?: string;
+      };
+
+      if (res.ok) setS(data);
+      setNotice(
+        data.message ?? (res.ok ? "요청했어요." : "요청하지 못했어요."),
+      );
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    }
+    setBusy(false);
+  };
+
+  // 1회성 신호: 감독 프로그램이 다음 확인 때 받아 가서, 진행 중인 작업이 끝나면 껐다가 실행기가 다시 켠다
+  const restart = async () => {
+    if (
+      !window.confirm(
+        "감독 프로그램을 재시작할까요?\n진행 중인 작업이 있으면 끝난 뒤 재시작해요. (그동안 새 일감은 받지 않아요)",
+      )
+    )
+      return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/factory/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restart: true }),
       });
       const data = (await res.json().catch(() => ({}))) as State & {
         message?: string;
@@ -203,6 +241,24 @@ export default function SupervisorControl() {
               value={`${s.running} / ${s.approved}`}
             />
             <Item label="승인 기다림" value={`${s.pending}`} />
+            {s.startedAt !== undefined && (
+              <Item
+                label="시작 시각"
+                value={
+                  s.startedAt
+                    ? `${new Date(s.startedAt).toLocaleString("ko-KR")}${s.restartedBoot ? " · 재시작됨" : ""}`
+                    : "알 수 없음"
+                }
+              />
+            )}
+            {s.ffmpeg !== undefined && (
+              <div className="col-span-2 min-w-0 sm:col-span-3">
+                <dt className="text-default-500">ffmpeg</dt>
+                <dd className="break-all font-medium">
+                  {s.ffmpeg ?? "알 수 없음(예전 감독 프로그램)"}
+                </dd>
+              </div>
+            )}
             {s.commitSubject && (
               <div className="col-span-2 sm:col-span-4">
                 <dt className="inline text-default-500">현재 버전 내용: </dt>
@@ -257,6 +313,37 @@ export default function SupervisorControl() {
                 {s.autoUpdate ? "자동 업데이트 끄기" : "자동 업데이트 켜기"}
               </Button>
             </div>
+          </div>
+        )}
+        {s && s.restartState !== undefined && (
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span>
+              🔄 감독 재시작
+              <span className="ml-1 text-xs text-default-500">
+                (진행 중인 작업이 끝난 뒤 껐다 켜요. 윈도우 PATH 를 새로 읽어 새로 설치한 ffmpeg 등을 찾아요)
+              </span>
+              {s.restartNote && (
+                <span
+                  className={`mt-1 block text-xs ${s.restartState === "failed" ? "text-danger" : "text-default-500"}`}
+                >
+                  {s.restartNote}
+                </span>
+              )}
+            </span>
+            <Button
+              className="min-h-11 w-full sm:min-h-0 sm:w-auto"
+              isDisabled={
+                busy ||
+                !!s.restartRequestedAt ||
+                s.restartState === "waiting" ||
+                s.restartState === "restarting"
+              }
+              size="sm"
+              variant="flat"
+              onPress={restart}
+            >
+              🔄 감독 재시작
+            </Button>
           </div>
         )}
         {s && s.autoDeploy !== undefined && (

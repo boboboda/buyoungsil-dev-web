@@ -48,6 +48,27 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - 상태 파일: `~/dev/factory/supervisor-update.json` (시험 중인 업데이트, 건너뛸 커밋 목록)
 - 통제실에서 끄면 `/api/factory/next` 응답에 `autoUpdate: false` 가 와서 업데이트하지 않아요(필드가 없으면 켜짐).
 
+## 감독 재시작 (`restart.mjs`, `/next` 의 `restart`)
+- 통제실(/admin/factory) 감독 프로그램 상태 영역의 [🔄 감독 재시작], 또는 커넥터 `supervisor_control` 의 `action=restart`.
+  홈페이지에 신호가 남고, 감독 프로그램이 다음 확인(15초 안) 때 `{ jobs: [], restart: true }` 로 받아 가요(그 응답에는 일감·신호를 싣지 않아요).
+- 받으면 새 일감 받기를 멈추고 `/next` 에 `hold=1` 을 붙여요. 홈페이지는 hold 동안 일감·정비 지시·1회성 신호(지금 업데이트·업로드 시험·키 점검 등)를
+  하나도 넘기지 않아요(유실 없음, 다시 켜진 뒤 받아 감). 진행 중인 앱 일감·정비가 끝나면 `~/dev/factory/supervisor-restart.json` 을 남기고 exit 0 →
+  실행기(`run-supervisor.sh`)가 30초 뒤 다시 띄워요.
+- 끄기 전에 점검: 실행기 안(`FACTORY_LAUNCHER=1`)인지, 실행기 표시 파일(`~/dev/factory/run-supervisor.pid`)이 있는지, 띄운 프로세스가 살아 있는지.
+  하나라도 아니면 끄지 않고 이유를 `restartFail` 로 알려요(통제실 빨간 글씨·텔레그램).
+- 실행기·작업 스케줄러는 로그온 때 PATH 를 쥐고 있으므로, 감독 프로그램이 시작할 때마다 레지스트리(HKLM 시스템·HKCU 사용자)의 Path 를 다시 읽어
+  빠진 폴더를 PATH 뒤에 붙여요(`pcenv.mjs`). Claude·ffmpeg 같은 자식 프로세스도 이 PATH 를 물려받아요. 실행기 파일은 바꿀 필요 없어요.
+- 다시 켜지면 `started`(시작 시각)·`boot=restart` 를 보내 통제실에 "시작 시각 … · 재시작됨"이 보이고 텔레그램으로 알려요.
+  재시작 요청을 받아 간 뒤 3분 넘게 응답도 새 시작도 없으면 홈페이지가 실패로 표시하고 텔레그램으로 한 번 알려요(통제실·커넥터 상태를 볼 때 판단).
+- 시험용 환경변수: `FACTORY_RESTART_STATE`(표시 파일), `FACTORY_LAUNCHER_LOCK`(실행기 표시 파일).
+
+## ffmpeg·ffprobe 찾기 (`pcenv.mjs`)
+- 찾는 순서: ① 프로세스 PATH(`where`) ② 레지스트리 사용자/시스템 Path ③ `%LOCALAPPDATA%\Microsoft\WinGet\Links`
+  ④ `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg*\ffmpeg-*\bin`(이름이 큰 버전 먼저) ⑤ `%USERPROFILE%\tools\ffmpeg\bin`
+- 찾으면 그 경로를 이후 호출에 계속 쓰고, PATH 에 없던 폴더면 PATH 에도 붙여요. 못 찾으면 1분 뒤 다시 찾아요(그 사이 설치했을 수 있음).
+- 업로드 시험 영상, 검토 영상 줄이기, 스토어 자료 지시문의 PC 환경이 모두 이 결과를 써요.
+- 통제실 감독 프로그램 상태와 `supervisor_control` status 에 "버전 | 경로"(없으면 "없음")가 보여요(`/next` 의 `ffmpeg`·`ffprobe`).
+
 ## 출시 준비 일감 (`release.mjs`)
 - 통제실 "출시 패키지"에서 보내는 `kind=release` 일감이에요. 완성된 앱 폴더에서 `RELEASE_REQUEST.md` 를 보고 출시 자료를 만들어요.
 - Claude 는 결과를 `.factory/outbox/project.json`(홈페이지 프로젝트 빈 항목), `.factory/outbox/release.json`(스토어 문구·데이터 보안·콘텐츠 등급·체크리스트·방침 초안·AAB 정보)에 저장해요.
