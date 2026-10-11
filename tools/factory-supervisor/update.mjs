@@ -53,7 +53,7 @@ function writeState(s) {
 // 감독 프로그램을 실행 모드로 시작할 때 맨 먼저 부른다. 현재 커밋을 찍고, 방금 업데이트한 버전이면 시험 기간을 잰다.
 export function startupGuard() {
   const h = head();
-  log(`감독 프로그램 커밋: ${short(h)}${UNDER_LAUNCHER ? "" : " (실행기 밖: 자동 업데이트 꺼짐)"}`);
+  log(`감독 프로그램 커밋(자동 업데이트 시험 반영): ${short(h)}${UNDER_LAUNCHER ? "" : " (실행기 밖: 자동 업데이트 꺼짐)"}`);
   const st = readState();
   if (!st.trial || !h) return;
   if (st.trial.to !== h) {
