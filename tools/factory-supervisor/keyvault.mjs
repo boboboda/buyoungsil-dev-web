@@ -4,11 +4,15 @@
 //   keytool 로 비밀번호·별칭도 확인한다(PKCS12 는 비밀번호가 있을 때만 지문까지, 없으면 형식만). 작업 폴더의 앱 폴더 안이고 git 이 추적 중이면 경고.
 // - create: [새 공용 키 만들기]. keytool 로 JKS·RSA 2048·10000일 키를 만든다. 대상 경로에 무엇이든 있으면 절대 덮어쓰지 않고 멈춘다.
 //   비밀번호가 아직 이 PC 에 없으면(통제실 → secrets.env 전달 전) pending 으로 알려 서버가 다음에 다시 준다.
+// - untrack: [커밋에서 빼기]. 앱 폴더 git 기록 조사 → git rm --cached → .gitignore 보강 → 그 두 경로만 로컬 커밋 → 다시 조회.
+//   파일은 읽거나 지우거나 옮기지 않고, push·기록 삭제(history rewrite)는 하지 않는다.
 // - 결과는 /api/factory/key-vault 로. 비밀번호·개인키 내용은 읽어서 보내지 않는다(오류 글도 가린다).
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
+import { addIgnoreLines } from "./keyguard.mjs";
 import { expandHome, findKeytool, jksInfo, maskText } from "./release.mjs";
 
 const MAX_BYTES = 1024 * 1024;
@@ -151,6 +155,102 @@ export function createKeyFile({ keyPath, alias, dname, storePass, keyPass, workD
   return { ok: true, info: c.info, error: c.error };
 }
 
+// ───────── [커밋에서 빼기] ─────────
+// 앱 폴더 git 에서 이 키 파일의 추적만 해제한다. 파일은 읽거나 지우거나 옮기지 않는다. push·기록 삭제는 하지 않는다.
+const SKIP_APPS = new Set(["selfdev", "supervisor-src", "node_modules"]);
+const UNTRACK_MSG = "chore: 서명 키 추적 해제, .gitignore 보강";
+const KEY_GLOBS = ["*.jks", "*.keystore", "*.p12", "*.pfx"];
+
+function gitRun(cwd, args, env) {
+  return spawnSync("git", args, { cwd, encoding: "utf8", shell: false, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}) });
+}
+const oneLine = (r) => `${r.stderr || ""} ${r.stdout || ""}`.replace(/\s+/g, " ").trim().slice(0, 200);
+const samePath = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+/** 돌려주는 값: { ok, error?, result } (result 는 서버 KeyUntrack 모양) */
+export function untrackKeyFile({ keyPath, workDir }) {
+  const result = { ok: true, message: null, file: null, wasTracked: false, stagedOnly: false, commits: [], hasRemote: null, remotes: [], pushed: [], untracked: false, gitignoreAdded: [], commit: null, stillTracked: null };
+  const fail = (error) => ({ ok: false, error, result: { ...result, ok: false } });
+  const abs = path.resolve(expandHome(String(keyPath ?? "")));
+  const root = path.resolve(String(workDir ?? ""));
+  const rel0 = path.relative(root, abs);
+  if (!workDir || !rel0 || rel0.startsWith("..") || path.isAbsolute(rel0)) return fail("작업 폴더의 앱 폴더 안에 있는 키 파일이 아니에요(앱 폴더 git 만 정리해요).");
+  const app = rel0.split(path.sep)[0];
+  if (SKIP_APPS.has(app) || app.startsWith(".")) return fail("공장 자체 폴더는 정리하지 않아요.");
+  const appDir = path.join(root, app);
+  const fileDir = path.dirname(abs);
+  if (!fs.existsSync(fileDir)) return fail(`키 파일이 있는 폴더가 없어요(${path.dirname(String(keyPath))}).`);
+
+  const top0 = gitRun(fileDir, ["rev-parse", "--show-toplevel"]);
+  if (top0.error?.code === "ENOENT") return fail("git 을 찾지 못했어요(Git 설치 필요).");
+  if (top0.status !== 0) return fail("이 앱 폴더는 git 저장소가 아니에요.");
+  const top = path.resolve(top0.stdout.trim());
+  const inApp = path.relative(appDir, top);
+  if (inApp.startsWith("..") || path.isAbsolute(inApp)) return fail("키 파일이 앱 폴더 밖의 git 저장소에 있어요. 정리하지 않았어요.");
+  const rel = path.relative(top, abs).split(path.sep).join("/");
+  result.file = rel;
+
+  // 1. 상태 조사(파일 내용은 보지 않음)
+  if (gitRun(top, ["ls-files", "--error-unmatch", "--", rel]).status !== 0) {
+    return { ok: true, result: { ...result, message: "git 이 추적하지 않아요" } };
+  }
+  result.wasTracked = true;
+  const lg = gitRun(top, ["log", "-n", "20", "--abbrev=7", "--date=short", "--format=%h%x09%ad%x09%s", "--", rel]);
+  result.commits = lg.status === 0
+    ? lg.stdout.split(/\r?\n/).filter(Boolean).map((l) => {
+        const [h, d, ...m] = l.split("\t");
+        return { hash: h.slice(0, 7), date: d ?? null, subject: m.join(" ").slice(0, 120) || null };
+      })
+    : [];
+  result.stagedOnly = result.commits.length === 0;
+  const rm0 = gitRun(top, ["remote"]);
+  result.remotes = rm0.status === 0 ? rm0.stdout.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).slice(0, 10) : [];
+  result.hasRemote = result.remotes.length > 0;
+  if (result.hasRemote) {
+    for (const c of result.commits) {
+      const b = gitRun(top, ["branch", "-r", "--contains", c.hash]);
+      const branches = b.status === 0 ? b.stdout.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && !x.includes(" -> ")).slice(0, 10) : [];
+      if (branches.length) result.pushed.push({ commit: c.hash, branches });
+    }
+  }
+
+  // 2. 추적 해제(작업 폴더의 파일은 그대로)
+  const rm = gitRun(top, ["rm", "--cached", "-q", "--", rel]);
+  if (rm.status !== 0) return fail(`추적 해제에 실패했어요: ${oneLine(rm)}`);
+  result.untracked = true;
+
+  // 3. .gitignore 보강(중복 없이)
+  result.gitignoreAdded = addIgnoreLines(top, [...KEY_GLOBS, `/${rel}`]);
+
+  // 4. 그 두 경로만 커밋: 임시 인덱스(HEAD 기준)에서 키 파일 제거 + .gitignore 만 반영해 커밋한다.
+  //    이미 스테이징돼 있던 다른 파일은 진짜 인덱스에 그대로 남고 커밋에 섞이지 않는다.
+  const tmpIndex = path.join(os.tmpdir(), `factory-untrack-${process.pid}-${Date.now()}.index`);
+  const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+  try {
+    const hasHead = gitRun(top, ["rev-parse", "-q", "--verify", "HEAD"]).status === 0;
+    if (hasHead && gitRun(top, ["read-tree", "HEAD"], env).status !== 0) return fail("커밋 준비(read-tree)에 실패했어요. 추적 해제는 됐어요(커밋은 안 함).");
+    gitRun(top, ["rm", "--cached", "-q", "--ignore-unmatch", "--", rel], env);
+    gitRun(top, ["add", "--", ".gitignore"], env);
+    const changed = gitRun(top, hasHead ? ["diff", "--cached", "--quiet", "HEAD"] : ["diff", "--cached", "--quiet"], env).status !== 0 || !hasHead;
+    if (changed) {
+      const who = gitRun(top, ["config", "user.email"]).stdout.trim() ? [] : ["-c", "user.name=app-factory", "-c", "user.email=factory@localhost"];
+      const c = gitRun(top, [...who, "commit", "-q", "--no-verify", "-m", UNTRACK_MSG], env);
+      if (c.status !== 0) return fail(`커밋에 실패했어요: ${oneLine(c)}. 추적 해제는 됐어요.`);
+      result.commit = gitRun(top, ["rev-parse", "--short=7", "HEAD"]).stdout.trim().slice(0, 7) || null;
+    }
+  } finally {
+    fs.rmSync(tmpIndex, { force: true });
+    fs.rmSync(`${tmpIndex}.lock`, { force: true });
+  }
+  // 진짜 인덱스도 새 커밋과 맞춘다(.gitignore). 키 파일은 위 2단계에서 이미 빠짐
+  gitRun(top, ["add", "--", ".gitignore"]);
+
+  // 5. 다시 확인
+  result.stillTracked = gitRun(top, ["ls-files", "--error-unmatch", "--", rel]).status === 0;
+  if (result.stillTracked) return fail("추적 해제 뒤에도 git 이 이 파일을 추적하고 있어요. 앱 폴더를 직접 확인하세요.");
+  return { ok: true, result };
+}
+
 let busy = false;
 
 /** /next 의 keyTasks 를 처리하고 결과를 보낸다. 던지지 않는다. readSecrets 는 secrets.env 를 읽는 함수 */
@@ -169,6 +269,12 @@ export async function runKeyTasks({ tasks, api, log, workDir, readSecrets }) {
           const r = createKeyFile({ keyPath: t.path, alias: t.alias, dname: t.dname, storePass, keyPass, workDir, log });
           results.push({ id: t.id, op: "create", ok: r.ok, pending: r.pending === true, error: r.error ?? null, info: r.info ?? null });
           log(r.ok ? `키 보관함: 공용 키 만들기 완료(${t.path})` : r.pending ? "키 보관함: 비밀번호를 기다려요" : `키 보관함: 만들기 실패 - ${r.error}`);
+        } else if (t.op === "untrack") {
+          const u = untrackKeyFile({ keyPath: t.path, workDir });
+          // 끝나면 다시 조회해 경고가 사라졌는지 함께 보낸다
+          const c = checkKeyFile({ keyPath: t.path, alias: t.alias, storePass, keyPass, workDir });
+          results.push({ id: t.id, op: "untrack", ok: u.ok, error: u.error ?? null, result: u.result, info: c.info });
+          log(`키 보관함: 커밋에서 빼기 ${t.path} → ${u.ok ? (u.result.wasTracked ? `해제${u.result.commit ? `, 커밋 ${u.result.commit}` : ""}` : "추적 안 함") : u.error}`);
         } else if (t.op === "check") {
           const r = checkKeyFile({ keyPath: t.path, alias: t.alias, storePass, keyPass, workDir });
           results.push({ id: t.id, op: "check", ok: true, error: r.error, info: r.info });

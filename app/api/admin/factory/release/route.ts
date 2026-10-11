@@ -14,6 +14,7 @@ import {
   deleteKey,
   registerExistingKey,
   requestKeyCheck,
+  requestUntrack,
   retryCreateKey,
   setVaultKeyPassword,
   updateKey,
@@ -70,6 +71,7 @@ async function keyTarget(body: Record<string, unknown>) {
 //                | { action: "vaultRegister", name, kind?, keystorePath, keyAlias?, description?, production?, storePassword, keyPassword? }  (등록만)
 //                | { action: "vaultUpdate", keyId, name?, kind?, description?, production? } | { action: "vaultDelete", keyId }  (보관함 항목만, PC 파일은 그대로)
 //                | { action: "vaultCheck", keyId }  (PC 가 그 파일을 확인) | { action: "vaultRetry", keyId }  (실패한 공용 키 만들기 다시)
+//                | { action: "vaultUntrack", keyId }  (앱 폴더 git 추적 해제 + .gitignore 보강 + 로컬 커밋. 파일·원격은 그대로)
 //       | { action: "requestKeyScan", appSlug? }  (appSlug 를 주면 그 앱 하나만 점검)
 //       | { action: "removeApps", appSlugs: string[] }  (출시 패키지 목록에서만 지움. 지시 기록·앱 소스·PC 파일은 그대로)
 export async function POST(req: NextRequest) {
@@ -136,6 +138,7 @@ export async function POST(req: NextRequest) {
     else if (action === "vaultDelete") res = await deleteKey(keyId);
     else if (action === "vaultCheck") res = await requestKeyCheck(keyId);
     else if (action === "vaultRetry") res = await retryCreateKey(keyId);
+    else if (action === "vaultUntrack") res = await requestUntrack(keyId);
     else return NextResponse.json({ message: "알 수 없는 키 보관함 동작이에요." }, { status: 400 });
   } else if (action === "setKeyPassword" && typeof body?.keyId === "string") {
     if (!ID_RE.test(body.keyId)) return NextResponse.json({ message: "keyId 가 올바르지 않아요." }, { status: 400 });
@@ -157,7 +160,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         message:
-          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry 중 하나예요.",
+          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
       },
       { status: 400 },
     );

@@ -87,7 +87,7 @@ export default function ReleaseAccounts() {
   };
 
   // 키 만들기·조회를 기다리는 동안 10초마다 새로 읽는다(입력 중인 계정 칸은 그대로)
-  const waiting = !!data?.keys.some((k) => k.checking || k.createState === "requested" || k.createState === "creating");
+  const waiting = !!data?.keys.some((k) => k.checking || k.untracking || k.createState === "requested" || k.createState === "creating");
 
   useEffect(() => {
     if (!waiting) return;

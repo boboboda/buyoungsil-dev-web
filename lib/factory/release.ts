@@ -479,7 +479,16 @@ async function getKeyScan(): Promise<{ at: string | null; apps: KeyScanApp[]; re
 // ───────── 앱이 쓸 업로드 키 ─────────
 
 // 키 보관함 항목(필요한 칸만)
-type VaultKeyRow = { id: string; name: string; kind: string; keystorePath: string; keyAlias: string; production: boolean; createState: string | null };
+type VaultKeyRow = {
+  id: string;
+  name: string;
+  kind: string;
+  keystorePath: string;
+  keyAlias: string;
+  production: boolean;
+  createState: string | null;
+  passwordRef: string | null;
+};
 type AccountRow = {
   label: string;
   name: string;
@@ -494,7 +503,7 @@ const fromVault = (source: "custom" | "account", k: VaultKeyRow) => ({
   source,
   path: k.keystorePath,
   alias: k.keyAlias,
-  ref: keyRefOf(k.keystorePath, k.keyAlias),
+  ref: k.passwordRef || keyRefOf(k.keystorePath, k.keyAlias), // 경로를 바꾼 키는 처음 구분값으로 비밀번호를 찾는다
   keyId: k.id as string | null,
   name: k.name as string | null,
   kind: k.kind as string | null,
@@ -661,6 +670,8 @@ export async function releaseOverview() {
             // 보관함에서 PC 가 확인한 정보·조회 중·마지막 오류
             check: key.keyId ? (vaultById.get(key.keyId)?.check ?? null) : null,
             checking: key.keyId ? (vaultById.get(key.keyId)?.checking ?? null) : null,
+            untracking: key.keyId ? (vaultById.get(key.keyId)?.untracking ?? null) : null,
+            untrack: key.keyId ? (vaultById.get(key.keyId)?.untrack ?? null) : null,
             lastError: key.keyId ? (vaultById.get(key.keyId)?.lastError ?? null) : null,
           }
         : null,

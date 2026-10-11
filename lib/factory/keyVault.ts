@@ -6,6 +6,8 @@
 // - [조회]: PC 가 그 파일 하나를 직접 확인한다(확장자 없어도 됨, 1MB 이하 일반 파일만, 심볼릭 링크는 따라가지 않음).
 // - 예전 값(계정의 서명 키 경로·별칭, 앱별 '다른 키')은 첫 로드 때 보관함 항목으로 가져온다(예전 열은 지우지 않고 사본으로 둔다).
 // - 운영 키(production)는 삭제·다시 만들기 불가. 보관함 항목을 지워도 PC 파일은 지우지 않는다.
+// - [커밋에서 빼기]: 앱 폴더 git 이 키 파일을 추적 중이면 PC 가 기록을 조사하고(커밋 해시 앞 7자리·날짜·메시지 첫 줄, 원격·브랜치 이름만)
+//   git rm --cached + .gitignore 보강 + 그 두 경로만 로컬 커밋한다. 파일은 지우거나 옮기거나 바꾸지 않고, push·기록 삭제는 하지 않는다(운영 키도 허용).
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
@@ -42,6 +44,9 @@ export function checkKeyPath(v: unknown): { ok: true; value: string } | { ok: fa
 }
 
 const ALIAS_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** 비밀번호 이름에 쓰는 구분값(경로를 바꾼 키는 처음 값) */
+export const vaultRef = (k: { passwordRef: string | null; keystorePath: string; keyAlias: string }) => k.passwordRef || keyRefOf(k.keystorePath, k.keyAlias);
 const normPath = (p: string) => p.trim().replace(/\\/g, "/").toLowerCase();
 
 // ───────── 확인 결과 모양 ─────────
@@ -58,6 +63,24 @@ export interface KeyCheck {
   inApp: string | null; // 작업 폴더의 앱 폴더 안에 있으면 그 앱 이름
   gitTracked: boolean | null; // 앱 폴더 안이고 git 이 추적 중이면 true(경고)
   note: string | null;
+}
+
+// [커밋에서 빼기] 결과
+export interface KeyUntrack {
+  at: string;
+  ok: boolean;
+  message: string | null; // 한국어 한 줄(오류 또는 '추적하지 않아요')
+  file: string | null; // 저장소 안 상대 경로
+  wasTracked: boolean;
+  stagedOnly: boolean; // 스테이징만 되고 커밋된 적 없음
+  commits: { hash: string; date: string | null; subject: string | null }[];
+  hasRemote: boolean | null;
+  remotes: string[];
+  pushed: { commit: string; branches: string[] }[]; // 원격 브랜치(마지막 fetch 기준)에 들어간 커밋
+  untracked: boolean;
+  gitignoreAdded: string[];
+  commit: string | null; // 새로 만든 로컬 커밋(앞 7자리)
+  stillTracked: boolean | null;
 }
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? maskSecrets(v.replace(/[\u0000-\u001f\u007f]/g, " ")).slice(0, max) : null);
@@ -83,6 +106,37 @@ function cleanCheck(v: unknown): KeyCheck | null {
     inApp: str(r.inApp, 60),
     gitTracked: boolOrNull(r.gitTracked),
     note: str(r.note, 300),
+  };
+}
+
+const HASH_RE = /^[0-9a-f]{7,12}$/;
+const hash = (v: unknown) => (typeof v === "string" && HASH_RE.test(v) ? v.slice(0, 7) : null);
+const strList = (v: unknown, n: number, max: number) => (Array.isArray(v) ? v.slice(0, n).map((x) => str(x, max)).filter((x): x is string => !!x) : []);
+
+function cleanUntrack(v: unknown, error: string | null): KeyUntrack {
+  const r = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+
+  return {
+    at: new Date().toISOString(),
+    ok: !error && r.ok !== false,
+    message: error ?? str(r.message, 300),
+    file: str(r.file, 300),
+    wasTracked: r.wasTracked === true,
+    stagedOnly: r.stagedOnly === true,
+    commits: (Array.isArray(r.commits) ? r.commits : [])
+      .slice(0, 20)
+      .map((c: Record<string, unknown>) => ({ hash: hash(c?.hash) ?? "", date: str(c?.date, 20), subject: str(c?.subject, 120) }))
+      .filter((c) => c.hash),
+    hasRemote: boolOrNull(r.hasRemote),
+    remotes: strList(r.remotes, 10, 40),
+    pushed: (Array.isArray(r.pushed) ? r.pushed : [])
+      .slice(0, 20)
+      .map((x: Record<string, unknown>) => ({ commit: hash(x?.commit) ?? "", branches: strList(x?.branches, 10, 80) }))
+      .filter((x) => x.commit && x.branches.length),
+    untracked: r.untracked === true,
+    gitignoreAdded: strList(r.gitignoreAdded, 10, 200),
+    commit: hash(r.commit),
+    stillTracked: boolOrNull(r.stillTracked),
   };
 }
 
@@ -156,6 +210,8 @@ export interface VaultKey {
   createState: string | null;
   check: KeyCheck | null;
   checking: "requested" | "taken" | null;
+  untracking: "requested" | "taken" | null;
+  untrack: KeyUntrack | null;
   lastError: string | null;
   lastErrorAt: Date | null;
   password: KeyPasswordState;
@@ -187,9 +243,11 @@ export async function listVault(): Promise<VaultKey[]> {
     createState: k.createState,
     check: (k.check as unknown as KeyCheck | null) ?? null,
     checking: k.checkRequestedAt ? (k.checkTakenAt ? "taken" : "requested") : null,
+    untracking: k.untrackRequestedAt ? (k.untrackTakenAt ? "taken" : "requested") : null,
+    untrack: (k.untrack as unknown as KeyUntrack | null) ?? null,
     lastError: maskSecrets(k.lastError),
     lastErrorAt: k.lastErrorAt,
-    password: pwByRef.get(keyRefOf(k.keystorePath, k.keyAlias)) ?? "none",
+    password: pwByRef.get(vaultRef(k)) ?? "none",
     usedBy: { accounts: k.accounts.map((a) => a.label), apps: k.apps.map((a) => a.appSlug) },
     createdAt: k.createdAt,
   }));
@@ -201,6 +259,14 @@ async function samePathExists(path: string, alias: string) {
   const all = await prisma.factoryKey.findMany({ select: { id: true, name: true, keystorePath: true, keyAlias: true } });
 
   return all.find((k) => normPath(k.keystorePath) === normPath(path) && k.keyAlias === alias) ?? null;
+}
+
+/** 새 항목의 비밀번호 구분값. 경로를 옮긴 다른 키가 이 값을 이미 쓰고 있으면 겹치지 않는 값으로 */
+async function freshRef(path: string, alias: string): Promise<string> {
+  const base = keyRefOf(path, alias);
+  const used = (await prisma.factoryKey.findMany({ select: { passwordRef: true, keystorePath: true, keyAlias: true } })).map(vaultRef);
+
+  return used.includes(base) ? keyRefOf(`${path}#${Date.now()}`, alias) : base;
 }
 
 function checkName(v: unknown): { ok: true; value: string } | { ok: false; message: string } {
@@ -234,12 +300,14 @@ export async function createSharedKey(input: Record<string, unknown>): Promise<R
   const dup = await samePathExists(path.value, alias);
 
   if (dup) return bad(`같은 경로·별칭의 키가 이미 보관함에 있어요(${dup.name}).`, 409);
-  const pw = await registerKeyPassword(path.value, alias, input.password, input.password);
+  const ref = await freshRef(path.value, alias);
+  const pw = await registerKeyPassword(path.value, alias, input.password, input.password, ref);
 
   if (!pw.ok) return pw;
   await prisma.factoryKey.create({
     data: {
       name: name.value,
+      passwordRef: ref,
       kind: "shared",
       keystorePath: path.value,
       keyAlias: alias,
@@ -271,12 +339,14 @@ export async function registerExistingKey(input: Record<string, unknown>): Promi
   const dup = await samePathExists(path.value, alias);
 
   if (dup) return bad(`같은 경로·별칭의 키가 이미 보관함에 있어요(${dup.name}).`, 409);
-  const pw = await registerKeyPassword(path.value, alias, input.storePassword, input.keyPassword);
+  const ref = await freshRef(path.value, alias);
+  const pw = await registerKeyPassword(path.value, alias, input.storePassword, input.keyPassword, ref);
 
   if (!pw.ok) return pw;
   await prisma.factoryKey.create({
     data: {
       name: name.value,
+      passwordRef: ref,
       kind: isKind(input.kind) ? input.kind : "app",
       keystorePath: path.value,
       keyAlias: alias,
@@ -289,7 +359,10 @@ export async function registerExistingKey(input: Record<string, unknown>): Promi
   return { ok: true, status: 200, message: `'${name.value}' 키를 등록했어요. 작업 PC 가 파일을 확인해 결과를 보여 줘요.` };
 }
 
-/** 이름·종류·설명·운영 키 표시만 바꾼다(경로·별칭은 바꾸지 않음: 다른 키면 새로 등록) */
+/**
+ * 이름·종류·설명·운영 키 표시, 경로(파일을 옮긴 뒤)를 바꾼다. 별칭은 바꾸지 않는다(다른 키면 새로 등록).
+ * 경로를 바꿔도 비밀번호는 이어진다(passwordRef 에 처음 구분값을 남김). 운영 키도 경로는 바꿀 수 있다(파일은 건드리지 않음).
+ */
 export async function updateKey(id: string, input: Record<string, unknown>): Promise<Res> {
   const cur = await prisma.factoryKey.findUnique({ where: { id } });
 
@@ -311,7 +384,34 @@ export async function updateKey(id: string, input: Record<string, unknown>): Pro
   }
   if (input.description !== undefined) data.description = clean(input.description, 1000);
   if (input.production !== undefined) data.production = input.production === true;
+  let moved: string | null = null;
+
+  if (input.keystorePath !== undefined) {
+    const path = checkKeyPath(input.keystorePath);
+
+    if ("message" in path) return bad(path.message);
+    if (normPath(path.value) !== normPath(cur.keystorePath)) {
+      const dup = await samePathExists(path.value, cur.keyAlias);
+
+      if (dup) return bad(`같은 경로·별칭의 키가 이미 보관함에 있어요(${dup.name}).`, 409);
+      moved = path.value;
+      data.keystorePath = moved;
+      data.passwordRef = vaultRef(cur);
+      // 새 경로로 다시 확인한다
+      data.check = Prisma.DbNull;
+      data.untrack = Prisma.DbNull;
+      data.checkRequestedAt = new Date();
+      data.checkTakenAt = null;
+    }
+  }
   await prisma.factoryKey.update({ where: { id }, data });
+  if (moved) {
+    // 예전 열(호환용 사본)도 맞춘다
+    await prisma.factoryReleaseAccount.updateMany({ where: { defaultKeyId: id }, data: { keystorePath: moved } });
+    await prisma.factoryApp.updateMany({ where: { keyId: id }, data: { customKeystorePath: moved } });
+
+    return { ok: true, status: 200, message: "키 정보를 저장했어요. 새 경로로 다시 조회해요(비밀번호는 그대로 이어져요)." };
+  }
 
   return { ok: true, status: 200, message: "키 정보를 저장했어요." };
 }
@@ -344,6 +444,23 @@ export async function requestKeyCheck(id: string): Promise<Res> {
   return { ok: true, status: 200, message: `'${k.name}' 조회를 요청했어요. 작업 PC 가 15초 안에 확인해요.` };
 }
 
+/**
+ * [커밋에서 빼기]: PC 가 앱 폴더 git 에서 이 키 파일의 추적을 해제하도록 요청(운영 키도 됨: 파일은 바꾸지 않는다).
+ * push·기록 삭제·파일 이동은 하지 않는다.
+ */
+export async function requestUntrack(id: string): Promise<Res> {
+  const k = await prisma.factoryKey.findUnique({ where: { id }, select: { name: true } });
+
+  if (!k) return bad("없는 키예요.", 404);
+  await prisma.factoryKey.update({ where: { id }, data: { untrackRequestedAt: new Date(), untrackTakenAt: null } });
+
+  return {
+    ok: true,
+    status: 200,
+    message: `'${k.name}' 커밋에서 빼기를 요청했어요. 작업 PC 가 기록을 조사한 뒤 추적만 해제해요(파일은 그대로, push 안 함).`,
+  };
+}
+
 /** 실패한 공용 키 만들기를 다시 요청(운영 키는 안 됨). 파일이 이미 있으면 PC 가 여전히 덮어쓰지 않는다. */
 export async function retryCreateKey(id: string): Promise<Res> {
   const k = await prisma.factoryKey.findUnique({ where: { id } });
@@ -362,14 +479,14 @@ export async function setVaultKeyPassword(id: string, storePassword: unknown, ke
 
   if (!k) return bad("없는 키예요.", 404);
 
-  return registerKeyPassword(k.keystorePath, k.keyAlias, storePassword, keyPassword);
+  return registerKeyPassword(k.keystorePath, k.keyAlias, storePassword, keyPassword, vaultRef(k));
 }
 
 // ───────── 감독 프로그램 (/next 의 keyTasks → POST /api/factory/key-vault) ─────────
 
 export interface KeyTask {
   id: string;
-  op: "create" | "check";
+  op: "create" | "check" | "untrack";
   path: string;
   alias: string;
   dname: string | null;
@@ -387,6 +504,7 @@ export async function keyTasksForNext(): Promise<KeyTask[]> {
           { createState: "requested" },
           { createState: "creating", OR: [{ createTakenAt: null }, { createTakenAt: { lt: stale } }] },
           { checkRequestedAt: { not: null }, OR: [{ checkTakenAt: null }, { checkTakenAt: { lt: stale } }] },
+          { untrackRequestedAt: { not: null }, OR: [{ untrackTakenAt: null }, { untrackTakenAt: { lt: stale } }] },
         ],
       },
       take: 10,
@@ -395,15 +513,22 @@ export async function keyTasksForNext(): Promise<KeyTask[]> {
     const tasks: KeyTask[] = [];
 
     for (const k of rows) {
-      const names = keySecretNames(keyRefOf(k.keystorePath, k.keyAlias));
+      const names = keySecretNames(vaultRef(k));
       const base = { id: k.id, path: k.keystorePath, alias: k.keyAlias, dname: k.dname, storeName: names.store, keyName: names.key };
 
-      if (k.createState === "requested" || k.createState === "creating") {
+      const fresh = (taken: Date | null) => !taken || taken < stale;
+
+      if (k.createState === "requested" || (k.createState === "creating" && fresh(k.createTakenAt))) {
         await prisma.factoryKey.update({ where: { id: k.id }, data: { createState: "creating", createTakenAt: now } });
         tasks.push({ ...base, op: "create" });
-      } else {
+      } else if (k.checkRequestedAt && fresh(k.checkTakenAt)) {
         await prisma.factoryKey.update({ where: { id: k.id }, data: { checkTakenAt: now } });
         tasks.push({ ...base, op: "check" });
+      }
+      // 커밋에서 빼기는 만들기·조회와 따로 낸다(같은 키에 둘 다 있을 수 있음)
+      if (k.untrackRequestedAt && fresh(k.untrackTakenAt)) {
+        await prisma.factoryKey.update({ where: { id: k.id }, data: { untrackTakenAt: now } });
+        tasks.push({ ...base, op: "untrack" });
       }
     }
 
@@ -446,6 +571,17 @@ export async function receiveKeyResults(results: unknown): Promise<number> {
       await prisma.factoryKey.update({
         where: { id },
         data: { checkRequestedAt: null, checkTakenAt: null, ...(info ? { check: info as unknown as Prisma.InputJsonObject } : {}), ...errData },
+      });
+    } else if (r.op === "untrack") {
+      // 결과는 따로 남기고, 다시 조회한 정보(info)가 있으면 확인 정보도 바꾼다
+      await prisma.factoryKey.update({
+        where: { id },
+        data: {
+          untrackRequestedAt: null,
+          untrackTakenAt: null,
+          untrack: cleanUntrack(r.result, error) as unknown as Prisma.InputJsonObject,
+          ...(info ? { check: info as unknown as Prisma.InputJsonObject } : {}),
+        },
       });
     } else continue;
     n++;

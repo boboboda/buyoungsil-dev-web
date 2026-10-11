@@ -37,6 +37,24 @@ export interface KeyCheck {
   note: string | null;
 }
 
+// [커밋에서 빼기] 결과(서버 lib/factory/keyVault.ts 의 KeyUntrack 과 같다)
+export interface KeyUntrack {
+  at: string;
+  ok: boolean;
+  message: string | null;
+  file: string | null;
+  wasTracked: boolean;
+  stagedOnly: boolean;
+  commits: { hash: string; date: string | null; subject: string | null }[];
+  hasRemote: boolean | null;
+  remotes: string[];
+  pushed: { commit: string; branches: string[] }[];
+  untracked: boolean;
+  gitignoreAdded: string[];
+  commit: string | null;
+  stillTracked: boolean | null;
+}
+
 export interface VaultKey {
   id: string;
   name: string;
@@ -50,6 +68,8 @@ export interface VaultKey {
   createState: string | null; // requested | creating | done | failed | null(등록한 키)
   check: KeyCheck | null;
   checking: "requested" | "taken" | null;
+  untracking: "requested" | "taken" | null;
+  untrack: KeyUntrack | null;
   lastError: string | null;
   lastErrorAt: string | null;
   password: KeyPasswordState;
@@ -139,6 +159,8 @@ export interface ReleaseApp {
     production: boolean;
     check: KeyCheck | null;
     checking: "requested" | "taken" | null;
+    untracking: "requested" | "taken" | null;
+    untrack: KeyUntrack | null;
     lastError: string | null;
   } | null;
   keyScan: KeyScanApp | null;

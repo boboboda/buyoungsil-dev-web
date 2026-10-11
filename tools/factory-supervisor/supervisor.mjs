@@ -28,6 +28,7 @@ import {
 } from "./release.mjs";
 import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
 import { runKeyTasks } from "./keyvault.mjs";
+import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport } from "./store.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
@@ -238,6 +239,7 @@ function rulesFor(job) {
 - 폴더에 이미 작업물이 있으면 처음부터 다시 만들지 말고 이어서 진행하세요. 기획서의 MVP 범위만 구현하고 범위 밖 기능은 추가하지 마세요.
 ${stackRules(job)}
 - 외부 서비스 키는 환경변수로만 읽을 수 있습니다(이 지시에 허용된 이름만). 키 값을 파일, 로그, 커밋에 쓰거나 출력하지 마세요.
+- 키 파일(.jks/.keystore/.p12/.pfx, key.properties, secrets.env 와 확장자 없는 키스토어)은 절대 git add 하지 마세요. 감독 프로그램이 발견하면 앱 폴더 커밋을 멈춰요.
 - 에뮬레이터, 개발 서버, 감시 프로세스처럼 백그라운드로 띄운 것은 마지막 응답 전에 반드시 직접 끄세요. 남아 있으면 작업이 끝나지 않아 감독 프로그램이 강제로 정리해요.
 - 진행 단계가 바뀔 때마다 .factory/phase.txt 에 한 단어(scaffold, code, build, screenshots, done 중 하나)를 덮어써 주세요.
 - 화면 스크린샷을 만들 수 있으면 .factory/screenshots/ 에 png 로 저장하세요(예: home.png, result.png). 못 만들면 건너뛰세요.
@@ -250,11 +252,21 @@ function git(dir, args) {
   return spawnSync("git", args, { cwd: dir, encoding: "utf8", shell: false });
 }
 
+// 일감마다(새 폴더 포함) .gitignore 에 공장 파일·키 파일 패턴이 없으면 덧붙인다(기존 내용 유지)
 function ensureGitignore(dir) {
-  const p = path.join(dir, ".gitignore");
-  const have = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
-  const need = [".factory/", ".env", "*.keystore", "key.properties", "local.properties"].filter((l) => !have.split(/\r?\n/).includes(l));
-  if (need.length) fs.appendFileSync(p, (have && !have.endsWith("\n") ? "\n" : "") + need.join("\n") + "\n");
+  addIgnoreLines(dir, [".factory/", ".env", "local.properties", ...KEY_IGNORE]);
+}
+
+// 앱 폴더 커밋(git add -A). 키 파일이 들어가려 하면 add·커밋을 하지 않고 job.keyBlocked 에 남긴다(완료 보고 때 통제실에 표시)
+function safeCommit(dir, job, message) {
+  const blocked = keyFilesToCommit(dir);
+  if (blocked.length) {
+    job.keyBlocked = blocked;
+    log(`[${job.appSlug}] 키 파일이 커밋에 들어가려 해서 커밋을 멈췄어요: ${blocked.join(", ")}`);
+    return false;
+  }
+  git(dir, ["add", "-A"]);
+  return git(dir, ["-c", "user.name=app-factory", "-c", "user.email=factory@localhost", "commit", "-q", "-m", message]).status === 0;
 }
 
 function prepareDir(job) {
@@ -309,17 +321,12 @@ function prepareDir(job) {
 
   ensureGitignore(dir);
   if (!fs.existsSync(path.join(dir, ".git"))) git(dir, ["init", "-q"]);
-  if (onExisting) {
-    git(dir, ["add", "-A"]);
-    git(dir, ["-c", "user.name=app-factory", "-c", "user.email=factory@localhost", "commit", "-q", "-m", `${job.kind === "release" ? "출시 준비 전 저장" : "수정 전 저장"}: ${job.title}`]);
-  }
+  if (onExisting) safeCommit(dir, job, `${job.kind === "release" ? "출시 준비 전 저장" : "수정 전 저장"}: ${job.title}`);
   return dir;
 }
 
 function commitResult(dir, job) {
-  git(dir, ["add", "-A"]);
-  const r = git(dir, ["-c", "user.name=app-factory", "-c", "user.email=factory@localhost", "commit", "-q", "-m", `${job.kind === "new" ? "앱 공장" : job.kind === "release" ? "출시 준비" : "수정"}: ${job.title}`]);
-  return r.status === 0;
+  return safeCommit(dir, job, `${job.kind === "new" ? "앱 공장" : job.kind === "release" ? "출시 준비" : "수정"}: ${job.title}`);
 }
 
 function promptFor(job) {
@@ -527,6 +534,13 @@ async function flush(st, extra = {}) {
 }
 
 async function finish(st, status, fields) {
+  // 키 파일 때문에 앱 폴더 커밋을 멈췄으면 통제실에 보이게(파일 이름만)
+  if (st.job.keyBlocked?.length && !st.keyBlockedShown) {
+    st.keyBlockedShown = true;
+    const msg = `⚠️ 키 파일이 커밋에 들어가려 해요: ${st.job.keyBlocked.join(", ")}. 앱 폴더 커밋을 멈췄어요(파일은 그대로). 통제실 설정 → 키 보관함의 [커밋에서 빼기]로 정리하세요.`;
+    addLog(st, "warn", msg);
+    if (typeof fields?.summary === "string") fields = { ...fields, summary: `${msg}\n${fields.summary}`.slice(0, 3990) };
+  }
   // 마지막 스크린샷이 아직 안 올라갔으면 완료를 보고하기 전에 몇 번 더 시도한다
   for (let i = 0; i < 3 && st.reportable; i++) {
     if ((await uploadShots(st)) === 0) break;

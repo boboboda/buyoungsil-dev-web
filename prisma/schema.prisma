@@ -713,6 +713,10 @@ model FactoryKey {
   check            Json? // PC 에서 확인된 정보(있음·크기·수정 시각·형식·별칭·SHA-1·git 추적·확인 시각)
   lastError        String?                 @db.Text // 마지막 만들기·조회 오류(비밀번호 가림)
   lastErrorAt      DateTime?
+  untrackRequestedAt DateTime? // [커밋에서 빼기] 요청 시각(PC 가 가져가면 untrackTakenAt)
+  untrackTakenAt     DateTime?
+  passwordRef        String? // 비밀번호 이름(RELEASE_KEY_<이 값>_…)에 쓰는 구분값. 경로를 바꿔도 비밀번호가 이어지게 처음 값을 남긴다(없으면 경로+별칭)
+  untrack            Json? // [커밋에서 빼기] 결과(커밋 해시 앞 7자리·날짜·메시지 첫 줄, 원격·브랜치 이름, .gitignore 추가 줄, 새 커밋). 파일 내용 없음
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
   accounts         FactoryReleaseAccount[]

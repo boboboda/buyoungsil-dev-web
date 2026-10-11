@@ -4,6 +4,7 @@
 // - [기존 키 등록]: 경로·별칭·비밀번호만 등록(파일은 만들거나 옮기거나 바꾸지 않음). 확장자 없는 파일도 된다(예: Untitled).
 // - [조회]: 작업 PC 가 그 파일 하나를 확인(있음·크기·형식·별칭·SHA-1·git 추적). 비밀번호는 다시 보여 주지 않는다(등록 상태만).
 // - 운영 키는 삭제·다시 만들기 불가. 삭제는 보관함 항목만 지우고 PC 파일은 지우지 않는다.
+// - git 추적 경고가 있으면 [커밋에서 빼기]: 작업 PC 가 기록을 조사하고 추적만 해제(+ .gitignore, 로컬 커밋 1개). 파일·원격은 그대로.
 "use client";
 
 import { useEffect, useState } from "react";
@@ -11,7 +12,7 @@ import { Button, Card, CardBody, CardHeader, Chip } from "@heroui/react";
 
 import Field from "./Field";
 import KeyPasswordForm from "./KeyPasswordForm";
-import { fmtSize, postRelease, type KeyCheck, type ReleaseOverview, type VaultKey } from "./releaseTypes";
+import { fmtSize, postRelease, type KeyCheck, type KeyUntrack, type ReleaseOverview, type VaultKey } from "./releaseTypes";
 
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
 const fmt = (v: string | null | undefined) => (v ? new Date(v).toLocaleString("ko-KR") : "-");
@@ -58,6 +59,105 @@ export function KeyError({ text, at }: { text: string | null; at?: string | null
   );
 }
 
+// 복사해서 쓸 셸 경로(~ 는 따옴표 밖에 둬야 펼쳐진다)
+function shellPath(p: string): string {
+  const s = p.replace(/\\/g, "/");
+  const safe = /^[\w./:@+-]+$/;
+
+  if (s.startsWith("~/")) return safe.test(s.slice(2)) ? s : `~/"${s.slice(2).replace(/"/g, '\\"')}"`;
+
+  return safe.test(s) ? s : `"${s.replace(/"/g, '\\"')}"`;
+}
+
+/** 앱 폴더 안의 키를 ~/keys/ 로 옮기는 명령 한 줄(자동으로 하지 않음) */
+export function moveCommand(keyPath: string, check: KeyCheck | null): string {
+  const base = keyPath.replace(/\\/g, "/").split("/").pop() || "key";
+  const name = base.includes(".") ? base : `${check?.inApp ?? base}.${check?.type === "PKCS12" ? "p12" : "jks"}`;
+
+  return `mkdir -p ~/keys && mv ${shellPath(keyPath)} ${shellPath(`~/keys/${name}`)}`;
+}
+
+/** [커밋에서 빼기] 버튼과 결과. 경고가 있거나 결과가 있을 때만 보인다 */
+export function UntrackView({
+  keyPath,
+  check,
+  untrack,
+  untracking,
+  busy,
+  onUntrack,
+}: {
+  keyPath: string;
+  check: KeyCheck | null;
+  untrack: KeyUntrack | null;
+  untracking: "requested" | "taken" | null;
+  busy: boolean;
+  onUntrack: () => void;
+}) {
+  if (!check?.gitTracked && !untrack && !untracking) return null;
+  const pushed = untrack?.pushed ?? [];
+
+  return (
+    <div className="space-y-1 rounded-lg border border-default-200 p-2 text-xs">
+      {(check?.gitTracked || untracking) && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button className="min-h-11 sm:min-h-0" color="warning" isDisabled={busy || !!untracking} size="sm" variant="flat" onPress={onUntrack}>
+            {untracking ? (untracking === "taken" ? "작업 PC 가 정리하는 중…" : "요청함(작업 PC 대기)…") : "🧹 커밋에서 빼기"}
+          </Button>
+          <span className="text-default-500">
+            앱 폴더 git 에서 추적만 해제하고 .gitignore 를 보강해 로컬 커밋 1개를 만들어요. 파일은 지우거나 옮기지 않고, push 도 하지 않아요.
+          </span>
+        </div>
+      )}
+      {untrack && (
+        <div className="space-y-1">
+          <div className="text-default-500">커밋에서 빼기 결과 ({new Date(untrack.at).toLocaleString("ko-KR")})</div>
+          {!untrack.ok && <KeyError text={untrack.message ?? "실패했어요"} />}
+          {untrack.ok && !untrack.wasTracked && <div>✅ {untrack.message ?? "git 이 추적하지 않아요"}</div>}
+          {untrack.wasTracked && (
+            <>
+              {untrack.stagedOnly ? (
+                <div>스테이징만 되고 커밋된 적은 없었어요.</div>
+              ) : (
+                <div>
+                  이 파일이 들어간 커밋:
+                  {untrack.commits.map((c) => (
+                    <div key={c.hash} className="pl-2 text-default-600">
+                      <code>{c.hash}</code> {c.date ?? ""} {c.subject ?? ""}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {untrack.hasRemote === false && <div>원격 없음(이 PC 에만 있는 기록이에요).</div>}
+              {pushed.length > 0 ? (
+                <div className="font-semibold text-danger">
+                  ⚠️ 원격 기록에 키 파일이 남아 있어요({pushed.map((p) => `커밋 ${p.commit}, ${p.branches.join("·")}`).join(" / ")}). 기록에서 지우기가 필요해요. 자동으로 하지
+                  않아요(채팅에서 상의한 뒤 따로 지시하세요).
+                </div>
+              ) : (
+                untrack.hasRemote && !untrack.stagedOnly && <div>원격({untrack.remotes.join(", ")})에는 올라가지 않았어요(마지막 fetch 기준).</div>
+              )}
+              {untrack.untracked && <div>✅ 추적 해제함(파일은 그대로)</div>}
+              {untrack.gitignoreAdded.length > 0 && <div>.gitignore 에 추가: {untrack.gitignoreAdded.join(", ")}</div>}
+              {untrack.commit && (
+                <div>
+                  로컬 커밋 <code>{untrack.commit}</code> (chore: 서명 키 추적 해제, .gitignore 보강) · push 안 함
+                </div>
+              )}
+              {untrack.stillTracked === false && <div className="text-success-600">✅ 다시 확인: git 추적 경고가 사라졌어요</div>}
+            </>
+          )}
+        </div>
+      )}
+      {(untrack?.wasTracked || check?.inApp) && (
+        <div className="space-y-1">
+          <div>권장: 키 파일을 앱 폴더 밖 ~/keys/ 로 옮긴 뒤 [고치기]로 경로를 바꾸세요(자동으로 옮기지 않아요. 비밀번호는 그대로 이어져요).</div>
+          <code className="block break-all rounded bg-default-100 p-1">{moveCommand(keyPath, check)}</code>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const CREATE_TEXT: Record<string, string> = {
   requested: "⏳ 만들기 요청됨(작업 PC 가 15초 안에 가져가요)",
   creating: "⏳ 작업 PC 가 만드는 중…",
@@ -66,7 +166,7 @@ const CREATE_TEXT: Record<string, string> = {
 
 function KeyItem({ k, busy, call, onSaved }: { k: VaultKey; busy: boolean; call: (b: Record<string, unknown>, confirm?: string) => void; onSaved: (d: Partial<ReleaseOverview>) => void }) {
   const [edit, setEdit] = useState(false);
-  const [f, setF] = useState({ name: k.name, kind: k.kind, description: k.description ?? "", production: k.production });
+  const [f, setF] = useState({ name: k.name, kind: k.kind, description: k.description ?? "", production: k.production, keystorePath: k.keystorePath });
   const mine = k.check?.aliases.find((a) => a.alias.toLowerCase() === k.keyAlias.toLowerCase());
 
   return (
@@ -105,6 +205,19 @@ function KeyItem({ k, busy, call, onSaved }: { k: VaultKey; busy: boolean; call:
         </div>
       )}
       <KeyCheckView alias={k.keyAlias} check={k.check} />
+      <UntrackView
+        busy={busy}
+        check={k.check}
+        keyPath={k.keystorePath}
+        untrack={k.untrack}
+        untracking={k.untracking}
+        onUntrack={() =>
+          call(
+            { action: "vaultUntrack", keyId: k.id },
+            `'${k.name}' 를 앱 폴더 git 추적에서 뺄까요?\n\n먼저 기록을 조사하고, git rm --cached(파일은 그대로) → .gitignore 보강 → 로컬 커밋 1개를 만들어요. push·기록 삭제·파일 이동은 하지 않아요.`,
+          )
+        }
+      />
       <KeyPasswordForm state={k.password} target={{ keyId: k.id }} onSaved={onSaved} />
       <div className="flex flex-wrap items-center gap-2">
         <Button className="min-h-11 sm:min-h-0" isDisabled={busy || !!k.checking} size="sm" variant="flat" onPress={() => call({ action: "vaultCheck", keyId: k.id })}>
@@ -154,7 +267,10 @@ function KeyItem({ k, busy, call, onSaved }: { k: VaultKey; busy: boolean; call:
             <input checked={f.production} type="checkbox" onChange={(e) => setF({ ...f, production: e.target.checked })} />
             운영 키(프로덕션 배포에 쓰이는 키: 삭제·다시 만들기 불가)
           </label>
-          <p className="text-xs text-default-500 sm:col-span-2">경로·별칭은 바꿀 수 없어요. 다른 파일이면 [기존 키 등록]으로 새로 등록하세요.</p>
+          <Field className="sm:col-span-2" help="같은 키 파일을 옮긴 뒤에만 바꾸세요(비밀번호는 그대로 이어져요). 저장하면 새 경로로 다시 조회해요." label="키 파일 경로(PC)">
+            <input className={input} value={f.keystorePath} onChange={(e) => setF({ ...f, keystorePath: e.target.value })} />
+          </Field>
+          <p className="text-xs text-default-500 sm:col-span-2">별칭은 바꿀 수 없어요. 다른 키 파일이면 [기존 키 등록]으로 새로 등록하세요.</p>
           <Button
             className="min-h-11 sm:min-h-0"
             color="primary"
@@ -162,8 +278,9 @@ function KeyItem({ k, busy, call, onSaved }: { k: VaultKey; busy: boolean; call:
             size="sm"
             onPress={() => {
               const off = k.production && !f.production ? "운영 키 표시를 끌까요? 끄면 이 항목을 지울 수 있게 돼요." : undefined;
+              const moved = f.keystorePath.trim() !== k.keystorePath ? `키 파일 경로를 바꿀까요?\n${k.keystorePath}\n→ ${f.keystorePath.trim()}\n\n파일을 이미 옮긴 경우에만 바꾸세요(공장은 파일을 옮기지 않아요).` : undefined;
 
-              call({ action: "vaultUpdate", keyId: k.id, ...f }, off);
+              call({ action: "vaultUpdate", keyId: k.id, ...f }, [off, moved].filter(Boolean).join("\n\n") || undefined);
               setEdit(false);
             }}
           >

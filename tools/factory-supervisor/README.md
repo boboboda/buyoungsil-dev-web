@@ -66,7 +66,12 @@ node supervisor.mjs      # 끄려면 Ctrl+C
   - `check`: 지정한 키 파일 하나를 직접 확인(확장자 없어도 됨, 1MB 이하 일반 파일만, 심볼릭 링크는 따라가지 않음). 형식·별칭·SHA-1(JKS 는 비밀번호 없이),
     secrets.env 에 비밀번호가 있으면 keytool 로 비밀번호·별칭 확인(PKCS12 는 이때만 지문, 없으면 형식만). 작업 폴더의 앱 폴더 안이고 git 추적 중이면 경고.
   - `create`: [새 공용 키 만들기]. keytool 로 JKS·RSA 2048·10000일. 경로에 무엇이든 있으면 덮어쓰지 않고 '이미 있어요'. 비밀번호가 아직 없으면 `pending`.
+  - `untrack`: [커밋에서 빼기]. 그 앱 폴더 git 에서 기록 조사(커밋 해시 7자리·날짜·메시지, 원격·브랜치 이름) → `git rm --cached` →
+    `.gitignore` 보강(*.jks·*.keystore·*.p12·*.pfx·그 파일) → 임시 인덱스로 그 두 경로만 로컬 커밋(다른 스테이징은 섞지 않음) → 다시 조회.
+    파일은 읽거나 지우거나 옮기지 않고, push·기록 삭제는 하지 않아요.
   - 출시 일감은 키를 만들지 않아요(`job.release.key.generate` 가 false 면 파일이 없을 때 `missingMessage` 로 키 단계 실패).
+- 키 파일 커밋 막기(`keyguard.mjs`): 일감마다 앱 폴더 `.gitignore` 에 `*.jks`·`*.keystore`·`*.p12`·`*.pfx`·`key.properties`·`secrets.env` 가 없으면 덧붙이고,
+  앱 폴더를 커밋하기 전에 들어갈 파일 중 키 파일(이름 패턴, 확장자 없는 파일은 머리가 JKS/JCEKS/PKCS12)이 있으면 커밋을 멈추고 결과에 상대 경로만 알려요.
 - 키 파일 후보 찾기(보조, `/next` 의 `keyScan` + `keyScanApps`): 그 앱 폴더에서 .jks·.keystore·.p12 와 확장자 없는 JKS(2KB~100KB, 매직 0xFEEDFEED),
   key.properties 를 찾아 경로(`abs` 포함)·별칭·SHA-1·git 추적 여부만 `/api/factory/key-report` 로 보내요(폴더가 없으면 `missing: true`).
 - 스토어 자료 수정·프로젝트 업데이트의 갱신 항목(`job.release.items`): 고른 항목의 단계만 검사하고, Play 에도 고른 것만 올려요(문구를 안 고르면 제목·설명 그대로, 영상 링크만이면 등록정보 PATCH 로 영상만, 이미지를 안 고르면 이미지 그대로). `items` 가 없으면 예전 일감이라 예전처럼 전부.

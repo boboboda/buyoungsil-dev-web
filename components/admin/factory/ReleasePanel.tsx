@@ -15,7 +15,7 @@ import { Button, Card, CardBody, CardHeader, Chip } from "@heroui/react";
 
 import Field from "./Field";
 import AppKeyLookup from "./AppKeyLookup";
-import { KeyCheckView, KeyError } from "./KeyVault";
+import { KeyCheckView, KeyError, UntrackView } from "./KeyVault";
 import StoreAssetsView from "./StoreAssetsView";
 import { KEY_PASSWORD_TEXT, fmtDate, fmtSize, postRelease, type ReleaseApp, type ReleaseJobInfo, type ReleaseOverview } from "./releaseTypes";
 
@@ -266,6 +266,24 @@ function AppRow({
               <KeyError text={app.key.lastError} />
               <KeyCheckView alias={app.key.alias} check={app.key.check} />
               {app.key.keyId && (
+                <UntrackView
+                  busy={busy}
+                  check={app.key.check}
+                  keyPath={app.key.path}
+                  untrack={app.key.untrack}
+                  untracking={app.key.untracking}
+                  onUntrack={() => {
+                    if (
+                      app.key?.keyId &&
+                      window.confirm(
+                        "이 키 파일을 앱 폴더 git 추적에서 뺄까요?\n\n먼저 기록을 조사하고, git rm --cached(파일은 그대로) → .gitignore 보강 → 로컬 커밋 1개를 만들어요. push·기록 삭제·파일 이동은 하지 않아요.",
+                      )
+                    )
+                      call({ action: "vaultUntrack", keyId: app.key.keyId });
+                  }}
+                />
+              )}
+              {app.key.keyId && (
                 <Button
                   className="min-h-11 sm:min-h-0"
                   isDisabled={busy || !!app.key.checking}
@@ -496,7 +514,7 @@ export default function ReleasePanel() {
   // 진행 중이거나 대기 중인 출시 일감이 있으면 15초마다 단계를 새로 읽는다
   // [키 조회] 결과를 기다리는 앱이 있어도 새로 읽는다
   const live = !!data?.apps.some(
-    (a) => (a.lastReleaseJob && ["pending", "approved", "running"].includes(a.lastReleaseJob.status)) || a.keyScanRequest || a.key?.checking,
+    (a) => (a.lastReleaseJob && ["pending", "approved", "running"].includes(a.lastReleaseJob.status)) || a.keyScanRequest || a.key?.checking || a.key?.untracking,
   );
 
   useEffect(() => {

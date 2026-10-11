@@ -78,6 +78,7 @@ export async function registerKeyPassword(
   keyAlias: string,
   storePassword: unknown,
   keyPassword: unknown,
+  refOverride?: string | null, // 키 보관함 항목의 passwordRef(경로를 바꾼 키). 없으면 경로+별칭
 ): Promise<{ ok: boolean; status: number; message: string }> {
   const sp = checkPassword(storePassword, "키 저장소 비밀번호");
 
@@ -91,7 +92,7 @@ export async function registerKeyPassword(
   if (!sealed) {
     return { ok: false, status: 500, message: "서버 암호화 키가 없어 보관할 수 없어요(FACTORY_SECRET_KEY 또는 NEXTAUTH_SECRET 필요)." };
   }
-  const ref = keyRefOf(keystorePath, keyAlias);
+  const ref = refOverride || keyRefOf(keystorePath, keyAlias);
   const names = keySecretNames(ref);
   const data = { keystorePath, keyAlias, storeName: names.store, keyName: names.key, sealed, registeredAt: new Date(), deliveredAt: null };
 

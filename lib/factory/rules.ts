@@ -57,6 +57,7 @@ export const DEFAULT_RULES: Record<RuleSectionId, string> = {
 - 화면이 없으니 스크린샷은 건너뛰세요. 띄운 서버는 끝내기 전에 반드시 종료하세요.`,
   "stack:default": `- 앱 종류 '{{stack}}' 에 맞는 표준 도구로 프로젝트를 만들고, 끝내기 전에 그 도구의 분석·빌드·테스트를 통과시키세요.`,
   common: `- 외부 서비스 키는 환경변수로만 읽을 수 있습니다(이 지시에 허용된 이름만). 키 값을 파일, 로그, 커밋에 쓰거나 출력하지 마세요.
+- 키 파일(.jks/.keystore/.p12/.pfx, key.properties, secrets.env 와 확장자 없는 키스토어)은 절대 git add 하지 마세요. 감독 프로그램이 발견하면 앱 폴더 커밋을 멈춰요.
 - 에뮬레이터, 개발 서버, 감시 프로세스처럼 백그라운드로 띄운 것은 마지막 응답 전에 반드시 직접 끄세요. 남아 있으면 작업이 끝나지 않아 감독 프로그램이 강제로 정리해요.
 - 진행 단계가 바뀔 때마다 .factory/phase.txt 에 한 단어(scaffold, code, build, screenshots, done 중 하나)를 덮어써 주세요.
 - 화면 스크린샷을 만들 수 있으면 .factory/screenshots/ 에 png 로 저장하세요(예: home.png, result.png). 못 만들면 건너뛰세요.
