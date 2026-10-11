@@ -1,7 +1,8 @@
 // lib/factory/storeAssets.ts
 // 앱 공장 출시 2단계: 스토어 자료(앱 폴더 .factory/store/)와 홍보 영상 링크.
 // - 기준 파일은 PC 에만 있다. 서버에는 감독 프로그램이 검사한 결과(단계별 상태·경로·크기·길이)와
-//   고정된 이미지 칸(아이콘, 대표 이미지, 폰 스크린샷 png/jpg)만 올라온다. 영상 파일은 올라오지 않는다(경로·크기·길이만).
+//   고정된 이미지 칸(아이콘, 대표 이미지, 폰 스크린샷 png/jpg)만 올라온다. 영상 원본은 PC 에 두고, 검토용 사본(mp4)만
+//   store-video 라우트가 이미지와 같은 업로드 서버에 올려 그 주소(reviewVideo)를 저장한다.
 // - 홍보 영상은 사람이 YouTube 에 직접 올리고 링크만 저장한다(YouTube API 를 쓰지 않음).
 import { Prisma } from "@prisma/client";
 
@@ -83,6 +84,8 @@ export interface StoreAssets {
   stages: Partial<Record<(typeof STORE_STAGES)[number], StoreStage>>;
   images: Record<string, StoreImage>; // icon, feature, phone-01..08
   video: { path: string; size: number | null; durationSec: number | null } | null;
+  // 검토용 홍보 영상 사본의 업로드 서버 주소(store-video 가 저장. 업로드 서버에 삭제 API 가 없어 지우지 않는다)
+  reviewVideo?: { url: string; size: number; at: string } | null;
   listing: Record<string, { title: string; shortDescription: string; fullDescription: string }> | null;
   tools: string | null; // HyperFrames·에뮬레이터 확인 결과(짧은 글)
   upload: { at: string; ok: boolean; note: string; editId?: string | null; changesNotSentForReview?: boolean } | null;
@@ -127,6 +130,7 @@ function baseFor(cur: StoreAssets | null, jobId: string): StoreAssets {
     stages: {},
     images: cur?.images ?? {},
     video: null,
+    reviewVideo: null,
     listing: cur?.listing ?? null,
     tools: null,
     upload: null,
@@ -243,6 +247,25 @@ export async function saveStoreImageUrl(appSlug: string, jobId: string, slot: st
 
   next.images[slot] = { width: prev?.width ?? null, height: prev?.height ?? null, size: prev?.size ?? null, url };
   await saveAssets(appSlug, next);
+}
+
+/** store-video 라우트가 업로드 서버에 올린 뒤 부른다 */
+export async function saveStoreReviewVideoUrl(appSlug: string, jobId: string, url: string, size: number) {
+  const cur = readStoreAssets((await prisma.factoryApp.findUnique({ where: { appSlug }, select: { storeAssets: true } }))?.storeAssets);
+  const next = baseFor(cur, jobId);
+
+  next.reviewVideo = { url, size, at: new Date().toISOString() };
+  await saveAssets(appSlug, next);
+}
+
+/** store-video 라우트 앞부분: 검토 단계가 있는 출시 일감(첫 출시·스토어 수정)이 실행 중인지 */
+export async function storeVideoJob(jobId: unknown): Promise<FoundJob> {
+  const found = await runningReleaseJob(jobId);
+
+  if (found.error) return found;
+  if (!found.job.review) return refuse(400, "검토 단계가 있는 일감만 검토 영상을 올릴 수 있어요.");
+
+  return found;
 }
 
 /** store-image 라우트 앞부분: 스토어 자료 수정 일감이 실행 중인지 */

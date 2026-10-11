@@ -1,6 +1,6 @@
 // components/admin/factory/ReleaseReview.tsx
 // 출시 카드의 '검토 대기' 화면과 그 부품.
-// - 아이콘·대표 이미지·스크린샷(누르면 크게, [다운로드]), 문구(글자 수·[복사]), 개인정보처리방침 초안, 홍보 영상(관리자만 재생, 결정 뒤·7일 뒤 지워짐)
+// - 아이콘·대표 이미지·스크린샷(누르면 크게, [다운로드]), 문구(글자 수·[복사]), 개인정보처리방침 초안, 홍보 영상(업로드 서버 사본 재생. 예전 일감은 DB 사본: 관리자만, 결정 뒤·7일 뒤 지워짐)
 // - [✅ 이대로 진행] [🔁 다시 만들기](메모) [취소]. 승인 전에는 Play 업로드·홈페이지 반영·완료가 되지 않는다(서버·감독 프로그램 양쪽에서 막음)
 // - 앱 업데이트 완료 결과(버전 이름·코드, AAB 크기, 시험 요약, 업로드 트랙)
 "use client";
@@ -178,11 +178,13 @@ export function ReviewPanel({
         <div className="font-medium">홍보 영상</div>
         {job.reviewVideo ? (
           <>
-            <video className="max-h-96 w-full max-w-xl rounded border border-default-200" controls preload="metadata" src={`/api/admin/factory/review-video/${job.id}`}>
+            <video className="max-h-96 w-full max-w-xl rounded border border-default-200" controls preload="metadata" src={job.reviewVideo.url ?? `/api/admin/factory/review-video/${job.id}`}>
               <track kind="captions" />
             </video>
             <p className="text-xs text-default-500">
-              검토용 사본 {fmtSize(job.reviewVideo.size)} · 결정하거나 {fmt(job.reviewVideo.expiresAt)}이 지나면 서버에서 지워져요(PC 의 원본은 그대로).
+              {job.reviewVideo.expiresAt
+                ? `검토용 사본 ${fmtSize(job.reviewVideo.size)} · 결정하거나 ${fmt(job.reviewVideo.expiresAt)}이 지나면 서버에서 지워져요(PC 의 원본은 그대로).`
+                : `검토용 사본 ${fmtSize(job.reviewVideo.size)} · 업로드 서버에 있어요(삭제 기능이 없어 남아요. 주소를 아는 사람만 볼 수 있어요). PC 의 원본은 그대로.`}
             </p>
           </>
         ) : videoStage?.status === "skipped" ? (

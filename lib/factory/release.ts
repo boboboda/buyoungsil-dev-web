@@ -14,6 +14,7 @@ import { DEFAULT_KEY_ALIAS, keyPasswordStatuses, keyRefOf, keySecretNames } from
 import { maskSecrets } from "@/lib/factory/mask";
 import { KEY_KINDS, listVault } from "@/lib/factory/keyVault";
 import { deleteReviewVideo, reviewVideoInfo } from "@/lib/factory/reviewVideo";
+import { readStoreAssets } from "@/lib/factory/storeAssets";
 
 // 출시 일감 종류. 종류마다 서버가 만드는 지시문과 허용 동작(outbox 파일·키 준비)이 다르다.
 // project(프로젝트 업데이트)는 예전 종류: 예전 일감 기록이 읽히고 커넥터 호환으로만 받는다(통제실에서는 고르지 않음. 홈페이지만 고치려면 store + 덮어쓰기)
@@ -735,7 +736,14 @@ export async function releaseOverview() {
             reviewApprovedAt: lastRelease.reviewApprovedAt,
             redoNote: lastRelease.redoNote,
             summary: lastRelease.status === "review" || lastRelease.status === "done" ? (maskSecrets(lastRelease.summary)?.slice(0, 2000) ?? null) : null,
-            reviewVideo: videos.get(lastRelease.id) ?? null,
+            // 검토 영상: 업로드 서버 주소(store-video)가 있으면 그것, 없으면 예전 방식(DB 조각, 관리자만 재생)
+            reviewVideo: (() => {
+              const sa = readStoreAssets(app?.storeAssets);
+              const rv = lastRelease.status === "review" && sa?.jobId === lastRelease.id ? sa.reviewVideo : null;
+              const old = videos.get(lastRelease.id);
+
+              return rv ? { size: rv.size, url: rv.url, expiresAt: null } : old ? { ...old, url: null } : null;
+            })(),
             versionName: lastRelease.versionName,
             releaseNotes: lastRelease.releaseNotes,
             buildResult: lastRelease.buildResult,
@@ -1069,7 +1077,7 @@ const STORE_VIDEO = [
   "- HyperFrames(HeyGen 오픈소스 HTML→MP4, npm 패키지 `hyperframes`, Apache-2.0)로 15~30초 앱 소개 영상 `promo.mp4`(1920x1080 또는 1080x1920)를 만드세요: 스크린샷과 스토어 문구가 움직이게.",
   "- 필요 환경: Node 22 이상, ffmpeg·ffprobe, Chrome(`npx hyperframes doctor` 로 확인). 앱 폴더 밖 임시 폴더에서 `npx hyperframes init` → 구성 HTML 작성 → `npx hyperframes render -c <html> -o <앱 폴더>/.factory/store/promo.mp4`.",
   '- 환경이 안 되거나 렌더가 실패하면 실패로 끝내지 말고 status.json 에 `"video": {"skipped": true, "reason": "이유"}` 를 쓰고 넘어가세요. 확인한 환경(Node·ffmpeg·Chrome·버전·라이선스)을 status.json 의 `"tools": "한두 줄"` 에 적으세요.',
-  "- 영상은 PC 에 둬요(검토용으로만 감독 프로그램이 통제실에 잠깐 올려요). YouTube 업로드는 하지 마세요(사람이 직접 올리고 링크만 통제실에 넣어요).",
+  "- 영상 원본은 PC 에 둬요(검토용 사본은 감독 프로그램이 업로드 서버에 올려 통제실에서 재생해요). YouTube 업로드는 하지 마세요(사람이 직접 올리고 링크만 통제실에 넣어요).",
   "- Play 등록정보의 영상 링크는 감독 프로그램이 통제실에 저장된 링크로 넣어요.",
   "",
 ];

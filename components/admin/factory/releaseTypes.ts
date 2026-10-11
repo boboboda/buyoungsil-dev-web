@@ -122,7 +122,8 @@ export interface ReleaseJobInfo {
   reviewApprovedAt: string | null;
   redoNote: string | null;
   summary: string | null; // 검토 대기·완료일 때 결과 요약(비밀번호 가림)
-  reviewVideo: { size: number; expiresAt: string } | null; // 통제실에서 재생할 검토 영상(관리자만)
+  // 통제실에서 재생할 검토 영상: url 이 있으면 업로드 서버 주소(지워지지 않음), 없으면 예전 방식(DB, 관리자만·결정 뒤·7일 뒤 삭제)
+  reviewVideo: { size: number; url: string | null; expiresAt: string | null } | null;
   versionName: string | null; // 앱 업데이트 입력
   releaseNotes: string | null;
   buildResult: BuildResult | null;
@@ -200,6 +201,7 @@ export interface StoreAssets {
   stages: Partial<Record<"icon" | "screenshots" | "video" | "listing" | "review" | "upload" | "homepage", { status: StoreStageStatus; note: string | null }>>;
   images: Record<string, { width: number | null; height: number | null; size: number | null; url: string | null }>;
   video: { path: string; size: number | null; durationSec: number | null } | null;
+  reviewVideo?: { url: string; size: number; at: string } | null;
   listing: Record<string, { title: string; shortDescription: string; fullDescription: string }> | null;
   tools: string | null;
   upload: { at: string; ok: boolean; note: string; changesNotSentForReview?: boolean } | null;
