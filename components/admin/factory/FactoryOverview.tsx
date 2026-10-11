@@ -144,6 +144,22 @@ export default function FactoryOverview({
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<"updates" | "deploys" | "threads">("deploys");
+  // 업데이트·배포 이력은 길어서 기본으로 접어 둔다. 펼침 여부는 이 브라우저에 기억
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      setHistoryOpen(localStorage.getItem("factory.historyOpen") === "1");
+    } catch {}
+  }, []);
+  const toggleHistory = () =>
+    setHistoryOpen((v) => {
+      try {
+        localStorage.setItem("factory.historyOpen", v ? "0" : "1");
+      } catch {}
+
+      return !v;
+    });
 
   const load = useCallback(async () => {
     try {
@@ -189,8 +205,7 @@ export default function FactoryOverview({
   const todo = inbox
     ? inbox.jobs.length +
       inbox.turns.length +
-      inbox.deploys.filter((d) => !d.inProgress && d.canDeploy !== false)
-        .length
+      inbox.deploys.filter((d) => !d.inProgress && d.canDeploy !== false).length
     : 0;
 
   return (
@@ -253,9 +268,7 @@ export default function FactoryOverview({
                 <Button
                   className="min-h-11 sm:min-h-0"
                   color="danger"
-                  isDisabled={
-                    !!busy || d.inProgress || d.canDeploy === false
-                  }
+                  isDisabled={!!busy || d.inProgress || d.canDeploy === false}
                   size="sm"
                   onPress={() =>
                     act(
@@ -376,31 +389,51 @@ export default function FactoryOverview({
       <Card className="mb-6">
         <CardBody className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="font-semibold">📜 업데이트·배포 이력</div>
-            <div className="flex gap-1">
-              {(
-                [
-                  ["deploys", "서버 배포"],
-                  ["updates", "감독 프로그램 업데이트"],
-                  ["threads", "정비 대화"],
-                ] as const
-              ).map(([k, label]) => (
-                <Button
-                  key={k}
-                  color={tab === k ? "primary" : "default"}
-                  size="sm"
-                  variant={tab === k ? "solid" : "flat"}
-                  onPress={() => setTab(k)}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
+            <button
+              aria-expanded={historyOpen}
+              className="flex min-h-11 items-center gap-2 text-left font-semibold sm:min-h-0"
+              type="button"
+              onClick={toggleHistory}
+            >
+              <span className="text-default-500">
+                {historyOpen ? "▾" : "▸"}
+              </span>
+              📜 업데이트·배포 이력
+              {!historyOpen && data && (
+                <span className="text-xs font-normal text-default-500">
+                  (배포 {data.deploys.length} · 업데이트 {data.updates.length} ·
+                  정비 {data.threads.length}, 눌러서 펼치기)
+                </span>
+              )}
+            </button>
+            {historyOpen && (
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    ["deploys", "서버 배포"],
+                    ["updates", "감독 프로그램 업데이트"],
+                    ["threads", "정비 대화"],
+                  ] as const
+                ).map(([k, label]) => (
+                  <Button
+                    key={k}
+                    color={tab === k ? "primary" : "default"}
+                    size="sm"
+                    variant={tab === k ? "solid" : "flat"}
+                    onPress={() => setTab(k)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            )}
           </div>
 
-          {!data && <p className="text-sm text-default-500">읽는 중…</p>}
+          {historyOpen && !data && (
+            <p className="text-sm text-default-500">읽는 중…</p>
+          )}
 
-          {data && tab === "deploys" && (
+          {historyOpen && data && tab === "deploys" && (
             <div className="space-y-2">
               {data.deploys.length === 0 && (
                 <p className="text-sm text-default-500">배포 기록이 없어요.</p>
@@ -423,7 +456,9 @@ export default function FactoryOverview({
                       <span className="font-medium">{d.threadTitle}</span>
                       {d.via && (
                         <span className="text-xs text-default-500">
-                          ({d.via === "자동" ? "자동 배포" : `${d.via}에서 요청`})
+                          (
+                          {d.via === "자동" ? "자동 배포" : `${d.via}에서 요청`}
+                          )
                         </span>
                       )}
                     </div>
@@ -440,18 +475,14 @@ export default function FactoryOverview({
                       요청 {when(d.requestedAt)} · 시작 {when(d.startedAt)} ·
                       완료 {when(d.finishedAt)}
                     </div>
-                    {d.result && (
-                      <div className="mt-1 whitespace-pre-wrap break-words text-xs text-default-600">
-                        {d.result}
-                      </div>
-                    )}
+                    {d.result && <ResultText text={d.result} />}
                   </div>
                 );
               })}
             </div>
           )}
 
-          {data && tab === "updates" && (
+          {historyOpen && data && tab === "updates" && (
             <div className="space-y-2">
               {data.updates.length === 0 && (
                 <p className="text-sm text-default-500">
@@ -499,7 +530,7 @@ export default function FactoryOverview({
             </div>
           )}
 
-          {data && tab === "threads" && (
+          {historyOpen && data && tab === "threads" && (
             <div className="space-y-2">
               {data.threads.length === 0 && (
                 <p className="text-sm text-default-500">정비 대화가 없어요.</p>
@@ -563,5 +594,27 @@ export default function FactoryOverview({
         </CardBody>
       </Card>
     </>
+  );
+}
+
+// 배포 결과: 첫 줄(요약)만 보이고, 로그 끝부분 같은 나머지는 접어 둔다
+function ResultText({ text }: { text: string }) {
+  const [first, ...rest] = text.split("\n");
+  const more = rest.join("\n").trim();
+
+  return (
+    <div className="mt-1 break-words text-xs text-default-600">
+      <div className="whitespace-pre-wrap">{first}</div>
+      {more && (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-default-500">
+            자세히 ({rest.length}줄)
+          </summary>
+          <div className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-default-100 p-2 font-mono text-[11px]">
+            {more}
+          </div>
+        </details>
+      )}
+    </div>
   );
 }

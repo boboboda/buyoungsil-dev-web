@@ -266,7 +266,7 @@ export default function FactoryControl() {
         ))}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         {/* 지시 목록 */}
         <div className={`space-y-2 ${selectedId ? "hidden lg:block" : ""}`}>
           {listError && (
@@ -295,8 +295,15 @@ export default function FactoryControl() {
               }}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate font-semibold">{j.title}</span>
-                <Chip color={STATUS[j.status].color} size="sm" variant="flat">
+                <span className="min-w-0 truncate font-semibold">
+                  {j.title}
+                </span>
+                <Chip
+                  className="shrink-0"
+                  color={STATUS[j.status].color}
+                  size="sm"
+                  variant="flat"
+                >
                   {STATUS[j.status].label}
                 </Chip>
               </div>

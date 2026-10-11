@@ -41,7 +41,7 @@ export function CopyButton({ text, label = "복사" }: { text: string; label?: s
 /** 스토어 문구(언어별): 글자 수와 [복사] */
 export function ListingCopy({ listing }: { listing: Record<string, Record<string, unknown>> }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {Object.entries(listing).map(([lang, v]) => (
         <div key={lang} className="space-y-1">
           <div className="text-xs font-semibold text-default-500">{lang === "ko" || lang === "ko-KR" ? `한국어 (${lang})` : lang === "en" || lang === "en-US" ? `영어 (${lang})` : lang}</div>
