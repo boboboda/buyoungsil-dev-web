@@ -2,9 +2,22 @@
 // - 출시 준비 일감(kind=release)의 작업 규칙
 // - 일감이 끝나면 앱 폴더 .factory/outbox/ 의 정해진 파일만, 정해진 홈페이지 주소로 보낸다(그 밖의 파일·주소는 없다)
 // - 배포 계정 키 파일이 PC 에 "있는지"만 확인해 알린다(파일 내용은 읽지 않는다)
+// - 통제실에서 등록한 키 비밀번호를 받아 secrets.env 에 저장하고, 저장했다고 알려 서버 값을 지우게 한다
+// - 첫 출시 일감의 업로드 키 준비: 앱에 key.properties 가 있으면 그대로 두고, 없으면 공용/지정 키를 환경변수로 넘긴다.
+//   공용 키 파일이 없을 때만 keytool 로 한 번 만든다(있으면 절대 덮어쓰거나 새로 만들지 않는다)
+// - 키 점검: 앱 폴더의 .jks·.keystore 와 key.properties 를 찾아 경로·별칭·SHA-1·git 추적 여부만 보고(비밀번호는 읽지 않는다)
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+// 로그·실패 이유에 섞인 비밀번호를 가린다(서버 lib/factory/mask.ts 와 같은 규칙)
+const MASK_PATTERNS = [
+  /((?:store|key|keystore)?[_-]?pass(?:word|wd)?["']?\s*[=:]\s*["']?)([^\s"',;)]+)/gi,
+  /(-(?:src|dest)?(?:store|key)pass(?::env|:file)?\s+)(\S+)/gi,
+];
+export const maskText = (s) => MASK_PATTERNS.reduce((acc, re) => acc.replace(re, "$1***"), String(s ?? ""));
 
 // outbox 파일 이름 → 보낼 주소. 이 목록에 없는 파일은 보내지 않는다.
 const OUTBOX = {
@@ -18,8 +31,10 @@ export function releaseRules(job) {
   if (job.kind !== "release") return "";
   return `
 ## 출시 준비 (이 일감은 kind=release)
-- RELEASE_REQUEST.md 가 이번 지시예요. 앱 기능은 바꾸지 말고 출시 자료만 만드세요(꼭 필요한 빌드 설정 변경만).
-- 결과는 \`.factory/outbox/\` 에 JSON 파일 두 개로 저장하세요. 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
+- RELEASE_REQUEST.md 가 이번 지시예요(종류: 첫 출시 / 스토어 자료 수정 / 프로젝트 업데이트). 앱 기능은 바꾸지 말고 그 종류가 허락한 것만 하세요.
+- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, upload, homepage, done)으로 .factory/phase.txt 에 쓰고,
+  더 진행할 수 없으면 .factory/fail.json 에 {"stage": "단계", "reason": "이유"} 를 쓰고 끝내세요(비밀번호·키 값 금지).
+- 결과는 \`.factory/outbox/\` 에 JSON 파일로 저장하세요(첫 출시: 아래 두 개, 스토어 자료 수정: release.json, 프로젝트 업데이트: project.json). 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
   - \`project.json\` (홈페이지 프로젝트의 빈 항목만 채워요): {"description": "소개 2~3문장", "privacyPolicy": "개인정보처리방침 마크다운"}
     - 방침에 [[ ... ]] 자리표시자를 남기지 마세요(남으면 거절돼요). 모르는 값은 release.json 의 checklist 에 적으세요.
   - \`release.json\`:
@@ -61,18 +76,22 @@ function realAab(dir, aab) {
 }
 
 // 일감이 끝날 때(완료 보고 전에) 부른다. 보낸 파일은 .factory/outbox/sent/ 로 옮긴다.
+// 돌려주는 값: 실패 목록 [{ name, status, message }]. (홈페이지에 연결된 프로젝트가 없어 project.json 이 404 인 것은 실패로 보지 않는다)
+// job.release.outbox 가 있으면(서버가 출시 종류별로 정함) 그 파일만 보낸다.
 export async function sendOutbox({ dir, job, api, addLog }) {
   const box = path.join(dir, ".factory", "outbox");
+  const allowed = Array.isArray(job.release?.outbox) ? job.release.outbox.filter((n) => OUTBOX[n]) : Object.keys(OUTBOX);
+  const failures = [];
   let names = [];
   try {
     names = fs.readdirSync(box).filter((n) => fs.statSync(path.join(box, n)).isFile());
   } catch {
-    return;
+    return failures;
   }
   for (const name of names) {
     const endpoint = OUTBOX[name];
-    if (!endpoint) {
-      addLog("warn", `outbox 의 ${name} 은 보낼 수 있는 파일이 아니라서 건너뛰어요(허용: ${Object.keys(OUTBOX).join(", ")}).`);
+    if (!endpoint || !allowed.includes(name)) {
+      addLog("warn", `outbox 의 ${name} 은 이 일감에서 보낼 수 있는 파일이 아니라서 건너뛰어요(허용: ${allowed.join(", ")}).`);
       continue;
     }
     const full = path.join(box, name);
@@ -83,11 +102,12 @@ export async function sendOutbox({ dir, job, api, addLog }) {
       if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("JSON 객체가 아니에요");
     } catch (e) {
       addLog("warn", `outbox ${name} 을 읽지 못했어요: ${e.message}`);
+      failures.push({ name, status: 0, message: `${name} 을 읽지 못했어요: ${e.message}` });
       continue;
     }
     let body;
     if (name === "project.json") {
-      body = { appSlug: job.appSlug };
+      body = { appSlug: job.appSlug, jobId: job.id };
       for (const k of PROJECT_KEYS) if (data[k] !== undefined) body[k] = data[k];
     } else {
       const { aab, warn } = realAab(dir, data.aab);
@@ -103,15 +123,312 @@ export async function sendOutbox({ dir, job, api, addLog }) {
         fs.renameSync(full, path.join(box, "sent", `${job.id}-${name}`));
       } else {
         addLog("warn", `outbox ${name} 보내기 거절(${r.status}): ${msg}`);
+        if (!(name === "project.json" && r.status === 404)) failures.push({ name, status: r.status, message: `${name} 거절(${r.status}): ${msg}` });
       }
     } catch (e) {
       addLog("warn", `outbox ${name} 보내기 오류: ${e.message}`);
+      failures.push({ name, status: 0, message: `${name} 보내기 오류: ${e.message}` });
+    }
+  }
+  return failures;
+}
+
+// Claude 가 남긴 .factory/fail.json (출시 일감에서 단계 실패를 알리는 파일). 없으면 null
+export function readFailFile(dir) {
+  const p = path.join(dir, ".factory", "fail.json");
+  try {
+    const v = JSON.parse(fs.readFileSync(p, "utf8"));
+    const stage = typeof v?.stage === "string" && /^[a-z_-]{1,40}$/.test(v.stage) ? v.stage : null;
+    const reason = typeof v?.reason === "string" ? v.reason.slice(0, 1500) : "";
+    return { stage, reason: reason || "이유 없음" };
+  } catch {
+    return null;
+  }
+}
+
+// 재시도 때 RELEASE_REQUEST.md 에 붙이는 안내
+export function resumeSection(job) {
+  const r = job.release;
+  if (!r?.resumeFrom) return "";
+  return `\n\n## 재시도: '${r.resumeFrom}' 단계부터\n- 이전 시도가 이 단계에서 실패했어요${r.resumeNote ? `: ${maskText(r.resumeNote).slice(0, 500)}` : "."}\n- 앞 단계에서 이미 만든 결과(빌드 산출물, outbox 파일 등)는 다시 만들지 말고 그대로 쓰고, 이 단계부터 이어서 하세요.\n`;
+}
+
+// ───────── 업로드 키 준비 (첫 출시) ─────────
+
+const expandHome = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
+
+/** 앱 자체 키 설정 파일(Flutter: android/key.properties, 그 밖: key.properties) */
+export function appKeyProperties(dir) {
+  return ["android/key.properties", "key.properties"].map((r) => path.join(dir, r)).find((p) => fs.existsSync(p)) ?? null;
+}
+
+function findKeytool() {
+  const exe = process.platform === "win32" ? "keytool.exe" : "keytool";
+  const cands = [
+    process.env.JAVA_HOME && path.join(process.env.JAVA_HOME, "bin", exe),
+    "keytool",
+    process.platform === "win32" && path.join(process.env.ProgramFiles || "C:\\Program Files", "Android", "Android Studio", "jbr", "bin", exe),
+    process.platform === "darwin" && "/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool",
+  ].filter(Boolean);
+  for (const c of cands) {
+    if (c !== "keytool" && !fs.existsSync(c)) continue;
+    const r = spawnSync(c, ["-help"], { encoding: "utf8", shell: false, timeout: 20_000, windowsHide: true });
+    if (r.status === 0) return c;
+  }
+  return null;
+}
+
+/**
+ * 첫 출시 일감의 키 준비. 돌려주는 값:
+ *   { ok: true, env, secrets, note }   env 를 Claude 에 넘기고 secrets(비밀번호 값)는 로그 가리기에 쓴다
+ *   { ok: false, reason }              키 단계 실패
+ * 앱에 key.properties 가 있으면 아무것도 넘기지 않는다(앱 자체 키를 그대로 쓴다).
+ */
+export function prepareReleaseKey({ job, dir, secrets, log }) {
+  const k = job.release?.key;
+  if (job.release?.kind !== "first" || !k) return { ok: true, env: {}, secrets: [], note: null };
+  const own = appKeyProperties(dir);
+  if (own) return { ok: true, env: {}, secrets: [], note: `앱 자체 키 설정(${path.relative(dir, own)})을 그대로 써요(건드리지 않음).` };
+
+  const storePass = secrets[k.storeName] || (k.legacyStoreName && secrets[k.legacyStoreName]) || "";
+  const keyPass = secrets[k.keyName] || (k.legacyKeyName && secrets[k.legacyKeyName]) || storePass;
+  if (!storePass) {
+    return { ok: false, reason: `키 비밀번호가 이 PC 에 없어요(${k.storeName}). 통제실에서 ${k.source === "custom" ? "이 앱의 다른 키" : "배포 계정"} 비밀번호를 등록한 뒤 재시도하세요.` };
+  }
+  if (typeof k.path !== "string" || !/\.(jks|keystore)$/i.test(k.path)) return { ok: false, reason: "키 경로가 .jks/.keystore 가 아니에요." };
+  const abs = path.resolve(expandHome(k.path));
+  let note;
+
+  if (fs.existsSync(abs)) {
+    note = `업로드 키 사용: ${k.path} (${k.alias}, 기존 파일 그대로)`;
+  } else if (!k.generate) {
+    return { ok: false, reason: `지정한 키 파일이 없어요: ${k.path}. 경로를 확인하세요(앱별 다른 키는 새로 만들지 않아요).` };
+  } else {
+    const kt = findKeytool();
+    if (!kt) return { ok: false, reason: "keytool 을 찾지 못해 공용 키를 만들 수 없어요(JDK 나 Android Studio 를 설치하거나 JAVA_HOME 을 지정하세요)." };
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    if (fs.existsSync(abs)) return { ok: false, reason: "키 파일이 방금 생겼어요. 덮어쓰지 않으려고 멈췄어요. 재시도하세요." };
+    const r = spawnSync(
+      kt,
+      ["-genkeypair", "-keystore", abs, "-storetype", "JKS", "-alias", k.alias, "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000",
+        "-dname", String(k.dname || "CN=App Factory, C=KR"), "-storepass:env", "FACTORY_KT_STOREPASS", "-keypass:env", "FACTORY_KT_KEYPASS", "-noprompt"],
+      { encoding: "utf8", shell: false, timeout: 60_000, windowsHide: true, env: { ...process.env, FACTORY_KT_STOREPASS: storePass, FACTORY_KT_KEYPASS: keyPass } },
+    );
+    if (r.status !== 0 || !fs.existsSync(abs)) {
+      const why = maskText(`${r.stderr || ""} ${r.stdout || ""}`.replace(/\s+/g, " ").trim()).slice(0, 300);
+      return { ok: false, reason: `keytool 로 공용 키를 만들지 못했어요: ${why || `종료 코드 ${r.status}`}` };
+    }
+    log?.(`공용 업로드 키를 새로 만들었어요: ${abs}`);
+    note = `공용 업로드 키를 새로 만들었어요: ${k.path} (${k.alias}). ⚠️ 이 파일과 비밀번호를 PC 밖 안전한 곳 두 군데 이상에 백업하세요.`;
+  }
+  return {
+    ok: true,
+    env: { FACTORY_KEYSTORE_PATH: abs, FACTORY_KEY_ALIAS: k.alias, FACTORY_KEYSTORE_PASSWORD: storePass, FACTORY_KEY_PASSWORD: keyPass },
+    secrets: [storePass, keyPass],
+    note,
+  };
+}
+
+// ───────── 키 비밀번호 받기 (통제실 등록 → secrets.env) ─────────
+
+const NAME_RE = /^[A-Z][A-Z0-9_]{1,63}$/;
+
+// secrets.env 의 해당 이름 줄만 바꾸거나 덧붙인다. 다른 줄은 그대로 둔다.
+function upsertSecrets(file, entries) {
+  const text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  const lines = text ? text.split(/\r?\n/) : [];
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  for (const [name, value] of Object.entries(entries)) {
+    if (!NAME_RE.test(name) || typeof value !== "string" || /[\r\n]/.test(value)) throw new Error(`저장할 수 없는 값(${name})`);
+    const i = lines.findIndex((l) => new RegExp(`^\\s*${name}\\s*=`).test(l));
+    if (i >= 0) lines[i] = `${name}=${value}`;
+    else lines.push(`${name}=${value}`);
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, lines.join("\n") + "\n", { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+let syncingKeys = false;
+
+/** /next 응답에 keyPasswordsPending 이 있으면 부른다. 값은 로그에 남기지 않는다. 던지지 않는다. */
+export async function syncKeyPasswords({ api, log, secretsFile }) {
+  if (syncingKeys) return;
+  syncingKeys = true;
+  try {
+    const r = await api("GET", "/api/factory/key-passwords");
+    if (r.status !== 200 || !Array.isArray(r.data?.items)) return log(`키 비밀번호 가져오기 거절(${r.status})`);
+    const ack = [];
+    for (const it of r.data.items) {
+      if (!it || !NAME_RE.test(it.storeName) || !NAME_RE.test(it.keyName) || typeof it.store !== "string" || typeof it.key !== "string") continue;
+      try {
+        upsertSecrets(secretsFile, { [it.storeName]: it.store, [it.keyName]: it.key });
+        ack.push({ keyRef: it.keyRef, version: it.version });
+      } catch (e) {
+        log(`키 비밀번호를 secrets.env 에 저장하지 못했어요: ${e.message}`);
+      }
+    }
+    if (ack.length) {
+      const a = await api("POST", "/api/factory/key-passwords", { ack });
+      log(a.status === 200 ? `키 비밀번호 ${ack.length}개를 secrets.env 에 저장했어요(서버 값은 지움).` : `키 비밀번호 저장 확인 거절(${a.status})`);
+    }
+  } catch (e) {
+    log(`키 비밀번호 가져오기 오류: ${e.message}`);
+  } finally {
+    syncingKeys = false;
+  }
+}
+
+// ───────── 키 점검 ─────────
+
+const SKIP_DIRS = new Set(["node_modules", ".git", "build", ".gradle", ".dart_tool", "Pods", ".idea", ".cxx", "intermediates", ".next", "dist", ".factory"]);
+const SKIP_APPS = new Set(["selfdev", "supervisor-src", "node_modules"]);
+
+const sha1Hex = (buf) => createHash("sha1").update(buf).digest("hex").toUpperCase().match(/../g).join(":");
+
+/** JKS/JCEKS 파일에서 별칭과 인증서 SHA-1 을 읽는다(인증서는 암호화돼 있지 않아 비밀번호가 필요 없다). PKCS12 는 비밀번호 없이 못 읽는다. */
+export function jksInfo(buf) {
+  if (buf.length < 12) return { type: "알 수 없음", aliases: [], note: "파일이 너무 작아요" };
+  const magic = buf.readUInt32BE(0);
+  if (magic !== 0xfeedfeed && magic !== 0xcececece) {
+    return { type: buf[0] === 0x30 ? "PKCS12" : "알 수 없음", aliases: [], note: buf[0] === 0x30 ? "PKCS12 는 비밀번호 없이 지문을 읽을 수 없어요" : null };
+  }
+  const type = magic === 0xfeedfeed ? "JKS" : "JCEKS";
+  const aliases = [];
+  let o = 4;
+  try {
+    const ver = buf.readUInt32BE(o);
+    o += 4;
+    const n = buf.readUInt32BE(o);
+    o += 4;
+    const utf = () => {
+      const l = buf.readUInt16BE(o);
+      o += 2;
+      const s = buf.toString("utf8", o, o + l);
+      o += l;
+      return s;
+    };
+    const cert = () => {
+      if (ver === 2) utf(); // 인증서 종류(X.509)
+      const l = buf.readUInt32BE(o);
+      o += 4;
+      const der = buf.subarray(o, o + l);
+      o += l;
+      return sha1Hex(der);
+    };
+    for (let i = 0; i < n && i < 20; i++) {
+      const tag = buf.readUInt32BE(o);
+      o += 4;
+      const alias = utf();
+      o += 8; // 만든 시각
+      if (tag === 1) {
+        const kl = buf.readUInt32BE(o);
+        o += 4 + kl; // 암호화된 개인키(건너뜀)
+        const cc = buf.readUInt32BE(o);
+        o += 4;
+        let first = null;
+        for (let c = 0; c < cc; c++) {
+          const h = cert();
+          if (c === 0) first = h;
+        }
+        aliases.push({ alias, sha1: first });
+      } else if (tag === 2) {
+        aliases.push({ alias, sha1: cert() });
+      } else {
+        aliases.push({ alias, sha1: null }); // JCEKS 비밀 키 등: 더 읽지 않는다
+        break;
+      }
+    }
+  } catch {
+    return { type, aliases, note: "파일 끝을 읽지 못했어요(일부만 표시)" };
+  }
+  return { type, aliases, note: null };
+}
+
+function walk(root, depth, out, budget) {
+  if (depth > 5 || budget.n <= 0) return;
+  let ents = [];
+  try {
+    ents = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of ents) {
+    if (--budget.n <= 0) return;
+    const full = path.join(root, e.name);
+    if (e.isDirectory()) {
+      if (!SKIP_DIRS.has(e.name)) walk(full, depth + 1, out, budget);
+    } else if (e.isFile()) {
+      const low = e.name.toLowerCase();
+      if (low.endsWith(".jks") || low.endsWith(".keystore")) out.keys.push(full);
+      else if (low === "key.properties") out.props.push(full);
     }
   }
 }
 
+function gitTracked(appDir, file) {
+  if (!fs.existsSync(path.join(appDir, ".git"))) return null;
+  const r = spawnSync("git", ["ls-files", "--error-unmatch", "--", path.relative(appDir, file)], { cwd: appDir, encoding: "utf8", shell: false, windowsHide: true });
+  return r.status === 0;
+}
+
+// key.properties 에서 storeFile·keyAlias 줄만 읽는다(비밀번호 줄은 읽어서 쓰지 않는다)
+function readKeyProps(file) {
+  const out = { storeFile: null, keyAlias: null };
+  try {
+    for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+      const m = line.match(/^\s*(storeFile|keyAlias)\s*=\s*(.*?)\s*$/);
+      if (m) out[m[1]] = m[2].slice(0, 300);
+    }
+  } catch {
+    /* 못 읽음 */
+  }
+  return out;
+}
+
+/** /next 응답에 keyScan: true 가 있으면 한 번 실행. 던지지 않는다. */
+export async function runKeyScan({ api, log, workDir }) {
+  try {
+    const apps = [];
+    let dirs = [];
+    try {
+      dirs = fs.readdirSync(workDir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".") && !SKIP_APPS.has(d.name));
+    } catch {
+      dirs = [];
+    }
+    for (const d of dirs.slice(0, 100)) {
+      const appDir = path.join(workDir, d.name);
+      const found = { keys: [], props: [] };
+      walk(appDir, 0, found, { n: 30_000 });
+      if (!found.keys.length && !found.props.length) {
+        apps.push({ appSlug: d.name, keys: [], keyProperties: [] });
+        continue;
+      }
+      const rel = (p) => path.relative(appDir, p).replace(/\\/g, "/");
+      apps.push({
+        appSlug: d.name,
+        keys: found.keys.slice(0, 20).map((k) => {
+          let info = { type: "알 수 없음", aliases: [], note: "읽지 못했어요" };
+          try {
+            info = jksInfo(fs.readFileSync(k));
+          } catch {
+            /* 그대로 */
+          }
+          return { path: rel(k), type: info.type, aliases: info.aliases, gitTracked: gitTracked(appDir, k), note: info.note };
+        }),
+        keyProperties: found.props.slice(0, 10).map((p) => ({ path: rel(p), ...readKeyProps(p), gitTracked: gitTracked(appDir, p) })),
+      });
+    }
+    const r = await api("POST", "/api/factory/key-report", { apps });
+    log(r.status === 200 ? `키 점검 결과를 보냈어요(앱 ${apps.length}개).` : `키 점검 결과 보내기 거절(${r.status})`);
+  } catch (e) {
+    log(`키 점검 오류: ${e.message}`);
+  }
+}
+
 // ───────── 배포 계정 키 파일 존재 확인 ─────────
-const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
+const expand = expandHome;
 const ALLOWED_EXT = [".jks", ".keystore", ".json"];
 let lastPcSig = "";
 let lastPcAt = 0;

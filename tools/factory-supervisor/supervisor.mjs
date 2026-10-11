@@ -14,7 +14,17 @@ import path from "node:path";
 import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard } from "./update.mjs";
-import { releaseRules, reportPcPaths, sendOutbox } from "./release.mjs";
+import {
+  maskText,
+  prepareReleaseKey,
+  readFailFile,
+  releaseRules,
+  reportPcPaths,
+  resumeSection,
+  runKeyScan,
+  sendOutbox,
+  syncKeyPasswords,
+} from "./release.mjs";
 import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
@@ -260,13 +270,16 @@ function prepareDir(job) {
   if (job.kind === "revision") {
     fs.writeFileSync(path.join(dir, "CHANGE_REQUEST.md"), `# 수정 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n`);
   } else if (job.kind === "release") {
-    fs.writeFileSync(path.join(dir, "RELEASE_REQUEST.md"), `# 출시 준비 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n`);
+    fs.writeFileSync(path.join(dir, "RELEASE_REQUEST.md"), `# 출시 준비 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n${resumeSection(job)}`);
     fs.mkdirSync(path.join(dir, ".factory", "outbox"), { recursive: true });
+    fs.rmSync(path.join(dir, ".factory", "fail.json"), { force: true }); // 지난 시도의 실패 표시는 지운다
   } else {
     fs.writeFileSync(path.join(dir, "PLAN.md"), job.planMarkdown + "\n");
   }
   fs.writeFileSync(path.join(dir, ".factory", "history", `${job.id}.md`), job.planMarkdown + "\n");
-  fs.writeFileSync(path.join(dir, ".factory", "phase.txt"), "scaffold\n");
+  // 출시 일감은 그 종류의 첫 단계(재시도면 그 단계)로 시작한다
+  const firstPhase = job.kind === "release" && job.release ? job.release.resumeFrom || job.release.stages?.[0] || "scaffold" : "scaffold";
+  fs.writeFileSync(path.join(dir, ".factory", "phase.txt"), `${firstPhase}\n`);
 
   // CLAUDE.md: 우리 블록만 갈아 끼우고 나머지는 그대로 둔다
   const claudeMd = path.join(dir, "CLAUDE.md");
@@ -323,9 +336,10 @@ function killTree(child) {
 
 const brief = (v, n = 140) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-function redactor(secretValues) {
-  const vals = secretValues.filter((v) => v && v.length >= 8);
-  return (s) => vals.reduce((acc, v) => acc.split(v).join("***"), s);
+// 키 비밀번호(keyValues)는 짧을 수 있어 4자 이상이면 가린다. 마지막에 비밀번호 모양(storePassword=… 등)도 가린다.
+function redactor(secretValues, keyValues = []) {
+  const vals = [...secretValues.filter((v) => v && v.length >= 8), ...keyValues.filter((v) => v && v.length >= 4)];
+  return (s) => maskText(vals.reduce((acc, v) => acc.split(v).join("***"), s));
 }
 
 function addLog(st, level, message) {
@@ -522,7 +536,7 @@ async function finish(st, status, fields) {
 
 async function failEarly(job, reason) {
   log(`[${job.appSlug}] 시작하지 못함: ${reason}`);
-  const st = { job, logs: [], phase: null, phaseDirty: false, shots: new Set(), shotHashes: new Set(), shotTries: new Map(), reportable: true, redact: (s) => s, dir: cfg.workDir };
+  const st = { job, logs: [], phase: null, phaseDirty: false, shots: new Set(), shotHashes: new Set(), shotTries: new Map(), reportable: true, redact: maskText, dir: cfg.workDir };
   await finish(st, "failed", { failReason: reason });
 }
 
@@ -543,14 +557,45 @@ async function runJob(job) {
   }
 
   const allowed = Object.fromEntries((job.requiredSecrets ?? []).map((n) => [n, secrets[n]]));
+  const rel = job.kind === "release" ? (job.release ?? null) : null; // 서버가 준 출시 정보(종류·단계·outbox·키). 예전 서버면 없음
   const st = {
     job, dir, child: null, logs: [], phase: "scaffold", phaseDirty: true, shots: new Set(), shotHashes: new Set(), shotTries: new Map(),
     reportable: true, stopped: null, result: null, stderrTail: "", lastText: "", started: Date.now(),
     redact: redactor(Object.values(allowed)),
   };
   running.set(job.id, st);
+  readPhase(st);
   seedShots(st);
   addLog(st, "info", `앱 폴더 준비 완료: ${dir} (작업 규칙: ${job.rulesSource})`);
+
+  if (rel) {
+    addLog(st, "info", `출시 일감 종류: ${rel.kindLabel ?? rel.kind}${rel.resumeFrom ? ` · 재시도: '${rel.resumeFrom}' 단계부터` : ""}`);
+    // 홈페이지 반영 단계만 다시: Claude 없이 남은 outbox 만 보낸다
+    if (rel.resumeFrom === "homepage") {
+      try {
+        return await finishRelease(st, { summary: "홈페이지 반영 단계만 다시 했어요(남아 있던 outbox 를 다시 보냄)." });
+      } finally {
+        running.delete(job.id);
+      }
+    }
+    // 첫 출시: 업로드 키 준비(앱 자체 key.properties 가 있으면 그대로)
+    let key;
+    try {
+      key = prepareReleaseKey({ job, dir, secrets, log: (m) => log(`[${job.appSlug}] ${m}`) });
+    } catch (e) {
+      key = { ok: false, reason: `키 준비 중 오류: ${e.message}` };
+    }
+    if (!key.ok) {
+      try {
+        return await finish(st, "failed", { failReason: st.redact(key.reason), failStage: "key" });
+      } finally {
+        running.delete(job.id);
+      }
+    }
+    Object.assign(allowed, key.env);
+    st.redact = redactor(Object.values(allowed).filter((v) => !key.secrets.includes(v)), key.secrets);
+    if (key.note) addLog(st, "info", key.note);
+  }
 
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", cfg.permissionMode, "--allowedTools", cfg.allowedTools];
   if (cfg.model) args.push("--model", cfg.model);
@@ -620,8 +665,13 @@ async function runJob(job) {
 
   try {
     if (st.stopped) {
-      if (/^시간 초과/.test(st.stopped)) await finish(st, "failed", { failReason: st.stopped });
+      if (/^시간 초과/.test(st.stopped)) await finish(st, "failed", { failReason: st.stopped, ...(rel ? { failStage: st.phase } : {}) });
       // 취소·종료·서버 쪽 상태 변경이면 서버가 이미 정리했거나(또는 곧 정리) 하므로 보고하지 않는다
+    } else if (rel && st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
+      // 출시 일감: Claude 가 남긴 실패 표시(fail.json) → 그 단계 실패. 아니면 outbox 를 보내고, 거절되면 홈페이지 반영 실패
+      const text = st.redact(String(st.result.result ?? st.lastText ?? "").trim());
+      const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result.num_turns ? `, ${st.result.num_turns}턴` : ""})`;
+      await finishRelease(st, { summary: (text || "완료(요약 없음)").slice(0, 3700) + footer, checkFail: true });
     } else if (st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
       // outbox(출시 자료 등)는 일감이 아직 실행 중일 때 보내야 서버가 받는다
       await sendOutbox({ dir, job, api, addLog: (level, m) => addLog(st, level, m) });
@@ -631,11 +681,33 @@ async function runJob(job) {
       await finish(st, "done", { summary: (text || "완료(요약 없음)").slice(0, 3800) + footer });
     } else {
       const why = st.redact(String(st.result?.is_error ? st.result.result : "") || st.stderrTail.trim() || `claude 가 비정상 종료(코드 ${code})`);
-      await finish(st, "failed", { failReason: why.slice(-1800) });
+      if (rel) readPhase(st);
+      await finish(st, "failed", { failReason: why.slice(-1800), ...(rel ? { failStage: st.phase } : {}) });
     }
   } finally {
     running.delete(job.id);
   }
+}
+
+// 출시 일감 마무리: (checkFail 이면) fail.json 확인 → outbox 보내기 → 앱 폴더 커밋 → 완료/실패 보고
+async function finishRelease(st, { summary, checkFail = false }) {
+  const { job, dir } = st;
+  if (checkFail) {
+    const f = readFailFile(dir);
+    if (f) {
+      readPhase(st);
+      commitResult(dir, job);
+      return finish(st, "failed", { failReason: st.redact(f.reason), failStage: f.stage || st.phase });
+    }
+  }
+  fs.writeFileSync(path.join(dir, ".factory", "phase.txt"), "homepage\n");
+  readPhase(st);
+  const failures = await sendOutbox({ dir, job, api, addLog: (level, m) => addLog(st, level, m) });
+  const committed = commitResult(dir, job);
+  if (failures.length) {
+    return finish(st, "failed", { failReason: st.redact(`홈페이지 반영 실패: ${failures.map((x) => x.message).join(" / ")}`).slice(0, 1800), failStage: "homepage" });
+  }
+  await finish(st, "done", { summary: summary + (committed ? " (앱 폴더에 커밋함)" : "") });
 }
 
 // ───────────── 대기열 확인 ─────────────
@@ -664,6 +736,9 @@ async function loop() {
           autoUpdate = r.data?.autoUpdate !== false;
           if (r.data?.updateNow === true) requestUpdateNow(); // 1회성 "지금 업데이트": 다음 루프에서 바로 확인
           reportPcPaths(r.data?.pcPaths, api, log).catch(() => {}); // 배포 계정 키 파일이 있는지만 알린다
+          // 통제실에서 등록한 키 비밀번호를 secrets.env 로(값은 로그에 남기지 않음), 키 점검 요청(한 번). 둘 다 던지지 않는다
+          if (r.data?.keyPasswordsPending === true) syncKeyPasswords({ api, log, secretsFile: cfg.secretsFile }).catch(() => {});
+          if (r.data?.keyScan === true) runKeyScan({ api, log, workDir: cfg.workDir }).catch(() => {});
           // 공장 정비 지시·[배포] 요청(앱 일감과 따로. 정비는 돌던 앱 일감이 없을 때만 시작)
           onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow });
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.

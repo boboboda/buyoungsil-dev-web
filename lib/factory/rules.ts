@@ -62,8 +62,10 @@ export const DEFAULT_RULES: Record<RuleSectionId, string> = {
 - 화면 스크린샷을 만들 수 있으면 .factory/screenshots/ 에 png 로 저장하세요(예: home.png, result.png). 못 만들면 건너뛰세요.
 - 마지막 응답은 한국어 3~6줄 결과 요약으로 하세요: 만든 화면, 분석/빌드 결과, 사람이 해야 할 일.`,
   release: `## 출시 준비 (이 일감은 kind=release)
-- RELEASE_REQUEST.md 가 이번 지시예요. 앱 기능은 바꾸지 말고 출시 자료만 만드세요(꼭 필요한 빌드 설정 변경만).
-- 결과는 \`.factory/outbox/\` 에 JSON 파일 두 개로 저장하세요. 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
+- RELEASE_REQUEST.md 가 이번 지시예요(종류: 첫 출시 / 스토어 자료 수정 / 프로젝트 업데이트). 앱 기능은 바꾸지 말고 그 종류가 허락한 것만 하세요.
+- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, upload, homepage, done)으로 .factory/phase.txt 에 쓰고(위 공통 규칙의 단계 이름 대신),
+  더 진행할 수 없으면 .factory/fail.json 에 {"stage": "단계", "reason": "이유"} 를 쓰고 끝내세요(비밀번호·키 값 금지).
+- 결과는 \`.factory/outbox/\` 에 JSON 파일로 저장하세요(첫 출시: 아래 두 개, 스토어 자료 수정: release.json, 프로젝트 업데이트: project.json). 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
   - \`project.json\` (홈페이지 프로젝트의 빈 항목만 채워요): {"description": "소개 2~3문장", "privacyPolicy": "개인정보처리방침 마크다운"}
     - 방침에 [[ ... ]] 자리표시자를 남기지 마세요(남으면 거절돼요). 모르는 값은 release.json 의 checklist 에 적으세요.
   - \`release.json\`:
@@ -83,7 +85,7 @@ export const DEFAULT_RULES: Record<RuleSectionId, string> = {
   "prompt:revision":
     "CHANGE_REQUEST.md 에 적힌 수정 내용만 이 앱에 반영하세요. 기존 기획은 PLAN.md 를 참고하되 요청 밖의 부분은 바꾸지 마세요. CLAUDE.md 의 작업 규칙을 따르세요.",
   "prompt:release":
-    "RELEASE_REQUEST.md 에 적힌 출시 준비를 하세요. 앱 기능은 바꾸지 말고, CLAUDE.md 작업 규칙의 '출시 준비' 형식대로 .factory/outbox/ 에 결과를 저장하세요.",
+    "RELEASE_REQUEST.md 에 적힌 출시 일감(종류와 허락된 동작)대로 하세요. 앱 기능은 바꾸지 말고, CLAUDE.md 작업 규칙의 '출시 준비' 형식대로 .factory/outbox/ 에 결과를 저장하세요. 재시도 안내가 있으면 그 단계부터 이어서 하세요.",
 };
 
 const isSection = (id: string): id is RuleSectionId => RULE_SECTIONS.some((s) => s.id === id);
