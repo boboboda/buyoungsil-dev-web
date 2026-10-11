@@ -632,3 +632,14 @@ model FactorySetting {
 
   @@map("factory_settings")
 }
+
+// 공장 앱 단위 레코드. 공장 앱 이름(slug)과 홈페이지 Project 를 잇는다.
+// (Project.name 은 제목+id 로 자동 생성되는 값이라 slug 와 같지 않다.)
+model FactoryApp {
+  appSlug   String   @id
+  projectId String?  @unique // 연결된 홈페이지 Project.id
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("factory_apps")
+}

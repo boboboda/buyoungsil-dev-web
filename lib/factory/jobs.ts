@@ -6,6 +6,7 @@
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { ensureProjectForJob } from "@/lib/factory/project";
 
 export const LEASE_MS = 10 * 60 * 1000;
 export const MAX_LOGS_PER_JOB = 500;
@@ -259,6 +260,20 @@ async function explainNoChange(id: string, wanted: string): Promise<ActionResult
   return refuse(409, `지금 상태(${job.status})에서는 ${wanted} 할 수 없어요.`);
 }
 
+// 새 앱 일감을 승인하면 홈페이지 Project 를 만든다. 실패해도 승인은 그대로 둔다.
+async function linkProjectOnApprove(id: string): Promise<void> {
+  try {
+    const job = await prisma.factoryJob.findUnique({
+      where: { id },
+      select: { kind: true, appSlug: true, title: true, planMarkdown: true },
+    });
+
+    if (job?.kind === "new") await ensureProjectForJob(job);
+  } catch (error) {
+    console.error("[factory] 홈페이지 프로젝트 만들기 실패:", error);
+  }
+}
+
 export async function adminAction(id: string, body: Record<string, unknown>): Promise<ActionResult> {
   const now = new Date();
 
@@ -268,6 +283,7 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
         where: { id, status: "pending" },
         data: { status: "approved", approvedAt: now },
       });
+      if (res.count > 0) await linkProjectOnApprove(id);
       return res.count > 0 ? done("승인했어요.") : explainNoChange(id, "승인");
     }
 
