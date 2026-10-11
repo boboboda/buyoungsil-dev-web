@@ -21,7 +21,7 @@ export const maskText = (s) => MASK_PATTERNS.reduce((acc, re) => acc.replace(re,
 
 // outbox 파일 이름 → 보낼 주소. 이 목록에 없는 파일은 보내지 않는다.
 const OUTBOX = {
-  "project.json": "/api/factory/project", // 홈페이지 프로젝트의 빈 항목만 채움(이미 있는 값은 서버가 덮어쓰지 않음)
+  "project.json": "/api/factory/project", // 홈페이지 프로젝트의 빈 항목만 채움(승인 때 '덮어쓰기'를 고른 store/project 일감만 서버가 덮어씀)
   "release.json": "/api/factory/release", // 출시 패키지(스토어 문구·데이터 보안·콘텐츠 등급·체크리스트·방침 초안·AAB 정보)
 };
 const MAX_OUTBOX_BYTES = 300 * 1024;
@@ -32,10 +32,10 @@ export function releaseRules(job) {
   return `
 ## 출시 준비 (이 일감은 kind=release)
 - RELEASE_REQUEST.md 가 이번 지시예요(종류: 첫 출시 / 스토어 자료 수정 / 프로젝트 업데이트). 앱 기능은 바꾸지 말고 그 종류가 허락한 것만 하세요.
-- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, upload, homepage, done)으로 .factory/phase.txt 에 쓰고,
+- 진행 단계는 RELEASE_REQUEST.md 의 단계 이름(key, build, sign, store, icon, screenshots, video, listing, upload, homepage, done)으로 .factory/phase.txt 에 쓰고,
   더 진행할 수 없으면 .factory/fail.json 에 {"stage": "단계", "reason": "이유"} 를 쓰고 끝내세요(비밀번호·키 값 금지).
-- 결과는 \`.factory/outbox/\` 에 JSON 파일로 저장하세요(첫 출시: 아래 두 개, 스토어 자료 수정: release.json, 프로젝트 업데이트: project.json). 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
-  - \`project.json\` (홈페이지 프로젝트의 빈 항목만 채워요): {"description": "소개 2~3문장", "privacyPolicy": "개인정보처리방침 마크다운"}
+- 결과는 \`.factory/outbox/\` 에 JSON 파일로 저장하세요(첫 출시: 아래 두 개, 스토어 자료 수정: release.json·project.json + .factory/store/ 의 정해진 파일, 프로젝트 업데이트: project.json). 감독 프로그램이 일감이 끝날 때 홈페이지로 보내요. 다른 파일 이름은 보내지 않아요.
+  - \`project.json\` (홈페이지 프로젝트의 빈 항목만 채워요. 승인 때 '덮어쓰기'를 고른 일감은 방침 말고는 바꿔요): {"description": "소개 2~3문장", "privacyPolicy": "개인정보처리방침 마크다운"}
     - 방침에 [[ ... ]] 자리표시자를 남기지 마세요(남으면 거절돼요). 모르는 값은 release.json 의 checklist 에 적으세요.
   - \`release.json\`:
     {"storeListing": {"ko": {"title": "30자 이내", "shortDescription": "80자 이내", "fullDescription": "4000자 이내"}, "en": {...같은 형식}},
@@ -47,14 +47,14 @@ export function releaseRules(job) {
      "notes": "사람이 알아야 할 것",
      "aab": {"path": "build/app/outputs/bundle/release/app-release.aab", "versionName": "1.0.0", "versionCode": 1}}
   - aab 는 실제로 서명 빌드를 만든 경우에만 넣으세요. 경로는 앱 폴더 기준. 파일은 PC 에만 두고 서버로 올리지 않아요(크기·시각은 감독 프로그램이 채워요).
-- 서명 키·서비스 계정 키 파일은 RELEASE_REQUEST.md 에 적힌 PC 경로에서 읽기만 하세요. 앱 폴더로 복사하거나 커밋하지 마세요.
+- 서명 키 파일은 RELEASE_REQUEST.md 에 적힌 PC 경로에서 읽기만 하세요(서비스 계정 키 파일은 읽지 마세요). 앱 폴더로 복사하거나 커밋하지 마세요.
 - 비밀번호는 환경변수로만 읽고, 파일·로그·커밋·JSON 에 쓰지 마세요.
-- 스토어 업로드는 RELEASE_REQUEST.md 가 허락한 경우에만, 비공개 테스트 트랙에만 하세요. 프로덕션 트랙은 절대 건드리지 마세요.
+- Play 업로드(업데이트 AAB → 비공개 테스트 트랙, 스토어 등록정보·이미지)는 감독 프로그램이 해요. 직접 올리지 마세요(fastlane·API 호출 금지). 프로덕션 트랙은 절대 건드리지 마세요.
 `;
 }
 
 // AAB 정보는 실제 파일을 보고 채운다(앱 폴더 안의 .aab 만). 없으면 빼고 이유를 돌려준다.
-function realAab(dir, aab) {
+export function realAab(dir, aab) {
   if (!aab || typeof aab !== "object" || typeof aab.path !== "string") return { aab: undefined };
   const full = path.resolve(dir, aab.path);
   if (!full.startsWith(dir + path.sep) || !full.toLowerCase().endsWith(".aab")) return { aab: undefined, warn: `AAB 경로가 앱 폴더 밖이거나 .aab 가 아니라서 뺐어요: ${aab.path}` };

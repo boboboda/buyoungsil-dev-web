@@ -55,7 +55,7 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - AAB 는 PC 에만 두고, 경로·크기·버전·빌드 시각만 보내요(크기·시각은 감독 프로그램이 실제 파일로 채움).
 - 배포 계정의 키 파일 경로가 통제실에 등록돼 있으면, 감독 프로그램이 그 파일이 "있는지"만 확인해 알려요(내용은 읽지 않음, .jks/.keystore/.json 만).
 - 서명 비밀번호는 `secrets.env` 의 `RELEASE_<계정>_KEYSTORE_PASSWORD`, `RELEASE_<계정>_KEY_PASSWORD` 에 넣어요.
-- 출시 일감 종류(`job.release.kind`): `first`(첫 출시) / `store`(스토어 자료 수정, release.json 만) / `project`(프로젝트 업데이트, project.json 만). 종류마다 보낼 수 있는 outbox 파일을 서버가 정해 줘요.
+- 출시 일감 종류(`job.release.kind`): `first`(첫 출시) / `store`(스토어 자료 수정, release.json·project.json) / `project`(프로젝트 업데이트, project.json 만). 종류마다 보낼 수 있는 outbox 파일을 서버가 정해 줘요.
 - 업로드 키(첫 출시만): 앱 폴더에 `android/key.properties`(또는 `key.properties`)가 있으면 그대로 쓰고 건드리지 않아요. 없으면 앱별 다른 키 또는 배포 계정 공용 키를
   `FACTORY_KEYSTORE_PATH`·`FACTORY_KEY_ALIAS`·`FACTORY_KEYSTORE_PASSWORD`·`FACTORY_KEY_PASSWORD` 환경변수로 Claude 에 넘겨요. 공용 키 파일이 없을 때만 keytool 로 한 번 만들고, 있으면 절대 덮어쓰지 않아요.
 - 키 비밀번호: 통제실에서 입력하면 서버가 암호화해 잠깐 보관 → `/next` 의 `keyPasswordsPending` 을 보고 `/api/factory/key-passwords` 에서 받아 `secrets.env` 에
@@ -63,6 +63,20 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - 진행 단계는 `.factory/phase.txt`(key, build, sign, store, upload, homepage), 실패는 Claude 가 `.factory/fail.json`({stage, reason})으로 알려요. outbox 가 거절되면 `homepage` 단계 실패.
   재시도(`job.release.resumeFrom`)가 `homepage` 면 Claude 없이 남은 outbox 만 다시 보내요. 로그·실패 이유의 비밀번호는 가려요(`maskText`).
 - 키 점검(`/next` 의 `keyScan`): 앱 폴더들에서 .jks·.keystore 와 key.properties 를 찾아 경로·별칭·SHA-1(JKS 는 비밀번호 없이 읽음)·git 추적 여부만 `/api/factory/key-report` 로 보내요.
+
+## 스토어 자료·Play 업로드 (`store.mjs`, 출시 2단계)
+- 서버가 `job.release.play`({packageName, serviceAccountKeyPath, track, videoUrl, missing})를 줄 때만 동작해요(예전 서버의 일감이면 예전처럼 outbox 만).
+- 스토어 자료 수정(`store`): Claude 가 앱 폴더 `.factory/store/` 에 `icon-512.png`, `feature-1024x500.png`, `screenshots/phone-01..08.png|jpg`, `promo.mp4`(HyperFrames),
+  `listing.json`, `status.json`(건너뜀 이유·확인한 도구)을 만들어요. 지시문 끝에 이 PC 환경(Android SDK·emulator·adb·AVD·Node·ffmpeg·Chrome)을 붙여 줘요.
+- 끝나면 감독 프로그램이 검사해요(크기·비율·알파·용량·글자 수, 영상은 mp4 길이만). 단계: 아이콘·대표 이미지(icon) / 스크린샷(screenshots) / 영상(video) / 문구(listing) / 업로드(upload) / 홈페이지 반영(homepage).
+  스크린샷이 없으면 '스크린샷 단계 건너뜀 - 직접 올려야 함', 영상이 없으면 '영상 단계 건너뜀'(실패 아님).
+- 홈페이지로는 고정 칸 이미지만 `/api/factory/store-image`(icon, feature, phone-01..08, png/jpg)로, 검사 결과는 `/api/factory/store-assets` 로 보내요. 영상 파일은 보내지 않아요(경로·크기·길이만).
+- Play Developer API: 서비스 계정 JSON 으로 토큰(JWT) → edits 열기 → 언어별 등록정보(제목·짧은/긴 설명·영상 링크) → 이미지 종류별 통째 교체(deleteall → upload) → 커밋.
+  커밋은 `changesInReviewBehavior=ERROR_IF_IN_REVIEW`(진행 중인 검토를 취소하지 않음). "자동으로 검토에 보낼 수 없음"이면 `changesNotSentForReview=true` 로 다시 커밋하고 Console 에서 검토 보내기를 하라고 알려요.
+- 첫 출시(`first`): 최초 업로드를 마친 앱이면 outbox release.json 의 서명 AAB 를 비공개 테스트 트랙(`alpha`)에 올려요(초안 앱이면 draft). 프로덕션 트랙은 건드리지 않아요.
+- 업로드 조건(서비스 계정 키 파일, 패키지 이름, 최초 AAB 업로드 완료)이 모자라면 업로드는 건너뛰고 모자란 것을 알려요. 업로드 거절 이유(버전 코드 중복 등)는 한국어로 바꿔 '업로드' 단계 실패로 알려요.
+  재시도가 `upload` 면 Claude 없이 업로드부터 다시 해요. 서비스 계정 키 내용·토큰은 어디에도 쓰지 않아요.
+- 시험용: `FACTORY_PLAY_API_BASE` 환경변수로 API 주소를 바꿀 수 있어요(토큰 주소는 서비스 계정 JSON 의 token_uri).
 
 ## 공장 정비 (`maintenance.mjs`)
 - 공장 자체(홈페이지·감독 프로그램 코드)를 고치는 대화형 스레드예요. 앱 일감과 따로 돌아요(통제실 감독 프로그램 카드, 커넥터 `maintenance_*`).

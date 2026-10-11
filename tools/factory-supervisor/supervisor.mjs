@@ -18,6 +18,7 @@ import {
   maskText,
   prepareReleaseKey,
   readFailFile,
+  realAab,
   releaseRules,
   reportPcPaths,
   resumeSection,
@@ -26,6 +27,7 @@ import {
   syncKeyPasswords,
 } from "./release.mjs";
 import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
+import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport } from "./store.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -270,7 +272,19 @@ function prepareDir(job) {
   if (job.kind === "revision") {
     fs.writeFileSync(path.join(dir, "CHANGE_REQUEST.md"), `# 수정 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n`);
   } else if (job.kind === "release") {
-    fs.writeFileSync(path.join(dir, "RELEASE_REQUEST.md"), `# 출시 준비 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n${resumeSection(job)}`);
+    // 스토어 자료 수정: 이 PC 의 에뮬레이터·HyperFrames 환경을 지시문 끝에 붙이고, .factory/store/ 를 준비한다
+    let env = "";
+    if (job.release?.kind === "store") {
+      fs.mkdirSync(path.join(dir, ".factory", "store", "screenshots"), { recursive: true });
+      if (!job.release.resumeFrom) fs.rmSync(path.join(dir, ".factory", "store", "status.json"), { force: true }); // 새로 시작하면 지난 건너뜀 표시는 지운다
+      try {
+        job.storeEnv = storeEnv();
+        env = storeEnvSection(job.storeEnv);
+      } catch (e) {
+        env = `\n\n## 이 PC 환경\n- 확인하지 못했어요: ${e.message}\n`;
+      }
+    }
+    fs.writeFileSync(path.join(dir, "RELEASE_REQUEST.md"), `# 출시 준비 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n${resumeSection(job)}${env}`);
     fs.mkdirSync(path.join(dir, ".factory", "outbox"), { recursive: true });
     fs.rmSync(path.join(dir, ".factory", "fail.json"), { force: true }); // 지난 시도의 실패 표시는 지운다
   } else {
@@ -570,10 +584,11 @@ async function runJob(job) {
 
   if (rel) {
     addLog(st, "info", `출시 일감 종류: ${rel.kindLabel ?? rel.kind}${rel.resumeFrom ? ` · 재시도: '${rel.resumeFrom}' 단계부터` : ""}`);
-    // 홈페이지 반영 단계만 다시: Claude 없이 남은 outbox 만 보낸다
-    if (rel.resumeFrom === "homepage") {
+    // 업로드·홈페이지 반영 단계만 다시: Claude 없이 감독 프로그램이 한다(남아 있던 outbox·스토어 자료로)
+    if (rel.resumeFrom === "homepage" || rel.resumeFrom === "upload") {
       try {
-        return await finishRelease(st, { summary: "홈페이지 반영 단계만 다시 했어요(남아 있던 outbox 를 다시 보냄)." });
+        const what = rel.resumeFrom === "upload" ? "Play 업로드부터" : "홈페이지 반영 단계만";
+        return await finishRelease(st, { summary: `${what} 다시 했어요(Claude 없이 남아 있던 결과로).`, from: rel.resumeFrom });
       } finally {
         running.delete(job.id);
       }
@@ -689,9 +704,77 @@ async function runJob(job) {
   }
 }
 
-// 출시 일감 마무리: (checkFail 이면) fail.json 확인 → outbox 보내기 → 앱 폴더 커밋 → 완료/실패 보고
-async function finishRelease(st, { summary, checkFail = false }) {
+const MARK = { ok: "✅", skipped: "⏭", failed: "❌" };
+const STAGE_NAME = { icon: "아이콘·대표 이미지", screenshots: "스크린샷", video: "영상", listing: "문구", upload: "업로드", homepage: "홈페이지 반영" };
+
+function setPhase(st, phase) {
+  fs.writeFileSync(path.join(st.dir, ".factory", "phase.txt"), `${phase}\n`);
+  readPhase(st);
+}
+
+// Play 업로드 전에 모자란 것(서버가 본 것 + 서비스 계정 키 파일이 지금 이 PC 에 있는지)
+function playMissing(play) {
+  if (!play) return ["서버가 Play 업로드 정보를 주지 않았어요(홈페이지 배포 전일 수 있어요)"];
+  const missing = Array.isArray(play.missing) ? play.missing.map(String) : [];
+  if (play.serviceAccountKeyPath && !missing.some((m) => m.includes("서비스 계정 키"))) {
+    if (!fs.existsSync(path.resolve(expand(play.serviceAccountKeyPath)))) missing.push(`서비스 계정 키 파일이 이 PC 에 없어요(${play.serviceAccountKeyPath})`);
+  }
+  return missing;
+}
+
+async function postStoreAssets(st, body) {
+  try {
+    const r = await api("POST", "/api/factory/store-assets", { jobId: st.job.id, ...body });
+    if (r.status !== 200) addLog(st, "warn", `스토어 자료 결과 보내기 거절(${r.status}): ${r.data?.message ?? ""}`);
+  } catch (e) {
+    addLog(st, "warn", `스토어 자료 결과 보내기 오류: ${e.message}`);
+  }
+}
+
+// 첫 출시: 최초 업로드를 마친 앱이면 outbox release.json 의 AAB 를 비공개 테스트 트랙에 올린다
+async function uploadReleaseAab(st) {
   const { job, dir } = st;
+  const play = job.release?.play;
+  const missing = playMissing(play);
+  if (missing.length) {
+    addLog(st, "info", `Play 업로드 안 함(최초 업로드는 사람이 직접): ${missing.join(" / ")}`);
+    return { note: `업로드 ⏭ 안 함: ${missing.join(" / ")}` };
+  }
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(path.join(dir, ".factory", "outbox", "release.json"), "utf8"));
+  } catch {
+    data = null;
+  }
+  const { aab, warn } = realAab(dir, data?.aab);
+  if (warn) addLog(st, "warn", warn);
+  if (!aab) return { note: "업로드 ⏭ 안 함: release.json 에 서명 AAB 가 없어요" };
+  setPhase(st, "upload");
+  try {
+    const r = await playUploadAab({ play, aabPath: aab.path, log: (m) => addLog(st, "info", m) });
+    const note =
+      `업데이트 AAB(버전 코드 ${r.versionCode})를 ${play.track} 트랙에 올렸어요` +
+      (r.status === "draft" ? "(초안 앱이라 초안으로: Console 에서 출시 검토)" : "") +
+      (r.changesNotSentForReview ? ". Console 에서 '검토를 위해 변경사항 보내기'를 직접 눌러야 해요" : "") +
+      ".";
+    await postStoreAssets(st, { aabUpload: { ok: true, note, track: play.track, versionCode: r.versionCode } });
+    addLog(st, "info", note);
+    return { note: `업로드 ✅ ${note}` };
+  } catch (e) {
+    const reason = st.redact(e.message);
+    await postStoreAssets(st, { aabUpload: { ok: false, note: reason, track: play.track, versionCode: aab.versionCode } });
+    return { fail: `Play 업로드 실패: ${reason}` };
+  }
+}
+
+// 출시 일감 마무리: (checkFail 이면) fail.json 확인 → (스토어 자료 수정) 자료 검사 → Play 업로드 → 홈페이지(이미지·outbox) → 앱 폴더 커밋 → 완료/실패 보고
+// from: 재시도 시작 단계(upload | homepage). homepage 면 Play 업로드는 건너뛴다
+async function finishRelease(st, { summary, checkFail = false, from = null }) {
+  const { job, dir } = st;
+  // 출시 2단계 서버만 job.release.play 를 준다. 예전 서버의 일감이면 예전처럼 outbox 만 보낸다(스토어 자료 검사·Play 업로드 없음)
+  const v2 = !!job.release && "play" in job.release;
+  const kind = v2 ? job.release.kind : null;
+  const lines = [];
   if (checkFail) {
     const f = readFailFile(dir);
     if (f) {
@@ -700,14 +783,83 @@ async function finishRelease(st, { summary, checkFail = false }) {
       return finish(st, "failed", { failReason: st.redact(f.reason), failStage: f.stage || st.phase });
     }
   }
-  fs.writeFileSync(path.join(dir, ".factory", "phase.txt"), "homepage\n");
-  readPhase(st);
-  const failures = await sendOutbox({ dir, job, api, addLog: (level, m) => addLog(st, level, m) });
+
+  let check = null;
+  if (kind === "store") {
+    check = checkStoreAssets(dir);
+    if (job.storeEnv) check.tools = [check.tools, `PC: ${envSummary(job.storeEnv)}`].filter(Boolean).join(" · ");
+    for (const k of ["icon", "screenshots", "video", "listing"]) {
+      const s = check.stages[k];
+      lines.push(`${STAGE_NAME[k]} ${MARK[s.status]} ${s.note ?? ""}`.trim());
+      if (s.status === "skipped") addLog(st, "warn", s.note);
+    }
+    if (check.video) {
+      lines.push(`영상 파일(PC 에만): ${check.video.path} · ${check.video.size >= 1024 * 1024 ? `${(check.video.size / 1024 / 1024).toFixed(1)}MB` : `${Math.ceil(check.video.size / 1024)}KB`}${check.video.durationSec ? ` · ${check.video.durationSec}초` : ""}`);
+    }
+    if (check.failure) {
+      await postStoreAssets(st, storeReport(check));
+      commitResult(dir, job);
+      const reason = `${STAGE_NAME[check.failure.stage]} 검사 실패: ${check.failure.reason}`;
+      return finish(st, "failed", { failReason: st.redact(reason).slice(0, 1800), failStage: check.failure.stage });
+    }
+  }
+
+  // 업로드(Play). 재시도가 '홈페이지 반영'부터면 건너뛴다
+  if (from !== "homepage") {
+    if (kind === "store") {
+      const missing = playMissing(job.release?.play);
+      if (missing.length) {
+        check.stages.upload = { status: "skipped", note: `Play 업로드 안 함 - 부족한 것: ${missing.join(" / ")}` };
+        addLog(st, "warn", check.stages.upload.note);
+      } else {
+        setPhase(st, "upload");
+        try {
+          const r = await playUploadStore({ play: job.release.play, check, log: (m) => addLog(st, "info", m) });
+          const note =
+            `Play 등록정보(${r.langs.join(", ")})${r.video ? "·영상 링크" : ""}` +
+            (r.imageTypes.length ? `, 이미지 ${r.imageTypes.join("·")} 교체` : "") +
+            " 커밋함" +
+            (r.changesNotSentForReview ? ". 자동으로 검토에 보낼 수 없는 앱이라 Console 에서 '검토를 위해 변경사항 보내기'를 직접 눌러야 해요" : "");
+          check.stages.upload = { status: "ok", note };
+          await postStoreAssets(st, { ...storeReport(check), upload: { ok: true, note, editId: r.editId, changesNotSentForReview: r.changesNotSentForReview } });
+        } catch (e) {
+          const reason = st.redact(e.message);
+          check.stages.upload = { status: "failed", note: reason };
+          await postStoreAssets(st, { ...storeReport(check), upload: { ok: false, note: reason } });
+          commitResult(dir, job);
+          return finish(st, "failed", { failReason: `Play 업로드 실패: ${reason}`.slice(0, 1800), failStage: "upload" });
+        }
+      }
+      lines.push(`업로드 ${MARK[check.stages.upload.status]} ${check.stages.upload.note}`);
+    } else if (kind === "first") {
+      const r = await uploadReleaseAab(st);
+      if (r.fail) {
+        commitResult(dir, job);
+        return finish(st, "failed", { failReason: r.fail.slice(0, 1800), failStage: "upload" });
+      }
+      lines.push(r.note);
+    }
+  }
+
+  setPhase(st, "homepage");
+  const failures = [];
+  if (kind === "store") {
+    // 고정 이미지 칸만 홈페이지로(영상은 보내지 않음), 결과 저장. 대표 이미지를 홈페이지 프로젝트에 넣도록 project.json 은 늘 보낸다
+    const sent = await sendStoreImages({ check, job, api, addLog: (level, m) => addLog(st, level, m) });
+    failures.push(...sent.map((m) => `스토어 이미지 ${m}`));
+    const homepage = { status: failures.length ? "failed" : "ok", note: failures.join(" / ") || null };
+    await postStoreAssets(st, { ...storeReport(check), stages: { ...check.stages, homepage } });
+    const pj = path.join(dir, ".factory", "outbox", "project.json");
+    if (!fs.existsSync(pj)) fs.writeFileSync(pj, "{}\n");
+  }
+  failures.push(...(await sendOutbox({ dir, job, api, addLog: (level, m) => addLog(st, level, m) })).map((x) => x.message));
   const committed = commitResult(dir, job);
   if (failures.length) {
-    return finish(st, "failed", { failReason: st.redact(`홈페이지 반영 실패: ${failures.map((x) => x.message).join(" / ")}`).slice(0, 1800), failStage: "homepage" });
+    return finish(st, "failed", { failReason: st.redact(`홈페이지 반영 실패: ${failures.join(" / ")}`).slice(0, 1800), failStage: "homepage" });
   }
-  await finish(st, "done", { summary: summary + (committed ? " (앱 폴더에 커밋함)" : "") });
+  if (job.release?.overwriteProject) lines.push("홈페이지 프로젝트: 덮어쓰기(개인정보처리방침 제외)");
+  const extra = lines.length ? `\n${lines.map((l) => `- ${l}`).join("\n")}` : "";
+  await finish(st, "done", { summary: (summary + extra).slice(0, 3900) + (committed ? " (앱 폴더에 커밋함)" : "") });
 }
 
 // ───────────── 대기열 확인 ─────────────
