@@ -8,8 +8,8 @@
 //   TELEGRAM_APPROVE_BUTTONS  "true" 이면 알림에 [승인] 버튼을 붙인다
 //   FACTORY_PUBLIC_URL        (선택) 통제실 주소의 기본값은 https://www.buyoungsilcoding.com
 import prisma from "@/lib/prisma";
-import { ID_RE, KIND_LABELS, adminAction } from "@/lib/factory/jobs";
-import { approveTurn, requestDeploy } from "@/lib/factory/maintenance";
+import { ID_RE, KIND_LABELS } from "@/lib/factory/jobs";
+import { runApproval } from "@/lib/factory/approvals"; // 통제실 버튼과 같은 입구
 
 const API_TIMEOUT_MS = 5000;
 const MAX_BUTTON_AGE_SEC = 24 * 60 * 60; // 24시간이 지난 알림의 버튼은 무시한다
@@ -250,10 +250,11 @@ export async function handleUpdate(update: Update): Promise<void> {
 
       return;
     }
-    const r = mm[1] === "a" ? await approveTurn(mm[2]) : await requestDeploy(mm[2]);
+    const r = await runApproval(mm[1] === "a" ? "maintenance_approve" : "deploy", mm[2], "텔레그램");
 
     await answer(r.message.slice(0, 190));
-    if (r.ok && cq.message?.message_id !== undefined) {
+    // 처리했거나 이미 (통제실 등에서) 처리된 건이면 버튼을 지운다
+    if ((r.ok || r.status === 409) && cq.message?.message_id !== undefined) {
       await tg("editMessageReplyMarkup", {
         chat_id: chatId(),
         message_id: cq.message.message_id,
@@ -280,7 +281,7 @@ export async function handleUpdate(update: Update): Promise<void> {
     return;
   }
 
-  const result = await adminAction(m[1], { action: "approve" });
+  const result = await runApproval("job_approve", m[1], "텔레그램");
 
   await answer(result.message);
 

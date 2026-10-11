@@ -5,6 +5,7 @@
 // 응답: { "jobs": [ { id, appSlug, title, kind, parentJobId, stack, priority, requiredSecrets, planMarkdown, attempts } ] }
 //   통제실에서 정지 상태면 { "jobs": [], "paused": true } 를 돌려주고 아무것도 가져가지 않는다.
 //   모든 응답에 autoUpdate(true/false)가 들어간다. false 면 감독 프로그램은 자동 업데이트를 하지 않는다.
+//   감독 프로그램은 commit(현재 커밋)·note(최근 업데이트 소식)·subject(현재 커밋 메시지 첫 줄)를 함께 보낸다(모두 선택).
 //   통제실·커넥터에서 "지금 업데이트"를 누르면 다음 응답 한 번에 updateNow: true 가 붙는다(받아 가면 지운다).
 //   각 job 에 rules(CLAUDE.md 작업 규칙 본문)·prompt(첫 지시문)가 붙는다(lib/factory/rules.ts, 통제실에서 고칠 수 있음).
 //   감독 프로그램은 이 값이 없으면 자기 코드 안 기본값을 쓴다.
@@ -38,9 +39,10 @@ export async function GET(req: NextRequest) {
   const commitRaw = req.nextUrl.searchParams.get("commit") ?? "";
   const noteRaw = (req.nextUrl.searchParams.get("note") ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 150);
   const commit = /^[0-9a-f]{7,40}$/.test(commitRaw) ? commitRaw : "";
+  const subject = (req.nextUrl.searchParams.get("subject") ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 150);
 
   try {
-    if (commit) await saveSupervisorInfo(commit, noteRaw).catch(() => undefined);
+    if (commit) await saveSupervisorInfo(commit, noteRaw, subject).catch(() => undefined);
 
     // 통제실에서 "일시 정지" 하면 일감을 내주지 않는다. (인증은 이미 통과했으니 "연결됨" 표시는 계속 갱신된다)
     const [enabled, autoUpdate] = await Promise.all([isSupervisorEnabled(), isAutoUpdateEnabled()]);

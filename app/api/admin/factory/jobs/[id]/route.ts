@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAdmin } from "@/lib/factory/admin";
 import { adminAction, claudeUsageFor, ID_RE } from "@/lib/factory/jobs";
+import { runApproval } from "@/lib/factory/approvals";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,7 +45,11 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ message: "요청 형식이 올바르지 않아요." }, { status: 400 });
   }
 
-  const result = await adminAction(id, body as Record<string, unknown>);
+  // 승인은 텔레그램 버튼과 같은 입구로(이미 처리된 건이면 안내)
+  const result =
+    (body as Record<string, unknown>).action === "approve"
+      ? await runApproval("job_approve", id, "통제실")
+      : await adminAction(id, body as Record<string, unknown>);
 
   return NextResponse.json(
     result.ok ? { success: true, message: result.message } : { message: result.message },

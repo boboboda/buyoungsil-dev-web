@@ -656,7 +656,7 @@ async function loop() {
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         const r = await api(
           "GET",
-          `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}`,
+          `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}&subject=${encodeURIComponent(info.subject ?? "")}`,
         );
         notePoll(r.status === 200); // 새 버전 건강 확인(200 이면 확인됨)
         if (r.status === 200) {

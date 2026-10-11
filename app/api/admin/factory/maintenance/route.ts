@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
-import { approveTurn, cancelTurn, closeThread, maintenanceOverview, requestDeploy, sendMaintenance } from "@/lib/factory/maintenance";
+import { runApproval } from "@/lib/factory/approvals";
+import { cancelTurn, closeThread, maintenanceOverview, sendMaintenance } from "@/lib/factory/maintenance";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,13 +36,13 @@ export async function POST(req: NextRequest) {
       r = await sendMaintenance({ threadId: threadId || undefined, text: body.text, source: "통제실" });
       break;
     case "approve":
-      r = turnId ? await approveTurn(turnId) : null;
+      r = turnId ? await runApproval("maintenance_approve", turnId, "통제실") : null;
       break;
     case "cancel":
       r = turnId ? await cancelTurn(turnId) : null;
       break;
     case "deploy":
-      r = threadId ? await requestDeploy(threadId) : null;
+      r = threadId ? await runApproval("deploy", threadId, "통제실") : null;
       break;
     case "close":
       r = threadId ? await closeThread(threadId) : null;

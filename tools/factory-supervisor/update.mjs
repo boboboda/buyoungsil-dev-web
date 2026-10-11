@@ -38,10 +38,12 @@ const out = (r) => (r.status === 0 ? r.stdout.trim() : null);
 const errText = (r) => (r.error?.message || r.stderr || r.stdout || `코드 ${r.status}`).trim().slice(0, 500);
 const head = () => out(git(["rev-parse", "HEAD"]));
 
-// 대기열 확인 때 홈페이지에 함께 알리는 값: 현재 커밋(7자)과 최근 자동 업데이트 소식
+// 대기열 확인 때 홈페이지에 함께 알리는 값: 현재 커밋(7자), 그 커밋 메시지 첫 줄, 최근 자동 업데이트 소식
+let subjectCache = { head: "", subject: "" }; // 커밋이 바뀔 때만 git log 를 다시 읽는다
 export function reportInfo() {
   const h = head();
-  return { commit: h ? h.slice(0, 7) : "", note: lastStatus.slice(0, 150) };
+  if (h && subjectCache.head !== h) subjectCache = { head: h, subject: (out(git(["log", "-1", "--format=%s", h])) ?? "").slice(0, 150) };
+  return { commit: h ? h.slice(0, 7) : "", note: lastStatus.slice(0, 150), subject: h ? subjectCache.subject : "" };
 }
 
 function readState() {

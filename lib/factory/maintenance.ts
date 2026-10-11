@@ -62,10 +62,24 @@ export async function sendMaintenance(input: { threadId?: unknown; text?: unknow
   };
 }
 
+const TURN_STATE: Record<string, string> = {
+  queued: "이미 승인돼 대기열에 있어요",
+  running: "이미 진행 중이에요",
+  done: "이미 끝난 지시예요",
+  failed: "이미 끝난(실패) 지시예요",
+  cancelled: "취소된 지시예요",
+};
+
+// 조건부 updateMany 라서 통제실·텔레그램에서 동시에 눌러도 한쪽만 승인된다. 다른 쪽에는 지금 상태를 알려 준다.
 export async function approveTurn(turnId: string): Promise<Result> {
   const r = await prisma.factoryMaintenanceMessage.updateMany({ where: { id: turnId, role: "user", status: "awaiting_approval" }, data: { status: "queued" } });
 
-  return r.count ? { ok: true, status: 200, message: "정비 지시를 승인했어요. 진행 중인 앱 일감이 끝나면 시작해요." } : fail(409, "승인할 수 있는 지시가 아니에요.");
+  if (r.count) return { ok: true, status: 200, message: "정비 지시를 승인했어요. 진행 중인 앱 일감이 끝나면 시작해요." };
+  const turn = await prisma.factoryMaintenanceMessage.findUnique({ where: { id: turnId }, select: { role: true, status: true } });
+
+  if (!turn || turn.role !== "user") return fail(404, "없는 지시예요.");
+
+  return fail(409, `승인할 수 없어요: ${TURN_STATE[turn.status ?? ""] ?? `지금 상태(${turn.status})`}.`);
 }
 
 export async function cancelTurn(turnId: string): Promise<Result> {
@@ -86,20 +100,37 @@ export async function closeThread(threadId: string): Promise<Result> {
   return r.count ? { ok: true, status: 200, message: "정비를 닫았어요." } : fail(404, "없는 정비예요.");
 }
 
-/** 사람이 [배포]를 누름(통제실·텔레그램). GitHub 에 올라간 커밋만 배포할 수 있다. */
-export async function requestDeploy(threadId: string): Promise<Result> {
+/** 사람이 [배포]를 누름(통제실·텔레그램). GitHub 에 올라간 커밋만 배포할 수 있다.
+ *  조건부 updateMany 라서 두 곳에서 동시에 눌러도 배포 요청은 한 번만 들어간다. */
+export async function requestDeploy(threadId: string, via: "통제실" | "텔레그램" = "통제실"): Promise<Result> {
   const t = await prisma.factoryMaintenance.findUnique({ where: { id: threadId } });
 
   if (!t) return fail(404, "없는 정비예요.");
-  if (!t.needsDeploy || !t.pushedCommit) return fail(409, "배포할 변경이 없어요.");
-  if (t.deployRequestedAt && !t.deployedAt && !t.deployResult) return fail(409, "이미 배포를 요청했어요.");
-  await prisma.factoryMaintenance.update({
-    where: { id: threadId },
-    data: { deployCommit: t.pushedCommit, deployRequestedAt: new Date(), deployStartedAt: null, deployedAt: null, deployResult: null },
+  if (!t.needsDeploy || !t.pushedCommit) {
+    return fail(409, t.deployedAt && t.deployCommit ? `이미 배포했어요(${t.deployCommit.slice(0, 7)}).` : "배포할 변경이 없어요.");
+  }
+  const commit = t.pushedCommit;
+  const now = new Date();
+  const r = await prisma.factoryMaintenance.updateMany({
+    where: {
+      id: threadId,
+      needsDeploy: true,
+      pushedCommit: commit,
+      // 배포 요청이 없었거나, 지난 배포가 끝났을 때만(진행 중인 배포가 있으면 막는다)
+      OR: [{ deployRequestedAt: null }, { deployedAt: { not: null } }, { deployResult: { not: null } }],
+    },
+    data: { deployCommit: commit, deployRequestedAt: now, deployStartedAt: null, deployedAt: null, deployResult: null },
   });
 
-  return { ok: true, status: 200, message: `배포를 요청했어요(${t.pushedCommit.slice(0, 7)}). 감독 프로그램이 15초 안에 받아서 서버에 올려요(빌드 3~4분).` };
+  if (!r.count) return fail(409, "이미 배포를 요청했어요(진행 중). 끝나면 결과가 여기와 텔레그램에 나와요.");
+  await prisma.factoryDeploy.create({ data: { maintenanceId: threadId, commit, via, requestedAt: now } }).catch((e) => console.error("[factory] 배포 이력 기록 실패:", e));
+
+  return { ok: true, status: 200, message: `배포를 요청했어요(${commit.slice(0, 7)}). 감독 프로그램이 15초 안에 받아서 서버에 올려요(빌드 3~4분).` };
 }
+
+/** 이 정비의 가장 최근 배포 이력(아직 결과 없는 것) */
+const openDeploy = (threadId: string, commit: string | null) =>
+  prisma.factoryDeploy.findFirst({ where: { maintenanceId: threadId, ok: null, ...(commit ? { commit } : {}) }, orderBy: { requestedAt: "desc" } });
 
 // ───────── 감독 프로그램 쪽 ─────────
 
@@ -121,10 +152,21 @@ async function releaseStale(): Promise<void> {
       data: { maintenanceId: s.maintenanceId, role: "system", text: "감독 프로그램 보고가 20분 넘게 없어서 이 지시를 실패로 정리했어요. 같은 내용을 다시 보내면 이어서 해요." },
     });
   }
-  await prisma.factoryMaintenance.updateMany({
+  const staleMsg = "배포 결과 보고가 20분 넘게 없어요. 서버 배포 로그를 확인하세요.";
+  const staleDeploys = await prisma.factoryMaintenance.findMany({
     where: { deployStartedAt: { lt: cut }, deployedAt: null, deployResult: null },
-    data: { deployResult: "배포 결과 보고가 20분 넘게 없어요. 서버 배포 로그를 확인하세요." },
+    select: { id: true },
   });
+
+  if (staleDeploys.length) {
+    const ids = staleDeploys.map((d) => d.id);
+
+    await prisma.factoryMaintenance.updateMany({ where: { id: { in: ids }, deployedAt: null, deployResult: null }, data: { deployResult: staleMsg } });
+    await prisma.factoryDeploy.updateMany({
+      where: { maintenanceId: { in: ids }, ok: null, startedAt: { lt: cut } },
+      data: { ok: false, finishedAt: new Date(), result: staleMsg },
+    });
+  }
 }
 
 /** /next 응답에 붙일 것: 다음 정비 지시(진행 중인 게 없을 때), 배포 요청. */
@@ -211,10 +253,17 @@ export async function reportTurn(body: TurnReport): Promise<Result> {
 }
 
 export async function deployStarted(threadId: string, commit: string): Promise<Result> {
+  const now = new Date();
   const r = await prisma.factoryMaintenance.updateMany({
     where: { id: threadId, deployCommit: commit, deployRequestedAt: { not: null }, deployStartedAt: null, deployResult: null },
-    data: { deployStartedAt: new Date() },
+    data: { deployStartedAt: now },
   });
+
+  if (r.count) {
+    const d = await openDeploy(threadId, commit);
+
+    if (d) await prisma.factoryDeploy.update({ where: { id: d.id }, data: { startedAt: now } });
+  }
 
   return r.count ? { ok: true, status: 200, message: "배포 시작" } : fail(409, "배포 요청이 없거나 이미 시작됐어요.");
 }
@@ -227,6 +276,14 @@ export async function deployFinished(threadId: string, ok: boolean, output: stri
     where: { id: threadId },
     data: { deployedAt: ok ? new Date() : null, deployResult: clean(output, 4000) || (ok ? "배포 완료" : "배포 실패"), ...(ok ? { needsDeploy: false } : {}) },
   });
+  const d = await openDeploy(threadId, t.deployCommit);
+
+  if (d) {
+    await prisma.factoryDeploy.update({
+      where: { id: d.id },
+      data: { ok, finishedAt: new Date(), result: clean(output, 4000) || (ok ? "배포 완료" : "배포 실패") },
+    });
+  }
   await prisma.factoryMaintenanceMessage.create({
     data: { maintenanceId: threadId, role: "system", text: ok ? `서버 배포 완료(${t.deployCommit?.slice(0, 7)}).` : `서버 배포 실패: ${clean(output, 1500)}` },
   });

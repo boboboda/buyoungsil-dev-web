@@ -45,6 +45,7 @@ export interface SupervisorInfo {
   commit: string;
   note: string;
   at: string;
+  subject?: string; // 현재 커밋 메시지 첫 줄(새 감독 프로그램만 보낸다)
 }
 
 export async function getSupervisorInfo(): Promise<SupervisorInfo | null> {
@@ -58,18 +59,37 @@ export async function getSupervisorInfo(): Promise<SupervisorInfo | null> {
   }
 }
 
-/** 감독 프로그램이 알려 준 커밋·소식을 저장한다. 값이 바뀔 때만 쓴다(5초마다 오는 요청이 DB 를 두드리지 않게). */
-export async function saveSupervisorInfo(commit: string, note: string): Promise<void> {
+const MAX_EVENTS = 300;
+
+/** 감독 프로그램이 알려 준 커밋·소식을 저장한다. 값이 바뀔 때만 쓴다(5초마다 오는 요청이 DB 를 두드리지 않게).
+ *  바뀌면 업데이트 이력(FactorySupervisorEvent)에 한 줄 남긴다. */
+export async function saveSupervisorInfo(commit: string, note: string, subject = ""): Promise<void> {
   const cur = await getSupervisorInfo();
 
-  if (cur && cur.commit === commit && cur.note === note) return;
-  const value = JSON.stringify({ commit, note, at: new Date().toISOString() });
+  if (cur && cur.commit === commit && cur.note === note && (!subject || cur.subject === subject)) return;
+  const keepSubject = subject || (cur?.commit === commit ? (cur?.subject ?? "") : "");
+  const value = JSON.stringify({ commit, note, at: new Date().toISOString(), ...(keepSubject ? { subject: keepSubject } : {}) });
 
   await prisma.factorySetting.upsert({
     where: { key: INFO_KEY },
     create: { key: INFO_KEY, value },
     update: { value },
   });
+
+  // 커밋이나 소식이 바뀐 경우만 이력에 남긴다(메시지만 처음 채워진 경우는 남기지 않음)
+  if (cur && cur.commit === commit && cur.note === note) return;
+  await prisma.factorySupervisorEvent.create({
+    data: {
+      fromCommit: cur && cur.commit !== commit ? cur.commit : null,
+      commit,
+      subject: keepSubject || null,
+      note: note || null,
+    },
+  });
+  // 오래된 이력은 정리한다
+  const old = await prisma.factorySupervisorEvent.findMany({ orderBy: { id: "desc" }, skip: MAX_EVENTS, take: 100, select: { id: true } });
+
+  if (old.length) await prisma.factorySupervisorEvent.deleteMany({ where: { id: { lte: old[0].id } } });
 }
 
 const UPDATE_NOW_KEY = "updateNowRequestedAt";
