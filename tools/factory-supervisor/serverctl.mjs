@@ -106,7 +106,8 @@ function remote(args, input) {
     windowsHide: true,
     maxBuffer: 10 * 1024 * 1024,
   });
-  return { code: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ? `\n${r.stderr}` : ""}`.trim(), error: r.error?.message };
+  // stdout 은 손대지 않고(설정 파일 끝 줄바꿈까지 그대로) 따로 돌려준다. out 은 사람이 읽을 요약.
+  return { code: r.status ?? -1, stdout: r.stdout ?? "", out: `${r.stdout ?? ""}${r.stderr ? `\n${r.stderr}` : ""}`.trim(), error: r.error?.message };
 }
 
 // 출력에서 값이 보일 만한 것을 가린다(KEY=값 꼴, 넘겨받은 값)
@@ -296,6 +297,7 @@ async function envChange(cmd, key) {
   if (!KEY_RE.test(key ?? "")) die("KEY 는 영문 대문자·숫자·_ 로(대문자로 시작, 64자 이하).");
   let value;
   if (cmd === "env-set") {
+    if (process.argv.length > 4) die("값은 명령줄 인자로 받지 않아요(로그에 남아요). SERVERCTL_VALUE 환경변수나 stdin 으로 넘겨 주세요.");
     value = process.env.SERVERCTL_VALUE;
     if (value === undefined) {
       if (process.stdin.isTTY) die("값은 환경변수 SERVERCTL_VALUE 또는 stdin 으로 넘겨 주세요(명령줄 인자 금지).");
@@ -333,7 +335,7 @@ async function main() {
     case "nginx-show": {
       const r = remote(["nginx-show"]);
       if (r.code !== 0) die(r.out);
-      return say(r.out);
+      return process.stdout.write(mask(r.stdout)); // 파일 그대로(끝 줄바꿈 포함)
     }
     case "nginx-set-directive": {
       const [name, value, ...loc] = rest;
@@ -345,7 +347,7 @@ async function main() {
       if (cur.code !== 0) die(cur.out);
       let next;
       try {
-        next = setDirective(cur.out, name, value, location);
+        next = setDirective(cur.stdout, name, value, location);
       } catch (e) {
         die(e.message);
       }
