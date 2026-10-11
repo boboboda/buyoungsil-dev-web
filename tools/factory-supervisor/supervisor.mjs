@@ -13,6 +13,10 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
+import { maybeUpdate, startupGuard } from "./update.mjs";
+
+// 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
+if (!process.argv[2]) startupGuard();
 
 const IS_WIN = process.platform === "win32";
 const expand = (p) => (typeof p === "string" && (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) ? path.join(os.homedir(), p.slice(1)) : p);
@@ -607,16 +611,23 @@ async function runJob(job) {
 
 // ───────────── 대기열 확인 ─────────────
 let paused = false;
+let autoUpdate = true; // 통제실 스위치. /next 응답에 autoUpdate: false 가 오면 끈다(필드가 없으면 켜짐)
 
 async function loop() {
   let delay = cfg.pollSec * 1000;
   while (!shuttingDown) {
+    try {
+      maybeUpdate({ running: running.size, autoUpdate }); // 일감이 없을 때만 10분마다. 받으면 여기서 exit(0)
+    } catch (e) {
+      log(`자동 업데이트 확인 중 오류: ${e.message}`);
+    }
     try {
       const free = cfg.slots - running.size;
       if (free > 0) {
         const r = await api("GET", `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}`);
         if (r.status === 200) {
           delay = cfg.pollSec * 1000;
+          autoUpdate = r.data?.autoUpdate !== false;
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
           if (nowPaused !== paused) {
