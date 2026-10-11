@@ -344,8 +344,52 @@ async function deploy(d, ctx) {
     });
     c.on("error", (e) => res({ code: -1, buf: e.message }));
   });
-  const text = tail(output.buf, 3000);
-  const ok = output.code === 0 && !/Failed to compile|Type error|빌드 실패|\[rejected\]|error: failed to push/i.test(text);
-  await post(ctx, { action: "deploy_done", threadId, ok, output: text || `종료 코드 ${output.code}` });
-  log(`[정비 배포] ${ok ? "완료" : "실패"} (${short(commit)})`);
+  const full = String(output.buf ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+  const upToDate = /Everything up-to-date/.test(full);
+  // 성공은 "컨테이너 교체 완료"(또는 바꿀 게 없음)가 보일 때. 실패 문구는 로그 전체에서 찾는다
+  const replaced = /Recreating developWeb \.\.\. done|developWeb is up-to-date|Creating developWeb \.\.\. done/.test(full);
+  const failed = /Failed to compile|Type error|\[rejected\]|error: failed to push|ERROR: /i.test(full);
+  let ok = output.code === 0 && !failed && (replaced || upToDate);
+  // 배포하면 홈페이지 컨테이너가 바뀌므로, 다시 응답할 때까지 기다린 뒤 결과를 보낸다(바뀌는 중에 보내면 결과가 사라졌다)
+  const h = ok ? await waitHealthy() : { ok: false, sec: 0 };
+  if (ok && !h.ok) ok = false;
+  const summary = upToDate
+    ? "서버가 이미 이 커밋이라 바꿀 것이 없어요(Everything up-to-date)."
+    : ok
+      ? `빌드 성공, 컨테이너 교체, 홈페이지 헬스체크 200(교체 후 ${h.sec}초).`
+      : output.code !== 0
+        ? `push 실패(종료 코드 ${output.code}).`
+        : failed
+          ? "서버 빌드 실패(기존 컨테이너가 그대로 돌고 있어요)."
+          : replaced
+            ? `빌드·교체는 됐지만 홈페이지가 ${Math.round(HEALTH_WAIT_MS / 1000)}초 안에 200 을 주지 않아요.`
+            : "배포 결과를 확인하지 못했어요(컨테이너 교체 표시가 없음).";
+  const report = `${summary}\n\n--- 배포 로그 끝부분 ---\n${tail(full, ok ? 600 : 2500)}`;
+  // 결과 보고는 받아들여질 때까지 다시 보낸다(최대 5분)
+  let sent = false;
+  for (let i = 0; i < 20 && !sent; i++) {
+    const r = await post(ctx, { action: "deploy_done", threadId, ok, output: report });
+    sent = r.status === 200 || r.status === 404 || r.status === 409;
+    if (!sent) await new Promise((res) => setTimeout(res, 15_000));
+  }
+  log(`[정비 배포] ${ok ? "완료" : "실패"} (${short(commit)}) ${summary}${sent ? "" : " — 결과를 홈페이지에 보고하지 못했어요"}`);
+}
+
+// 홈페이지가 다시 200 을 줄 때까지 기다린다(브라우저 UA). 배포 직후 컨테이너가 바뀌는 동안은 502 가 난다.
+const HEALTH_WAIT_MS = 3 * 60_000;
+async function waitHealthy() {
+  const start = Date.now();
+  while (Date.now() - start < HEALTH_WAIT_MS) {
+    try {
+      const r = await fetch("https://www.buyoungsilcoding.com/", {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (r.status === 200) return { ok: true, sec: Math.round((Date.now() - start) / 1000) };
+    } catch {
+      /* 아직 바뀌는 중 */
+    }
+    await new Promise((res) => setTimeout(res, 5_000));
+  }
+  return { ok: false, sec: Math.round((Date.now() - start) / 1000) };
 }
