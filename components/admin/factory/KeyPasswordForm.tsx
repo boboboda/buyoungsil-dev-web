@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { Button } from "@heroui/react";
 
+import Field from "./Field";
 import { KEY_PASSWORD_TEXT, postRelease, type KeyPasswordState, type ReleaseOverview } from "./releaseTypes";
 
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
@@ -49,24 +50,14 @@ export default function KeyPasswordForm({
         </Button>
       </div>
       {open && (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <input
-            autoComplete="new-password"
-            className={input}
-            placeholder="키 저장소 비밀번호 (6자 이상)"
-            type="password"
-            value={store}
-            onChange={(e) => setStore(e.target.value)}
-          />
-          <input
-            autoComplete="new-password"
-            className={input}
-            placeholder="키 비밀번호 (비우면 위와 같게)"
-            type="password"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-          />
-          <Button className="min-h-11 sm:min-h-0" color="primary" isDisabled={busy || store.length < 6} size="sm" onPress={submit}>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-start">
+          <Field help=".jks 파일을 여는 비밀번호. 6자 이상." label="키 저장소 비밀번호">
+            <input autoComplete="new-password" className={input} type="password" value={store} onChange={(e) => setStore(e.target.value)} />
+          </Field>
+          <Field help="키 별칭의 비밀번호. 비우면 위와 같게 써요." label="키 비밀번호">
+            <input autoComplete="new-password" className={input} type="password" value={key} onChange={(e) => setKey(e.target.value)} />
+          </Field>
+          <Button className="min-h-11 sm:mt-5 sm:min-h-0" color="primary" isDisabled={busy || store.length < 6} size="sm" onPress={submit}>
             등록
           </Button>
           <p className="text-xs text-default-500 sm:col-span-3">

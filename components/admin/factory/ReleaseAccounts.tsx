@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, CardHeader } from "@heroui/react";
 
+import Field from "./Field";
 import KeyPasswordForm from "./KeyPasswordForm";
 import KeyScanTable from "./KeyScanTable";
 import { fmtDate, postRelease, type ReleaseAccount, type ReleaseOverview } from "./releaseTypes";
@@ -132,41 +133,82 @@ export default function ReleaseAccounts() {
             return (
               <div key={label} className="space-y-3 border-t border-default-200 pt-4 first:border-0 first:pt-0">
                 <div className="font-semibold">계정 {label}</div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <input className={input} placeholder="이름 (예: 개인 계정)" value={f.name} onChange={(e) => set(label, { name: e.target.value })} />
-                  <label className="flex items-center gap-2 text-sm">
-                    <input checked={f.requiresTesting} type="checkbox" onChange={(e) => set(label, { requiresTesting: e.target.checked })} />
-                    비공개 테스트 필요(테스터 12명·14일)
-                  </label>
-                  <input className={input} placeholder="스토어 개발자 이름" value={f.developerName} onChange={(e) => set(label, { developerName: e.target.value })} />
-                  <input className={input} placeholder="연락 이메일" value={f.contactEmail} onChange={(e) => set(label, { contactEmail: e.target.value })} />
-                  <input
-                    className={input}
-                    inputMode="numeric"
-                    placeholder="Play Console 개발자 계정 ID (19자리 숫자)"
-                    value={f.developerAccountId}
-                    onChange={(e) => set(label, { developerAccountId: e.target.value })}
+                <p className="text-sm text-default-600">처음 한 번만 채우면 돼요. 아래 목록이 모두 ✅ 가 되면 준비 끝이에요.</p>
+                <ul className="space-y-1 text-sm">
+                  <Check ok={!!acc?.name} text="내가 알아볼 별명" />
+                  <Check ok={!!acc?.developerName && !!acc?.contactEmail} text="개발자 이름·연락 이메일" />
+                  <Check ok={!!acc?.developerAccountId} text="Play Console 개발자 계정 ID" />
+                  <Check ok={!!acc?.accountType} text="계정 유형(개인/조직)" />
+                  <Check ok={!!acc?.loginEmail} text="Play Console 로그인 구글 이메일" />
+                  <Check ok={!!acc?.keystorePath} text={`서명 키 경로 등록${acc?.keystorePath ? `: ${acc.keystorePath}` : ""}`} />
+                  <Check
+                    ok={!!acc?.serviceAccountKeyPath}
+                    text={`서비스 계정 키 경로 등록${acc?.serviceAccountKeyPath ? `: ${acc.serviceAccountKeyPath}` : " (비공개 테스트 자동 업로드에 필요)"}`}
                   />
-                  <select className={input} value={f.accountType} onChange={(e) => set(label, { accountType: e.target.value })}>
-                    <option value="">계정 유형 고르기…</option>
-                    <option value="personal">개인</option>
-                    <option value="organization">조직</option>
-                  </select>
-                  <input
-                    className={`${input} sm:col-span-2`}
-                    placeholder="Play Console 로그인 구글 이메일"
-                    value={f.loginEmail}
-                    onChange={(e) => set(label, { loginEmail: e.target.value })}
-                  />
-                  <input className={input} placeholder="서명 키 경로 (예: ~/keys/upload-a.jks)" value={f.keystorePath} onChange={(e) => set(label, { keystorePath: e.target.value })} />
-                  <input className={input} placeholder="키 별칭 (예: upload)" value={f.keyAlias} onChange={(e) => set(label, { keyAlias: e.target.value })} />
-                  <input
-                    className={`${input} sm:col-span-2`}
-                    placeholder="서비스 계정 키 경로 (Play Developer API, 예: ~/keys/play-a.json)"
-                    value={f.serviceAccountKeyPath}
-                    onChange={(e) => set(label, { serviceAccountKeyPath: e.target.value })}
-                  />
-                  <textarea className={`${input} sm:col-span-2`} placeholder="메모" rows={2} value={f.notes} onChange={(e) => set(label, { notes: e.target.value })} />
+                </ul>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field help="출시 패키지 화면의 계정 선택에 이 이름이 나와요. 짧은 별명만 넣으세요(숫자 ID·이메일 넣지 않기)." label="내가 알아볼 별명">
+                    <input className={input} placeholder="예: 개인 계정, 조직 계정" value={f.name} onChange={(e) => set(label, { name: e.target.value })} />
+                  </Field>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className="text-xs font-medium text-default-700">비공개 테스트</span>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input checked={f.requiresTesting} type="checkbox" onChange={(e) => set(label, { requiresTesting: e.target.checked })} />
+                      비공개 테스트 필요(테스터 12명·14일)
+                    </label>
+                    <span className="break-words text-xs text-default-500">
+                      개인 계정(2023년 11월 이후 생성)은 보통 체크, 조직 계정은 보통 해제. Play Console 에서 확인.
+                    </span>
+                  </div>
+                  <Field help="Play Console 개발자 계정 페이지의 '개발자 이름'(스토어에 공개되는 이름) 그대로." label="스토어 개발자 이름">
+                    <input className={input} placeholder="예: 코지 소프트" value={f.developerName} onChange={(e) => set(label, { developerName: e.target.value })} />
+                  </Field>
+                  <Field help="스토어에 공개돼도 괜찮은 연락 이메일. 법적 이름·주소는 넣지 않기." label="연락 이메일">
+                    <input className={input} placeholder="예: contact@example.com" type="email" value={f.contactEmail} onChange={(e) => set(label, { contactEmail: e.target.value })} />
+                  </Field>
+                  <Field help="19자리 숫자. 개발자 계정 페이지 또는 Console 주소 /developers/<이 숫자>/ 에서 확인." label="Play Console 개발자 계정 ID">
+                    <input
+                      className={input}
+                      inputMode="numeric"
+                      placeholder="예: 1234567890123456789"
+                      value={f.developerAccountId}
+                      onChange={(e) => set(label, { developerAccountId: e.target.value })}
+                    />
+                  </Field>
+                  <Field help="Console 개발자 계정 페이지의 '계정 유형'." label="계정 유형">
+                    <select className={input} value={f.accountType} onChange={(e) => set(label, { accountType: e.target.value })}>
+                      <option value="">고르기…</option>
+                      <option value="personal">개인</option>
+                      <option value="organization">조직</option>
+                    </select>
+                  </Field>
+                  <Field className="sm:col-span-2" help="Console 에 로그인하는 구글 계정(계정 소유자)." label="Play Console 로그인 구글 이메일">
+                    <input className={input} placeholder="예: me@gmail.com" type="email" value={f.loginEmail} onChange={(e) => set(label, { loginEmail: e.target.value })} />
+                  </Field>
+                  <Field
+                    help="PC 에 있는 업로드 키(.jks) 파일 경로. 비워 두면 공장이 공용 키를 새로 만들 곳을 정함. 비밀번호는 여기 말고 아래 '비밀번호 등록'에."
+                    label="서명 키 경로"
+                  >
+                    <input className={input} placeholder="예: ~/keys/upload.jks" value={f.keystorePath} onChange={(e) => set(label, { keystorePath: e.target.value })} />
+                  </Field>
+                  <Field help=".jks 안의 키 이름." label="키 별칭">
+                    <input className={input} placeholder="예: upload" value={f.keyAlias} onChange={(e) => set(label, { keyAlias: e.target.value })} />
+                  </Field>
+                  <Field
+                    className="sm:col-span-2"
+                    help="Play API 용 서비스 계정 JSON 파일 경로(PC). 아직 없으면 비워 두세요(비공개 테스트 자동 업로드·스토어 자료 업로드 때 필요)."
+                    label="서비스 계정 키 경로"
+                  >
+                    <input
+                      className={input}
+                      placeholder="예: ~/keys/play-sa.json"
+                      value={f.serviceAccountKeyPath}
+                      onChange={(e) => set(label, { serviceAccountKeyPath: e.target.value })}
+                    />
+                  </Field>
+                  <Field className="sm:col-span-2" help="자유 메모." label="메모">
+                    <textarea className={input} rows={2} value={f.notes} onChange={(e) => set(label, { notes: e.target.value })} />
+                  </Field>
                 </div>
                 <Button className="min-h-11 sm:min-h-0" color="primary" isDisabled={busy || !f.name.trim()} size="sm" onPress={() => save(label)}>
                   계정 {label} 저장
@@ -177,10 +219,8 @@ export default function ReleaseAccounts() {
                     {acc.loginEmail ? ` · ${acc.loginEmail} 로 로그인` : ""})
                   </a>
                 )}
-                {acc && (
+                {acc && (acc.keystorePath || acc.serviceAccountKeyPath) && (
                   <ul className="space-y-1 text-sm">
-                    <Check ok={!!acc.developerName && !!acc.contactEmail} text="개발자 이름·연락 이메일" />
-                    <Check ok={!!acc.keystorePath} text={`서명 키 경로 등록${acc.keystorePath ? `: ${acc.keystorePath}` : ""}`} />
                     {acc.keystorePath && (
                       <Check
                         ok={!!ks?.exists}
@@ -198,7 +238,6 @@ export default function ReleaseAccounts() {
                         </p>
                       </li>
                     )}
-                    <Check ok={!!acc.serviceAccountKeyPath} text={`서비스 계정 키 경로 등록${acc.serviceAccountKeyPath ? `: ${acc.serviceAccountKeyPath}` : " (비공개 테스트 자동 업로드에 필요)"}`} />
                     {acc.serviceAccountKeyPath && (
                       <Check
                         ok={!!sa?.exists}

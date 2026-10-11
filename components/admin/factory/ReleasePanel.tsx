@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Chip } from "@heroui/react";
 
+import Field from "./Field";
 import KeyPasswordForm from "./KeyPasswordForm";
 import KeyScanTable from "./KeyScanTable";
 import StoreAssetsView from "./StoreAssetsView";
@@ -202,23 +203,29 @@ function AppRow({
         </Chip>
       </CardHeader>
       <CardBody className="space-y-3">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <select className={input} value={acc} onChange={(e) => setAcc(e.target.value)}>
-            <option value="">배포 계정 고르기…</option>
-            {data.accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                계정 {a.label} · {a.name}
-              </option>
-            ))}
-          </select>
-          <select className={input} value={status} onChange={(e) => setStatus(e.target.value)}>
-            {data.statuses.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-          <input className={input} placeholder="패키지 이름 (com.factory.my_app)" value={pkgName} onChange={(e) => setPkgName(e.target.value)} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Field help="설정 → 배포 계정에서 만든 계정 중 하나." label="배포 계정">
+            <select className={input} value={acc} onChange={(e) => setAcc(e.target.value)}>
+              <option value="">고르기…</option>
+              {data.accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  계정 {a.label} · {a.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field help="지금 출시가 어디까지 왔는지." label="출시 상태">
+            <select className={input} value={status} onChange={(e) => setStatus(e.target.value)}>
+              {data.statuses.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field help="Play 에 올라가는 앱 고유 이름. 한 번 올리면 못 바꿔요." label="패키지 이름">
+            <input className={input} placeholder="예: com.factory.my_app" value={pkgName} onChange={(e) => setPkgName(e.target.value)} />
+          </Field>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input checked={first} type="checkbox" onChange={(e) => setFirst(e.target.checked)} />
@@ -231,9 +238,13 @@ function AppRow({
               앱 폴더에 key.properties 가 이미 있으면 작업 PC 는 그 키를 그대로 써요(건드리지 않음). 없을 때만 아래 키를 써요. 공용 키 대신 다른 키를 쓰려면
               경로와 별칭을 넣고 저장하세요(비우면 공용 키).
             </p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <input className={input} placeholder="다른 키 경로 (예: ~/keys/my-app.jks)" value={customPath} onChange={(e) => setCustomPath(e.target.value)} />
-              <input className={input} placeholder="별칭 (비우면 upload)" value={customAlias} onChange={(e) => setCustomAlias(e.target.value)} />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field help="이 앱에만 쓸 업로드 키(.jks) 파일의 PC 경로. 비우면 배포 계정 공용 키." label="다른 키 경로">
+                <input className={input} placeholder="예: ~/keys/my-app.jks" value={customPath} onChange={(e) => setCustomPath(e.target.value)} />
+              </Field>
+              <Field help=".jks 안의 키 이름. 비우면 upload." label="키 별칭">
+                <input className={input} placeholder="예: upload" value={customAlias} onChange={(e) => setCustomAlias(e.target.value)} />
+              </Field>
             </div>
             {app.key?.source === "custom" && <KeyPasswordForm state={app.key.password} target={{ appSlug: app.appSlug }} onSaved={onSaved} />}
             {app.key?.source === "account" && <p className="text-xs">공용 키 비밀번호는 설정 화면의 배포 계정에서 등록해요.</p>}
@@ -312,14 +323,10 @@ function AppRow({
           </label>
         )}
         <p className="text-xs text-default-500">{KIND_HELP[kind]}</p>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <input
-            aria-label="홍보 영상 링크"
-            className={`${input} sm:flex-1`}
-            placeholder="홍보 영상 링크 (https://www.youtube.com/watch?v=… 또는 https://youtu.be/…)"
-            value={video}
-            onChange={(e) => setVideo(e.target.value)}
-          />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <Field className="sm:flex-1" label="홍보 영상 링크 (YouTube)">
+            <input className={input} placeholder="예: https://youtu.be/…" value={video} onChange={(e) => setVideo(e.target.value)} />
+          </Field>
           <Button
             className="min-h-11 sm:min-h-0"
             isDisabled={busy || video.trim() === (app.promoVideoUrl ?? "")}
