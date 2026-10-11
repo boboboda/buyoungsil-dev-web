@@ -12,6 +12,7 @@ type Status =
   | "approved"
   | "running"
   | "review"
+  | "linkwait"
   | "done"
   | "failed"
   | "cancelled";
@@ -85,6 +86,7 @@ const STATUS: Record<
   approved: { label: "승인됨·대기열", color: "primary" },
   running: { label: "제작 중", color: "secondary" },
   review: { label: "검토 대기", color: "warning" },
+  linkwait: { label: "영상 링크 대기", color: "warning" },
   done: { label: "완료", color: "success" },
   failed: { label: "실패", color: "danger" },
   cancelled: { label: "취소", color: "default" },
@@ -96,6 +98,7 @@ const FILTERS: { value: "" | Status; label: string }[] = [
   { value: "approved", label: "대기열" },
   { value: "running", label: "제작 중" },
   { value: "review", label: "검토 대기" },
+  { value: "linkwait", label: "영상 링크 대기" },
   { value: "done", label: "완료" },
   { value: "failed", label: "실패" },
   { value: "cancelled", label: "취소" },
@@ -364,7 +367,8 @@ function JobDetailView({
     job.status === "pending" ||
     job.status === "approved" ||
     job.status === "running" ||
-    job.status === "review"; // 출시 검토 대기도 취소할 수 있다(결정은 출시 패키지 화면에서)
+    job.status === "review" || // 출시 검토 대기도 취소할 수 있다(결정은 출시 패키지 화면에서)
+    job.status === "linkwait";
 
   useEffect(() => {
     setPriority(String(job.priority));

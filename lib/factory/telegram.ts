@@ -71,7 +71,7 @@ const cut = (v: string | null | undefined, max: number) => {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 };
 
-export type JobEvent = "pending" | "done" | "failed" | "review";
+export type JobEvent = "pending" | "done" | "failed" | "review" | "linkwait";
 
 // 일감 상태가 바뀐 것을 알린다. 절대 던지지 않는다.
 export async function notifyJobEvent(
@@ -111,6 +111,8 @@ export async function notifyJobEvent(
     } else if (event === "review") {
       text = `👀 검토 대기: ${name} (${job.appSlug}) 스토어 자료가 준비됐어요
 통제실 출시 패키지에서 확인하고 [이대로 진행]·[다시 만들기]·[취소] 중에 골라 주세요.`;
+    } else if (event === "linkwait") {
+      text = `🎬 영상 링크 대기: ${name} (${job.appSlug})\n이미지·문구는 반영했어요. 홍보 영상을 YouTube 에 올린 뒤 출시 카드에서 링크를 붙여 넣어 주세요(링크 없이 마칠 수도 있어요).`;
     } else if (event === "done") {
       text = `✅ 완료\n${name} (${job.appSlug}) · ${kind}\n${cut(job.summary, 200) || "(요약 없음)"}`;
     } else {
@@ -118,7 +120,10 @@ export async function notifyJobEvent(
     }
 
     const row: Record<string, string>[] = [
-      { text: event === "review" ? "검토하러 가기" : "통제실 열기", url: `${publicUrl()}${event === "review" ? "/admin/factory/release" : "/admin/factory"}` },
+      {
+        text: event === "review" ? "검토하러 가기" : event === "linkwait" ? "링크 넣으러 가기" : "통제실 열기",
+        url: `${publicUrl()}${event === "review" || event === "linkwait" ? "/admin/factory/release" : "/admin/factory"}`,
+      },
     ];
 
     if (event === "pending" && approveEnabled() && secret()) {

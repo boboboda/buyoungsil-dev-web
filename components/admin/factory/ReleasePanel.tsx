@@ -20,7 +20,7 @@ import Field from "./Field";
 import AppKeyLookup from "./AppKeyLookup";
 import { KeyCheckView, KeyError, UntrackView } from "./KeyVault";
 import StoreAssetsView from "./StoreAssetsView";
-import { BuildResultView, ListingCopy, ReviewPanel } from "./ReleaseReview";
+import { BuildResultView, FirstVideoPanel, LinkWaitPanel, ListingCopy, ReviewPanel, isYoutubeUrl } from "./ReleaseReview";
 import { KEY_PASSWORD_TEXT, fmtDate, fmtSize, postRelease, type ReadyItem, type ReleaseApp, type ReleaseJobInfo, type ReleaseOverview } from "./releaseTypes";
 
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
@@ -83,6 +83,7 @@ const STATE_CHIP: Record<string, { text: string; color: "default" | "primary" | 
   pending: { text: "승인 대기", color: "default" },
   generating: { text: "생성 중", color: "primary" },
   review: { text: "검토 대기", color: "warning" },
+  linkwait: { text: "영상 링크 대기", color: "warning" },
   publishing: { text: "반영 중", color: "primary" },
   done: { text: "완료", color: "success" },
   failed: { text: "실패", color: "danger" },
@@ -101,6 +102,7 @@ const JOB_STATUS: Record<string, string> = {
   approved: "대기열(작업 PC 가 곧 시작)",
   running: "진행 중",
   review: "검토 대기",
+  linkwait: "영상 링크 대기",
   done: "완료",
   failed: "실패",
   cancelled: "취소됨",
@@ -114,6 +116,9 @@ function JobStatus({
   busy,
   onRetry,
   onDecision,
+  onVideoLink,
+  onVideoSkip,
+  onSaveLink,
 }: {
   app: ReleaseApp;
   job: ReleaseJobInfo;
@@ -121,6 +126,9 @@ function JobStatus({
   busy: boolean;
   onRetry: () => void;
   onDecision: (decision: "approve" | "redo" | "cancel", note?: string) => void;
+  onVideoLink: (url: string) => void;
+  onVideoSkip: () => void;
+  onSaveLink: (url: string) => void;
 }) {
   const kind = kinds.find((k) => k.value === job.releaseKind)?.label ?? job.releaseKind;
   const failed = job.status === "failed";
@@ -135,7 +143,7 @@ function JobStatus({
           {job.versionName ? ` · 버전 ${job.versionName}` : ""}
           {job.overwriteProject ? (job.releaseKind === "update" ? " · 홈페이지 반영" : " · 홈페이지 덮어쓰기") : ""})
         </span>
-        <Chip color={chip.color} size="sm" variant={job.state === "review" ? "solid" : "flat"}>
+        <Chip color={chip.color} size="sm" variant={job.state === "review" || job.state === "linkwait" ? "solid" : "flat"}>
           {chip.text}
         </Chip>
         {job.status === "running" && job.phase ? <span>현재 단계: {job.phaseLabel}</span> : null}
@@ -143,6 +151,8 @@ function JobStatus({
       </div>
       {job.redoNote && job.state === "generating" && <div className="text-xs">🔁 다시 만드는 중: {job.redoNote}</div>}
       {job.status === "review" && <ReviewPanel app={app} busy={busy} job={job} onDecision={onDecision} />}
+      {job.status === "linkwait" && <LinkWaitPanel app={app} busy={busy} job={job} onApply={onVideoLink} onSkip={onVideoSkip} />}
+      {job.status === "done" && job.releaseKind === "first" && job.reviewRequired && <FirstVideoPanel app={app} busy={busy} job={job} onSave={onSaveLink} />}
       {job.status === "done" && job.releaseKind === "update" && <BuildResultView job={job} />}
       {job.status === "done" && job.summary && job.releaseKind !== "update" && (
         <details>
@@ -316,6 +326,9 @@ function AppRow({
   const ready: ReadyItem[] = [
     ...(app.readiness[kind as "first" | "store" | "update"] ?? []),
     ...(isStore ? [{ label: "갱신 항목 1개 이상 선택", ok: items.length > 0, note: items.length ? null : "아래에서 고르세요" }] : []),
+    ...(isStore && items.includes("videoLink")
+      ? [{ label: "YouTube 링크", ok: isYoutubeUrl(video), note: isYoutubeUrl(video) ? null : "아래 링크 칸에 youtube.com/watch?v=… 또는 youtu.be/… 를 넣으세요" }]
+      : []),
     ...(isUpdate ? [{ label: "업데이트 내용(10자 이상)", ok: updateText.trim().length >= 10, note: updateText.trim().length >= 10 ? null : "아래에 적으세요" }] : []),
   ];
   const lacking = ready.filter((r) => r.ok === false);
@@ -357,6 +370,8 @@ function AppRow({
         overwriteProject: ow,
         ...(kindItems.length ? { updateItems: picked.map((i) => i.value) } : {}),
         ...(isUpdate ? { updateText, versionName: versionName.trim(), releaseNotes: releaseNotes.trim() } : {}),
+        // '홍보 영상 링크만 반영': 링크를 먼저 저장하고 등록
+        ...(isStore && items.includes("videoLink") ? { videoUrl: video.trim() } : {}),
       });
     }
   };
@@ -512,7 +527,14 @@ function AppRow({
                     checked={items.includes(it.value)}
                     className="mt-1"
                     type="checkbox"
-                    onChange={(e) => setItems((s) => (e.target.checked ? [...s, it.value] : s.filter((x) => x !== it.value)))}
+                    onChange={(e) =>
+                      // '홍보 영상 만들기'와 '홍보 영상 링크만 반영'은 같이 고를 수 없다
+                      setItems((s) =>
+                        e.target.checked
+                          ? [...s.filter((x) => !(it.value === "video" && x === "videoLink") && !(it.value === "videoLink" && x === "video")), it.value]
+                          : s.filter((x) => x !== it.value),
+                      )
+                    }
                   />
                   <span>
                     {it.label}
@@ -522,33 +544,21 @@ function AppRow({
                         Play 의 개인정보처리방침 주소(/project/&lt;이름&gt;/privacy)는 고정이라, 홈페이지 내용만 바꾸면 Play 가 보여 주는 내용도 바뀌어요.
                       </span>
                     )}
-                    {it.value === "video" && !app.promoVideoUrl && (
-                      <span className="block text-xs text-warning-600">아직 저장된 영상 링크가 없어요. 아래에 링크를 저장해야 Play 영상이 바뀌어요.</span>
+                    {it.value === "video" && (
+                      <span className="block text-xs text-default-500">링크는 지금 필요 없어요. 검토에서 [이대로 진행] 뒤 &apos;영상 링크 대기&apos;에서 넣어요(&apos;링크만 반영&apos;과 같이 못 골라요).</span>
                     )}
                   </span>
                 </label>
               ))}
             </fieldset>
           )}
-          {isStore && (
+          {/* 링크 칸은 '홍보 영상 링크만 반영'을 골랐을 때만(필수). 영상 링크 대기 단계의 칸은 아래 일감 결과에 */}
+          {isStore && items.includes("videoLink") && (
             <div className="space-y-1">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <Field className="sm:flex-1" label="홍보 영상 링크 (YouTube)">
-                  <input className={input} placeholder="예: https://youtu.be/…" value={video} onChange={(e) => setVideo(e.target.value)} />
-                </Field>
-                <Button
-                  className="min-h-11 sm:min-h-0"
-                  isDisabled={busy || video.trim() === (app.promoVideoUrl ?? "")}
-                  size="sm"
-                  variant="flat"
-                  onPress={() => call({ action: "savePromoVideo", appSlug: app.appSlug, url: video })}
-                >
-                  링크 저장
-                </Button>
-              </div>
-              <p className="text-xs text-default-500">
-                영상은 YouTube 에 직접 올리고 링크만 넣어요(공개 또는 일부 공개, 퍼가기 허용, 광고 끔). &apos;홍보 영상 링크&apos;를 고르면 Play 등록정보 영상에 들어가요.
-              </p>
+              <Field help="YouTube 에 이미 올린 영상의 링크(공개 또는 일부 공개, 퍼가기 허용, 광고 끔). 승인할 때 저장돼요." label="홍보 영상 링크 (YouTube, 필수)">
+                <input className={input} placeholder="예: https://youtu.be/…" value={video} onChange={(e) => setVideo(e.target.value)} />
+              </Field>
+              {video.trim() && !isYoutubeUrl(video) && <p className="text-xs text-danger">youtube.com/watch?v=… 또는 youtu.be/… 링크만 넣을 수 있어요.</p>}
             </div>
           )}
           {isUpdate && (
@@ -619,6 +629,9 @@ function AppRow({
             job={app.lastReleaseJob}
             kinds={data.kinds}
             onDecision={(decision, note) => app.lastReleaseJob && call({ action: "reviewDecision", jobId: app.lastReleaseJob.id, decision, note })}
+            onSaveLink={(url) => call({ action: "savePromoVideo", appSlug: app.appSlug, url })}
+            onVideoLink={(url) => app.lastReleaseJob && call({ action: "videoLinkApply", jobId: app.lastReleaseJob.id, url })}
+            onVideoSkip={() => app.lastReleaseJob && call({ action: "videoLinkSkip", jobId: app.lastReleaseJob.id })}
             onRetry={() => app.lastReleaseJob && call({ action: "retryRelease", jobId: app.lastReleaseJob.id })}
           />
         )}

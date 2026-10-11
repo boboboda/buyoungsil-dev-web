@@ -85,6 +85,9 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - `review.approved` 가 true 일 때만 반영 단계(Play 업로드·홈페이지·완료)를 해요. 서버가 upload 부터라고 줘도 승인 전이면 검토 대기로만 보내요.
 - `review.redoNote`(다시 만들기 메모)는 RELEASE_REQUEST.md 끝에 붙여 그 항목만 다시 만들어요(.factory/store/status.json 은 남김).
 - 검토가 있는 첫 출시는 Play 에 올리지 않아요(최초 AAB 는 사람이 Console 에). 승인 뒤 홈페이지 빈 칸 채우기와 AAB 위치 안내.
+- 홍보 영상: 갱신 항목 `video`(홍보 영상 만들기)는 mp4 만 만들고 Play 영상은 건드리지 않아요. 서버가 `videoLinkWait: true` 를 주면 반영 뒤 완료 대신
+  `status: "linkwait"`(영상 링크 대기)로 보고해요. 사람이 링크를 넣으면 `resumeFrom: "videolink"` 로 다시 와서 Play 등록정보 영상만 PATCH 하고 완료(문구·이미지·홈페이지는 그대로).
+  `videoLink`(홍보 영상 링크만 반영)는 Claude·검토 없이 upload 부터 영상만 반영해요. 예전 서버(`videoLinkWait` 없음)에서는 `video` 가 예전 뜻(저장된 링크 반영)이에요.
 - 앱 업데이트(`kind: "update"`): 키 준비 → Claude 가 코드 수정·시험·버전·서명 AAB → AAB 를 비공개 테스트 트랙에(출시 노트 포함) → `build` 결과 보고.
   홈페이지 반영(`overwriteProject`)을 고르지 않았으면 project.json 을 보내지 않아요.
 

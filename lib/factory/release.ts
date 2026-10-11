@@ -14,7 +14,7 @@ import { DEFAULT_KEY_ALIAS, keyPasswordStatuses, keyRefOf, keySecretNames } from
 import { maskSecrets } from "@/lib/factory/mask";
 import { KEY_KINDS, listVault } from "@/lib/factory/keyVault";
 import { deleteReviewVideo, reviewVideoInfo } from "@/lib/factory/reviewVideo";
-import { readStoreAssets } from "@/lib/factory/storeAssets";
+import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import { APP_NAME_SOURCE_LABELS, cleanAppName, pickAppName, storeTitleOf } from "@/lib/factory/appName";
 
 // 출시 일감 종류. 종류마다 서버가 만드는 지시문과 허용 동작(outbox 파일·키 준비)이 다르다.
@@ -56,6 +56,8 @@ export const RELEASE_STAGE_LABELS: Record<string, string> = {
   listing: "문구",
   privacy: "개인정보처리방침",
   review: "검토 대기",
+  linkwait: "영상 링크 대기",
+  videolink: "영상 링크 반영",
   code: "코드 수정",
   test: "시험",
   version: "버전 올림",
@@ -66,7 +68,7 @@ export const RELEASE_STAGE_LABELS: Record<string, string> = {
 export const stageLabel = (s: string | null | undefined) => (s ? (RELEASE_STAGE_LABELS[s] ?? s) : "-");
 // 재시도를 이 단계부터 시작할 수 있다
 // review 부터 = 검토 자료만 다시 올리기(Claude 없이), upload·homepage 부터 = 승인 뒤 반영만 다시(Claude 없이)
-const RESUMABLE = ["key", "build", "sign", "store", "icon", "screenshots", "video", "listing", "privacy", "code", "test", "version", "review", "upload", "homepage"];
+const RESUMABLE = ["key", "build", "sign", "store", "icon", "screenshots", "video", "listing", "privacy", "code", "test", "version", "review", "upload", "homepage", "videolink"];
 // 종류별로 감독 프로그램이 홈페이지로 보낼 수 있는 outbox 파일
 const OUTBOX_BY_KIND: Record<ReleaseKind, string[]> = {
   first: ["project.json", "release.json"],
@@ -84,7 +86,10 @@ export const UPDATE_ITEMS: Partial<Record<ReleaseKind, UpdateItem[]>> = {
   store: [
     { value: "images", label: "이미지", help: "아이콘·대표 이미지·폰 스크린샷을 새로 만들어 Play 와 홈페이지에 올려요." },
     { value: "listing", label: "문구", help: "제목·짧은 설명·긴 설명을 새로 써서 Play 등록정보에 올려요(홈페이지 소개·기술 스택도)." },
-    { value: "video", label: "홍보 영상 링크", help: "저장된 YouTube 링크를 Play 등록정보 영상에 넣어요(PC 에 홍보 영상 promo.mp4 도 새로 만들어요)." },
+    // video: 영상(mp4)만 만든다. 링크는 YouTube 에 올린 뒤 '영상 링크 대기'에서 붙여 넣는다(Play 영상은 그때 반영)
+    { value: "video", label: "홍보 영상 만들기", help: "홍보 영상(promo.mp4)을 새로 만들어요. YouTube 에 올린 뒤 카드에서 링크를 붙여 넣으면 Play 등록정보에 반영돼요." },
+    // videoLink: 이미 YouTube 에 올린 영상의 링크만 Play 등록정보에 넣는다(링크 필수, '홍보 영상 만들기'와 같이 못 고름)
+    { value: "videoLink", label: "홍보 영상 링크만 반영", help: "YouTube 에 이미 올린 영상의 링크만 Play 등록정보 영상에 넣어요(아래 링크 칸 필수)." },
     { value: "privacy", label: "개인정보처리방침 갱신", help: "홈페이지 프로젝트의 개인정보처리방침을 새로 써서 덮어써요." },
   ],
   project: [
@@ -111,6 +116,10 @@ export function normalizeUpdateItems(kind: ReleaseKind, v: unknown): { ok: true;
     return { ok: false, message: `갱신 항목은 ${defs.map((d) => `${d.value}(${d.label})`).join(", ")} 중에서 골라요.` };
   }
   const items = defs.map((d) => d.value).filter((x) => v.includes(x));
+
+  if (items.includes("video") && items.includes("videoLink")) {
+    return { ok: false, message: "'홍보 영상 만들기'와 '홍보 영상 링크만 반영'은 같이 고를 수 없어요(영상을 만들면 링크는 나중에 넣어요)." };
+  }
 
   if (items.length === 0) return { ok: false, message: "갱신할 항목을 하나 이상 고르세요." };
 
@@ -647,6 +656,7 @@ export function readinessProblem(items: ReadyItem[] | undefined): string | null 
 /** 출시 일감의 카드 표시 상태 */
 function jobState(j: { status: string; reviewRequired: boolean; reviewApprovedAt: Date | null }): string {
   if (j.status === "review") return "review";
+  if (j.status === "linkwait") return "linkwait";
   if (["pending", "approved", "running"].includes(j.status)) return j.reviewRequired && j.reviewApprovedAt ? "publishing" : j.status === "pending" ? "pending" : "generating";
   return j.status; // done | failed | cancelled
 }
@@ -830,14 +840,22 @@ export async function releaseOverview() {
             reviewAt: lastRelease.reviewAt,
             reviewApprovedAt: lastRelease.reviewApprovedAt,
             redoNote: lastRelease.redoNote,
-            summary: lastRelease.status === "review" || lastRelease.status === "done" ? (maskSecrets(lastRelease.summary)?.slice(0, 2000) ?? null) : null,
+            summary: ["review", "done", "linkwait"].includes(lastRelease.status) ? (maskSecrets(lastRelease.summary)?.slice(0, 2000) ?? null) : null,
             // 검토 영상: 업로드 서버 주소(store-video)가 있으면 그것, 없으면 예전 방식(DB 조각, 관리자만 재생)
             reviewVideo: (() => {
               const sa = readStoreAssets(app?.storeAssets);
-              const rv = lastRelease.status === "review" && sa?.jobId === lastRelease.id ? sa.reviewVideo : null;
+              // 검토 대기·영상 링크 대기·완료(첫 출시 영상 내려받기)에서 쓴다
+              const rv = sa?.jobId === lastRelease.id ? sa.reviewVideo : null;
               const old = videos.get(lastRelease.id);
 
               return rv ? { size: rv.size, url: rv.url, expiresAt: null } : old ? { ...old, url: null } : null;
+            })(),
+            // 원본 영상(PC 경로). 검토 사본이 줄인 것이면 원본 위치를 알려 준다
+            originalVideo: (() => {
+              const sa = readStoreAssets(app?.storeAssets);
+              const v = sa?.jobId === lastRelease.id ? sa.video : null;
+
+              return v ? { path: v.path, size: v.size, reduced: !!sa?.reviewVideo && v.size !== null && sa.reviewVideo.size !== v.size } : null;
             })(),
             versionName: lastRelease.versionName,
             releaseNotes: lastRelease.releaseNotes,
@@ -1126,7 +1144,7 @@ const LEGACY_STAGES: Partial<Record<ReleaseKind, string[]>> = {
 };
 
 // 스토어 수정: 갱신 항목 → 단계(review·upload·homepage 는 늘 감독 프로그램이)
-const STORE_ITEM_STAGES: Record<string, string[]> = { images: ["icon", "screenshots"], video: ["video"], listing: ["listing"], privacy: ["privacy"] };
+const STORE_ITEM_STAGES: Record<string, string[]> = { images: ["icon", "screenshots"], video: ["video"], videoLink: [], listing: ["listing"], privacy: ["privacy"] };
 
 /** 이 일감이 거치는 단계. items 가 null 이면 종류의 전체 단계. review=false 면 예전(검토 없는) 일감 */
 export function releaseStages(kind: ReleaseKind, items: string[] | null, review = true): string[] {
@@ -1290,6 +1308,7 @@ export async function buildReleasePlan(
       ...scope(),
       ...(want("images") ? STORE_IMAGES : []),
       ...(want("video") ? STORE_VIDEO : []),
+      ...(want("videoLink") ? ["## 홍보 영상 링크만 반영", "- 할 일 없어요. 감독 프로그램이 통제실에 저장된 링크를 Play 등록정보 영상에 넣어요. 영상 파일을 만들지 마세요.", ""] : []),
       ...(want("listing") ? [...STORE_LISTING.slice(0, -1), "- `.factory/outbox/release.json` 에 storeListing(같은 내용, 키는 ko/en), checklist, notes 만 넣으세요(보낸 항목만 바뀌어요).", ""] : []),
       ...(want("privacy") ? ["## 단계 privacy: 개인정보처리방침 갱신", ...PRIVACY_STEPS, ""] : []),
       "## 홈페이지 프로젝트 (project.json)",
@@ -1299,7 +1318,7 @@ export async function buildReleasePlan(
       "",
       ...REVIEW_NOTE,
       "## 승인 뒤 업로드·홈페이지 (감독 프로그램이 해요. 직접 하지 마세요)",
-      "- Play 업로드 조건이 맞으면(서비스 계정 키, 패키지 이름, 최초 AAB 업로드 완료) Play Developer API 로 고른 항목만 올려요: 문구→제목·설명, 홍보 영상 링크→영상, 이미지→종류별 통째 교체.",
+      "- Play 업로드 조건이 맞으면(서비스 계정 키, 패키지 이름, 최초 AAB 업로드 완료) Play Developer API 로 고른 항목만 올려요: 문구→제목·설명, 이미지→종류별 통째 교체, '홍보 영상 링크만 반영'→저장된 링크를 영상에. '홍보 영상 만들기'는 mp4 만 만들고, 링크는 사람이 YouTube 에 올린 뒤 넣어요('영상 링크 대기').",
       `- ${projectRule}`,
       `- ${privacyRule}`,
       "",
@@ -1461,6 +1480,8 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
       // 검토 단계: required 면 감독 프로그램은 자료를 만든 뒤 검토 대기로 보고만 하고(업로드·홈페이지·완료 없음),
       // approved(사람이 [이대로 진행])일 때만 반영 단계(Play 업로드·홈페이지)를 한다. redoNote 는 [다시 만들기] 메모
       review: reviewRequired ? { required: true, approved, redoNote: approved ? null : (r?.redoNote ?? null) } : null,
+      // 이 서버는 '영상 링크 대기'(status=linkwait)를 받는다: '홍보 영상 만들기'를 고른 스토어 수정은 반영 뒤 완료 대신 링크 대기로 보고
+      videoLinkWait: kind === "store" && !!items?.includes("video"),
       // 고른 갱신 항목(store: images·listing·video·privacy, project: description·cover·privacy). null 이면 예전 일감(전부, 예전 동작)
       items,
       itemsLabel: items ? updateItemsText(kind, items) : null,
@@ -1478,7 +1499,9 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
               packageName: app?.packageName ?? null,
               serviceAccountKeyPath: acc?.serviceAccountKeyPath ?? null,
               track: PLAY_TEST_TRACK,
-              videoUrl: kind === "store" && has(items, "video") ? (app?.promoVideoUrl ?? null) : null,
+              // Play 등록정보 영상 링크: '링크만 반영'을 골랐거나 '영상 링크 대기'에서 링크를 넣은 뒤(videolink)만. 예전 일감(항목 없음)은 예전처럼
+              videoUrl:
+                kind === "store" && (items === null || items.includes("videoLink") || r?.resumeFrom === "videolink") ? (app?.promoVideoUrl ?? null) : null,
               // 앱 업데이트 출시 노트(What's new). release.json 의 releaseNotes 가 있으면 감독 프로그램이 그걸 먼저 쓴다
               releaseNotes: kind === "update" ? (r?.releaseNotes ?? null) : null,
               missing: playUploadMissing(app, acc, pcStatus?.items),
@@ -1523,6 +1546,8 @@ const ITEM_FIELDS: Record<string, ProjectField[]> = {
   description: ["title", "description", "techStack", "appLink"], // project: 설명
   images: ["coverImage"],
   cover: ["coverImage"],
+  video: [], // 홈페이지 Project 에는 영상 칸이 없다(Play 에만)
+  videoLink: [],
   privacy: ["privacyPolicy"],
 };
 
@@ -1607,6 +1632,50 @@ export async function reviewDecision(jobId: string, decision: unknown, noteIn: u
   await prisma.factoryJobLog.create({ data: { jobId, level: "info", message: logMsg } });
 
   return { ok: true, status: 200, message };
+}
+
+// ───────── 영상 링크 대기 (스토어 수정 '홍보 영상 만들기' 뒤) ─────────
+
+/**
+ * [링크 반영]: 링크(youtube.com/watch, youtu.be)를 앱에 저장하고, 감독 프로그램이 Play 등록정보 영상만 바꾸도록(videolink 단계부터, Claude 없이) 다시 대기열에 넣는다.
+ * 같은 앱의 다른 일감이 돌고 있으면 끝난 뒤에 하라고 거절한다.
+ */
+export async function applyVideoLink(jobId: string, raw: unknown): Promise<{ ok: boolean; status: number; message: string }> {
+  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { kind: true, status: true, appSlug: true } });
+
+  if (!job || job.kind !== "release") return { ok: false, status: 404, message: "없는 출시 일감이에요." };
+  if (job.status !== "linkwait") return { ok: false, status: 409, message: `영상 링크 대기가 아니에요(지금 ${job.status}).` };
+  const busy = await prisma.factoryJob.count({ where: { appSlug: job.appSlug, id: { not: jobId }, status: { in: [...ACTIVE_STATUSES] } } });
+
+  if (busy > 0) return { ok: false, status: 409, message: "같은 앱의 진행 중인 일감이 끝난 뒤에 링크를 반영하세요." };
+  const saved = await savePromoVideoUrl(job.appSlug, raw);
+
+  if (!saved.ok) return saved;
+  if (raw === null || (typeof raw === "string" && !raw.trim())) return { ok: false, status: 400, message: "YouTube 링크를 넣어 주세요." };
+  const res = await prisma.factoryJob.updateMany({
+    where: { id: jobId, status: "linkwait" },
+    data: { status: "approved", approvedAt: new Date(), resumeFrom: "videolink", resumeNote: null, attempts: 0, workerId: null, leaseUntil: null, phase: null },
+  });
+
+  if (res.count === 0) return { ok: false, status: 409, message: "이미 다른 곳에서 처리됐어요." };
+  await prisma.factoryJobLog.create({ data: { jobId, level: "info", message: "영상 링크 반영 요청" } });
+
+  return { ok: true, status: 200, message: "링크를 저장했어요. 작업 PC 가 Play 등록정보 영상만 바꾸고 일감을 완료로 닫아요." };
+}
+
+/** [영상 링크 없이 마치기]: 링크 대기 일감을 완료로 닫는다(링크는 나중에 '홍보 영상 링크만 반영'으로) */
+export async function finishWithoutVideoLink(jobId: string): Promise<{ ok: boolean; status: number; message: string }> {
+  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { kind: true, status: true, summary: true } });
+
+  if (!job || job.kind !== "release") return { ok: false, status: 404, message: "없는 출시 일감이에요." };
+  if (job.status !== "linkwait") return { ok: false, status: 409, message: `영상 링크 대기가 아니에요(지금 ${job.status}).` };
+  const summary = `${job.summary ?? ""}\n- 영상 링크 없이 마쳤어요(나중에 스토어 수정의 '홍보 영상 링크만 반영'으로 넣을 수 있어요)`.trim().slice(0, 4000);
+  const res = await prisma.factoryJob.updateMany({ where: { id: jobId, status: "linkwait" }, data: { status: "done", finishedAt: new Date(), summary, phase: "done" } });
+
+  if (res.count === 0) return { ok: false, status: 409, message: "이미 다른 곳에서 처리됐어요." };
+  await prisma.factoryJobLog.create({ data: { jobId, level: "info", message: "영상 링크 없이 마침" } });
+
+  return { ok: true, status: 200, message: "영상 링크 없이 완료로 닫았어요." };
 }
 
 // ───────── 재시도 (실패한 단계부터) ─────────

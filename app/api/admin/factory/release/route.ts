@@ -27,6 +27,8 @@ import {
   releaseOverview,
   removeAppRelease,
   requestKeyScan,
+  applyVideoLink,
+  finishWithoutVideoLink,
   retryRelease,
   reviewDecision,
   saveReleaseAccount,
@@ -68,6 +70,8 @@ async function keyTarget(body: Record<string, unknown>) {
 //       | { action: "savePromoVideo", appSlug, url }  (홍보 영상 YouTube 링크. 빈 값이면 지움)
 //       | { action: "retryRelease", jobId }  (실패한 단계부터 다시)
 //       | { action: "reviewDecision", jobId, decision: approve|redo|cancel, note? }  (검토 대기 결정. redo 는 note 필수)
+//       | { action: "videoLinkApply", jobId, url }  (영상 링크 대기: 링크 저장 → Play 등록정보 영상만 반영 → 완료)
+//       | { action: "videoLinkSkip", jobId }  (영상 링크 없이 완료로 닫기)
 //       enqueueRelease 의 kind=update(앱 업데이트)는 updateText(필수)·versionName·releaseNotes 를 함께 보낸다
 //       | { action: "setKeyPassword", keyId | accountId | appSlug, storePassword, keyPassword? }
 //       키 보관함: { action: "vaultCreate", name, keystorePath?, keyAlias?, dname?, description?, password, password2 }  (PC 가 keytool 로 만듦, 있으면 덮어쓰지 않음)
@@ -110,6 +114,8 @@ export async function POST(req: NextRequest) {
       source: "통제실 출시 패키지",
       overwriteProject: body?.overwriteProject === true,
       ...(UPDATE_ITEMS[kind] ? { updateItems: body?.updateItems } : {}),
+      // '홍보 영상 링크만 반영'의 링크(먼저 저장한다)
+      ...(kind === "store" && typeof body?.videoUrl === "string" ? { videoUrl: body.videoUrl } : {}),
       // 앱 업데이트(기능 추가) 입력
       ...(kind === "update" ? { updateText: body?.updateText, versionName: body?.versionName, releaseNotes: body?.releaseNotes } : {}),
     });
@@ -133,6 +139,11 @@ export async function POST(req: NextRequest) {
 
     if (!ID_RE.test(jobId)) return NextResponse.json({ message: "jobId 가 올바르지 않아요." }, { status: 400 });
     res = await reviewDecision(jobId, body?.decision, body?.note);
+  } else if (action === "videoLinkApply" || action === "videoLinkSkip") {
+    const jobId = typeof body?.jobId === "string" ? body.jobId : "";
+
+    if (!ID_RE.test(jobId)) return NextResponse.json({ message: "jobId 가 올바르지 않아요." }, { status: 400 });
+    res = action === "videoLinkApply" ? await applyVideoLink(jobId, body?.url ?? null) : await finishWithoutVideoLink(jobId);
   } else if (action === "retryRelease") {
     const jobId = typeof body?.jobId === "string" ? body.jobId : "";
 
@@ -170,7 +181,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         message:
-          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, reviewDecision, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
+          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, reviewDecision, videoLinkApply, videoLinkSkip, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
       },
       { status: 400 },
     );

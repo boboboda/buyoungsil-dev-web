@@ -17,7 +17,7 @@ import {
   readinessProblem,
   updateItemsText,
 } from "@/lib/factory/release";
-import { readStoreAssets } from "@/lib/factory/storeAssets";
+import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import {
   ACTIVE_STATUSES,
   APP_SLUG_RE,
@@ -246,11 +246,12 @@ export const FACTORY_TOOLS = [
         },
         updateItems: {
           type: "array",
-          items: { type: "string", enum: ["images", "listing", "video", "privacy", "description", "cover"] },
+          items: { type: "string", enum: ["images", "listing", "video", "videoLink", "privacy", "description", "cover"] },
           description:
             "store/project 만: 갱신할 항목(고른 것만 만들고·올리고·반영). store = images(아이콘·대표 이미지·폰 스크린샷), listing(제목·짧은/긴 설명), video(홍보 영상 링크), privacy(개인정보처리방침 갱신: 홈페이지 방침 덮어쓰기). " +
             "project = description(설명·기술 스택), cover(대표 이미지), privacy. 빼면 store=images·listing·video, project=description·cover(방침은 안 건드림). 빈 배열은 안 돼요",
         },
+        videoUrl: { type: "string", description: "store + updateItems 에 videoLink(홍보 영상 링크만 반영)일 때: YouTube 링크(youtube.com/watch 또는 youtu.be). 저장된 링크가 있으면 생략 가능" },
         updateText: { type: "string", description: "update 만(필수): 무엇을 추가·수정할지(수정 지시처럼 구체적으로)" },
         versionName: { type: "string", description: "update 만(선택): 새 버전 이름(예: 1.3.0). 비우면 patch +1, 버전 코드는 늘 +1" },
         releaseNotes: { type: "string", description: "update 만(선택): 출시 노트(What's new, 500자 이내). 비우면 공장이 업데이트 내용으로 초안" },
@@ -443,10 +444,21 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
     if (versionName && !/^\d+(\.\d+){1,3}([-+][0-9A-Za-z.-]+)?$/.test(versionName)) return text("버전 이름은 1.2.3 같은 형식이에요(비우면 patch +1).", true);
     releaseNotes = clean(args.releaseNotes, 500, true) || null;
   }
+  // '홍보 영상 링크만 반영': 링크가 있어야 한다(같이 보낸 링크는 먼저 저장)
+  const linkOnly = kind === "store" && items.items.includes("videoLink");
+
+  if (linkOnly && args.videoUrl !== undefined && args.videoUrl !== null && args.videoUrl !== "") {
+    const saved = await savePromoVideoUrl(appSlug, args.videoUrl);
+
+    if (!saved.ok) return text(saved.message, true);
+  }
   const o = await releaseOverview();
   const app = o.apps.find((a) => a.appSlug === appSlug);
 
   if (!app?.done) return text(`${appSlug} 는 완성된 앱이 아니에요.`, true);
+  if (linkOnly && !app.promoVideoUrl) return text("'홍보 영상 링크만 반영'은 YouTube 링크가 필요해요(videoUrl 로 보내거나 카드에서 저장).", true);
+  // 링크만 반영이면 만들 자료가 없어 Claude·검토 없이 바로 Play 반영 단계부터
+  const linkOnlyJob = linkOnly && items.items.length === 1;
   // 종류별 필요한 준비가 부족하면 등록하지 않는다(출시 카드의 체크 목록과 같다. 예전 종류 project 는 예전처럼)
   const lack = kind === "project" ? null : readinessProblem(app.readiness[kind]);
 
@@ -465,7 +477,8 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
     releaseKind: kind,
     overwriteProject,
     updateItems: items.items,
-    reviewRequired: REVIEW_KINDS.includes(kind),
+    reviewRequired: REVIEW_KINDS.includes(kind) && !linkOnlyJob,
+    resumeFrom: linkOnlyJob ? "upload" : null,
     versionName,
     releaseNotes,
     planMarkdown: plan.plan,
@@ -825,6 +838,8 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
           updateItems: kind === "release" && Array.isArray(args.updateItems) ? (args.updateItems as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 10) : [],
           // 검토 단계·앱 업데이트 입력(enqueueReleaseJob 이 확인한 값만 넘긴다)
           reviewRequired: kind === "release" && args.reviewRequired === true,
+          // 출시 일감이 처음부터 시작할 단계(enqueueReleaseJob 의 '링크만 반영'만: upload)
+          resumeFrom: kind === "release" && args.resumeFrom === "upload" ? "upload" : null,
           versionName: kind === "release" && typeof args.versionName === "string" ? args.versionName.slice(0, 40) : null,
           releaseNotes: kind === "release" && typeof args.releaseNotes === "string" ? args.releaseNotes.slice(0, 500) : null,
         },

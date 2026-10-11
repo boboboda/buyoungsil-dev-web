@@ -3,6 +3,8 @@
 // - 아이콘·대표 이미지·스크린샷(누르면 크게, [다운로드]), 문구(글자 수·[복사]), 개인정보처리방침 초안, 홍보 영상(업로드 서버 사본 재생. 예전 일감은 DB 사본: 관리자만, 결정 뒤·7일 뒤 지워짐)
 // - [✅ 이대로 진행] [🔁 다시 만들기](메모) [취소]. 승인 전에는 Play 업로드·홈페이지 반영·완료가 되지 않는다(서버·감독 프로그램 양쪽에서 막음)
 // - 앱 업데이트 완료 결과(버전 이름·코드, AAB 크기, 시험 요약, 업로드 트랙)
+// - 영상 링크 대기(스토어 수정 '홍보 영상 만들기' 뒤): [영상 내려받기] → YouTube 에 올린 뒤 링크 [링크 반영] 또는 [영상 링크 없이 마치기]
+// - 첫 출시 완료 뒤: [영상 내려받기]와 링크 안내(첫 출시는 Play API 를 쓰지 않음), 링크 저장
 "use client";
 
 import { useState } from "react";
@@ -121,6 +123,103 @@ export function ImageGallery({ assets }: { assets: StoreAssets }) {
 }
 
 const fmt = (v: string | null | undefined) => (v ? new Date(v).toLocaleString("ko-KR") : "-");
+const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
+// youtube.com/watch?v=… 또는 youtu.be/… (서버가 한 번 더 확인)
+export const isYoutubeUrl = (v: string) => /^https?:\/\/((www\.|m\.)?youtube\.com\/watch\?(.*&)?v=[A-Za-z0-9_-]{11}|youtu\.be\/[A-Za-z0-9_-]{11})/.test(v.trim());
+const YT_GUIDE = "YouTube 에 올린 뒤 링크를 붙여 넣으세요(공개 또는 일부 공개, 퍼가기 허용, 광고 끔).";
+
+/** [영상 내려받기](업로드 서버의 검토용 사본) + 원본 위치 */
+export function VideoDownload({ job }: { job: ReleaseJobInfo }) {
+  const src = job.reviewVideo ? (job.reviewVideo.url ?? `/api/admin/factory/review-video/${job.id}`) : null;
+
+  return (
+    <div className="space-y-1 text-xs">
+      {src ? (
+        <a className="inline-block rounded-lg bg-primary-100 px-3 py-2 text-sm text-primary-700" download href={src} rel="noopener noreferrer" target="_blank">
+          ⬇️ 영상 내려받기 ({fmtSize(job.reviewVideo?.size)})
+        </a>
+      ) : (
+        <span className="text-default-500">통제실에 올라간 영상 사본이 없어요.</span>
+      )}
+      {job.originalVideo && (job.originalVideo.reduced || !src) && (
+        <div className="text-default-600">
+          {job.originalVideo.reduced ? "줄여서 올린 사본이에요. " : ""}원본은 PC 의 <code className="break-all">{job.originalVideo.path}</code> 에 있어요(
+          {fmtSize(job.originalVideo.size)}).
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 영상 링크 대기: 내려받기 → YouTube → [링크 반영] / [영상 링크 없이 마치기] */
+export function LinkWaitPanel({
+  app,
+  job,
+  busy,
+  onApply,
+  onSkip,
+}: {
+  app: ReleaseApp;
+  job: ReleaseJobInfo;
+  busy: boolean;
+  onApply: (url: string) => void;
+  onSkip: () => void;
+}) {
+  const [url, setUrl] = useState(app.promoVideoUrl ?? "");
+  const valid = isYoutubeUrl(url);
+
+  return (
+    <div className="space-y-2 rounded-lg border-2 border-warning-300 bg-warning-50 p-3 text-sm dark:bg-warning-50/10">
+      <div className="font-semibold">🎬 영상 링크 대기</div>
+      <p className="text-xs text-default-600">
+        이미지·문구는 Play 에 반영했어요. 홍보 영상을 내려받아 YouTube 에 올리고 링크를 넣으면 Play 등록정보 영상만 바꾸고 완료로 닫아요. 며칠 두어도 사라지지
+        않고, 다른 일감도 막지 않아요.
+      </p>
+      <VideoDownload job={job} />
+      <p className="text-xs">{YT_GUIDE}</p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <input className={`${input} sm:flex-1`} placeholder="예: https://youtu.be/…" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <Button className="min-h-11 sm:min-h-0" color="warning" isDisabled={busy || !valid} size="sm" onPress={() => onApply(url.trim())}>
+          링크 반영
+        </Button>
+        <Button
+          className="min-h-11 sm:min-h-0"
+          isDisabled={busy}
+          size="sm"
+          variant="light"
+          onPress={() => window.confirm("영상 링크 없이 이 일감을 완료로 닫을까요? 링크는 나중에 '홍보 영상 링크만 반영'으로 넣을 수 있어요.") && onSkip()}
+        >
+          영상 링크 없이 마치기
+        </Button>
+      </div>
+      {url.trim() && !valid && <p className="text-xs text-danger">YouTube 링크(youtube.com/watch?v=… 또는 youtu.be/…)만 넣을 수 있어요.</p>}
+    </div>
+  );
+}
+
+/** 첫 출시 완료 뒤 영상: 내려받기와 링크 안내(Play API 를 쓰지 않음), 링크는 저장만(나중에 스토어 수정에서 씀) */
+export function FirstVideoPanel({ app, job, busy, onSave }: { app: ReleaseApp; job: ReleaseJobInfo; busy: boolean; onSave: (url: string) => void }) {
+  const [url, setUrl] = useState(app.promoVideoUrl ?? "");
+  const valid = !url.trim() || isYoutubeUrl(url);
+
+  if (!job.reviewVideo && !job.originalVideo) return null;
+
+  return (
+    <div className="space-y-2 rounded-lg border border-default-200 p-2 text-sm">
+      <div className="font-medium">🎬 홍보 영상</div>
+      <VideoDownload job={job} />
+      <p className="text-xs text-default-600">
+        {YT_GUIDE} 링크는 Play Console 에 직접 입력하거나, 첫 업로드 뒤 스토어 수정의 &apos;홍보 영상 링크만 반영&apos;으로 넣으세요.
+      </p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <input className={`${input} sm:flex-1`} placeholder="예: https://youtu.be/…" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <Button className="min-h-11 sm:min-h-0" isDisabled={busy || !valid || url.trim() === (app.promoVideoUrl ?? "")} size="sm" variant="flat" onPress={() => onSave(url.trim())}>
+          링크 저장
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /** 검토 대기 화면 */
 export function ReviewPanel({
@@ -195,6 +294,12 @@ export function ReviewPanel({
           </p>
         ) : (
           <p className="text-xs text-default-500">영상이 없어요.</p>
+        )}
+        {(job.reviewVideo || job.originalVideo) && (
+          <>
+            <VideoDownload job={job} />
+            {!isFirst && <p className="text-xs text-default-500">[이대로 진행] 뒤 &apos;영상 링크 대기&apos;에서 YouTube 링크를 넣으면 Play 등록정보 영상에 반영돼요.</p>}
+          </>
         )}
       </section>
 

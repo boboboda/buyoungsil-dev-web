@@ -621,10 +621,12 @@ async function runJob(job) {
     addLog(st, "info", `출시 일감 종류: ${rel.kindLabel ?? rel.kind}${rel.resumeFrom ? ` · 재시도: '${rel.resumeFrom}' 단계부터` : ""}`);
     // 검토 승인 뒤 반영·업로드·홈페이지 반영 단계만 다시, 검토 자료만 다시 올리기: Claude 없이 감독 프로그램이 한다(남아 있던 outbox·스토어 자료로).
     // 검토가 필요한데 승인 전이면 finishRelease 가 검토 대기로만 보낸다(업로드하지 않음)
-    if (["homepage", "upload", "review"].includes(rel.resumeFrom)) {
+    if (["homepage", "upload", "review", "videolink"].includes(rel.resumeFrom)) {
       try {
         const what =
-          rel.review?.required && rel.review.approved && rel.resumeFrom !== "review"
+          rel.resumeFrom === "videolink"
+            ? "YouTube 링크를 Play 등록정보 영상에 넣었어요"
+            : rel.review?.required && rel.review.approved && rel.resumeFrom !== "review"
             ? `검토 승인 뒤 ${rel.resumeFrom === "upload" ? "Play 업로드·홈페이지 반영" : "홈페이지 반영"}을 했어요`
             : rel.resumeFrom === "review"
               ? "검토 자료를 다시 올렸어요"
@@ -899,6 +901,7 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
     }
   }
   if (review && review.approved !== true) return reviewHandoff(st, { summary, lines, items });
+  if (kind === "store" && from === "videolink") return finishVideoLink(st, { summary });
   if (review) lines.push("검토 승인됨([이대로 진행])");
 
   // 앱 업데이트: 서명 AAB 가 있어야 한다. 빌드 결과(시험 요약 포함)는 release.json 을 보내기 전에 읽어 둔다
@@ -930,7 +933,12 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
   if (from !== "homepage") {
     if (kind === "store") {
       const missing = playMissing(job.release?.play);
-      const playItems = items ? items.filter((i) => ["images", "listing", "video"].includes(i)) : null;
+      // Play 에 올릴 것: 이미지·문구, '홍보 영상 링크만 반영'(→ 영상 링크). '홍보 영상 만들기'는 링크가 아직 없어 여기서 Play 를 건드리지 않는다(영상 링크 대기)
+      // (예전 서버는 videoLinkWait 를 주지 않는다: 그때 video 는 예전 뜻 '저장된 링크를 영상에')
+      const oldVideo = job.release.videoLinkWait === undefined;
+      const playItems = items
+        ? items.filter((i) => ["images", "listing", "videoLink", ...(oldVideo ? ["video"] : [])].includes(i)).map((i) => (i === "videoLink" ? "video" : i))
+        : null;
       if (playItems && playItems.length === 0) {
         check.stages.upload = { status: "skipped", note: "Play 에 올릴 항목(이미지·문구·홍보 영상 링크)을 고르지 않아서 Play 는 건드리지 않았어요" };
       } else if (missing.length) {
@@ -939,7 +947,7 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
       } else {
         setPhase(st, "upload");
         try {
-          const r = await playUploadStore({ play: job.release.play, check, items, log: (m) => addLog(st, "info", m) });
+          const r = await playUploadStore({ play: job.release.play, check, items: playItems, log: (m) => addLog(st, "info", m) });
           const note =
             `Play 등록정보(${r.langs.join(", ") || "언어 없음"})${r.listing === false ? "" : " 문구"}${r.video ? "·영상 링크" : ""}` +
             (r.imageTypes.length ? `, 이미지 ${r.imageTypes.join("·")} 교체` : "") +
@@ -1001,8 +1009,50 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
     );
     lines.push("스토어 문구·이미지는 출시 카드에서 [복사]·[다운로드]해 Console 에 넣으세요. 이후 Play 반영은 '스토어 수정'으로 할 수 있어요.");
   }
+  if (kind === "first" && review && sentRelease(dir, job.id) && fs.existsSync(path.join(dir, ".factory", "store", "promo.mp4"))) {
+    lines.push("홍보 영상: 출시 카드에서 [영상 내려받기]로 받아 YouTube 에 올리세요. 링크는 Console 에 직접 넣거나, 첫 업로드 뒤 스토어 수정의 '홍보 영상 링크만 반영'으로 넣어요.");
+  }
+  // '홍보 영상 만들기'를 고른 스토어 수정: 이미지·문구는 반영했고, 영상은 사람이 YouTube 에 올린 링크를 기다린다(서버가 받는 경우만)
+  const waitLink = kind === "store" && items?.includes("video") && job.release.videoLinkWait === true && !!check?.video;
+  if (waitLink) {
+    lines.push("🎬 영상 링크 대기: 출시 카드에서 [영상 내려받기] → YouTube 에 올린 뒤 링크를 붙여 넣으면 Play 등록정보 영상에 반영해요(링크 없이 마칠 수도 있어요).");
+  } else if (kind === "store" && items?.includes("video") && !check?.video) {
+    lines.push("홍보 영상: 만들지 못해 링크 대기 없이 마쳐요(영상 단계 결과 참고).");
+  }
   const extra = lines.length ? `\n${lines.map((l) => `- ${l}`).join("\n")}` : "";
-  await finish(st, "done", { summary: (summary + extra).slice(0, 3900) + (committed ? " (앱 폴더에 커밋함)" : ""), ...(build ? { build } : {}) });
+  await finish(st, waitLink ? "linkwait" : "done", { summary: (summary + extra).slice(0, 3900) + (committed ? " (앱 폴더에 커밋함)" : ""), ...(build ? { build } : {}) });
+}
+
+// 영상 링크 대기 뒤 [링크 반영]: Play 등록정보 영상 필드만 바꾼다(이미 올린 이미지·문구는 건드리지 않음). 홈페이지 Project 에는 영상 칸이 없다
+async function finishVideoLink(st, { summary }) {
+  const { job, dir } = st;
+  const play = job.release?.play;
+  const lines = [];
+  const missing = playMissing(play);
+  if (!play?.videoUrl) {
+    return finish(st, "failed", { failReason: "저장된 YouTube 링크가 없어요. 카드에서 링크를 넣고 다시 [링크 반영]을 누르세요.", failStage: "videolink" });
+  }
+  if (missing.length) {
+    commitResult(dir, job);
+    return finish(st, "failed", { failReason: `Play 업로드를 할 수 없어요 - 부족한 것: ${missing.join(" / ")}`.slice(0, 1800), failStage: "videolink" });
+  }
+  setPhase(st, "upload");
+  try {
+    // 빈 검사 결과로 '영상만' 올린다(문구·이미지 없음)
+    const empty = { images: {}, shots: [], stages: {}, listing: null };
+    const r = await playUploadStore({ play, check: empty, items: ["video"], log: (m) => addLog(st, "info", m) });
+    const note =
+      `Play 등록정보(${r.langs.join(", ") || "언어 없음"}) 영상 링크만 바꿔 커밋함` +
+      (r.changesNotSentForReview ? ". Console 에서 '검토를 위해 변경사항 보내기'를 직접 눌러야 해요" : "");
+    await postStoreAssets(st, { upload: { ok: true, note, editId: r.editId, changesNotSentForReview: r.changesNotSentForReview } });
+    lines.push(`영상 링크 반영 ✅ ${note}`);
+  } catch (e) {
+    const reason = st.redact(e.message);
+    await postStoreAssets(st, { upload: { ok: false, note: `영상 링크: ${reason}` } });
+    return finish(st, "failed", { failReason: `Play 영상 링크 반영 실패: ${reason}`.slice(0, 1800), failStage: "videolink" });
+  }
+  if (job.release?.overwriteProject) lines.push("홈페이지 프로젝트에는 영상 칸이 없어 Play 에만 반영했어요");
+  await finish(st, "done", { summary: `${summary}\n${lines.map((l) => `- ${l}`).join("\n")}`.slice(0, 3900) });
 }
 
 // ───────────── 대기열 확인 ─────────────

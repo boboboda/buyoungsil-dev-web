@@ -115,7 +115,7 @@ export interface ReleaseJobInfo {
   overwriteProject: boolean;
   updateItems: string[] | null; // 고른 갱신 항목(null: 예전 일감·첫 출시)
   updateItemsText: string | null;
-  // 카드 표시 상태: pending | generating(생성 중) | review(검토 대기) | publishing(반영 중) | done | failed | cancelled
+  // 카드 표시 상태: pending | generating(생성 중) | review(검토 대기) | publishing(반영 중) | linkwait(영상 링크 대기) | done | failed | cancelled
   state: string;
   reviewRequired: boolean;
   reviewAt: string | null;
@@ -124,6 +124,7 @@ export interface ReleaseJobInfo {
   summary: string | null; // 검토 대기·완료일 때 결과 요약(비밀번호 가림)
   // 통제실에서 재생할 검토 영상: url 이 있으면 업로드 서버 주소(지워지지 않음), 없으면 예전 방식(DB, 관리자만·결정 뒤·7일 뒤 삭제)
   reviewVideo: { size: number; url: string | null; expiresAt: string | null } | null;
+  originalVideo: { path: string; size: number | null; reduced: boolean } | null; // 원본 영상(PC). reduced 면 검토 사본은 줄인 것
   versionName: string | null; // 앱 업데이트 입력
   releaseNotes: string | null;
   buildResult: BuildResult | null;
