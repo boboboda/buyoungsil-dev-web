@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { parseDraftInput } from "@/lib/drafts/validate";
 import { MAX_SUB_NAME, cleanSubName, normalizeName } from "@/lib/drafts/subCategory";
 import { FACTORY_INSTRUCTIONS, FACTORY_TOOLS, callFactoryTool, isFactoryTool } from "@/lib/factory/mcp";
+import { MAINTENANCE_INSTRUCTIONS, MAINTENANCE_TOOLS, callMaintenanceTool, isMaintenanceTool } from "@/lib/factory/maintenance-mcp";
 
 const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_PENDING = 100; // 초안함이 이 개수를 넘으면 더 받지 않는다 (폭주 방지)
@@ -15,7 +16,8 @@ const MAX_SUB_PER_SECTION = 15; // 섹션당 세부 카테고리 상한 (난립 
 const INSTRUCTIONS =
   "부영실 개발 홈페이지의 초안함 커넥터예요. save_draft 로 글 초안을 보내면 관리자 초안함에 '대기' 상태로 쌓이고, " +
   "관리자가 분류를 정해 비공개 글로 보내요. 보내기 전에 list_categories 로 실제 섹션/카테고리 이름을 확인하세요." +
-  FACTORY_INSTRUCTIONS;
+  FACTORY_INSTRUCTIONS +
+  MAINTENANCE_INSTRUCTIONS;
 
 type JsonRpcRequest = {
   jsonrpc?: string;
@@ -90,10 +92,11 @@ const DRAFT_TOOLS = [
   },
 ];
 
-export const TOOLS = [...DRAFT_TOOLS, ...FACTORY_TOOLS];
+export const TOOLS = [...DRAFT_TOOLS, ...FACTORY_TOOLS, ...MAINTENANCE_TOOLS];
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
   if (isFactoryTool(name)) return callFactoryTool(name, args);
+  if (isMaintenanceTool(name)) return callMaintenanceTool(name, args); // 공장 정비(앱 일감과 따로)
 
   if (name === "list_categories") {
     const [cats, subs] = await Promise.all([

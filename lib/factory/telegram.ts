@@ -9,6 +9,7 @@
 //   FACTORY_PUBLIC_URL        (선택) 통제실 주소의 기본값은 https://www.buyoungsilcoding.com
 import prisma from "@/lib/prisma";
 import { ID_RE, KIND_LABELS, adminAction } from "@/lib/factory/jobs";
+import { approveTurn, requestDeploy } from "@/lib/factory/maintenance";
 
 const API_TIMEOUT_MS = 5000;
 const MAX_BUTTON_AGE_SEC = 24 * 60 * 60; // 24시간이 지난 알림의 버튼은 무시한다
@@ -134,6 +135,43 @@ export async function notifyText(text: string, path = "/admin/factory/release"):
   }
 }
 
+export type MaintenanceEvent = "approval" | "done" | "failed" | "deployed" | "deploy_failed";
+
+// 공장 정비 알림. 지시·결과 본문은 짧게만 싣는다. 승인([정비 승인])·[배포] 버튼은 승인 버튼을 켰을 때만 붙인다. 절대 던지지 않는다.
+export async function notifyMaintenance(event: MaintenanceEvent, threadId: string, turnId?: string): Promise<void> {
+  try {
+    if (!token() || !chatId()) return;
+    const t = await prisma.factoryMaintenance.findUnique({ where: { id: threadId } });
+
+    if (!t) return;
+    const last = await prisma.factoryMaintenanceMessage.findFirst({
+      where: { maintenanceId: threadId, role: event === "approval" ? "user" : "assistant" },
+      orderBy: { createdAt: "desc" },
+    });
+    const head = {
+      approval: "🛠 정비 지시 승인 대기",
+      done: "🛠 정비 완료",
+      failed: "🛠 정비 실패",
+      deployed: "🚀 정비 배포 완료",
+      deploy_failed: "🚀 정비 배포 실패",
+    }[event];
+    const body = event === "deployed" || event === "deploy_failed" ? cut(t.deployResult, 200) : cut(last?.text, 300);
+    const row: Record<string, string>[] = [{ text: "통제실 열기", url: `${publicUrl()}/admin/factory` }];
+
+    if (approveEnabled() && secret()) {
+      if (event === "approval" && turnId) row.unshift({ text: "✅ 정비 승인", callback_data: `ma:${turnId}` });
+      if (event === "done" && t.needsDeploy && t.pushedCommit) row.unshift({ text: "🚀 배포", callback_data: `md:${threadId}` });
+    }
+    await tg("sendMessage", {
+      chat_id: chatId(),
+      text: `${head}\n${t.title}${event === "done" && t.needsDeploy ? "\n(서버 코드가 바뀌어 배포가 필요해요)" : ""}\n${body}`.slice(0, 900),
+      reply_markup: { inline_keyboard: [row] },
+    });
+  } catch {
+    console.error("[telegram] 정비 알림 처리 실패");
+  }
+}
+
 // 길이가 같으면 끝까지 비교해서 틀린 위치로 시간 차이가 나지 않게 한다.
 const same = (a: string, b: string) => {
   if (a.length !== b.length) return false;
@@ -197,6 +235,31 @@ export async function handleUpdate(update: Update): Promise<void> {
 
   if (!approveEnabled()) {
     await answer("승인 버튼이 꺼져 있어요. 통제실에서 승인하세요.");
+
+    return;
+  }
+
+  // 공장 정비 버튼: ma:<지시 id> 승인, md:<정비 id> 배포
+  const mm = /^m([ad]):([A-Za-z0-9_-]{1,40})$/.exec(cq.data ?? "");
+
+  if (mm && ID_RE.test(mm[2])) {
+    const age = Math.floor(Date.now() / 1000) - (cq.message?.date ?? 0);
+
+    if (!cq.message?.date || age > MAX_BUTTON_AGE_SEC) {
+      await answer("오래된 알림이라 처리할 수 없어요. 통제실에서 하세요.");
+
+      return;
+    }
+    const r = mm[1] === "a" ? await approveTurn(mm[2]) : await requestDeploy(mm[2]);
+
+    await answer(r.message.slice(0, 190));
+    if (r.ok && cq.message?.message_id !== undefined) {
+      await tg("editMessageReplyMarkup", {
+        chat_id: chatId(),
+        message_id: cq.message.message_id,
+        reply_markup: { inline_keyboard: [[{ text: "통제실 열기", url: `${publicUrl()}/admin/factory` }]] },
+      });
+    }
 
     return;
   }

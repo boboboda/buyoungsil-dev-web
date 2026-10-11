@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody } from "@heroui/react";
 
+import MaintenancePanel from "./MaintenancePanel";
+
 interface State {
   enabled: boolean;
   autoUpdate: boolean;
@@ -197,6 +199,7 @@ export default function SupervisorControl() {
           </div>
         )}
         {notice && <p className="text-sm text-default-600">{notice}</p>}
+        <MaintenancePanel />
       </CardBody>
     </Card>
   );

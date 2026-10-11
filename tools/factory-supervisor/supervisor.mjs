@@ -15,6 +15,7 @@ import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard } from "./update.mjs";
 import { releaseRules, reportPcPaths, sendOutbox } from "./release.mjs";
+import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -38,6 +39,8 @@ const DEFAULTS = {
   permissionMode: "acceptEdits",
   allowedTools: "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
   model: "",
+  selfdevDir: "~/dev/factory/selfdev", // 공장 정비 전용 체크아웃
+  deployRemote: "serverpc:git-server/repo/developWeb.git", // 정비 [배포] 때 push 할 서버 배포 저장소(고정)
 };
 
 const stamp = () => new Date().toLocaleTimeString("ko-KR", { hour12: false });
@@ -643,7 +646,7 @@ async function loop() {
   let delay = cfg.pollSec * 1000;
   while (!shuttingDown) {
     try {
-      maybeUpdate({ running: running.size, autoUpdate }); // 일감이 없을 때만 10분마다. 받으면 여기서 exit(0)
+      maybeUpdate({ running: running.size + (maintenanceBusy() ? 1 : 0), autoUpdate }); // 일감·정비가 없을 때만 10분마다. 받으면 여기서 exit(0)
     } catch (e) {
       log(`자동 업데이트 확인 중 오류: ${e.message}`);
     }
@@ -661,6 +664,8 @@ async function loop() {
           autoUpdate = r.data?.autoUpdate !== false;
           if (r.data?.updateNow === true) requestUpdateNow(); // 1회성 "지금 업데이트": 다음 루프에서 바로 확인
           reportPcPaths(r.data?.pcPaths, api, log).catch(() => {}); // 배포 계정 키 파일이 있는지만 알린다
+          // 공장 정비 지시·[배포] 요청(앱 일감과 따로. 정비는 돌던 앱 일감이 없을 때만 시작)
+          onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow });
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
           if (nowPaused !== paused) {
