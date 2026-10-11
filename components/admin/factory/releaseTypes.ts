@@ -11,9 +11,37 @@ export interface ReleaseAccount {
   keystorePath: string | null;
   keyAlias: string | null;
   serviceAccountKeyPath: string | null;
+  developerAccountId: string | null;
+  accountType: string | null; // personal | organization
+  loginEmail: string | null;
+  playConsoleUrl: string | null;
   notes: string | null;
   secretNames: { keystore: string; key: string };
   secretNamesRegistered: boolean;
+  keyPassword: KeyPasswordState | null; // 공용 키 비밀번호 등록 상태(키 경로가 없으면 null)
+}
+
+// none: 미등록, waiting: 서버에 암호화 보관 중(PC 가져가기 대기), delivered: PC secrets.env 에 저장됨(서버 값 삭제)
+export type KeyPasswordState = "none" | "waiting" | "delivered";
+
+export interface KeyScanApp {
+  appSlug: string;
+  keys: { path: string; type: string; aliases: { alias: string; sha1: string | null }[]; gitTracked: boolean | null; note?: string | null }[];
+  keyProperties: { path: string; storeFile: string | null; keyAlias: string | null; gitTracked: boolean | null }[];
+}
+
+export interface ReleaseJobInfo {
+  id: string;
+  status: string;
+  finishedAt: string | null;
+  releaseKind: string;
+  phase: string | null;
+  phaseLabel: string;
+  failStage: string | null;
+  failStageLabel: string | null;
+  failReason: string | null;
+  resumeFrom: string | null;
+  logs: { at: string; level: string; message: string }[];
 }
 
 export interface PcPathItem {
@@ -40,14 +68,20 @@ export interface ReleaseApp {
   releasePackageAt: string | null;
   releasePackageJob: string | null;
   aab: { path: string; size: number | null; versionName: string | null; versionCode: number | null; builtAt: string | null } | null;
-  lastReleaseJob: { id: string; status: string; finishedAt: string | null } | null;
+  customKeystorePath: string | null;
+  customKeyAlias: string | null;
+  key: { source: "custom" | "account"; path: string; alias: string; password: KeyPasswordState } | null;
+  keyScan: KeyScanApp | null;
+  lastReleaseJob: ReleaseJobInfo | null;
 }
 
 export interface ReleaseOverview {
   statuses: { value: string; label: string }[];
+  kinds: { value: string; label: string }[];
   testingDays: number;
   accounts: ReleaseAccount[];
   pcStatus: { at: string; items: PcPathItem[] } | null;
+  keyScan: { at: string | null; apps: KeyScanApp[]; requestedAt: string | null };
   apps: ReleaseApp[];
   message?: string;
 }
@@ -71,3 +105,9 @@ export const fmtDate = (v: string | null | undefined) =>
 
 export const fmtSize = (n: number | null | undefined) =>
   n == null ? "-" : n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.round(n / 1024)}KB`;
+
+export const KEY_PASSWORD_TEXT: Record<KeyPasswordState, string> = {
+  none: "비밀번호 미등록",
+  waiting: "비밀번호 등록됨 (작업 PC 가 가져가기 대기 중)",
+  delivered: "비밀번호 등록됨 (작업 PC 에 저장 완료)",
+};
