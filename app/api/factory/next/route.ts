@@ -14,6 +14,7 @@
 //   배포 계정의 키 파일 경로가 등록돼 있으면 pcPaths: [{ key, path }] 가 붙는다. 감독 프로그램은 "있는지"만 확인해 /api/factory/pc-status 로 알린다.
 //   통제실에서 키 비밀번호를 등록했고 아직 안 가져갔으면 keyPasswordsPending: true(값은 /api/factory/key-passwords 에서 따로).
 //   통제실 [키 점검]을 누르면 다음 응답 한 번에 keyScan: true 가 붙는다(결과는 /api/factory/key-report).
+//   출시 카드 [키 조회](앱 하나)면 keyScan: true 와 keyScanApps: [appSlug] 가 함께 붙는다(감독 프로그램은 그 앱만 점검. 예전 감독 프로그램은 전체 점검).
 //   출시 일감(kind=release)에는 release: { kind, stages, outbox, resumeFrom, resumeNote, key } 가 붙는다(lib/factory/release.ts releaseJobExtras).
 //   만료된 running 을 먼저 정리하고, approved 중 우선순위 높은 순으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 import { NextRequest, NextResponse } from "next/server";
@@ -61,6 +62,7 @@ export async function GET(req: NextRequest) {
       ...(pcPaths.length ? { pcPaths } : {}),
       ...(keyPw ? { keyPasswordsPending: true } : {}),
       ...(keyScan ? { keyScan: true } : {}),
+      ...(Array.isArray(keyScan) ? { keyScanApps: keyScan } : {}),
       ...maint,
     };
 

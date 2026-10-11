@@ -98,19 +98,22 @@ export function readStoreAssets(v: unknown): StoreAssets | null {
 
 type FoundJob =
   | { error: { status: number; message: string }; job?: undefined }
-  | { error?: undefined; job: { id: string; appSlug: string; releaseKind: "first" | "store" | "project" } };
+  | { error?: undefined; job: { id: string; appSlug: string; releaseKind: "first" | "store" | "project"; images: boolean } };
 const refuse = (status: number, message: string): FoundJob => ({ error: { status, message } });
 
 // 감독 프로그램이 보낼 수 있는 일감인지: 실행 중인 출시 일감이어야 하고, 이미지·자료는 '스토어 자료 수정' 일감만
 async function runningReleaseJob(jobId: unknown): Promise<FoundJob> {
   if (typeof jobId !== "string" || !/^[A-Za-z0-9_-]{1,40}$/.test(jobId)) return refuse(400, "jobId 가 올바르지 않아요.");
-  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { id: true, appSlug: true, kind: true, status: true, releaseKind: true } });
+  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { id: true, appSlug: true, kind: true, status: true, releaseKind: true, updateItems: true } });
 
   if (!job) return refuse(404, "없는 지시입니다.");
   if (job.kind !== "release") return refuse(400, "출시 일감만 보낼 수 있어요.");
   if (job.status !== "running") return refuse(409, `지시가 실행 중이 아닙니다(${job.status}).`);
 
-  return { job: { id: job.id, appSlug: job.appSlug, releaseKind: releaseKindOf(job.releaseKind) } };
+  // images: '이미지'를 고른 일감인지(갱신 항목이 없는 예전 일감은 true)
+  const images = job.updateItems.length === 0 || job.updateItems.includes("images");
+
+  return { job: { id: job.id, appSlug: job.appSlug, releaseKind: releaseKindOf(job.releaseKind), images } };
 }
 
 // 같은 일감이면 이어서 합치고, 새 일감이면 새로 시작한다(이전 일감의 올린 이미지 URL 은 남긴다: 홈페이지 cover 로 쓰고 있을 수 있음)
@@ -184,7 +187,7 @@ export async function receiveStoreReport(body: Record<string, unknown>): Promise
       next.stages[k as (typeof STORE_STAGES)[number]] = { status: s.status as StoreStage["status"], note: text(s.note, 1000) };
     }
   }
-  if (body.images && typeof body.images === "object") {
+  if (body.images && typeof body.images === "object" && job.images) {
     // 이번 일감에서 확인한 이미지 칸만 남긴다(사라진 스크린샷 칸은 지움). URL 은 이미 올린 것을 유지
     const images: Record<string, StoreImage> = {};
 
@@ -247,6 +250,7 @@ export async function storeImageJob(jobId: unknown): Promise<FoundJob> {
 
   if (found.error) return found;
   if (found.job.releaseKind !== "store") return refuse(400, "스토어 자료 수정 일감만 스토어 이미지를 올릴 수 있어요.");
+  if (!found.job.images) return refuse(400, "이 일감은 '이미지' 갱신을 고르지 않아서 스토어 이미지를 올릴 수 없어요.");
 
   return found;
 }

@@ -5,6 +5,8 @@
 // 출시 일감 진행 단계, 실패 단계·이유·최근 로그(서버가 비밀번호를 가림), 실패한 단계부터 [재시도].
 // 2단계: 홍보 영상 링크(YouTube, 앱별), 스토어 자료·Play 업로드 결과, Play 업로드에 모자란 것,
 // 스토어 자료 수정·프로젝트 업데이트 승인 때 '홈페이지 프로젝트도 덮어쓰기'(기본 꺼짐, 개인정보처리방침 제외).
+// 스토어 자료 수정·프로젝트 업데이트는 승인 전에 갱신할 항목을 고른다(1개 이상. 고른 것만 만들고·올리고·반영).
+// 앱마다 [🔑 키 조회]: 그 앱 폴더 하나만 키 점검(결과는 카드에), 앱 자체 키를 '다른 키 사용'에 채우기.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -12,7 +14,7 @@ import { Button, Card, CardBody, CardHeader, Chip } from "@heroui/react";
 
 import Field from "./Field";
 import KeyPasswordForm from "./KeyPasswordForm";
-import KeyScanTable from "./KeyScanTable";
+import AppKeyLookup from "./AppKeyLookup";
 import StoreAssetsView from "./StoreAssetsView";
 import { fmtDate, fmtSize, postRelease, type ReleaseApp, type ReleaseJobInfo, type ReleaseOverview } from "./releaseTypes";
 
@@ -91,8 +93,8 @@ const REMOVE_CONFIRM = "출시 패키지 목록에서 지울까요? 앱 소스�
 const KIND_HELP: Record<string, string> = {
   first: "키 준비 → AAB 빌드·서명 → 스토어 문구·체크리스트 → 홈페이지 프로젝트 빈 칸 채우기",
   store:
-    "아이콘·대표 이미지(코드 생성) → 스크린샷(에뮬레이터) → 홍보 영상(HyperFrames, PC 에만) → 문구 → (조건이 맞으면) Play 등록정보·이미지 업로드 → 홈페이지 반영",
-  project: "홈페이지 프로젝트 정보만 갱신해요. AAB·Play 업로드는 하지 않아요",
+    "고른 항목만: 이미지(아이콘·대표 이미지·스크린샷) / 문구 / 홍보 영상 / 개인정보처리방침 → (조건이 맞으면) Play 등록정보·이미지 업로드 → 홈페이지 반영",
+  project: "홈페이지 프로젝트 정보 중 고른 항목만 갱신해요. AAB·Play 업로드는 하지 않아요",
 };
 
 const JOB_STATUS: Record<string, string> = {
@@ -112,7 +114,9 @@ function JobStatus({ job, kinds, busy, onRetry }: { job: ReleaseJobInfo; kinds: 
   return (
     <div className={`space-y-1 rounded-lg border p-2 text-sm ${failed ? "border-danger-200 bg-danger-50 dark:bg-danger-50/10" : "border-default-200"}`}>
       <div>
-        최근 출시 일감({kind}{job.overwriteProject ? " · 홈페이지 덮어쓰기" : ""}): <b>{JOB_STATUS[job.status] ?? job.status}</b>
+        최근 출시 일감({kind}
+        {job.updateItemsText ? ` · 갱신: ${job.updateItemsText}` : ""}
+        {job.overwriteProject ? " · 홈페이지 덮어쓰기" : ""}): <b>{JOB_STATUS[job.status] ?? job.status}</b>
         {job.status === "running" && job.phase ? ` · 현재 단계: ${job.phaseLabel}` : ""}
         {job.finishedAt ? ` · ${new Date(job.finishedAt).toLocaleString("ko-KR")}` : ""}
       </div>
@@ -161,6 +165,11 @@ function AppRow({
   // 패키지가 이미 있으면 보통 고치는 일이라 스토어 자료 수정을 먼저 보여 준다
   const [kind, setKind] = useState(app.releasePackage ? "store" : "first");
   const [overwrite, setOverwrite] = useState(false);
+  // 갱신 항목(스토어 자료 수정·프로젝트 업데이트). 종류를 바꾸면 비운다
+  const [items, setItems] = useState<string[]>([]);
+  const [keyOpen, setKeyOpen] = useState(!!app.customKeystorePath);
+  const kindItems = data.kinds.find((k) => k.value === kind)?.items ?? [];
+  const needItems = kindItems.length > 0 && items.length === 0;
   const [video, setVideo] = useState(app.promoVideoUrl ?? "");
   const canOverwrite = data.kinds.find((k) => k.value === kind)?.canOverwrite ?? false;
   const [busy, setBusy] = useState(false);
@@ -231,7 +240,23 @@ function AppRow({
           <input checked={first} type="checkbox" onChange={(e) => setFirst(e.target.checked)} />
           최초 AAB 를 Play Console 에 직접 올렸어요(이후 첫 출시 일감이 비공개 테스트 트랙에 자동 업로드)
         </label>
-        <details className="rounded-lg border border-default-200 p-2 text-sm" open={!!app.customKeystorePath}>
+        <AppKeyLookup
+          busy={busy}
+          request={app.keyScanRequest}
+          scan={app.keyScan}
+          onLookup={() => call({ action: "requestKeyScan", appSlug: app.appSlug })}
+          onUseKey={(path, alias) => {
+            setCustomPath(path);
+            setCustomAlias(alias);
+            setKeyOpen(true);
+            setNotice("'다른 키 경로'·'키 별칭'을 채웠어요. [저장]을 눌러야 반영돼요(비밀번호는 아래에서 따로 등록).");
+          }}
+        />
+        <details
+          className="rounded-lg border border-default-200 p-2 text-sm"
+          open={keyOpen}
+          onToggle={(e) => setKeyOpen((e.currentTarget as HTMLDetailsElement).open)}
+        >
           <summary className="cursor-pointer">🔑 업로드 키 {app.key ? `· ${app.key.source === "custom" ? "이 앱 전용 키" : "배포 계정 공용 키"}: ${app.key.path} (${app.key.alias})` : "· 없음"}</summary>
           <div className="mt-2 space-y-2">
             <p className="text-xs text-default-500">
@@ -248,7 +273,6 @@ function AppRow({
             </div>
             {app.key?.source === "custom" && <KeyPasswordForm state={app.key.password} target={{ appSlug: app.appSlug }} onSaved={onSaved} />}
             {app.key?.source === "account" && <p className="text-xs">공용 키 비밀번호는 설정 화면의 배포 계정에서 등록해요.</p>}
-            {app.keyScan && <KeyScanTable apps={[app.keyScan]} />}
           </div>
         </details>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
@@ -272,7 +296,15 @@ function AppRow({
           >
             저장
           </Button>
-          <select aria-label="출시 일감 종류" className={`${input} sm:w-48`} value={kind} onChange={(e) => setKind(e.target.value)}>
+          <select
+            aria-label="출시 일감 종류"
+            className={`${input} sm:w-48`}
+            value={kind}
+            onChange={(e) => {
+              setKind(e.target.value);
+              setItems([]);
+            }}
+          >
             {data.kinds.map((k) => (
               <option key={k.value} value={k.value}>
                 {k.label}
@@ -282,20 +314,32 @@ function AppRow({
           <Button
             className="min-h-11 sm:min-h-0"
             color="primary"
-            isDisabled={busy || !app.releaseAccountId || !app.done || app.active}
+            isDisabled={busy || !app.releaseAccountId || !app.done || app.active || needItems}
             size="sm"
             onPress={() => {
               const label = data.kinds.find((k) => k.value === kind)?.label ?? kind;
+              const picked = kindItems.filter((i) => items.includes(i.value));
+              const skipped = kindItems.filter((i) => !items.includes(i.value));
+              const itemText = picked.length
+                ? `\n\n갱신할 항목(이것만 해요): ${picked.map((i) => i.label).join(", ")}${skipped.length ? `\n건드리지 않음: ${skipped.map((i) => i.label).join(", ")}` : ""}`
+                : "";
 
               const ow = canOverwrite && overwrite;
               const owText = canOverwrite
                 ? ow
-                  ? "\n\n⚠️ 홈페이지 프로젝트의 기존 값(설명·대표 이미지·앱 링크·기술 스택)을 덮어써요(개인정보처리방침은 제외)."
-                  : "\n\n홈페이지 프로젝트는 빈 칸만 채워요."
+                  ? "\n\n⚠️ 고른 항목의 홈페이지 프로젝트 기존 값(설명·대표 이미지·앱 링크·기술 스택)을 덮어써요."
+                  : "\n\n홈페이지 프로젝트는 고른 항목 중 빈 칸만 채워요."
                 : "";
 
-              if (window.confirm(`${app.title}: '${label}' 일감을 만들고 바로 승인할까요?\n\n${KIND_HELP[kind] ?? ""}${owText}`)) {
-                call({ action: "enqueueRelease", appSlug: app.appSlug, kind, runNow: true, overwriteProject: ow });
+              if (window.confirm(`${app.title}: '${label}' 일감을 만들고 바로 승인할까요?\n\n${KIND_HELP[kind] ?? ""}${itemText}${owText}`)) {
+                call({
+                  action: "enqueueRelease",
+                  appSlug: app.appSlug,
+                  kind,
+                  runNow: true,
+                  overwriteProject: ow,
+                  ...(kindItems.length ? { updateItems: picked.map((i) => i.value) } : {}),
+                });
               }
             }}
           >
@@ -314,12 +358,40 @@ function AppRow({
             삭제
           </Button>
           {!app.releaseAccountId && <span className="text-xs text-default-500">계정을 골라 저장하면 승인할 수 있어요</span>}
+          {app.releaseAccountId && needItems && <span className="text-xs text-warning-600">갱신할 항목을 하나 이상 고르면 승인할 수 있어요</span>}
           {app.active && <span className="text-xs text-default-500">진행 중 일감이 있어요(삭제할 수 없어요)</span>}
         </div>
+        {kindItems.length > 0 && (
+          <fieldset className="space-y-1 rounded-lg border border-default-200 p-2">
+            <legend className="px-1 text-sm font-medium">갱신할 항목 (1개 이상, 고른 것만 해요)</legend>
+            {kindItems.map((it) => (
+              <label key={it.value} className="flex items-start gap-2 text-sm">
+                <input
+                  checked={items.includes(it.value)}
+                  className="mt-1"
+                  type="checkbox"
+                  onChange={(e) => setItems((s) => (e.target.checked ? [...s, it.value] : s.filter((x) => x !== it.value)))}
+                />
+                <span>
+                  {it.label}
+                  <span className="block text-xs text-default-500">{it.help}</span>
+                  {it.value === "privacy" && (
+                    <span className="block text-xs text-default-500">
+                      Play 의 개인정보처리방침 주소(/project/&lt;이름&gt;/privacy)는 고정이라, 홈페이지 내용만 바꾸면 Play 가 보여 주는 내용도 바뀌어요.
+                    </span>
+                  )}
+                  {it.value === "video" && !app.promoVideoUrl && (
+                    <span className="block text-xs text-warning-600">아직 저장된 영상 링크가 없어요. 아래에 링크를 저장해야 Play 영상이 바뀌어요.</span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        )}
         {canOverwrite && (
           <label className="flex items-center gap-2 text-sm">
             <input checked={overwrite} type="checkbox" onChange={(e) => setOverwrite(e.target.checked)} />
-            홈페이지 프로젝트도 덮어쓰기 (설명·대표 이미지·앱 링크·기술 스택. 개인정보처리방침은 제외. 끄면 빈 칸만 채움)
+            홈페이지 프로젝트도 덮어쓰기 (고른 항목의 설명·대표 이미지·앱 링크·기술 스택. 끄면 빈 칸만 채움. 개인정보처리방침은 위 항목으로 따로)
           </label>
         )}
         <p className="text-xs text-default-500">{KIND_HELP[kind]}</p>
@@ -408,7 +480,10 @@ export default function ReleasePanel() {
   }, [load]);
 
   // 진행 중이거나 대기 중인 출시 일감이 있으면 15초마다 단계를 새로 읽는다
-  const live = !!data?.apps.some((a) => a.lastReleaseJob && ["pending", "approved", "running"].includes(a.lastReleaseJob.status));
+  // [키 조회] 결과를 기다리는 앱이 있어도 새로 읽는다
+  const live = !!data?.apps.some(
+    (a) => (a.lastReleaseJob && ["pending", "approved", "running"].includes(a.lastReleaseJob.status)) || a.keyScanRequest,
+  );
 
   useEffect(() => {
     if (!live) return;

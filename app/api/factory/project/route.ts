@@ -5,11 +5,12 @@
 //   jobId 가 출시 일감이면 그 종류가 홈페이지 반영을 허락할 때만 받는다.
 //   출시 일감이면 서버가 가진 값(스토어 자료의 대표 이미지 → coverImage, 출시된 앱의 Play 주소 → appLink)을 보낸 값이 없을 때 더한다.
 //   승인 때 '홈페이지 프로젝트도 덮어쓰기'를 고른 store/project 일감은 기존 값도 바꾼다(개인정보처리방침 제외).
+//   갱신 항목을 고른 일감은 그 항목의 칸만 받는다(나머지는 버림). '개인정보처리방침 갱신'을 고른 일감만 방침을 덮어쓴다.
 // 응답: 200 { ok, message, filled: [...], skipped: [...] } / 연결된 프로젝트가 없으면 404 / 방침에 [[ ]] 가 남아 있으면 400
 import { NextRequest, NextResponse } from "next/server";
 
 import { fail, guardWorker } from "@/lib/factory/http";
-import { fillProjectIfEmpty } from "@/lib/factory/project";
+import { fillProjectIfEmpty, type ProjectFill } from "@/lib/factory/project";
 import { projectFillAllowed } from "@/lib/factory/release";
 import { storeProjectValues } from "@/lib/factory/storeAssets";
 import { APP_SLUG_RE } from "@/lib/factory/jobs";
@@ -38,17 +39,17 @@ export async function POST(req: NextRequest) {
 
     if (allowed.ok === false) return fail(400, allowed.message);
     const server = allowed.release ? await storeProjectValues(body.appSlug) : {};
-    const r = await fillProjectIfEmpty(
-      body.appSlug,
-      {
-        description: str(body.description, 2000),
-        coverImage: str(body.coverImage, 500) ?? server.coverImage,
-        appLink: str(body.appLink, 500) ?? server.appLink,
-        techStack: tech,
-        privacyPolicy: str(body.privacyPolicy, 60000),
-      },
-      { overwrite: allowed.overwrite },
-    );
+    const fill: ProjectFill = {
+      description: str(body.description, 2000),
+      coverImage: str(body.coverImage, 500) ?? server.coverImage,
+      appLink: str(body.appLink, 500) ?? server.appLink,
+      techStack: tech,
+      privacyPolicy: str(body.privacyPolicy, 60000),
+    };
+
+    // 고르지 않은 항목의 칸은 버린다
+    if (allowed.fields) for (const k of Object.keys(fill) as (keyof ProjectFill)[]) if (!allowed.fields.includes(k)) delete fill[k];
+    const r = await fillProjectIfEmpty(body.appSlug, fill, { overwrite: allowed.overwrite, privacyOverwrite: allowed.privacyOverwrite });
 
     if (!r.ok) return fail(r.status, r.message);
 

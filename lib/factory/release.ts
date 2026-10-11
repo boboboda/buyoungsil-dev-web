@@ -52,6 +52,52 @@ const OUTBOX_BY_KIND: Record<ReleaseKind, string[]> = {
 };
 // 홈페이지 프로젝트 '덮어쓰기'를 고를 수 있는 종류(첫 출시는 늘 빈 칸만 채운다)
 export const OVERWRITE_KINDS: ReleaseKind[] = ["store", "project"];
+
+// 스토어 자료 수정·프로젝트 업데이트 승인 때 고르는 갱신 항목. 고른 항목만 만들고·올리고·홈페이지에 반영한다.
+// 일감의 updateItems 가 빈 배열이면 예전 일감이다(예전 동작 그대로).
+export type UpdateItem = { value: string; label: string; help: string };
+export const UPDATE_ITEMS: Partial<Record<ReleaseKind, UpdateItem[]>> = {
+  store: [
+    { value: "images", label: "이미지", help: "아이콘·대표 이미지·폰 스크린샷을 새로 만들어 Play 와 홈페이지에 올려요." },
+    { value: "listing", label: "문구", help: "제목·짧은 설명·긴 설명을 새로 써서 Play 등록정보에 올려요(홈페이지 소개·기술 스택도)." },
+    { value: "video", label: "홍보 영상 링크", help: "저장된 YouTube 링크를 Play 등록정보 영상에 넣어요(PC 에 홍보 영상 promo.mp4 도 새로 만들어요)." },
+    { value: "privacy", label: "개인정보처리방침 갱신", help: "홈페이지 프로젝트의 개인정보처리방침을 새로 써서 덮어써요." },
+  ],
+  project: [
+    { value: "description", label: "설명", help: "홈페이지 소개(2~3문장)와 기술 스택을 새로 정리해요." },
+    { value: "cover", label: "대표 이미지", help: "스토어 자료의 대표 이미지(1024x500)를 홈페이지 대표 이미지로 써요." },
+    { value: "privacy", label: "개인정보처리방침 갱신", help: "홈페이지 프로젝트의 개인정보처리방침을 새로 써서 덮어써요." },
+  ],
+};
+// 커넥터가 항목을 안 보냈을 때(예전 호출): 개인정보처리방침은 건드리지 않는 예전 범위
+const DEFAULT_UPDATE_ITEMS: Partial<Record<ReleaseKind, string[]>> = { store: ["images", "listing", "video"], project: ["description", "cover"] };
+const itemLabel = (kind: ReleaseKind, v: string) => UPDATE_ITEMS[kind]?.find((i) => i.value === v)?.label ?? v;
+export const updateItemsText = (kind: ReleaseKind, items: string[]) => items.map((v) => itemLabel(kind, v)).join("·");
+
+/**
+ * 갱신 항목 확인. 종류에 항목이 없으면(첫 출시) 빈 배열. undefined 면 예전 범위, 빈 배열·모르는 값은 거절.
+ * 돌려주는 순서는 UPDATE_ITEMS 순서.
+ */
+export function normalizeUpdateItems(kind: ReleaseKind, v: unknown): { ok: true; items: string[] } | { ok: false; message: string } {
+  const defs = UPDATE_ITEMS[kind];
+
+  if (!defs) return { ok: true, items: [] };
+  if (v === undefined) return { ok: true, items: DEFAULT_UPDATE_ITEMS[kind] ?? [] };
+  if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !defs.some((d) => d.value === x))) {
+    return { ok: false, message: `갱신 항목은 ${defs.map((d) => `${d.value}(${d.label})`).join(", ")} 중에서 골라요.` };
+  }
+  const items = defs.map((d) => d.value).filter((x) => v.includes(x));
+
+  if (items.length === 0) return { ok: false, message: "갱신할 항목을 하나 이상 고르세요." };
+
+  return { ok: true, items };
+}
+
+/** 일감에 저장된 갱신 항목. 예전 일감(빈 배열)이나 항목이 없는 종류는 null(= 전부, 예전 동작) */
+export const jobUpdateItems = (kind: ReleaseKind, items: string[] | null | undefined): string[] | null =>
+  UPDATE_ITEMS[kind] && items && items.length ? items : null;
+const has = (items: string[] | null, v: string) => !items || items.includes(v);
+
 // Play 업로드 트랙: 비공개 테스트(closed testing) 기본 트랙. 프로덕션은 사람이 Console 에서 '라이브러리에서 추가'로
 export const PLAY_TEST_TRACK = "alpha";
 
@@ -244,45 +290,118 @@ async function getPcPathStatus(): Promise<{ at: string; items: PcPathItem[] } | 
 
 const KEY_SCAN_REQUEST = "keyScanRequest";
 const KEY_SCAN_RESULT = "keyScanResult";
+// 앱 하나만 점검(출시 카드 [키 조회]): { [appSlug]: { requestedAt, takenAt } }. 결과가 오면 그 앱 줄을 지운다
+const KEY_SCAN_APPS = "keyScanAppRequests";
 
 export interface KeyScanApp {
   appSlug: string;
-  keys: { path: string; type: string; aliases: { alias: string; sha1: string | null }[]; gitTracked: boolean | null; note?: string | null }[];
+  keys: {
+    path: string;
+    abs?: string | null; // PC 의 절대 경로('이 키를 이 앱 키로 지정'에 쓴다)
+    type: string;
+    aliases: { alias: string; sha1: string | null }[];
+    gitTracked: boolean | null;
+    note?: string | null;
+  }[];
   keyProperties: { path: string; storeFile: string | null; keyAlias: string | null; gitTracked: boolean | null }[];
+  missing?: boolean; // PC 작업 폴더에 이 앱 폴더가 없음
+  at?: string | null; // 이 앱을 마지막으로 조회한 시각
 }
 
-/** 통제실 [키 점검]: 다음 /next 응답에 keyScan: true 를 한 번 붙인다 */
-export async function requestKeyScan(): Promise<{ ok: boolean; status: number; message: string }> {
+type KeyScanAppRequests = Record<string, { requestedAt: string; takenAt: string | null }>;
+
+async function readKeyScanApps(): Promise<KeyScanAppRequests> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: KEY_SCAN_APPS } });
+
+  try {
+    const v = row ? (JSON.parse(row.value) as KeyScanAppRequests) : {};
+
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeKeyScanApps(v: KeyScanAppRequests) {
+  if (Object.keys(v).length === 0) await prisma.factorySetting.deleteMany({ where: { key: KEY_SCAN_APPS } });
+  else {
+    const value = JSON.stringify(v);
+
+    await prisma.factorySetting.upsert({ where: { key: KEY_SCAN_APPS }, create: { key: KEY_SCAN_APPS, value }, update: { value } });
+  }
+}
+
+/**
+ * 통제실 [키 점검]: 다음 /next 응답에 keyScan: true 를 한 번 붙인다.
+ * appSlug 를 주면(출시 카드 [키 조회]) 그 앱 하나만 점검한다.
+ */
+export async function requestKeyScan(appSlug?: string): Promise<{ ok: boolean; status: number; message: string }> {
   const value = new Date().toISOString();
 
+  if (appSlug) {
+    const hasJob = await prisma.factoryJob.findFirst({ where: { appSlug }, select: { id: true } });
+
+    if (!hasJob) return { ok: false, status: 404, message: "그런 공장 앱이 없어요." };
+    const cur = await readKeyScanApps();
+
+    // 오래된 요청(1시간 넘음)은 정리하고, 한 번에 20개까지만
+    for (const [k, v] of Object.entries(cur)) if (Date.now() - Date.parse(v.requestedAt) > 60 * 60 * 1000) delete cur[k];
+    if (Object.keys(cur).length >= 20 && !cur[appSlug]) return { ok: false, status: 429, message: "키 조회 요청이 너무 많아요. 잠시 뒤 다시 하세요." };
+    cur[appSlug] = { requestedAt: value, takenAt: null };
+    await writeKeyScanApps(cur);
+
+    return { ok: true, status: 200, message: `${appSlug} 키 조회를 요청했어요. 작업 PC 가 15초 안에 가져가 결과를 보내요.` };
+  }
   await prisma.factorySetting.upsert({ where: { key: KEY_SCAN_REQUEST }, create: { key: KEY_SCAN_REQUEST, value }, update: { value } });
 
   return { ok: true, status: 200, message: "키 점검을 요청했어요. 작업 PC 가 15초 안에 가져가 결과를 보내요(잠시 뒤 새로고침)." };
 }
 
-/** /next 에서 부른다. 요청이 있으면 지우고 true */
-export async function consumeKeyScan(): Promise<boolean> {
+/**
+ * /next 에서 부른다. 요청이 없으면 false.
+ * 전체 점검 요청이 있으면 true(앱 하나 요청도 함께 처리됨), 앱 하나 요청만 있으면 그 앱 이름 목록.
+ * /next 는 둘 다 keyScan: true 로 알리고, 앱 목록은 keyScanApps 로 따로 준다(예전 감독 프로그램은 전체를 점검해 그 앱도 포함된다).
+ */
+export async function consumeKeyScan(): Promise<boolean | string[]> {
   const res = await prisma.factorySetting.deleteMany({ where: { key: KEY_SCAN_REQUEST } });
+  const cur = await readKeyScanApps();
+  const now = new Date().toISOString();
+  const fresh = Object.entries(cur).filter(([, v]) => !v.takenAt);
 
-  return res.count > 0;
+  if (fresh.length || res.count > 0) {
+    for (const [k] of fresh) cur[k].takenAt = now;
+    if (fresh.length) await writeKeyScanApps(cur);
+  }
+  if (res.count > 0) return true;
+
+  return fresh.length ? fresh.map(([k]) => k) : false;
 }
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, max) : null);
 const bool = (v: unknown) => (typeof v === "boolean" ? v : null);
 
+/**
+ * 감독 프로그램의 키 점검 결과 저장. body.only(앱 이름 목록)가 있으면 앱 하나 점검 결과라 그 앱들만 바꾸고 나머지는 그대로 둔다.
+ * 없으면 전체 점검 결과로 통째 바꾼다.
+ */
 export async function saveKeyScan(body: unknown): Promise<number> {
   const appsIn = (body as { apps?: unknown })?.apps;
+  const onlyIn = (body as { only?: unknown })?.only;
+  const only = Array.isArray(onlyIn) ? onlyIn.filter((x): x is string => typeof x === "string").slice(0, 20) : null;
 
   if (!Array.isArray(appsIn)) return 0;
   const apps: KeyScanApp[] = [];
+  const now = new Date().toISOString();
 
   for (const a of appsIn.slice(0, 100)) {
     const r = a as Record<string, unknown>;
     const appSlug = str(r?.appSlug, 60);
 
     if (!appSlug) continue;
+    if (only && !only.includes(appSlug)) continue;
     const keys = (Array.isArray(r.keys) ? r.keys : []).slice(0, 20).map((k: Record<string, unknown>) => ({
       path: str(k?.path, 300) ?? "",
+      abs: str(k?.abs, 300),
       type: str(k?.type, 20) ?? "?",
       aliases: (Array.isArray(k?.aliases) ? k.aliases : []).slice(0, 10).map((x: Record<string, unknown>) => ({
         alias: str(x?.alias, 80) ?? "",
@@ -298,20 +417,38 @@ export async function saveKeyScan(body: unknown): Promise<number> {
       gitTracked: bool(k?.gitTracked),
     }));
 
-    apps.push({ appSlug, keys, keyProperties });
+    apps.push({ appSlug, keys, keyProperties, missing: r.missing === true, at: now });
   }
-  const value = JSON.stringify({ at: new Date().toISOString(), apps });
+  let value: string;
+
+  if (only) {
+    // 앱 하나 점검: 이전 전체 점검 결과(시각 포함)는 그대로 두고 그 앱 줄만 바꾼다
+    const prev = await getKeyScan();
+    const merged = [...prev.apps.filter((a) => !apps.some((x) => x.appSlug === a.appSlug)), ...apps];
+
+    value = JSON.stringify({ at: prev.at, apps: merged });
+  } else value = JSON.stringify({ at: now, apps });
 
   await prisma.factorySetting.upsert({ where: { key: KEY_SCAN_RESULT }, create: { key: KEY_SCAN_RESULT, value }, update: { value } });
+  // 결과가 온 앱의 [키 조회] 요청은 끝났다
+  const req = await readKeyScanApps();
+  // 앱 하나 점검이면 그 앱들, 전체 점검이면 PC 가 가져간 요청 전부(전체 점검이 그 앱도 봤다)
+  const done = only ?? Object.keys(req).filter((k) => req[k].takenAt);
+
+  if (done.some((k) => req[k])) {
+    for (const k of done) if (req[k]?.takenAt) delete req[k];
+    await writeKeyScanApps(req);
+  }
 
   return apps.length;
 }
 
 /** 마지막 키 점검 결과와, 아직 PC 가 가져가지 않은 요청 시각 */
-async function getKeyScan(): Promise<{ at: string | null; apps: KeyScanApp[]; requestedAt: string | null }> {
-  const [row, req] = await Promise.all([
+async function getKeyScan(): Promise<{ at: string | null; apps: KeyScanApp[]; requestedAt: string | null; appRequests: KeyScanAppRequests }> {
+  const [row, req, appRequests] = await Promise.all([
     prisma.factorySetting.findUnique({ where: { key: KEY_SCAN_RESULT } }),
     prisma.factorySetting.findUnique({ where: { key: KEY_SCAN_REQUEST } }),
+    readKeyScanApps(),
   ]);
   let saved: { at: string; apps: KeyScanApp[] } | null = null;
 
@@ -321,7 +458,7 @@ async function getKeyScan(): Promise<{ at: string | null; apps: KeyScanApp[]; re
     saved = null;
   }
 
-  return { at: saved?.at ?? null, apps: saved?.apps ?? [], requestedAt: req?.value ?? null };
+  return { at: saved?.at ?? null, apps: saved?.apps ?? [], requestedAt: req?.value ?? null, appRequests };
 }
 
 // ───────── 앱이 쓸 업로드 키 ─────────
@@ -395,6 +532,7 @@ export async function releaseOverview() {
         failReason: true,
         resumeFrom: true,
         overwriteProject: true,
+        updateItems: true,
       },
     }),
     getPcPathStatus(),
@@ -404,6 +542,14 @@ export async function releaseOverview() {
   ]);
   const appBySlug = new Map(apps.map((a) => [a.appSlug, a]));
   const names = new Set(secretNames.map((s) => s.name));
+  // 앱별 키 조회 결과. 예전 결과에 시각이 없으면 전체 점검 시각. 전체 점검에 없던 앱은 PC 에 앱 폴더가 없는 것
+  const keyScanOf = (slug: string): KeyScanApp | null => {
+    const s = keyScan.apps.find((x) => x.appSlug === slug);
+
+    if (s) return { ...s, at: s.at ?? keyScan.at };
+
+    return keyScan.at ? { appSlug: slug, keys: [], keyProperties: [], missing: true, at: keyScan.at } : null;
+  };
   const pwByRef = new Map(keyPasswords.map((k) => [k.keyRef, k]));
   const seen = new Set<string>();
   const rows = [];
@@ -460,7 +606,9 @@ export async function releaseOverview() {
       playMissing: playUploadMissing(app ?? null, account, pcStatus?.items),
       // 이 앱이 쓸 업로드 키(앱 폴더에 key.properties 가 있으면 PC 가 그걸 먼저 쓴다)와 비밀번호 등록 상태(값 없음)
       key: key ? { source: key.source, path: key.path, alias: key.alias, password: pw?.state ?? "none" } : null,
-      keyScan: keyScan.apps.find((s) => s.appSlug === j.appSlug) ?? null,
+      keyScan: keyScanOf(j.appSlug),
+      // 출시 카드 [키 조회] 진행 상태(요청·가져간 시각). 결과가 오면 사라진다
+      keyScanRequest: keyScan.appRequests[j.appSlug] ?? null,
       lastReleaseJob: lastRelease
         ? {
             id: lastRelease.id,
@@ -474,6 +622,13 @@ export async function releaseOverview() {
             failReason: lastRelease.status === "failed" ? maskSecrets(lastRelease.failReason)?.slice(0, 1500) ?? null : null,
             resumeFrom: lastRelease.resumeFrom,
             overwriteProject: lastRelease.overwriteProject,
+            updateItems: jobUpdateItems(releaseKindOf(lastRelease.releaseKind), lastRelease.updateItems),
+            updateItemsText: (() => {
+              const k = releaseKindOf(lastRelease.releaseKind);
+              const items = jobUpdateItems(k, lastRelease.updateItems);
+
+              return items ? updateItemsText(k, items) : null;
+            })(),
             logs: logs.get(lastRelease.id) ?? [],
           }
         : null,
@@ -482,7 +637,7 @@ export async function releaseOverview() {
 
   return {
     statuses: RELEASE_STATUSES.map((s) => ({ value: s, label: RELEASE_STATUS_LABELS[s] })),
-    kinds: RELEASE_KINDS.map((k) => ({ value: k, label: RELEASE_KIND_LABELS[k], canOverwrite: OVERWRITE_KINDS.includes(k) })),
+    kinds: RELEASE_KINDS.map((k) => ({ value: k, label: RELEASE_KIND_LABELS[k], canOverwrite: OVERWRITE_KINDS.includes(k), items: UPDATE_ITEMS[k] ?? [] })),
     testingDays: TESTING_DAYS,
     accounts: accounts.map((a) => {
       const key = effectiveKey(null, a);
@@ -497,7 +652,7 @@ export async function releaseOverview() {
     }),
     pcStatus,
     keyPasswords,
-    keyScan,
+    keyScan: { at: keyScan.at, apps: keyScan.apps.filter((a) => !a.missing), requestedAt: keyScan.requestedAt },
     apps: rows,
   };
 }
@@ -655,7 +810,7 @@ const PACKAGE_KEYS = ["storeListing", "dataSafety", "contentRating", "checklist"
 export async function receiveReleasePackage(body: Record<string, unknown>): Promise<{ ok: boolean; status: number; message: string }> {
   const jobId = typeof body.jobId === "string" ? body.jobId : "";
   const job = jobId
-    ? await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { appSlug: true, kind: true, status: true, releaseKind: true } })
+    ? await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { appSlug: true, kind: true, status: true, releaseKind: true, updateItems: true } })
     : null;
 
   if (!job) return { ok: false, status: 404, message: "없는 지시입니다." };
@@ -674,7 +829,10 @@ export async function receiveReleasePackage(body: Record<string, unknown>): Prom
       ? { ...(cur.releasePackage as Record<string, unknown>) }
       : {};
 
-  for (const k of PACKAGE_KEYS) if (body[k] !== undefined) pkg[k] = sanitize(body[k]);
+  // '문구'를 고르지 않은 스토어 자료 수정 일감은 스토어 문구를 바꾸지 않는다
+  const skip = kind === "store" && !has(jobUpdateItems(kind, job.updateItems), "listing") ? ["storeListing"] : [];
+
+  for (const k of PACKAGE_KEYS) if (body[k] !== undefined && !skip.includes(k)) pkg[k] = sanitize(body[k]);
   if (JSON.stringify(pkg).length > 200_000) return { ok: false, status: 413, message: "패키지가 너무 커요(200KB 이하)." };
 
   let aab: Prisma.InputJsonObject | null = null;
@@ -712,10 +870,29 @@ const STAGES_BY_KIND: Record<ReleaseKind, string[]> = {
   project: ["homepage"],
 };
 
-function stageSection(kind: ReleaseKind): string {
+// 스토어 자료 수정: 갱신 항목 → 단계(upload·homepage 는 늘 감독 프로그램이)
+const STORE_ITEM_STAGES: Record<string, string[]> = { images: ["icon", "screenshots"], video: ["video"], listing: ["listing"], privacy: [] };
+
+/** 이 일감이 거치는 단계. items 가 null 이면 예전 일감(종류의 전체 단계) */
+export function releaseStages(kind: ReleaseKind, items: string[] | null): string[] {
+  if (kind !== "store" || !items) return STAGES_BY_KIND[kind];
+  const wanted = new Set(items.flatMap((i) => STORE_ITEM_STAGES[i] ?? []));
+
+  return STAGES_BY_KIND.store.filter((s) => wanted.has(s) || s === "upload" || s === "homepage");
+}
+
+// 개인정보처리방침 갱신(store/project 공통)
+const PRIVACY_STEPS = [
+  "- 코드에서 광고·분석·오류 수집 SDK 를 찾아(pubspec/gradle/package.json 과 import) 판별하고, 지금 앱이 실제로 하는 수집·처리에 맞춰 개인정보처리방침(마크다운)을 새로 쓰세요.",
+  "- [[ ... ]] 자리표시자를 남기면 홈페이지가 거절해요. 모두 실제 값으로 채우세요(연락 이메일은 위 배포 계정 정보).",
+  '- `.factory/outbox/project.json` 의 "privacyPolicy" 에 넣으세요. 홈페이지 프로젝트의 기존 방침을 이 내용으로 **덮어써요**.',
+  "- Play 의 개인정보처리방침 주소(홈페이지 /project/<이름>/privacy)는 그대로라, 홈페이지 내용이 바뀌면 Play 에서 보이는 내용도 바뀌어요. Play Console 은 건드리지 마세요.",
+];
+
+function stageSection(kind: ReleaseKind, items: string[] | null = null): string {
   return [
     "## 진행 단계와 실패 알림",
-    `- 단계가 바뀔 때마다 \`.factory/phase.txt\` 에 한 단어를 덮어쓰세요: ${STAGES_BY_KIND[kind].join(", ")} (끝나면 done).`,
+    `- 단계가 바뀔 때마다 \`.factory/phase.txt\` 에 한 단어를 덮어쓰세요: ${releaseStages(kind, items).join(", ")} (끝나면 done).`,
     '- 더 진행할 수 없으면(빌드·서명 실패 등) `.factory/fail.json` 에 {"stage": "build", "reason": "한국어 한두 문장"} 을 쓰고 끝내세요.',
     "  감독 프로그램이 이걸 보고 그 단계 실패로 알려요. 이유에 비밀번호·키 값은 절대 쓰지 마세요.",
   ].join("\n");
@@ -724,21 +901,37 @@ function stageSection(kind: ReleaseKind): string {
 /**
  * 출시 일감(kind=release)에 넣을 지시문. 계정·경로·이름만 들어가고 값은 없다.
  * - first(첫 출시): 키 준비, AAB 빌드, 스토어 문구·체크리스트, 홈페이지 프로젝트 빈 칸 채우기(+기존 조건의 비공개 테스트 업로드)
- * - store(스토어 자료 수정): .factory/store/ 에 아이콘·대표 이미지·스크린샷·영상·문구. Play 업로드·홈페이지 반영은 감독 프로그램이
- * - project(프로젝트 업데이트): 홈페이지 프로젝트 정보만. Play 업로드·AAB 금지
- * store/project 는 opts.overwriteProject 면 홈페이지 프로젝트 기존 값도 덮어쓴다(개인정보처리방침 제외).
+ * - store(스토어 자료 수정): 고른 항목만(이미지·문구·홍보 영상·개인정보처리방침). Play 업로드·홈페이지 반영은 감독 프로그램이
+ * - project(프로젝트 업데이트): 고른 항목만(설명·대표 이미지·개인정보처리방침). Play 업로드·AAB 금지
+ * store/project 는 opts.overwriteProject 면 홈페이지 프로젝트 기존 값도 덮어쓴다.
+ * 개인정보처리방침은 '개인정보처리방침 갱신'을 골랐을 때만 바꾸고, 그때는 덮어쓰기 선택과 상관없이 덮어쓴다.
+ * opts.updateItems 는 normalizeUpdateItems 로 확인한 값. 없으면 예전 범위.
  * 키 비밀번호는 requiredSecrets 로 넘기지 않는다. 감독 프로그램이 /next 의 job.release.key 를 보고 필요할 때만 secrets.env 에서 읽는다.
  */
 export async function buildReleasePlan(
   appSlug: string,
   kindArg: ReleaseKind = "first",
-  opts: { overwriteProject?: boolean } = {},
+  opts: { overwriteProject?: boolean; updateItems?: string[] } = {},
 ): Promise<{ ok: true; plan: string; requiredSecrets: string[] } | { ok: false; message: string }> {
   const kind = releaseKindOf(kindArg);
   const app = await prisma.factoryApp.findUnique({ where: { appSlug }, include: { releaseAccount: true } });
   const acc = app?.releaseAccount ?? null;
 
   if (!acc) return { ok: false, message: "먼저 출시 패키지 화면에서 이 앱의 배포 계정을 고르세요." };
+  const items = jobUpdateItems(kind, opts.updateItems ?? DEFAULT_UPDATE_ITEMS[kind]) ?? [];
+  const want = (v: string) => items.includes(v);
+  // 고른 항목만 하라는 안내(store/project)
+  const scope = () => {
+    const defs = UPDATE_ITEMS[kind] ?? [];
+    const off = defs.filter((d) => !want(d.value)).map((d) => d.label);
+
+    return [
+      "## 이번에 갱신할 항목 (이것만 하세요)",
+      ...defs.filter((d) => want(d.value)).map((d) => `- ✅ ${d.label}: ${d.help}`),
+      ...(off.length ? [`- ❌ 고르지 않은 항목(${off.join(", ")})은 만들지도, 바꾸지도, 파일로 남기지도 마세요. 감독 프로그램도 그 항목은 올리거나 반영하지 않아요.`] : []),
+      "",
+    ];
+  };
 
   const head = [
     `# ${RELEASE_KIND_LABELS[kind]} (${appSlug})`,
@@ -754,15 +947,15 @@ export async function buildReleasePlan(
 
   const overwrite = opts.overwriteProject === true && OVERWRITE_KINDS.includes(kind);
   const projectRule = overwrite
-    ? "홈페이지 프로젝트 **덮어쓰기**가 선택됐어요: description·techStack(그리고 서버가 가진 대표 이미지→coverImage, 출시된 앱이면 Play 주소→appLink)이 기존 값을 바꿔요. 개인정보처리방침은 빈 칸일 때만 채워요."
-    : "홈페이지 프로젝트는 **빈 칸만** 채워져요(이미 있는 값은 그대로).";
+    ? "홈페이지 프로젝트 **덮어쓰기**가 선택됐어요: 고른 항목의 값(설명·기술 스택, 대표 이미지, 출시된 앱이면 Play 주소→appLink)이 기존 값을 바꿔요."
+    : "홈페이지 프로젝트는 고른 항목 중 **빈 칸만** 채워져요(이미 있는 값은 그대로).";
+  const privacyRule = want("privacy")
+    ? "개인정보처리방침은 '개인정보처리방침 갱신'을 골랐으니 덮어쓰기 선택과 상관없이 새 내용으로 바뀌어요."
+    : "개인정보처리방침은 고르지 않았으니 절대 건드리지 않아요(project.json 에 privacyPolicy 를 넣지 마세요).";
 
   if (kind === "store") {
-    const lines = [
-      ...head,
-      "이 지시는 **스토어 자료만** 다시 만드는 일이에요. 앱 코드·빌드 설정은 바꾸지 마세요(스크린샷용 디버그 빌드는 괜찮아요).",
-      "기준 폴더는 앱 폴더의 `.factory/store/` 예요. 파일 이름은 아래 그대로 쓰세요(감독 프로그램이 이 이름만 검사·업로드해요).",
-      "",
+    const projectFields = [want("listing") ? '"description": "홈페이지 소개 2~3문장", "techStack": [...]' : "", want("privacy") ? '"privacyPolicy": "마크다운"' : ""].filter(Boolean);
+    const images = [
       "## 단계 icon: 아이콘·대표 이미지 (코드로 생성)",
       "- `icon-512.png`: 512x512 PNG(투명 허용), 1MB 이하. 앱의 기존 런처 아이콘(android/app/src/main/res/mipmap-*/ic_launcher*.png, assets 의 아이콘, flutter_launcher_icons 설정)이 있으면 그걸 키워서/다듬어 쓰세요.",
       "- `feature-1024x500.png`: 1024x500, **투명(알파) 없는 PNG**. 앱 이름·한 줄 소개·아이콘을 앱의 테마 색(ThemeData/colors.xml/tailwind 등)으로 배치.",
@@ -774,42 +967,69 @@ export async function buildReleasePlan(
       "- 에뮬레이터·adb 경로와 AVD 목록은 RELEASE_REQUEST.md 아래 '이 PC 환경'에 있어요. 띄운 에뮬레이터는 끝내기 전에 반드시 끄세요(`adb emu kill`).",
       '- 에뮬레이터를 쓸 수 없으면(AVD 없음, 가속 없음, 빌드 실패, 시간 부족) **실패로 끝내지 말고** `.factory/store/status.json` 에 `"screenshots": {"skipped": true, "reason": "이유"}` 를 쓰고 다음 단계로 가세요. 화면을 그림으로 지어내지 마세요.',
       "",
+    ];
+    const video = [
       "## 단계 video: 홍보 영상 (HyperFrames)",
       "- HyperFrames(HeyGen 오픈소스 HTML→MP4, npm 패키지 `hyperframes`, Apache-2.0)로 15~30초 앱 소개 영상 `promo.mp4`(1920x1080 또는 1080x1920)를 만드세요: 스크린샷과 스토어 문구가 움직이게.",
       "- 필요 환경: Node 22 이상, ffmpeg·ffprobe, Chrome(`npx hyperframes doctor` 로 확인). 앱 폴더 밖 임시 폴더에서 `npx hyperframes init` → 구성 HTML 작성 → `npx hyperframes render -c <html> -o <앱 폴더>/.factory/store/promo.mp4`.",
       '- 환경이 안 되거나 렌더가 실패하면 실패로 끝내지 말고 status.json 에 `"video": {"skipped": true, "reason": "이유"}` 를 쓰고 넘어가세요. 확인한 환경(Node·ffmpeg·Chrome·버전·라이선스)을 status.json 의 `"tools": "한두 줄"` 에 적으세요.',
       "- 영상은 PC 에만 둬요(서버로 보내지 않음). YouTube 업로드도 하지 마세요(사람이 직접 올리고 링크만 통제실에 넣어요).",
+      "- Play 등록정보의 영상 링크는 감독 프로그램이 통제실에 저장된 링크로 넣어요.",
       "",
+    ];
+    const listing = [
       "## 단계 listing: 스토어 문구",
       '- `listing.json`: {"ko-KR": {"title": "30자 이내", "shortDescription": "80자 이내", "fullDescription": "4000자 이내"}, "en-US": {...같은 형식}}. 언어 코드는 Play 형식(ko-KR, en-US).',
       "- 영상 링크는 이 폴더에 두지 마세요(통제실에 저장된 링크를 감독 프로그램이 넣어요).",
       "- `.factory/outbox/release.json` 에 storeListing(같은 내용, 키는 ko/en), checklist, notes 만 넣으세요(보낸 항목만 바뀌어요).",
-      '- `.factory/outbox/project.json` 에 {"description": "홈페이지 소개 2~3문장", "techStack": [...]} (선택).',
+      "",
+    ];
+    const lines = [
+      ...head,
+      "이 지시는 **스토어 자료 중 고른 항목만** 다시 만드는 일이에요. 앱 코드·빌드 설정은 바꾸지 마세요(스크린샷용 디버그 빌드는 괜찮아요).",
+      "기준 폴더는 앱 폴더의 `.factory/store/` 예요. 파일 이름은 아래 그대로 쓰세요(감독 프로그램이 이 이름만 검사·업로드해요).",
+      "",
+      ...scope(),
+      ...(want("images") ? images : []),
+      ...(want("video") ? video : []),
+      ...(want("listing") ? listing : []),
+      ...(want("privacy") ? ["## 개인정보처리방침 갱신", ...PRIVACY_STEPS, ""] : []),
+      "## 홈페이지 프로젝트 (project.json)",
+      projectFields.length
+        ? `- \`.factory/outbox/project.json\` 에 {${projectFields.join(", ")}} 만 넣으세요.`
+        : "- `.factory/outbox/project.json` 은 만들지 마세요(필요하면 감독 프로그램이 해요).",
       "",
       "## 업로드·홈페이지 (감독 프로그램이 해요. 직접 하지 마세요)",
-      "- 끝나면 감독 프로그램이 파일을 검사하고, 아이콘·대표 이미지·스크린샷(png/jpg)만 홈페이지로 올려요.",
-      "- Play 업로드 조건이 맞으면(서비스 계정 키, 패키지 이름, 최초 AAB 업로드 완료) Play Developer API 로 등록정보(제목·설명·영상 링크)와 이미지(종류별 통째 교체)를 올려요.",
+      "- 끝나면 감독 프로그램이 고른 항목의 파일만 검사하고, 이미지를 골랐으면 아이콘·대표 이미지·스크린샷(png/jpg)만 홈페이지로 올려요.",
+      "- Play 업로드 조건이 맞으면(서비스 계정 키, 패키지 이름, 최초 AAB 업로드 완료) Play Developer API 로 고른 항목만 올려요: 문구→제목·설명, 홍보 영상 링크→영상, 이미지→종류별 통째 교체.",
       `- ${projectRule}`,
+      `- ${privacyRule}`,
       "",
       "## 하지 말 것",
-      "- AAB 빌드·서명, Play 업로드·Play Console 조작, YouTube 업로드. 키·비밀번호 파일 읽기.",
+      "- AAB 빌드·서명, Play 업로드·Play Console 조작, YouTube 업로드. 키·비밀번호 파일 읽기. 고르지 않은 항목 만들기.",
       "",
-      stageSection(kind),
+      stageSection(kind, items),
     ];
 
     return { ok: true, plan: lines.join("\n"), requiredSecrets: [] };
   }
 
   if (kind === "project") {
+    const fields = [want("description") ? '"description", "techStack"' : "", want("privacy") ? '"privacyPolicy"' : ""].filter(Boolean);
     const lines = [
       ...head,
-      "이 지시는 **홈페이지 프로젝트 정보만** 갱신하는 일이에요. 앱 코드·빌드 설정은 바꾸지 마세요.",
+      "이 지시는 **홈페이지 프로젝트 정보 중 고른 항목만** 갱신하는 일이에요. 앱 코드·빌드 설정은 바꾸지 마세요.",
       "",
+      ...scope(),
       "## 만들 것",
-      "1. 지금 앱의 기능을 읽고 홈페이지 소개(description, 2~3문장)와 기술 스택(techStack)을 정리.",
-      "2. 개인정보처리방침: 코드에서 광고·분석·오류 수집 SDK 를 찾아 판별하고 작성([[ ... ]] 자리표시자 금지).",
-      '3. `.factory/outbox/project.json` 에 {"description", "techStack", "privacyPolicy"} 로 저장.',
+      ...(want("description") ? ["- 지금 앱의 기능을 읽고 홈페이지 소개(description, 2~3문장)와 기술 스택(techStack)을 정리."] : []),
+      ...(want("cover") ? ["- 대표 이미지는 서버가 가진 스토어 자료 대표 이미지를 써요. 이미지를 만들지 마세요."] : []),
+      ...(want("privacy") ? ["- 개인정보처리방침 갱신:", ...PRIVACY_STEPS.map((l) => `  ${l}`)] : []),
+      fields.length
+        ? `- \`.factory/outbox/project.json\` 에 {${fields.join(", ")}} 만 넣어 저장.`
+        : "- `.factory/outbox/project.json` 에 `{}` 를 저장(서버가 대표 이미지를 넣어요).",
       `- ${projectRule}`,
+      `- ${privacyRule}`,
       "",
       "## 하지 말 것",
       "- AAB 빌드·서명, Play 업로드(Play 는 건드리지 않아요), `release.json`. 이 종류에서는 서명 키·비밀번호도 넘기지 않아요.",
@@ -878,7 +1098,7 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
 
   if (rel.length === 0) return out;
   const [rows, apps] = await Promise.all([
-    prisma.factoryJob.findMany({ where: { id: { in: rel.map((j) => j.id) } }, select: { id: true, releaseKind: true, resumeFrom: true, resumeNote: true, overwriteProject: true } }),
+    prisma.factoryJob.findMany({ where: { id: { in: rel.map((j) => j.id) } }, select: { id: true, releaseKind: true, resumeFrom: true, resumeNote: true, overwriteProject: true, updateItems: true } }),
     prisma.factoryApp.findMany({ where: { appSlug: { in: rel.map((j) => j.appSlug) } }, include: { releaseAccount: true } }),
   ]);
   const pcStatus = await getPcPathStatus().catch(() => null);
@@ -890,11 +1110,15 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
     const acc = app?.releaseAccount ?? null;
     const key = kind === "first" ? effectiveKey(app, acc) : null;
     const names = key ? keySecretNames(key.ref) : null;
+    const items = jobUpdateItems(kind, r?.updateItems);
 
     out.set(j.id, {
       kind,
       kindLabel: RELEASE_KIND_LABELS[kind],
-      stages: STAGES_BY_KIND[kind],
+      stages: releaseStages(kind, items),
+      // 고른 갱신 항목(store: images·listing·video·privacy, project: description·cover·privacy). null 이면 예전 일감(전부, 예전 동작)
+      items,
+      itemsLabel: items ? updateItemsText(kind, items) : null,
       outbox: OUTBOX_BY_KIND[kind],
       resumeFrom: r?.resumeFrom && RESUMABLE.includes(r.resumeFrom) ? r.resumeFrom : null,
       resumeNote: r?.resumeNote ?? null,
@@ -908,7 +1132,7 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
               packageName: app?.packageName ?? null,
               serviceAccountKeyPath: acc?.serviceAccountKeyPath ?? null,
               track: PLAY_TEST_TRACK,
-              videoUrl: kind === "store" ? (app?.promoVideoUrl ?? null) : null,
+              videoUrl: kind === "store" && has(items, "video") ? (app?.promoVideoUrl ?? null) : null,
               missing: playUploadMissing(app, acc, pcStatus?.items),
             },
       key:
@@ -934,20 +1158,43 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
 
 /**
  * project.json 을 받아도 되는 일감인지. jobId 가 없으면(예전 감독 프로그램) 예전처럼 빈 칸만 채운다.
- * release: 출시 일감이면 그 종류. overwrite: 덮어쓰기를 고른 store/project 일감(개인정보처리방침은 여전히 빈 칸만)
+ * release: 출시 일감이면 그 종류. overwrite: 덮어쓰기를 고른 store/project 일감
+ * fields: 고른 갱신 항목으로 받을 수 있는 칸(null 이면 예전 일감: 전부, 개인정보처리방침은 빈 칸만)
+ * privacyOverwrite: '개인정보처리방침 갱신'을 고른 일감(덮어쓰기 선택과 상관없이 방침을 바꾼다)
  */
+export type ProjectField = "description" | "techStack" | "coverImage" | "appLink" | "privacyPolicy";
+const ITEM_FIELDS: Record<string, ProjectField[]> = {
+  listing: ["description", "techStack", "appLink"], // store: 문구
+  description: ["description", "techStack", "appLink"], // project: 설명
+  images: ["coverImage"],
+  cover: ["coverImage"],
+  privacy: ["privacyPolicy"],
+};
+
 export async function projectFillAllowed(
   jobId: unknown,
-): Promise<{ ok: true; release: ReleaseKind | null; overwrite: boolean } | { ok: false; message: string }> {
-  if (typeof jobId !== "string" || !jobId) return { ok: true, release: null, overwrite: false };
-  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { kind: true, releaseKind: true, overwriteProject: true } });
+): Promise<
+  | { ok: true; release: ReleaseKind | null; overwrite: boolean; fields: ProjectField[] | null; privacyOverwrite: boolean }
+  | { ok: false; message: string }
+> {
+  const legacy = { ok: true as const, release: null, overwrite: false, fields: null, privacyOverwrite: false };
 
-  if (!job || job.kind !== "release") return { ok: true, release: null, overwrite: false };
+  if (typeof jobId !== "string" || !jobId) return legacy;
+  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { kind: true, releaseKind: true, overwriteProject: true, updateItems: true } });
+
+  if (!job || job.kind !== "release") return legacy;
   const kind = releaseKindOf(job.releaseKind);
 
   if (!OUTBOX_BY_KIND[kind].includes("project.json")) return { ok: false, message: `${RELEASE_KIND_LABELS[kind]} 일감은 홈페이지 프로젝트를 바꿀 수 없어요.` };
+  const items = jobUpdateItems(kind, job.updateItems);
 
-  return { ok: true, release: kind, overwrite: OVERWRITE_KINDS.includes(kind) && job.overwriteProject };
+  return {
+    ok: true,
+    release: kind,
+    overwrite: OVERWRITE_KINDS.includes(kind) && job.overwriteProject,
+    fields: items ? [...new Set(items.flatMap((i) => ITEM_FIELDS[i] ?? []))] : null,
+    privacyOverwrite: !!items?.includes("privacy"),
+  };
 }
 
 // ───────── 재시도 (실패한 단계부터) ─────────

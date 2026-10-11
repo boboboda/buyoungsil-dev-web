@@ -11,6 +11,7 @@ import prisma from "@/lib/prisma";
 import { savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import {
   RELEASE_KIND_LABELS,
+  UPDATE_ITEMS,
   effectiveKey,
   isReleaseKind,
   releaseOverview,
@@ -51,11 +52,12 @@ async function keyTarget(body: Record<string, unknown>) {
 
 // 본문: { action: "saveAccount", ...계정 } | { action: "updateApp", appSlug, releaseAccountId?, releaseStatus?, packageName?, firstUploadDone?, customKeystorePath?, customKeyAlias? }
 //       | { action: "enqueueRelease", appSlug, kind?: first|store|project, runNow?, overwriteProject? }  (통제실 '승인'은 runNow: true 로 일감 생성 + 승인.
-//         overwriteProject: store/project 만, 홈페이지 프로젝트 기존 값도 덮어쓰기. 기본 꺼짐)
+//         overwriteProject: store/project 만, 홈페이지 프로젝트 기존 값도 덮어쓰기. 기본 꺼짐.
+//         updateItems: store/project 는 필수(1개 이상). store=images|listing|video|privacy, project=description|cover|privacy)
 //       | { action: "savePromoVideo", appSlug, url }  (홍보 영상 YouTube 링크. 빈 값이면 지움)
 //       | { action: "retryRelease", jobId }  (실패한 단계부터 다시)
 //       | { action: "setKeyPassword", accountId | appSlug, storePassword, keyPassword? }
-//       | { action: "requestKeyScan" }
+//       | { action: "requestKeyScan", appSlug? }  (appSlug 를 주면 그 앱 하나만 점검)
 //       | { action: "removeApps", appSlugs: string[] }  (출시 패키지 목록에서만 지움. 지시 기록·앱 소스·PC 파일은 그대로)
 export async function POST(req: NextRequest) {
   const denied = await requireAdmin();
@@ -78,8 +80,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: "kind 는 first, store, project 중 하나예요." }, { status: 400 });
     }
     const kind = isReleaseKind(body?.kind) ? body.kind : "first";
+
+    // 통제실에서는 갱신 항목을 반드시 고른다(커넥터는 빼면 예전 범위)
+    if (UPDATE_ITEMS[kind] && !Array.isArray(body?.updateItems)) {
+      return NextResponse.json({ message: "갱신할 항목을 하나 이상 고르세요." }, { status: 400 });
+    }
     // 커넥터 도구(enqueue_release_job)와 같은 함수: 지시문은 배포 계정 정보로 서버가 만든다
-    const r = await enqueueReleaseJob({ appSlug, kind, source: "통제실 출시 패키지", overwriteProject: body?.overwriteProject === true });
+    const r = await enqueueReleaseJob({
+      appSlug,
+      kind,
+      source: "통제실 출시 패키지",
+      overwriteProject: body?.overwriteProject === true,
+      ...(UPDATE_ITEMS[kind] ? { updateItems: body?.updateItems } : {}),
+    });
     const message = r.content[0]?.text ?? "";
 
     if (r.isError) return NextResponse.json({ message }, { status: 409 });
@@ -106,7 +119,8 @@ export async function POST(req: NextRequest) {
     if (!key) return NextResponse.json({ message: "비밀번호를 등록할 키 경로가 없어요. 먼저 키 경로를 저장하세요." }, { status: 400 });
     res = await registerKeyPassword(key.path, key.alias, body?.storePassword, body?.keyPassword);
   } else if (action === "requestKeyScan") {
-    res = await requestKeyScan();
+    if (body?.appSlug !== undefined && !APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 가 올바르지 않아요." }, { status: 400 });
+    res = await requestKeyScan(appSlug || undefined);
   } else if (action === "removeApps") {
     const slugs = Array.isArray(body?.appSlugs) ? body.appSlugs.filter((s): s is string => typeof s === "string").map((s) => s.trim()) : [];
 

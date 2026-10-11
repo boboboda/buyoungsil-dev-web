@@ -570,6 +570,7 @@ model FactoryJob {
   resumeFrom      String? // 재시도 때 이 단계부터 다시
   resumeNote      String? // 재시도 때 넘기는 이전 실패 이유(마스킹됨)
   overwriteProject Boolean  @default(false) // 출시 일감(store/project): 홈페이지 프로젝트의 기존 값도 덮어쓰기(개인정보처리방침 제외)
+  updateItems     String[]  @default([]) // 출시 일감(store/project): 갱신할 항목(images, listing, video, privacy / description, cover, privacy). 빈 배열은 예전 일감(예전 동작)
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
   startedAt       DateTime?

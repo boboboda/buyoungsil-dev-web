@@ -4,6 +4,7 @@
 // - 출시 단계: 비어 있는 항목만 채운다. 이미 입력된 내용은 덮어쓰지 않는다.
 //   예외: 사람이 승인 때 '홈페이지 프로젝트도 덮어쓰기'를 고른 스토어 자료 수정·프로젝트 업데이트 일감(overwrite)은
 //   설명·대표 이미지·앱 링크·기술 스택을 바꾼다. 개인정보처리방침은 그때도 빈 칸일 때만 채운다.
+//   단 '개인정보처리방침 갱신'을 고른 일감(privacyOverwrite)은 덮어쓰기 선택과 상관없이 방침을 바꾼다([[ ]] 검사는 그대로).
 import prisma from "@/lib/prisma";
 import { createProject } from "@/serverActions/projects";
 import { hasUnfilledPlaceholder } from "@/lib/privacy/template";
@@ -81,8 +82,15 @@ export interface FillResult {
 
 const PLACEHOLDER_DESCRIPTION = "개발 중인 앱입니다.";
 
-/** 출시 단계에서 비어 있는 Project 항목만 채운다. 이미 값이 있으면 건너뛴다(opts.overwrite 면 개인정보처리방침 말고는 바꾼다). */
-export async function fillProjectIfEmpty(appSlug: string, fill: ProjectFill, opts: { overwrite?: boolean } = {}): Promise<FillResult> {
+/**
+ * 출시 단계에서 비어 있는 Project 항목만 채운다. 이미 값이 있으면 건너뛴다(opts.overwrite 면 개인정보처리방침 말고는 바꾼다).
+ * opts.privacyOverwrite 면 개인정보처리방침도 바꾼다.
+ */
+export async function fillProjectIfEmpty(
+  appSlug: string,
+  fill: ProjectFill,
+  opts: { overwrite?: boolean; privacyOverwrite?: boolean } = {},
+): Promise<FillResult> {
   const app = await prisma.factoryApp.findUnique({ where: { appSlug } });
 
   if (!app?.projectId) {
@@ -102,9 +110,9 @@ export async function fillProjectIfEmpty(appSlug: string, fill: ProjectFill, opt
   const filled: string[] = [];
   const skipped: string[] = [];
   const overwritten: string[] = [];
-  const pick = (key: string, isEmpty: boolean, value: unknown, canOverwrite = true) => {
+  const pick = (key: string, isEmpty: boolean, value: unknown, canOverwrite = !!opts.overwrite) => {
     if (value === undefined || value === null || value === "") return;
-    if (!isEmpty && opts.overwrite && canOverwrite) {
+    if (!isEmpty && canOverwrite) {
       if (JSON.stringify((project as Record<string, unknown>)[key]) === JSON.stringify(value)) return; // 같은 값
       data[key] = value;
       overwritten.push(key);
@@ -127,7 +135,7 @@ export async function fillProjectIfEmpty(appSlug: string, fill: ProjectFill, opt
 
   const policy = fill.privacyPolicy?.trim();
 
-  pick("privacyPolicy", !project.privacyPolicy?.trim(), policy, false); // 덮어쓰기 대상 아님
+  pick("privacyPolicy", !project.privacyPolicy?.trim(), policy, !!opts.privacyOverwrite); // '개인정보처리방침 갱신'을 고른 일감만 덮어쓴다
   if (data.privacyPolicy) data.privacyUpdatedAt = new Date();
 
   if (filled.length + overwritten.length > 0) await prisma.project.update({ where: { id: project.id }, data });
@@ -136,7 +144,7 @@ export async function fillProjectIfEmpty(appSlug: string, fill: ProjectFill, opt
   return {
     ok: true,
     status: 200,
-    message: parts.length ? parts.join(" / ") : opts.overwrite ? "바꿀 항목이 없어요." : "채울 빈 항목이 없어요.",
+    message: parts.length ? parts.join(" / ") : opts.overwrite || opts.privacyOverwrite ? "바꿀 항목이 없어요." : "채울 빈 항목이 없어요.",
     filled: [...filled, ...overwritten],
     skipped,
   };

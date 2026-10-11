@@ -26,8 +26,23 @@ export type KeyPasswordState = "none" | "waiting" | "delivered";
 
 export interface KeyScanApp {
   appSlug: string;
-  keys: { path: string; type: string; aliases: { alias: string; sha1: string | null }[]; gitTracked: boolean | null; note?: string | null }[];
+  keys: {
+    path: string; // 앱 폴더 기준 상대 경로
+    abs?: string | null; // PC 절대 경로(새 감독 프로그램만 보냄)
+    type: string;
+    aliases: { alias: string; sha1: string | null }[];
+    gitTracked: boolean | null;
+    note?: string | null;
+  }[];
   keyProperties: { path: string; storeFile: string | null; keyAlias: string | null; gitTracked: boolean | null }[];
+  missing?: boolean; // PC 에 앱 폴더가 없음
+  at?: string | null; // 마지막 조회 시각
+}
+
+export interface UpdateItem {
+  value: string;
+  label: string;
+  help: string;
 }
 
 export interface ReleaseJobInfo {
@@ -42,6 +57,8 @@ export interface ReleaseJobInfo {
   failReason: string | null;
   resumeFrom: string | null;
   overwriteProject: boolean;
+  updateItems: string[] | null; // 고른 갱신 항목(null: 예전 일감·첫 출시)
+  updateItemsText: string | null;
   logs: { at: string; level: string; message: string }[];
 }
 
@@ -76,6 +93,7 @@ export interface ReleaseApp {
   playMissing: string[]; // Play 업로드에 모자란 것(비면 가능)
   key: { source: "custom" | "account"; path: string; alias: string; password: KeyPasswordState } | null;
   keyScan: KeyScanApp | null;
+  keyScanRequest: { requestedAt: string; takenAt: string | null } | null; // [키 조회] 진행 중
   lastReleaseJob: ReleaseJobInfo | null;
 }
 
@@ -96,7 +114,7 @@ export interface StoreAssets {
 
 export interface ReleaseOverview {
   statuses: { value: string; label: string }[];
-  kinds: { value: string; label: string; canOverwrite: boolean }[];
+  kinds: { value: string; label: string; canOverwrite: boolean; items: UpdateItem[] }[];
   testingDays: number;
   accounts: ReleaseAccount[];
   pcStatus: { at: string; items: PcPathItem[] } | null;

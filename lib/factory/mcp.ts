@@ -5,7 +5,16 @@ import { createHash } from "crypto";
 import prisma from "@/lib/prisma";
 import { notifyJobEvent } from "@/lib/factory/telegram";
 import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
-import { OVERWRITE_KINDS, RELEASE_KIND_LABELS, buildReleasePlan, isReleaseKind, releaseOverview, stageLabel } from "@/lib/factory/release";
+import {
+  OVERWRITE_KINDS,
+  RELEASE_KIND_LABELS,
+  buildReleasePlan,
+  isReleaseKind,
+  normalizeUpdateItems,
+  releaseOverview,
+  stageLabel,
+  updateItemsText,
+} from "@/lib/factory/release";
 import { readStoreAssets } from "@/lib/factory/storeAssets";
 import {
   ACTIVE_STATUSES,
@@ -228,6 +237,13 @@ export const FACTORY_TOOLS = [
           type: "boolean",
           description: "store/project 만: true 면 홈페이지 프로젝트의 기존 값(설명·대표 이미지·앱 링크·기술 스택)도 덮어써요(개인정보처리방침 제외). 기본 false(빈 칸만 채움). 사용자가 원할 때만",
         },
+        updateItems: {
+          type: "array",
+          items: { type: "string", enum: ["images", "listing", "video", "privacy", "description", "cover"] },
+          description:
+            "store/project 만: 갱신할 항목(고른 것만 만들고·올리고·반영). store = images(아이콘·대표 이미지·폰 스크린샷), listing(제목·짧은/긴 설명), video(홍보 영상 링크), privacy(개인정보처리방침 갱신: 홈페이지 방침 덮어쓰기). " +
+            "project = description(설명·기술 스택), cover(대표 이미지), privacy. 빼면 store=images·listing·video, project=description·cover(방침은 안 건드림). 빈 배열은 안 돼요",
+        },
         source: { type: "string", description: "어느 대화에서 온 건지 짧게 (선택, 100자 이내)" },
       },
       required: ["appSlug"],
@@ -401,7 +417,10 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
   if (args.overwriteProject !== undefined && typeof args.overwriteProject !== "boolean") return text("overwriteProject 는 true/false 예요.", true);
   // 홈페이지 프로젝트 덮어쓰기는 스토어 자료 수정·프로젝트 업데이트만(기본 꺼짐)
   const overwriteProject = args.overwriteProject === true && OVERWRITE_KINDS.includes(kind);
-  const plan = await buildReleasePlan(appSlug, kind, { overwriteProject });
+  const items = normalizeUpdateItems(kind, args.updateItems);
+
+  if ("message" in items) return text(items.message, true);
+  const plan = await buildReleasePlan(appSlug, kind, { overwriteProject, updateItems: items.items });
 
   if ("message" in plan) return text(plan.message, true);
   const o = await releaseOverview();
@@ -411,10 +430,11 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
 
   return enqueue({
     appSlug,
-    title: `${app.title} (${RELEASE_KIND_LABELS[kind]})`,
+    title: `${app.title} (${RELEASE_KIND_LABELS[kind]}${items.items.length ? `: ${updateItemsText(kind, items.items)}` : ""})`,
     kind: "release",
     releaseKind: kind,
     overwriteProject,
+    updateItems: items.items,
     planMarkdown: plan.plan,
     requiredSecrets: plan.requiredSecrets,
     source: clean(args.source, 100) || "채팅",
@@ -766,6 +786,8 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
           // 출시 일감 종류(enqueueReleaseJob 만 넘긴다. enqueue_app_job 은 kind=release 를 막는다)
           releaseKind: kind === "release" && typeof args.releaseKind === "string" ? args.releaseKind : null,
           overwriteProject: kind === "release" && args.overwriteProject === true,
+          // 갱신 항목(enqueueReleaseJob 이 normalizeUpdateItems 로 확인한 값만 넘긴다)
+          updateItems: kind === "release" && Array.isArray(args.updateItems) ? (args.updateItems as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 10) : [],
         },
         select: { id: true },
       });
