@@ -5,6 +5,7 @@ import { createHash } from "crypto";
 import prisma from "@/lib/prisma";
 import { notifyJobEvent } from "@/lib/factory/telegram";
 import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
+import { buildReleasePlan, releaseOverview } from "@/lib/factory/release";
 import {
   ACTIVE_STATUSES,
   APP_SLUG_RE,
@@ -48,7 +49,10 @@ export const FACTORY_INSTRUCTIONS =
   + "관리자가 통제실에서 직접 보낸 수정 지시는 source 가 '통제실'로 나와요. 결과는 get_factory_job(includePlan=true)으로 읽고 사용자와 의논하세요. "
   + "작업 PC 감독 프로그램은 supervisor_control 로 봐요: action=status(연결·버전·일시 정지·자동 업데이트·진행/대기 일감 수), "
   + "update_now(GitHub main 의 새 감독 프로그램 코드를 지금 받게 함. 15초~1분 뒤 status 의 commit 으로 확인), pause/resume(새 일감 받기 멈춤/재개), "
-  + "auto_update_on/off. 사용자가 요청한 경우에만 상태를 바꾸세요.";
+  + "auto_update_on/off. 사용자가 요청한 경우에만 상태를 바꾸세요. "
+  + "출시: get_release_status 로 앱별 출시 상태·배포 계정·패키지(스토어 문구·체크리스트)·AAB 정보·테스트 일정을 보고, "
+  + "enqueue_release_job(appSlug) 으로 출시 준비 일감을 등록해요(지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
+  + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 결과는 get_factory_job 과 get_release_status 로 확인하세요.";
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -187,6 +191,44 @@ export const FACTORY_TOOLS = [
     },
   },
   {
+    name: "get_release_status",
+    description:
+      "완성된 앱들의 출시 상태를 돌려줍니다: 출시 단계(준비중/패키지 생성/검토/비공개 테스트/출시), 배포 계정(A/B)과 키 준비 상태(경로·PC 에 있는지만), " +
+      "패키지 이름, 최초 업로드 여부, 비공개 테스트 시작·완료 예정일, 출시 패키지 요약(스토어 제목·짧은 설명·체크리스트 남은 할 일·찾은 SDK), AAB 정보(경로·크기·버전, 파일은 PC 에만). " +
+      "키 값은 담지 않아요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appSlug: { type: "string", description: "이 앱만 보기 (선택)" },
+      },
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "enqueue_release_job",
+    description:
+      "완성된 앱에 출시 준비 일감을 등록합니다(승인 대기, 승인은 관리자). 지시문은 서버가 그 앱의 배포 계정 정보로 만들어요: " +
+      "개인정보처리방침 초안, 스토어 문구(한/영), 데이터 보안·콘텐츠 등급 답안, 체크리스트, (서명 키가 있으면) 서명 AAB, " +
+      "(최초 업로드 뒤 서비스 계정 키가 있으면) 비공개 테스트 트랙 업로드. 먼저 통제실 출시 패키지에서 배포 계정을 골라 둬야 해요. " +
+      "끝나면 get_factory_job 과 get_release_status 로 확인하세요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appSlug: { type: "string", description: "완성된 앱 이름 (list_factory_jobs 의 appSlug)" },
+        source: { type: "string", description: "어느 대화에서 온 건지 짧게 (선택, 100자 이내)" },
+      },
+      required: ["appSlug"],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  {
     name: "supervisor_control",
     description:
       "작업 PC 의 감독 프로그램 상태를 보거나 정해진 명령을 보냅니다. 명령은 홈페이지에 신호로 남고, 감독 프로그램이 15초마다 확인할 때 가져가요. " +
@@ -231,12 +273,96 @@ export async function callFactoryTool(
     case "list_secret_names":
       return listSecretNames();
     case "enqueue_app_job":
+      // 출시 준비는 서버가 지시문을 만드는 enqueue_release_job 으로만
+      if (args.kind === "release") return text("출시 준비 일감은 enqueue_release_job(appSlug) 으로 보내세요.", true);
       return enqueue(args);
     case "supervisor_control":
       return supervisorControl(args);
+    case "get_release_status":
+      return getReleaseStatus(args);
+    case "enqueue_release_job":
+      return enqueueReleaseJob(args);
     default:
       return text(`알 수 없는 도구예요: ${name}`, true);
   }
+}
+
+// 출시 상태. 키 값은 없다(경로·이름·존재 여부만). 패키지는 요약만(전문은 통제실 출시 패키지 화면).
+async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResult> {
+  const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
+  const o = await releaseOverview();
+  const label = (v: string) => o.statuses.find((s) => s.value === v)?.label ?? v;
+  const apps = o.apps.filter((a) => a.done && (!appSlug || a.appSlug === appSlug));
+
+  if (appSlug && apps.length === 0) return text(`${appSlug} 라는 완성된 앱이 없어요.`, true);
+  const summarize = (pkg: Record<string, unknown> | null) => {
+    if (!pkg) return null;
+    const listing = (pkg.storeListing ?? {}) as Record<string, { title?: string; shortDescription?: string }>;
+    const checklist = Array.isArray(pkg.checklist) ? (pkg.checklist as { item?: string; done?: boolean }[]) : [];
+
+    return {
+      스토어제목: Object.fromEntries(Object.entries(listing).map(([k, v]) => [k, v?.title ?? null])),
+      짧은설명: Object.fromEntries(Object.entries(listing).map(([k, v]) => [k, v?.shortDescription ?? null])),
+      체크리스트: `${checklist.filter((c) => c.done).length}/${checklist.length} 완료`,
+      남은할일: checklist.filter((c) => !c.done).map((c) => c.item).slice(0, 15),
+      찾은SDK: pkg.sdks ?? null,
+      메모: typeof pkg.notes === "string" ? pkg.notes.slice(0, 500) : null,
+    };
+  };
+
+  return json({
+    배포계정: o.accounts.map((a) => {
+      const pc = (k: string) => o.pcStatus?.items.find((i) => i.key === `${a.label}.${k}`);
+
+      return {
+        계정: a.label,
+        이름: a.name,
+        비공개테스트필요: a.requiresTesting,
+        개발자이름: a.developerName,
+        연락이메일: a.contactEmail,
+        서명키: a.keystorePath ? (pc("keystore")?.exists ? "PC 에 있음" : pc("keystore") ? "PC 에 없음" : "경로만 등록(PC 확인 전)") : "없음",
+        서비스계정키: a.serviceAccountKeyPath ? (pc("serviceAccount")?.exists ? "PC 에 있음" : pc("serviceAccount") ? "PC 에 없음" : "경로만 등록(PC 확인 전)") : "없음",
+      };
+    }),
+    앱: apps.map((a) => ({
+      appSlug: a.appSlug,
+      이름: a.title,
+      종류: a.stack,
+      출시상태: label(a.releaseStatus),
+      배포계정: o.accounts.find((x) => x.id === a.releaseAccountId)?.label ?? null,
+      패키지이름: a.packageName,
+      최초업로드완료: a.firstUploadDone,
+      비공개테스트: a.testingStartedAt ? { 시작: iso(a.testingStartedAt), 완료예정: iso(a.testingDueAt) } : null,
+      진행중일감: a.active,
+      최근출시준비일감: a.lastReleaseJob,
+      패키지생성: iso(a.releasePackageAt),
+      패키지: summarize(a.releasePackage as Record<string, unknown> | null),
+      AAB: a.aab,
+    })),
+  });
+}
+
+// 출시 준비 일감 등록. 지시문은 서버가 배포 계정 정보로 만든다(채팅이 쓰지 않음). 승인은 관리자가 통제실/텔레그램에서.
+export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<ToolResult> {
+  const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
+
+  if (!APP_SLUG_RE.test(appSlug)) return text("appSlug 가 올바르지 않아요.", true);
+  const plan = await buildReleasePlan(appSlug);
+
+  if ("message" in plan) return text(plan.message, true);
+  const o = await releaseOverview();
+  const app = o.apps.find((a) => a.appSlug === appSlug);
+
+  if (!app?.done) return text(`${appSlug} 는 완성된 앱이 아니에요.`, true);
+
+  return enqueue({
+    appSlug,
+    title: `${app.title} (출시 준비)`,
+    kind: "release",
+    planMarkdown: plan.plan,
+    requiredSecrets: plan.requiredSecrets,
+    source: clean(args.source, 100) || "채팅",
+  });
 }
 
 async function supervisorControl(args: Record<string, unknown>): Promise<ToolResult> {

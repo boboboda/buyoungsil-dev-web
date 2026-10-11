@@ -5,8 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
 import { APP_SLUG_RE, adminAction } from "@/lib/factory/jobs";
-import { enqueue } from "@/lib/factory/mcp";
-import { buildReleasePlan, releaseOverview, saveReleaseAccount, updateAppRelease } from "@/lib/factory/release";
+import { enqueueReleaseJob } from "@/lib/factory/mcp";
+import { releaseOverview, saveReleaseAccount, updateAppRelease } from "@/lib/factory/release";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,19 +38,8 @@ export async function POST(req: NextRequest) {
     res = await updateAppRelease(appSlug, body ?? {});
   } else if (action === "enqueueRelease") {
     if (!APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 가 올바르지 않아요." }, { status: 400 });
-    const plan = await buildReleasePlan(appSlug);
-
-    if ("message" in plan) return NextResponse.json({ message: plan.message }, { status: 400 });
-    const overview = await releaseOverview();
-    const title = overview.apps.find((a) => a.appSlug === appSlug)?.title ?? appSlug;
-    const r = await enqueue({
-      appSlug,
-      title: `${title} (출시 준비)`,
-      kind: "release",
-      planMarkdown: plan.plan,
-      requiredSecrets: plan.requiredSecrets,
-      source: "통제실 출시 패키지",
-    });
+    // 커넥터 도구(enqueue_release_job)와 같은 함수: 지시문은 배포 계정 정보로 서버가 만든다
+    const r = await enqueueReleaseJob({ appSlug, source: "통제실 출시 패키지" });
     const message = r.content[0]?.text ?? "";
 
     if (r.isError) return NextResponse.json({ message }, { status: 409 });
