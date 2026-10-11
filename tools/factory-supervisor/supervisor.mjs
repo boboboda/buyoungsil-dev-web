@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
-import { maybeUpdate, reportInfo, requestUpdateNow, startupGuard } from "./update.mjs";
+import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard } from "./update.mjs";
 import { releaseRules, reportPcPaths, sendOutbox } from "./release.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
@@ -655,6 +655,7 @@ async function loop() {
           "GET",
           `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}`,
         );
+        notePoll(r.status === 200); // 새 버전 건강 확인(200 이면 확인됨)
         if (r.status === 200) {
           delay = cfg.pollSec * 1000;
           autoUpdate = r.data?.autoUpdate !== false;
@@ -682,6 +683,7 @@ async function loop() {
         }
       }
     } catch (e) {
+      notePoll(null); // 응답 없음: 새 코드 탓으로 보지 않는다
       log(`홈페이지에 연결하지 못했어요: ${e.message}`);
       delay = Math.min(delay * 2, 120_000);
     }

@@ -1,7 +1,8 @@
 // 앱 공장 감독 프로그램 자동 업데이트
 // - 일감이 하나도 돌지 않을 때만 10분마다 origin/main 을 확인해서, 이 폴더(tools/factory-supervisor/) 파일이 바뀌었으면
 //   git pull --ff-only → node --check → 정상 종료(exit 0)한다. 실행기(~/dev/factory/run-supervisor.sh)가 30초 뒤 새 코드로 다시 띄운다.
-// - 새 버전이 시작 후 30초 안에 꺼지면, 다음 시작 때 이전 커밋으로 되돌리고 그 커밋은 다시 받지 않는다(건너뛸 목록).
+// - 새 버전은 홈페이지 대기열 확인(/next 200)에 성공해야 확인된다. 그 전에 꺼지면 다음 시작 때, 3분 동안 오류 응답만 받으면 그 자리에서
+//   이전 커밋으로 되돌리고 그 커밋은 다시 받지 않는다(건너뛸 목록).
 // - 실행기 밖(FACTORY_LAUNCHER=1 이 없음)에서 돌 때는 다시 띄워 줄 장치가 없으므로 업데이트하지 않는다.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -13,7 +14,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
 const STATE_PATH = expand(process.env.FACTORY_UPDATE_STATE || "~/dev/factory/supervisor-update.json");
 const CHECK_EVERY_MS = Math.max(10, Number(process.env.FACTORY_UPDATE_EVERY_SEC) || 600) * 1000;
-const TRIAL_SEC = 30;
 const UNDER_LAUNCHER = process.env.FACTORY_LAUNCHER === "1";
 
 const stamp = () => new Date().toLocaleTimeString("ko-KR", { hour12: false });
@@ -72,8 +72,8 @@ export function startupGuard() {
     return;
   }
   if (st.trial.starts >= 1) {
-    // 지난번 시작이 30초를 못 버텼다 → 이전 커밋으로 되돌리고 이 커밋은 건너뛴다
-    log(`자동 업데이트 실패: 새 버전(${short(st.trial.to)})이 시작 후 ${TRIAL_SEC}초 안에 꺼졌어요. 이전 커밋(${short(st.trial.from)})으로 되돌려요.`);
+    // 지난번 시작이 홈페이지 확인에 성공하기 전에 꺼졌다 → 이전 커밋으로 되돌리고 이 커밋은 건너뛴다
+    log(`자동 업데이트 실패: 새 버전(${short(st.trial.to)})이 홈페이지 확인에 성공하기 전에 꺼졌어요. 이전 커밋(${short(st.trial.from)})으로 되돌려요.`);
     const r = git(["reset", "--hard", st.trial.from]);
     if (r.status !== 0) log(`되돌리기 실패(git reset): ${errText(r)}`);
     st.skip = [...new Set([...(st.skip ?? []), st.trial.to])].slice(-20);
@@ -83,13 +83,47 @@ export function startupGuard() {
   }
   st.trial.starts = 1;
   writeState(st);
+  trialHead = h;
+  armHealthTimer();
+}
+
+// ───────── 새 버전 건강 확인 ─────────
+// 새 버전은 "살아 있음"이 아니라 홈페이지 대기열 확인(/next)이 200 으로 성공해야 확인된다.
+// HEALTH_SEC 안에 200 없이 오류 응답만 받았으면 이전 커밋으로 되돌린다. 응답이 아예 없으면(홈페이지·네트워크 문제) 새 코드 탓이 아니니 더 기다린다.
+const HEALTH_SEC = Math.max(10, Number(process.env.FACTORY_HEALTH_SEC) || 180);
+let trialHead = null;
+let sawBadResponse = false;
+
+function armHealthTimer() {
   setTimeout(() => {
     const s = readState();
-    if (s.trial?.to !== h) return;
+    if (!trialHead || s.trial?.to !== trialHead) return; // 이미 확인됨
+    if (!sawBadResponse) {
+      log(`자동 업데이트 확인 대기: 새 버전(${short(trialHead)})이 아직 홈페이지 응답을 못 받았어요(연결 문제일 수 있어 더 기다려요).`);
+      return armHealthTimer();
+    }
+    log(`자동 업데이트 실패: 새 버전(${short(trialHead)})이 ${HEALTH_SEC}초 동안 홈페이지 대기열 확인에 성공하지 못했어요. 이전 커밋(${short(s.trial.from)})으로 되돌려요.`);
+    const r = git(["reset", "--hard", s.trial.from]);
+    if (r.status !== 0) log(`되돌리기 실패(git reset): ${errText(r)}`);
+    s.skip = [...new Set([...(s.skip ?? []), s.trial.to])].slice(-20);
     delete s.trial;
     writeState(s);
-    log(`자동 업데이트 확인: 새 버전(${short(h)})이 ${TRIAL_SEC}초 넘게 정상 동작해요.`);
-  }, TRIAL_SEC * 1000).unref();
+    process.exit(0); // 실행기가 되돌린 코드로 다시 띄운다
+  }, HEALTH_SEC * 1000).unref();
+}
+
+/** 대기열 확인(/next)을 할 때마다 부른다. ok=true(200), false(그 밖의 HTTP 응답), null(응답 없음: 네트워크 오류) */
+export function notePoll(ok) {
+  if (!trialHead) return;
+  if (ok === false) sawBadResponse = true;
+  if (ok !== true) return;
+  const s = readState();
+  const h = trialHead;
+  trialHead = null;
+  if (s.trial?.to !== h) return;
+  delete s.trial;
+  writeState(s);
+  log(`자동 업데이트 확인: 새 버전(${short(h)})이 홈페이지 대기열 확인에 성공했어요.`);
 }
 
 // supervisor.mjs 와 그 파일이 import 하는 이 폴더의 파일들
