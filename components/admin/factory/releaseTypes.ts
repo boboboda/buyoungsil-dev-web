@@ -223,6 +223,27 @@ export interface StoreAssets {
   aabUpload: { at: string; ok: boolean; note: string; track: string | null; versionCode: number | null } | null;
 }
 
+// 업로드 시험(서버 lib/factory/uploadTest.ts 와 같다)
+export interface UploadTestStep {
+  label: string;
+  bytes: number;
+  ms: number | null;
+  status: number;
+  ok: boolean;
+  url: string | null;
+  message: string | null;
+  stage: "pc" | "receive" | "upstream" | null;
+  upstreamStatus: number | null;
+}
+export interface UploadTestReport {
+  id: string;
+  kind: "video" | "image" | "big";
+  at: string;
+  synthetic: boolean;
+  note: string | null;
+  steps: UploadTestStep[];
+}
+
 export interface ReleaseOverview {
   statuses: { value: string; label: string }[];
   kinds: { value: string; label: string; hint: string; canOverwrite: boolean; items: UpdateItem[]; selectable: boolean; review: boolean }[];
@@ -231,6 +252,10 @@ export interface ReleaseOverview {
   pcStatus: { at: string; items: PcPathItem[] } | null;
   keyScan: { at: string | null; apps: KeyScanApp[]; requestedAt: string | null };
   keys: VaultKey[];
+  uploadTest?: {
+    current: { id: string; kind: "video" | "image" | "big"; requestedAt: string; takenAt: string | null; stale: boolean } | null;
+    last: Partial<Record<"video" | "image" | "big", UploadTestReport>>;
+  };
   keyKinds: { value: string; label: string }[];
   apps: ReleaseApp[];
   message?: string;

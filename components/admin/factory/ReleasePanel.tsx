@@ -20,6 +20,7 @@ import Field from "./Field";
 import AppKeyLookup from "./AppKeyLookup";
 import { KeyCheckView, KeyError, UntrackView } from "./KeyVault";
 import StoreAssetsView from "./StoreAssetsView";
+import UploadTestBox from "./UploadTestBox";
 import { BuildResultView, FirstVideoPanel, LinkWaitPanel, ListingCopy, ReviewPanel, isYoutubeUrl } from "./ReleaseReview";
 import { KEY_PASSWORD_TEXT, fmtDate, fmtSize, postRelease, type ReadyItem, type ReleaseApp, type ReleaseJobInfo, type ReleaseOverview } from "./releaseTypes";
 
@@ -719,6 +720,7 @@ export default function ReleasePanel() {
 
   return (
     <div className="space-y-4">
+      <UploadTestBox data={data} onReload={load} onSaved={onSaved} />
       {apps.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <Button color="danger" isDisabled={busy || picked.length === 0} size="sm" variant="flat" onPress={removePicked}>

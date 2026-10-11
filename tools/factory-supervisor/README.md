@@ -91,6 +91,12 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - 앱 업데이트(`kind: "update"`): 키 준비 → Claude 가 코드 수정·시험·버전·서명 AAB → AAB 를 비공개 테스트 트랙에(출시 노트 포함) → `build` 결과 보고.
   홈페이지 반영(`overwriteProject`)을 고르지 않았으면 project.json 을 보내지 않아요.
 
+## 업로드 시험 (`uploadtest.mjs`, `/next` 의 `uploadTest`)
+- 통제실 [영상/이미지/큰 파일 시험]을 누르면 `uploadTest: { id, kind }` 가 한 번 와요. 운영과 같은 함수(`store.mjs` 의 `postVideoFile`·`postImageFile`)로
+  `/api/factory/upload-test` 에 올리고(홈페이지가 store-video·store-image 와 같은 코드로 업로드 서버에 전달), 결과를 `/api/factory/upload-test-report` 로 보내요.
+- 영상: ffmpeg 가 있으면 2초 색 막대 영상, 없으면 mp4 머리만 맞는 1MB 합성 파일. 이미지: 64x64 PNG. 큰 파일: 10·50·120MB 합성 mp4, 처음 실패에서 멈춤.
+- 실패 구간: 홈페이지가 `stage`(receive·upstream)를 주면 그대로, 아니면(nginx 등 홈페이지 앞) `pc`. 시험 파일은 PC 임시 폴더에서 지워요(업로드 서버에는 남음).
+
 ## 스토어 자료·Play 업로드 (`store.mjs`, 출시 2단계)
 - 서버가 `job.release.play`({packageName, serviceAccountKeyPath, track, videoUrl, missing})를 줄 때만 동작해요(예전 서버의 일감이면 예전처럼 outbox 만).
 - 스토어 자료 수정(`store`): Claude 가 앱 폴더 `.factory/store/` 에 `icon-512.png`, `feature-1024x500.png`, `screenshots/phone-01..08.png|jpg`, `promo.mp4`(HyperFrames),

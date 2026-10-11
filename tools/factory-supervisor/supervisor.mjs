@@ -31,6 +31,7 @@ import {
 } from "./release.mjs";
 import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
 import { runKeyTasks } from "./keyvault.mjs";
+import { runUploadTest } from "./uploadtest.mjs";
 import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
 
@@ -1091,6 +1092,8 @@ async function loop() {
             })().catch(() => {});
           }
           // keyScanApps 가 있으면 그 앱 폴더만(출시 카드 [키 조회])
+          // 통제실 '업로드 시험'(한 번): 운영과 같은 함수로 시험 파일을 올리고 결과를 보낸다. 던지지 않는다
+          if (r.data?.uploadTest) runUploadTest({ test: r.data.uploadTest, api, log }).catch(() => {});
           if (r.data?.keyScan === true) runKeyScan({ api, log, workDir: cfg.workDir, only: Array.isArray(r.data?.keyScanApps) ? r.data.keyScanApps : null }).catch(() => {});
           // 공장 정비 지시·[배포] 요청(앱 일감과 따로. 정비는 돌던 앱 일감이 없을 때만 시작)
           onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow });

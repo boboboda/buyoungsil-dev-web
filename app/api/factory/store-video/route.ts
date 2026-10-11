@@ -9,11 +9,10 @@
 // 응답: 200 { ok, url } / 형식 400 / 실행 중이 아니면 409 / 크면 413 / 업로드 서버 오류 502
 import { NextRequest, NextResponse } from "next/server";
 
-import { uploadConfig } from "@/config/upload";
 import { fail, guardWorker } from "@/lib/factory/http";
 import { touchRunningJob } from "@/lib/factory/jobs";
 import { saveStoreReviewVideoUrl, storeVideoJob } from "@/lib/factory/storeAssets";
-import { isMp4Head, multipartStream, readHead } from "@/lib/factory/uploadStream";
+import { forwardStream, isMp4Head, readHead, uploadBase } from "@/lib/factory/uploadStream";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,7 +25,7 @@ export async function POST(req: NextRequest) {
   const blocked = await guardWorker(req);
   if (blocked) return blocked;
 
-  const base = (process.env.FACTORY_UPLOAD_URL?.trim() || uploadConfig.customServerUrl || "").replace(/\/+$/, "");
+  const base = uploadBase();
   if (!base) return fail(500, "업로드 서버 주소를 알 수 없습니다.");
   const size = Number(req.headers.get("content-length") ?? "0");
 
@@ -51,35 +50,17 @@ export async function POST(req: NextRequest) {
 
       return fail(400, "mp4 만 올릴 수 있어요.");
     }
-    const body = multipartStream(head, reader, { filename: `${job.appSlug}-review-${job.id}.mp4`, type: "video/mp4", expect: size, max: MAX_VIDEO });
-    let response: Response;
+    // 업로드 서버로 전달(업로드 시험과 같은 코드)
+    const sent = await forwardStream(base, head, reader, { filename: `${job.appSlug}-review-${job.id}.mp4`, type: "video/mp4", expect: size, max: MAX_VIDEO });
 
-    try {
-      response = await fetch(`${base}/upload/single`, {
-        method: "POST",
-        headers: { "Content-Type": body.contentType },
-        body: body.stream,
-        duplex: "half",
-        cache: "no-store",
-      } as RequestInit & { duplex: "half" });
-    } catch (error) {
-      console.error("[factory] store-video 전달 실패:", error instanceof Error ? error.message : error);
+    if (sent.ok === false) {
+      console.error("[factory] store-video 업로드 실패:", sent.stage, sent.upstreamStatus ?? "-");
 
-      return fail(body.received() !== size ? 400 : 502, body.received() !== size ? "영상을 끝까지 받지 못했어요." : "업로드 서버에 올리지 못했습니다.");
+      return fail(sent.status, sent.message, { stage: sent.stage, upstreamStatus: sent.upstreamStatus });
     }
-    if (!response.ok) {
-      console.error("[factory] store-video 업로드 서버 응답 오류:", response.status);
+    await saveStoreReviewVideoUrl(job.appSlug, job.id, sent.url, size);
 
-      return fail(response.status === 413 ? 413 : 502, response.status === 413 ? "업로드 서버가 파일이 너무 크다고 거절했어요." : "업로드 서버에 올리지 못했습니다.");
-    }
-    const result = (await response.json()) as { filename?: string; url?: string };
-
-    if (!result.filename || typeof result.url !== "string") return fail(502, "업로드 서버 응답이 올바르지 않습니다.");
-    const url = `${base}${result.url}`;
-
-    await saveStoreReviewVideoUrl(job.appSlug, job.id, url, size);
-
-    return NextResponse.json({ ok: true, url });
+    return NextResponse.json({ ok: true, url: sent.url });
   } catch (error) {
     console.error("[factory] store-video 실패:", error);
 

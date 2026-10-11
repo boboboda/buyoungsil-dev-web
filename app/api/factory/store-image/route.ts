@@ -8,10 +8,10 @@
 // 응답: 200 { ok, url } / 실행 중이 아니면 409
 import { NextRequest, NextResponse } from "next/server";
 
-import { uploadConfig } from "@/config/upload";
 import { fail, guardWorker } from "@/lib/factory/http";
 import { touchRunningJob } from "@/lib/factory/jobs";
 import { STORE_IMAGE_SLOTS, STORE_IMAGE_TYPES, saveStoreImageUrl, storeImageJob } from "@/lib/factory/storeAssets";
+import { forwardBuffer, uploadBase } from "@/lib/factory/uploadStream";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   const blocked = await guardWorker(req);
   if (blocked) return blocked;
 
-  const base = (process.env.FACTORY_UPLOAD_URL?.trim() || uploadConfig.customServerUrl || "").replace(/\/+$/, "");
+  const base = uploadBase();
   if (!base) return fail(500, "업로드 서버 주소를 알 수 없습니다.");
   if (Number(req.headers.get("content-length") ?? "0") > MAX_BODY) return fail(413, "파일이 너무 큽니다.");
 
@@ -62,22 +62,16 @@ export async function POST(req: NextRequest) {
 
     if (state.kind !== "ok") return fail(409, "지시가 실행 중이 아닙니다.", state.kind === "conflict" ? { cancelled: state.cancelled, status: state.status } : undefined);
 
-    const upstream = new FormData();
-    upstream.append("file", new Blob([buf], { type }), `${job.appSlug}-${slot}.${type === "image/png" ? "png" : "jpg"}`);
-    const response = await fetch(`${base}/upload/single`, { method: "POST", body: upstream });
+    // 업로드 서버로 전달(업로드 시험과 같은 코드)
+    const sent = await forwardBuffer(base, buf, type, `${job.appSlug}-${slot}.${type === "image/png" ? "png" : "jpg"}`);
 
-    if (!response.ok) {
-      console.error("[factory] store-image 업로드 서버 응답 오류:", response.status);
-      return fail(502, "업로드 서버에 올리지 못했습니다.");
+    if (sent.ok === false) {
+      console.error("[factory] store-image 업로드 실패:", sent.stage, sent.upstreamStatus ?? "-");
+      return fail(sent.status, sent.message, { stage: sent.stage, upstreamStatus: sent.upstreamStatus });
     }
-    const result = (await response.json()) as { filename?: string; url?: string };
+    await saveStoreImageUrl(job.appSlug, job.id, slot, sent.url);
 
-    if (!result.filename || typeof result.url !== "string") return fail(502, "업로드 서버 응답이 올바르지 않습니다.");
-    const url = `${base}${result.url}`;
-
-    await saveStoreImageUrl(job.appSlug, job.id, slot, url);
-
-    return NextResponse.json({ ok: true, url });
+    return NextResponse.json({ ok: true, url: sent.url });
   } catch (error) {
     console.error("[factory] store-image 실패:", error);
     return fail(500, "처리에 실패했습니다.");

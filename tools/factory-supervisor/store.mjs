@@ -318,16 +318,20 @@ export function envSummary(env) {
 
 const MIME = { png: "image/png", jpg: "image/jpeg" };
 
+/** 이미지 한 장을 multipart(file + 그 밖의 칸)로 올린다. 스토어 이미지와 업로드 시험이 같이 쓴다. 돌려주는 값: api 결과 */
+export async function postImageFile({ api, pathname, fields = {}, file, type, name }) {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) form.append(k, v);
+  form.append("file", new Blob([fs.readFileSync(file)], { type: MIME[type] ?? type }), name);
+  return api("POST", pathname, form);
+}
+
 /** 검사를 통과한 이미지만 고정 칸으로 올린다. 돌려주는 값: 실패 메시지 목록 */
 export async function sendStoreImages({ check, job, api, addLog }) {
   const failures = [];
   for (const [slot, m] of Object.entries(check.images)) {
-    const form = new FormData();
-    form.append("jobId", job.id);
-    form.append("slot", slot);
-    form.append("file", new Blob([fs.readFileSync(m.file)], { type: MIME[m.type] }), `${slot}.${m.type}`);
     try {
-      const r = await api("POST", "/api/factory/store-image", form);
+      const r = await postImageFile({ api, pathname: "/api/factory/store-image", fields: { jobId: job.id, slot }, file: m.file, type: m.type, name: `${slot}.${m.type}` });
       if (r.status === 200) addLog("info", `스토어 이미지 올림: ${slot}`);
       else failures.push(`${slot} 거절(${r.status}): ${r.data?.message ?? ""}`);
     } catch (e) {
@@ -385,6 +389,11 @@ function fitVideo(src, limit, log) {
   return { file: out, size: small };
 }
 
+/** mp4 파일을 원본 바이트로 흘려 보낸다(Content-Length 포함, 15분). 검토 영상과 업로드 시험이 같이 쓴다. 돌려주는 값: api 결과 */
+export function postVideoFile({ api, pathname, file, size }) {
+  return api("POST", pathname, { streamFile: file, size, type: "video/mp4" }, { timeoutMs: 15 * 60_000 });
+}
+
 /** mp4 인지(4~8바이트 'ftyp'). 서버도 같은 검사를 한다 */
 function isMp4(file) {
   const fd = fs.openSync(file, "r");
@@ -408,7 +417,7 @@ export async function uploadReviewVideo({ video, job, api, log }) {
   if (fit.note) return { ok: false, note: fit.note };
   let r;
   try {
-    r = await api("POST", `/api/factory/store-video?jobId=${encodeURIComponent(job.id)}`, { streamFile: fit.file, size: fit.size, type: "video/mp4" }, { timeoutMs: 15 * 60_000 });
+    r = await postVideoFile({ api, pathname: `/api/factory/store-video?jobId=${encodeURIComponent(job.id)}`, file: fit.file, size: fit.size });
   } catch (e) {
     return { ok: false, note: `검토 영상 올리기 오류: ${e.message}. PC 에서 직접 확인: ${video.path}` };
   }

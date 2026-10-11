@@ -15,6 +15,7 @@ import { maskSecrets } from "@/lib/factory/mask";
 import { KEY_KINDS, listVault } from "@/lib/factory/keyVault";
 import { deleteReviewVideo, reviewVideoInfo } from "@/lib/factory/reviewVideo";
 import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
+import { uploadTestState } from "@/lib/factory/uploadTest";
 import { APP_NAME_SOURCE_LABELS, cleanAppName, pickAppName, storeTitleOf } from "@/lib/factory/appName";
 
 // 출시 일감 종류. 종류마다 서버가 만드는 지시문과 허용 동작(outbox 파일·키 준비)이 다르다.
@@ -900,6 +901,7 @@ export async function releaseOverview() {
     keyPasswords,
     keyScan: { at: keyScan.at, apps: keyScan.apps.filter((a) => !a.missing), requestedAt: keyScan.requestedAt },
     keys: vault,
+    uploadTest: await uploadTestState(), // 통제실 '업로드 시험' 진행·마지막 결과
     keyKinds: Object.entries(KEY_KINDS).map(([value, label]) => ({ value, label })),
     apps: rows,
   };

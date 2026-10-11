@@ -9,6 +9,7 @@ import { registerKeyPassword } from "@/lib/factory/keyPasswords";
 import { enqueueReleaseJob } from "@/lib/factory/mcp";
 import prisma from "@/lib/prisma";
 import { savePromoVideoUrl } from "@/lib/factory/storeAssets";
+import { requestUploadTest } from "@/lib/factory/uploadTest";
 import {
   createSharedKey,
   deleteKey,
@@ -72,6 +73,7 @@ async function keyTarget(body: Record<string, unknown>) {
 //       | { action: "reviewDecision", jobId, decision: approve|redo|cancel, note? }  (검토 대기 결정. redo 는 note 필수)
 //       | { action: "videoLinkApply", jobId, url }  (영상 링크 대기: 링크 저장 → Play 등록정보 영상만 반영 → 완료)
 //       | { action: "videoLinkSkip", jobId }  (영상 링크 없이 완료로 닫기)
+//       | { action: "uploadTestStart", kind: video|image|big }  (업로드 시험: 작업 PC 가 실제 경로로 시험 파일을 올림)
 //       enqueueRelease 의 kind=update(앱 업데이트)는 updateText(필수)·versionName·releaseNotes 를 함께 보낸다
 //       | { action: "setKeyPassword", keyId | accountId | appSlug, storePassword, keyPassword? }
 //       키 보관함: { action: "vaultCreate", name, keystorePath?, keyAlias?, dname?, description?, password, password2 }  (PC 가 keytool 로 만듦, 있으면 덮어쓰지 않음)
@@ -144,6 +146,8 @@ export async function POST(req: NextRequest) {
 
     if (!ID_RE.test(jobId)) return NextResponse.json({ message: "jobId 가 올바르지 않아요." }, { status: 400 });
     res = action === "videoLinkApply" ? await applyVideoLink(jobId, body?.url ?? null) : await finishWithoutVideoLink(jobId);
+  } else if (action === "uploadTestStart") {
+    res = await requestUploadTest(body?.kind);
   } else if (action === "retryRelease") {
     const jobId = typeof body?.jobId === "string" ? body.jobId : "";
 
@@ -181,7 +185,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         message:
-          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, reviewDecision, videoLinkApply, videoLinkSkip, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
+          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, reviewDecision, videoLinkApply, videoLinkSkip, uploadTestStart, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
       },
       { status: 400 },
     );
