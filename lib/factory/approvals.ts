@@ -2,17 +2,22 @@
 // 승인·배포의 단일 입구. 텔레그램 버튼(lib/factory/telegram.ts)과 통제실 버튼(app/api/admin/factory/overview)이 모두 이 함수를 부른다.
 // - 앱 일감(새 앱·수정·출시 준비) 승인: adminAction(approve) — pending → approved 조건부 갱신
 // - 정비 지시 승인: approveTurn — awaiting_approval → queued 조건부 갱신
-// - 서버 [배포]: requestDeploy — 진행 중인 배포가 없을 때만 조건부 갱신
+// - 서버 [배포]: requestDeploy — 진행 중인 배포가 없고 정비 대기열이 비었을 때만(deploy_now 는 대기열이 남아도) 조건부 갱신
+// - 정비 대기열이 실패로 멈췄을 때: queue_skip(계속 진행)·queue_retry(재시도)·queue_clear(비우기). id 는 멈춘(실패한) 지시 id
 // 모두 조건부 updateMany 라서 두 곳에서 동시에 눌러도 한 번만 실행되고, 늦은 쪽은 "이미 처리됨" 안내를 받는다.
 // 이 파일에는 보기용 요약(승인 기다림 목록, 업데이트·배포 이력)도 같이 둔다.
 import prisma from "@/lib/prisma";
 import { ID_RE, KIND_LABELS, adminAction } from "@/lib/factory/jobs";
-import { approveTurn, requestDeploy } from "@/lib/factory/maintenance";
+import { approveTurn, deployBundle, queueAction, requestDeploy } from "@/lib/factory/maintenance";
 
 export const APPROVAL_ACTIONS = [
   "job_approve",
   "maintenance_approve",
   "deploy",
+  "deploy_now",
+  "queue_skip",
+  "queue_retry",
+  "queue_clear",
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 export type ApprovalVia = "통제실" | "텔레그램";
@@ -61,6 +66,15 @@ export async function runApproval(
       return approveTurn(id);
     case "deploy":
       return requestDeploy(id, via);
+    case "deploy_now":
+      // 텔레그램에는 [지금 배포] 버튼이 없다(확인창이 있는 통제실에서만)
+      return requestDeploy(id, via, { force: via === "통제실" });
+    case "queue_skip":
+      return queueAction("skip", via, id);
+    case "queue_retry":
+      return queueAction("retry", via, id);
+    case "queue_clear":
+      return queueAction("clear", via, id);
   }
 }
 
@@ -74,7 +88,7 @@ const excerpt = (v: string | null | undefined, max: number) => {
 
 /** 승인·배포를 기다리는 것들(통제실 맨 위 "할 일" 목록) */
 export async function approvalInbox() {
-  const [jobs, turns, deployThreads] = await Promise.all([
+  const [jobs, turns, bundle] = await Promise.all([
     prisma.factoryJob.findMany({
       where: { status: "pending" },
       orderBy: { createdAt: "asc" },
@@ -95,12 +109,27 @@ export async function approvalInbox() {
       take: 50,
       include: { maintenance: { select: { id: true, title: true } } },
     }),
-    prisma.factoryMaintenance.findMany({
-      where: { needsDeploy: true, pushedCommit: { not: null } },
-      orderBy: { updatedAt: "desc" },
-      take: 20,
-    }),
+    deployBundle(),
   ]);
+  // 서버 배포는 정비 대기열 단위로 하나로 묶는다(배포 안 된 지시 목록 + 가장 최근 정비 커밋)
+  const ip = bundle.inProgress;
+  const deploys =
+    bundle.items.length || ip
+      ? [
+          {
+            threadId: (ip?.threadId ?? bundle.threadId)!,
+            title: ip?.title ?? bundle.threadTitle ?? "정비 배포",
+            commit: ip?.commit ?? bundle.commit,
+            inProgress: !!ip,
+            started: !!ip?.started,
+            requestedAt: ip?.requestedAt ?? null,
+            lastResult: bundle.lastResult && !bundle.lastResult.ok ? bundle.lastResult.result : null,
+            items: bundle.items.map((i) => ({ title: i.title, commit: i.commit })),
+            queueLeft: bundle.queueLeft,
+            canDeploy: bundle.canDeploy,
+          },
+        ]
+      : [];
 
   return {
     jobs: jobs.map((j) => ({ ...j, kindLabel: KIND_LABELS[j.kind] ?? j.kind })),
@@ -112,16 +141,7 @@ export async function approvalInbox() {
       source: t.source,
       createdAt: t.createdAt,
     })),
-    deploys: deployThreads.map((t) => ({
-      threadId: t.id,
-      title: t.title,
-      commit: t.pushedCommit,
-      // 진행 중: 요청됐고 아직 결과가 없음
-      inProgress: !!t.deployRequestedAt && !t.deployedAt && !t.deployResult,
-      started: !!t.deployStartedAt,
-      requestedAt: t.deployRequestedAt,
-      lastResult: t.deployResult,
-    })),
+    deploys,
   };
 }
 
@@ -152,7 +172,18 @@ export async function supervisorUpdateHistory(limit = 40) {
   });
 }
 
-/** 서버 배포 이력(정비 제목 포함) */
+const parseItems = (raw: string | null) => {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as unknown;
+
+    return Array.isArray(v) ? (v as { title: string; commit: string }[]).map((i) => ({ title: String(i.title ?? ""), commit: String(i.commit ?? "") })) : null;
+  } catch {
+    return null;
+  }
+};
+
+/** 서버 배포 이력(정비 제목·포함된 지시 포함) */
 export async function deployHistory(limit = 40) {
   const rows = await prisma.factoryDeploy.findMany({
     orderBy: { requestedAt: "desc" },
@@ -171,6 +202,7 @@ export async function deployHistory(limit = 40) {
     finishedAt: d.finishedAt,
     ok: d.ok,
     result: d.result ? excerpt(d.result, 600) : null,
+    items: parseItems(d.items), // 이 배포에 포함된 지시(예전 배포는 null)
   }));
 }
 

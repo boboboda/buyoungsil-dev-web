@@ -148,8 +148,24 @@ export async function notifyText(text: string, path = "/admin/factory/release"):
 
 export type MaintenanceEvent = "approval" | "done" | "failed" | "deployed" | "deploy_failed";
 
-// 공장 정비 알림. 지시·결과 본문은 짧게만 싣는다. 승인([정비 승인])·[배포] 버튼은 승인 버튼을 켰을 때만 붙인다. 절대 던지지 않는다.
-export async function notifyMaintenance(event: MaintenanceEvent, threadId: string, turnId?: string): Promise<void> {
+export interface MaintenanceNotifyExtra {
+  position?: number; // 승인 대기: 대기열 몇 번째
+  halted?: boolean; // 실패: 대기열을 멈췄는지
+  queueLeft?: number; // 끝남: 대기열에 남은 지시 수
+  needsDeploy?: boolean; // 끝남: 이 지시가 서버 코드를 바꿨는지
+  items?: { title: string; commit: string }[]; // 배포: 포함된 지시
+  via?: string; // 배포: 누가(통제실·텔레그램·자동)
+}
+
+const itemLines = (items: { title: string; commit: string }[]) =>
+  items
+    .slice(0, 10)
+    .map((i) => `• ${cut(i.title, 60)} (${String(i.commit).slice(0, 7)})`)
+    .join("\n") + (items.length > 10 ? `\n… 외 ${items.length - 10}개` : "");
+
+// 공장 정비 알림. 지시·결과 본문은 짧게만 싣는다. 승인([정비 승인])·대기열([계속 진행]·[재시도]·[대기열 비우기]) 버튼은 승인 버튼을 켰을 때만 붙인다.
+// [배포] 버튼은 대기열이 다 끝난 뒤의 '배포 필요' 알림(notifyDeployReady)에만 붙인다. 절대 던지지 않는다.
+export async function notifyMaintenance(event: MaintenanceEvent, threadId: string, turnId?: string, extra: MaintenanceNotifyExtra = {}): Promise<void> {
   try {
     if (!token() || !chatId()) return;
     const t = await prisma.factoryMaintenance.findUnique({ where: { id: threadId } });
@@ -167,17 +183,44 @@ export async function notifyMaintenance(event: MaintenanceEvent, threadId: strin
       deploy_failed: "🚀 정비 배포 실패",
     }[event];
     const body = event === "deployed" || event === "deploy_failed" ? cut(t.deployResult, 200) : cut(last?.text, 300);
+    const notes: string[] = [];
+
+    if (event === "approval" && extra.position) notes.push(`(대기 ${extra.position}번째, 앞에 ${extra.position - 1}개)`);
+    if (event === "done" && extra.needsDeploy && extra.queueLeft) notes.push(`(서버 코드가 바뀜 — 대기열 ${extra.queueLeft}개가 끝난 뒤 한 번에 배포를 안내해요)`);
+    if (event === "failed" && extra.halted) notes.push("⏸ 정비 대기열을 멈췄어요. [계속 진행](건너뛰기)·[재시도]·[대기열 비우기] 중에 골라 주세요.");
     const row: Record<string, string>[] = [{ text: "통제실 열기", url: `${publicUrl()}/admin/factory` }];
+    const rows: Record<string, string>[][] = [row];
 
     if (approveEnabled() && secret()) {
       if (event === "approval" && turnId) row.unshift({ text: "✅ 정비 승인", callback_data: `ma:${turnId}` });
-      if (event === "done" && t.needsDeploy && t.pushedCommit) row.unshift({ text: "🚀 배포", callback_data: `md:${threadId}` });
+      if (event === "failed" && extra.halted && turnId) {
+        rows.unshift([
+          { text: "▶️ 계속 진행", callback_data: `mc:${turnId}` },
+          { text: "🔁 재시도", callback_data: `mr:${turnId}` },
+          { text: "🗑 대기열 비우기", callback_data: `mx:${turnId}` },
+        ]);
+      }
     }
+    const list = (event === "deployed" || event === "deploy_failed") && extra.items?.length ? `\n포함된 지시:\n${itemLines(extra.items)}` : "";
+
     await tg("sendMessage", {
       chat_id: chatId(),
-      text: `${head}\n${t.title}${event === "done" && t.needsDeploy ? "\n(서버 코드가 바뀌어 배포가 필요해요)" : ""}\n${body}`.slice(0, 900),
-      reply_markup: { inline_keyboard: [row] },
+      text: `${head}${extra.via === "자동" ? "(자동 배포)" : ""}\n${t.title}${notes.length ? `\n${notes.join("\n")}` : ""}\n${body}${list}`.slice(0, 1500),
+      reply_markup: { inline_keyboard: rows },
     });
+  } catch {
+    console.error("[telegram] 정비 알림 처리 실패");
+  }
+}
+
+// 정비 대기열이 다 끝나 '배포 필요'(포함될 지시 목록은 text 에). 승인 버튼을 켰으면 [배포] 버튼을 붙인다. 절대 던지지 않는다.
+export async function notifyDeployReady(threadId: string, text: string): Promise<void> {
+  try {
+    if (!token() || !chatId()) return;
+    const row: Record<string, string>[] = [{ text: "통제실 열기", url: `${publicUrl()}/admin/factory` }];
+
+    if (approveEnabled() && secret()) row.unshift({ text: "🚀 배포", callback_data: `md:${threadId}` });
+    await tg("sendMessage", { chat_id: chatId(), text: text.slice(0, 1500), reply_markup: { inline_keyboard: [row] } });
   } catch {
     console.error("[telegram] 정비 알림 처리 실패");
   }
@@ -250,8 +293,8 @@ export async function handleUpdate(update: Update): Promise<void> {
     return;
   }
 
-  // 공장 정비 버튼: ma:<지시 id> 승인, md:<정비 id> 배포
-  const mm = /^m([ad]):([A-Za-z0-9_-]{1,40})$/.exec(cq.data ?? "");
+  // 공장 정비 버튼: ma:<지시 id> 승인, md:<정비 id> 배포, mc·mr·mx:<실패한 지시 id> 대기열 계속 진행·재시도·비우기
+  const mm = /^m([adcrx]):([A-Za-z0-9_-]{1,40})$/.exec(cq.data ?? "");
 
   if (mm && ID_RE.test(mm[2])) {
     const age = Math.floor(Date.now() / 1000) - (cq.message?.date ?? 0);
@@ -261,7 +304,8 @@ export async function handleUpdate(update: Update): Promise<void> {
 
       return;
     }
-    const r = await runApproval(mm[1] === "a" ? "maintenance_approve" : "deploy", mm[2], "텔레그램");
+    const act = ({ a: "maintenance_approve", d: "deploy", c: "queue_skip", r: "queue_retry", x: "queue_clear" } as const)[mm[1] as "a" | "d" | "c" | "r" | "x"];
+    const r = await runApproval(act, mm[2], "텔레그램");
 
     await answer(r.message.slice(0, 190));
     // 처리했거나 이미 (통제실 등에서) 처리된 건이면 버튼을 지운다

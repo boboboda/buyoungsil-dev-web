@@ -9,7 +9,8 @@
 //   통제실·커넥터에서 "지금 업데이트"를 누르면 다음 응답 한 번에 updateNow: true 가 붙는다(받아 가면 지운다).
 //   각 job 에 rules(CLAUDE.md 작업 규칙 본문)·prompt(첫 지시문)가 붙는다(lib/factory/rules.ts, 통제실에서 고칠 수 있음).
 //   감독 프로그램은 이 값이 없으면 자기 코드 안 기본값을 쓴다.
-//   공장 정비: 대기 중인 정비 지시가 있으면 maintenance: { turnId, threadId, title, text, sessionId } 가 붙고(진행 중인 게 없을 때),
+//   공장 정비: 대기열 맨 앞 지시가 승인돼 있으면 maintenance: { turnId, threadId, title, text, sessionId, deployBundling: true, queueLeft } 가 붙고
+//   (진행 중인 게 없고 실패로 멈추지 않았을 때. 보낸 순서대로 하나씩),
 //   사람이 [배포]를 눌렀으면 maintenanceDeploy: { threadId, commit } 이 붙는다. 정비가 대기·진행 중이면 새 앱 일감은 내주지 않는다(maintenanceHold: true).
 //   배포 계정의 키 파일 경로가 등록돼 있으면 pcPaths: [{ key, path }] 가 붙는다. 감독 프로그램은 "있는지"만 확인해 /api/factory/pc-status 로 알린다.
 //   통제실에서 키 비밀번호를 등록했고 아직 안 가져갔으면 keyPasswordsPending: true(값은 /api/factory/key-passwords 에서 따로).

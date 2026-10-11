@@ -118,3 +118,38 @@ export async function consumeUpdateNow(): Promise<boolean> {
 
   return count > 0;
 }
+
+const AUTO_DEPLOY_KEY = "maintenanceAutoDeploy";
+
+/** 정비 대기열이 모두 끝나면 자동 배포할지. 값이 없으면 꺼짐. */
+export async function isAutoDeployEnabled(): Promise<boolean> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: AUTO_DEPLOY_KEY } });
+
+  return row?.value === "true";
+}
+
+export async function setAutoDeployEnabled(enabled: boolean): Promise<void> {
+  const value = enabled ? "true" : "false";
+
+  await prisma.factorySetting.upsert({
+    where: { key: AUTO_DEPLOY_KEY },
+    create: { key: AUTO_DEPLOY_KEY, value },
+    update: { value },
+  });
+}
+
+// 짧은 문자열 설정(정비 대기열 멈춤 표시 등). 없으면 null.
+export async function getSettingValue(key: string): Promise<string | null> {
+  const row = await prisma.factorySetting.findUnique({ where: { key } });
+
+  return row?.value ?? null;
+}
+
+export async function setSettingValue(key: string, value: string | null): Promise<void> {
+  if (value === null) {
+    await prisma.factorySetting.deleteMany({ where: { key } });
+
+    return;
+  }
+  await prisma.factorySetting.upsert({ where: { key }, create: { key, value }, update: { value } });
+}

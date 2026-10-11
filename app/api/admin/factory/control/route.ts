@@ -17,7 +17,7 @@ export async function GET() {
   return NextResponse.json(await supervisorSnapshot());
 }
 
-// 본문: { enabled: boolean } | { autoUpdate: boolean } | { updateNow: true }
+// 본문: { enabled: boolean } | { autoUpdate: boolean } | { autoDeploy: boolean } | { updateNow: true }
 export async function POST(req: NextRequest) {
   const denied = await requireAdmin();
 
@@ -26,12 +26,14 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as {
     enabled?: unknown;
     autoUpdate?: unknown;
+    autoDeploy?: unknown;
     updateNow?: unknown;
   } | null;
 
   let action: SupervisorAction | null = null;
 
   if (body?.updateNow === true) action = "update_now";
+  else if (typeof body?.autoDeploy === "boolean") action = body.autoDeploy ? "auto_deploy_on" : "auto_deploy_off";
   else if (typeof body?.autoUpdate === "boolean") action = body.autoUpdate ? "auto_update_on" : "auto_update_off";
   else if (typeof body?.enabled === "boolean") action = body.enabled ? "resume" : "pause";
 

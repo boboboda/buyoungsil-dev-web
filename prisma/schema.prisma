@@ -782,6 +782,9 @@ model FactoryMaintenanceMessage {
   startedAt     DateTime?
   finishedAt    DateTime?
   heartbeatAt   DateTime?
+  pushedCommit  String? // user 지시: 이 지시가 GitHub 에 올린 커밋
+  needsDeploy   Boolean            @default(false) // user 지시: 서버 코드가 바뀌었는지
+  deployedAt    DateTime? // user 지시: 이 지시의 커밋이 포함된 배포가 끝난 시각
   maintenance   FactoryMaintenance @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
 
   @@index([maintenanceId, createdAt])
@@ -800,6 +803,7 @@ model FactoryDeploy {
   finishedAt    DateTime?
   ok            Boolean? // null = 아직 결과 없음
   result        String?            @db.Text
+  items         String?            @db.Text // 이 배포에 포함된 지시 목록 JSON [{ turnId, threadId, title, commit }]
   maintenance   FactoryMaintenance @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
 
   @@index([requestedAt])

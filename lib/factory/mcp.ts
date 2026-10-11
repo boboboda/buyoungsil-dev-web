@@ -29,6 +29,9 @@ import {
   STACKS,
 } from "@/lib/factory/jobs";
 
+// 채팅(커넥터)에서는 배포할 수 없으므로 자동 배포 켜고 끄기(auto_deploy_on/off)는 통제실에서만 한다.
+const CONNECTOR_SUPERVISOR_ACTIONS = SUPERVISOR_ACTIONS.filter((a) => a !== "auto_deploy_on" && a !== "auto_deploy_off");
+
 export type ToolResult = {
   content: { type: "text"; text: string }[];
   isError?: boolean;
@@ -275,7 +278,7 @@ export const FACTORY_TOOLS = [
       properties: {
         action: {
           type: "string",
-          enum: [...SUPERVISOR_ACTIONS],
+          enum: [...CONNECTOR_SUPERVISOR_ACTIONS],
           description: "status | update_now | pause | resume | auto_update_on | auto_update_off",
         },
       },
@@ -468,8 +471,8 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
 async function supervisorControl(args: Record<string, unknown>): Promise<ToolResult> {
   const action = args.action;
 
-  if (typeof action !== "string" || !(SUPERVISOR_ACTIONS as readonly string[]).includes(action)) {
-    return text(`action 은 ${SUPERVISOR_ACTIONS.join(", ")} 중 하나예요.`, true);
+  if (typeof action !== "string" || !(CONNECTOR_SUPERVISOR_ACTIONS as readonly string[]).includes(action)) {
+    return text(`action 은 ${CONNECTOR_SUPERVISOR_ACTIONS.join(", ")} 중 하나예요.`, true);
   }
   const { message, snapshot: s } = await runSupervisorAction(action as SupervisorAction);
 
@@ -484,6 +487,7 @@ async function supervisorControl(args: Record<string, unknown>): Promise<ToolRes
     지금업데이트요청대기: s.updateNowRequestedAt,
     일시정지: !s.enabled,
     자동업데이트: s.autoUpdate,
+    정비대기열끝나면자동배포: s.autoDeploy,
     진행중: s.running,
     승인됨_대기열: s.approved,
     승인기다림: s.pending,

@@ -7,7 +7,7 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, Chip } from "@heroui/react";
 
-type Action = "job_approve" | "maintenance_approve" | "deploy";
+type Action = "job_approve" | "maintenance_approve" | "deploy" | "deploy_now";
 
 interface Overview {
   inbox: {
@@ -37,6 +37,10 @@ interface Overview {
       started: boolean;
       requestedAt: string | null;
       lastResult: string | null;
+      // 정비 대기열 묶음 배포(예전 서버에는 없다)
+      items?: { title: string; commit: string }[];
+      queueLeft?: number;
+      canDeploy?: boolean;
     }[];
   };
   updates: {
@@ -59,6 +63,7 @@ interface Overview {
     finishedAt: string | null;
     ok: boolean | null;
     result: string | null;
+    items?: { title: string; commit: string }[] | null;
   }[];
   threads: {
     id: string;
@@ -184,7 +189,8 @@ export default function FactoryOverview({
   const todo = inbox
     ? inbox.jobs.length +
       inbox.turns.length +
-      inbox.deploys.filter((d) => !d.inProgress).length
+      inbox.deploys.filter((d) => !d.inProgress && d.canDeploy !== false)
+        .length
     : 0;
 
   return (
@@ -229,23 +235,61 @@ export default function FactoryOverview({
                   {!d.inProgress && d.lastResult
                     ? ` · 지난 시도: ${d.lastResult.slice(0, 80)}`
                     : ""}
+                  {!d.inProgress && d.queueLeft
+                    ? ` · 정비 대기열 ${d.queueLeft}개 처리 후 배포할 수 있어요`
+                    : ""}
                 </div>
+                {d.items && d.items.length > 0 && (
+                  <ul className="mt-1 text-xs text-default-500">
+                    {d.items.map((i, n) => (
+                      <li key={`${n}-${i.commit}`} className="break-words">
+                        • {i.title} ({short(i.commit)})
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
-              <Button
-                className="min-h-11 sm:min-h-0"
-                color="danger"
-                isDisabled={!!busy || d.inProgress}
-                size="sm"
-                onPress={() =>
-                  act(
-                    "deploy",
-                    d.threadId,
-                    `커밋 ${short(d.commit)} 을 홈페이지 서버에 배포할까요?\n「${d.title}」\n(빌드 3~4분, 그동안 잠깐 끊길 수 있어요)`,
-                  )
-                }
-              >
-                {d.inProgress ? "진행 중" : "🚀 배포"}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  className="min-h-11 sm:min-h-0"
+                  color="danger"
+                  isDisabled={
+                    !!busy || d.inProgress || d.canDeploy === false
+                  }
+                  size="sm"
+                  onPress={() =>
+                    act(
+                      "deploy",
+                      d.threadId,
+                      `커밋 ${short(d.commit)} 을 홈페이지 서버에 배포할까요?\n${d.items?.length ? `(정비 지시 ${d.items.length}개 포함)` : `「${d.title}」`}\n(빌드 3~4분, 그동안 잠깐 끊길 수 있어요)`,
+                    )
+                  }
+                >
+                  {d.inProgress
+                    ? "진행 중"
+                    : d.queueLeft
+                      ? `대기열 ${d.queueLeft}개 처리 후`
+                      : "🚀 배포"}
+                </Button>
+                {!d.inProgress && !!d.queueLeft && (
+                  <Button
+                    className="min-h-11 sm:min-h-0"
+                    color="danger"
+                    isDisabled={!!busy}
+                    size="sm"
+                    variant="flat"
+                    onPress={() =>
+                      act(
+                        "deploy_now",
+                        d.threadId,
+                        `정비 대기열에 지시 ${d.queueLeft}개가 남아 있어요.\n지금까지 반영분(${short(d.commit)})만 먼저 배포할까요?\n남은 지시가 끝나면 다시 배포해야 해요.`,
+                      )
+                    }
+                  >
+                    지금 배포
+                  </Button>
+                )}
+              </div>
             </div>
           ))}
 
@@ -379,10 +423,19 @@ export default function FactoryOverview({
                       <span className="font-medium">{d.threadTitle}</span>
                       {d.via && (
                         <span className="text-xs text-default-500">
-                          ({d.via}에서 요청)
+                          ({d.via === "자동" ? "자동 배포" : `${d.via}에서 요청`})
                         </span>
                       )}
                     </div>
+                    {d.items && d.items.length > 0 && (
+                      <ul className="mt-1 text-xs text-default-500">
+                        {d.items.map((i, n) => (
+                          <li key={`${n}-${i.commit}`} className="break-words">
+                            • {i.title} ({short(i.commit)})
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     <div className="mt-1 text-xs text-default-500">
                       요청 {when(d.requestedAt)} · 시작 {when(d.startedAt)} ·
                       완료 {when(d.finishedAt)}

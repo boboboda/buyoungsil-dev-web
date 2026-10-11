@@ -6,9 +6,11 @@ import prisma from "@/lib/prisma";
 import {
   getPendingUpdateNow,
   getSupervisorInfo,
+  isAutoDeployEnabled,
   isAutoUpdateEnabled,
   isSupervisorEnabled,
   requestUpdateNow,
+  setAutoDeployEnabled,
   setAutoUpdateEnabled,
   setSupervisorEnabled,
 } from "@/lib/factory/settings";
@@ -16,13 +18,14 @@ import {
 const ONLINE_MS = 90_000;
 
 // 허용하는 명령은 이 목록뿐이다.
-export const SUPERVISOR_ACTIONS = ["status", "update_now", "pause", "resume", "auto_update_on", "auto_update_off"] as const;
+export const SUPERVISOR_ACTIONS = ["status", "update_now", "pause", "resume", "auto_update_on", "auto_update_off", "auto_deploy_on", "auto_deploy_off"] as const;
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, info, updateNowRequestedAt, last, running, approved, pending] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, last, running, approved, pending] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
+    isAutoDeployEnabled(),
     getSupervisorInfo(),
     getPendingUpdateNow(),
     prisma.factoryWorkerToken.findFirst({
@@ -39,6 +42,7 @@ export async function supervisorSnapshot() {
   return {
     enabled,
     autoUpdate,
+    autoDeploy, // 정비 대기열이 모두 끝나면 자동 배포(기본 꺼짐)
     commit: info?.commit ?? null,
     commitSubject: info?.subject ?? null, // 현재 커밋 메시지 첫 줄(무엇이 바뀌었는지)
     updateNote: info?.note ?? null,
@@ -84,6 +88,14 @@ export async function runSupervisorAction(action: SupervisorAction): Promise<{ m
     case "auto_update_off":
       await setAutoUpdateEnabled(false);
       message = "자동 업데이트를 껐어요. PC 프로그램은 지금 코드 그대로 실행돼요. (지금 업데이트 요청은 여전히 할 수 있어요)";
+      break;
+    case "auto_deploy_on":
+      await setAutoDeployEnabled(true);
+      message = "정비 대기열이 모두 끝나면 자동 배포해요(지난 배포 뒤 실패한 지시가 있으면 하지 않아요). 결과는 통제실·텔레그램에 알려요.";
+      break;
+    case "auto_deploy_off":
+      await setAutoDeployEnabled(false);
+      message = "자동 배포를 껐어요. 정비 대기열이 끝나면 '배포 필요'만 알리고, 배포는 [배포]를 눌러야 해요.";
       break;
   }
 

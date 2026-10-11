@@ -1,5 +1,5 @@
 // components/admin/factory/SupervisorControl.tsx
-// 감독 프로그램 상태(연결/꺼짐)와 일시 정지·재개, 자동 업데이트 켜고 끄기, 지금 업데이트.
+// 감독 프로그램 상태(연결/꺼짐)와 일시 정지·재개, 자동 업데이트 켜고 끄기, 지금 업데이트, 정비 대기열 끝나면 자동 배포 켜고 끄기.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -10,6 +10,7 @@ import MaintenancePanel from "./MaintenancePanel";
 interface State {
   enabled: boolean;
   autoUpdate: boolean;
+  autoDeploy?: boolean; // 예전 서버에는 없다
   commit: string | null;
   commitSubject: string | null;
   updateNote: string | null;
@@ -47,7 +48,7 @@ export default function SupervisorControl() {
     return () => clearInterval(t);
   }, [load]);
 
-  const toggleAuto = async () => {
+  const toggleAuto = async (body: Record<string, boolean> = { autoUpdate: !s?.autoUpdate }) => {
     if (!s) return;
     setBusy(true);
     setNotice(null);
@@ -55,7 +56,7 @@ export default function SupervisorControl() {
       const res = await fetch("/api/admin/factory/control", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autoUpdate: !s.autoUpdate }),
+        body: JSON.stringify(body),
       });
       const data = (await res.json().catch(() => ({}))) as State & {
         message?: string;
@@ -251,11 +252,33 @@ export default function SupervisorControl() {
                 isDisabled={busy}
                 size="sm"
                 variant="flat"
-                onPress={toggleAuto}
+                onPress={() => toggleAuto()}
               >
                 {s.autoUpdate ? "자동 업데이트 끄기" : "자동 업데이트 켜기"}
               </Button>
             </div>
+          </div>
+        )}
+        {s && s.autoDeploy !== undefined && (
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span>
+              🚀 정비 대기열이 모두 끝나면 자동 배포: {s.autoDeploy ? "켜짐" : "꺼짐"}
+              <span className="ml-1 text-xs text-default-500">
+                (기본 꺼짐. 켜면 대기열이 비고 마지막 지시의 검사가 통과했을 때 한 번 배포해요. 지난 배포 뒤 실패한 지시가 있으면 안 해요)
+              </span>
+            </span>
+            <Button
+              className="min-h-11 w-full sm:min-h-0 sm:w-auto"
+              isDisabled={busy}
+              size="sm"
+              variant="flat"
+              onPress={() => {
+                if (!s.autoDeploy && !window.confirm("정비 대기열이 모두 끝나면 사람 확인 없이 홈페이지 서버에 자동 배포할까요?")) return;
+                toggleAuto({ autoDeploy: !s.autoDeploy });
+              }}
+            >
+              {s.autoDeploy ? "자동 배포 끄기" : "자동 배포 켜기"}
+            </Button>
           </div>
         )}
         {notice && <p className="text-sm text-default-600">{notice}</p>}

@@ -3,6 +3,33 @@
 // 채팅에서는 서버 배포를 할 수 없다(배포는 통제실·텔레그램의 [배포] 버튼).
 import { maintenanceOverview, sendMaintenance } from "@/lib/factory/maintenance";
 
+type Overview = Awaited<ReturnType<typeof maintenanceOverview>>;
+
+// 대기열·배포 묶음 요약(maintenance_list / maintenance_get 공통)
+function queueView(o: Overview) {
+  const d = o.deploy;
+
+  return {
+    대기열: {
+      남은지시: o.queue.left,
+      멈춤: o.queue.halted ? `앞 지시 실패로 멈춤: 「${o.queue.halted.firstLine}」(정비 ${o.queue.halted.threadId}) — 관리자가 통제실·텔레그램에서 계속 진행·재시도·비우기를 골라야 해요` : null,
+      목록: o.queue.items.map((i) => ({ 순서: i.position, 상태: i.status, 기다림: i.wait, 지시첫줄: i.firstLine, 정비: i.threadId, 지시: i.turnId, 출처: i.source })),
+    },
+    배포대기: {
+      안내: d.inProgress
+        ? `배포 진행 중(${d.inProgress.commit?.slice(0, 7) ?? "?"})`
+        : !d.items.length
+          ? "배포할 변경 없음"
+          : d.queueLeft
+            ? `배포 대기 중: 대기열 ${d.queueLeft}개 처리 후 배포(지금까지 지시 ${d.items.length}개)`
+            : `배포 필요: 지시 ${d.items.length}개(관리자가 [배포]를 눌러야 해요)`,
+      포함될지시: d.items.map((i) => ({ 지시첫줄: i.title, 커밋: i.commit.slice(0, 7) })),
+      배포할커밋: d.commit,
+      대기열끝나면자동배포: o.autoDeploy,
+    },
+  };
+}
+
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
@@ -10,8 +37,9 @@ const ID = /^[A-Za-z0-9_-]{1,40}$/;
 export const MAINTENANCE_INSTRUCTIONS =
   " 공장 정비(공장 자체 = 홈페이지·감독 프로그램 코드를 고치는 일)는 앱 일감과 따로예요: maintenance_list 로 정비 대화 목록을, " +
   "maintenance_get(threadId) 로 대화·결과·배포 상태를 보고, maintenance_send(text, threadId?) 로 지시해요(threadId 를 주면 같은 Claude 세션에 이어서). " +
-  "채팅에서 보낸 지시는 관리자가 승인해야 시작하고, 정비가 대기·진행 중이면 새 앱 일감은 멈춰요. 결과는 검사를 통과해야 GitHub 에 올라가고, " +
-  "서버 배포는 관리자가 통제실·텔레그램에서 [배포]를 눌러야 해요(채팅에서는 배포 못 함). 앱 만들기·고치기는 enqueue_app_job 을 쓰세요.";
+  "처리 중이어도 지시는 대기열에 쌓이고(응답에 몇 번째인지 나와요), 감독 프로그램이 보낸 순서대로 하나씩 처리해요. 앞 지시가 실패하면 대기열이 멈추고 관리자가 다음을 정해요. " +
+  "채팅에서 보낸 지시는 관리자가 승인해야 시작하고(미리 승인 가능), 정비가 대기·진행 중이면 새 앱 일감은 멈춰요. 결과는 검사를 통과해야 GitHub 에 올라가고, " +
+  "서버 배포는 대기열이 다 끝난 뒤 관리자가 통제실·텔레그램에서 [배포]를 눌러야 해요(채팅에서는 배포 못 함). 앱 만들기·고치기는 enqueue_app_job 을 쓰세요.";
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -19,13 +47,15 @@ const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true,
 export const MAINTENANCE_TOOLS = [
   {
     name: "maintenance_list",
-    description: "공장 정비 대화 목록(최근 순): 제목, 상태, 처리 중인 지시, GitHub 에 올린 커밋, 배포 필요·배포 상태. 정비가 대기·진행 중이라 앱 일감이 멈춰 있는지(hold)도 알려 줘요.",
+    description:
+      "공장 정비 대화 목록(최근 순): 제목, 상태, 처리 중인 지시, GitHub 에 올린 커밋, 배포 필요·배포 상태. " +
+      "정비 대기열(순서·상태·멈춤), 배포 대기(대기열 몇 개 처리 후 배포, 포함될 지시), 앱 일감이 멈춰 있는지(hold)도 알려 줘요.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: READ,
   },
   {
     name: "maintenance_get",
-    description: "공장 정비 대화 하나: 지시와 Claude 결과, 최근 진행 로그, 배포 상태.",
+    description: "공장 정비 대화 하나: 지시와 Claude 결과, 최근 진행 로그, 배포 상태, 정비 대기열과 배포 대기 정보.",
     inputSchema: {
       type: "object",
       properties: { threadId: { type: "string", description: "maintenance_list 의 id" }, logs: { type: "boolean", description: "진행 로그 포함(기본 false)" } },
@@ -37,7 +67,8 @@ export const MAINTENANCE_TOOLS = [
   {
     name: "maintenance_send",
     description:
-      "공장 정비 지시를 보냅니다(관리자 승인 뒤 시작). threadId 를 주면 그 정비 대화에 이어서(같은 Claude 세션), 없으면 새 정비를 만들어요. " +
+      "공장 정비 지시를 보냅니다(관리자 승인 뒤 차례가 되면 시작). threadId 를 주면 그 정비 대화에 이어서(같은 Claude 세션), 없으면 새 정비를 만들어요. " +
+      "처리 중이거나 승인 대기인 지시가 있어도 대기열에 쌓이고, 응답에 '대기 N번째(앞에 M개)'가 나와요. " +
       "홈페이지(Next.js)·감독 프로그램(tools/factory-supervisor) 코드를 고치는 일만 보내세요. 서버 설정(nginx, .env)·PC 환경은 여기서 못 고쳐요.",
     inputSchema: {
       type: "object",
@@ -64,11 +95,13 @@ export async function callMaintenanceTool(name: string, args: Record<string, unk
       JSON.stringify(
         {
           새앱일감멈춤: o.hold,
+          ...queueView(o),
           정비: o.threads.map((t) => ({
             id: t.id,
             제목: t.title,
             상태: t.status,
             처리중지시: t.activeTurn,
+            남은지시수: t.activeTurns,
             올린커밋: t.pushedCommit,
             배포필요: t.needsDeploy,
             배포: t.deploy,
@@ -89,7 +122,7 @@ export async function callMaintenanceTool(name: string, args: Record<string, unk
 
     if (!t) return text("없는 정비예요.", true);
 
-    return text(JSON.stringify({ ...t, messages: t.messages.map((m) => ({ ...m, text: m.text.slice(0, 6000) })) }, null, 1));
+    return text(JSON.stringify({ ...queueView(o), ...t, messages: t.messages.map((m) => ({ ...m, text: m.text.slice(0, 6000) })) }, null, 1));
   }
   if (name === "maintenance_send") {
     const r = await sendMaintenance({ threadId: args.threadId, text: args.text, source: "채팅" });
