@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
   if (!WORKER_RE.test(worker)) return fail(400, "worker 이름이 올바르지 않습니다.");
 
   const slotsRaw = Number(req.nextUrl.searchParams.get("slots") ?? "1");
-  const slots = Number.isFinite(slotsRaw) ? Math.min(MAX_SLOTS, Math.max(1, Math.floor(slotsRaw))) : 1;
+  const slots = Number.isFinite(slotsRaw) ? Math.min(MAX_SLOTS, Math.max(0, Math.floor(slotsRaw))) : 1; // 0 = 일감은 받지 않고 신호만(감독 프로그램이 정비 중)
 
   // 감독 프로그램이 알려 주는 현재 커밋·최근 업데이트 소식(선택). 형식이 이상하면 무시한다.
   const commitRaw = req.nextUrl.searchParams.get("commit") ?? "";
@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
     if (await maintenanceHold().catch(() => false)) {
       return NextResponse.json({ jobs: [], maintenanceHold: true, autoUpdate, ...extra });
     }
-    const claimed = await claimJobs(worker, slots);
+    const claimed = slots > 0 ? await claimJobs(worker, slots) : [];
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
     const overrides = claimed.length ? await getRuleOverrides().catch(() => ({})) : {};
     const releases = await releaseJobExtras(claimed).catch(() => new Map<string, Record<string, unknown>>());

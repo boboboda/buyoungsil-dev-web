@@ -167,6 +167,11 @@ PIXELLAB_TOKEN=여기에값
 - Claude 가 `.factory/phase.txt` 에 단계(scaffold, code, build, screenshots, done)를 쓰면 통제실에 단계로 보여요.
 - Claude 가 `.factory/screenshots/` 에 png 를 저장하면 자동으로 올려요.
 - 끝나면 앱 폴더에 git 커밋을 남겨요. 수정 지시는 시작 전에 현재 상태를 먼저 커밋해 둬요.
+- **외부 저장소**(앱 폴더에 `.factory/external` 이 있거나 `prod` 원격이 있음: 원래 있던 저장소를 가져와 고치는 경우)는 감독 프로그램이 커밋하지 않아요.
+  공장 파일(`PLAN.md`, `CHANGE_REQUEST.md`, `RELEASE_REQUEST.md`, `.factory/`, 작업 규칙)은 `.git/info/exclude` 로만 빼고 `.gitignore` 도 건드리지 않아요.
+  작업 규칙은 저장소에 `CLAUDE.md` 가 있으면 `CLAUDE.local.md` 에 써요. 코드 커밋은 일감 Claude 가 직접 해서, 배포 브랜치에 공장 문서 커밋이 섞이지 않아요.
+- 정비 지시나 정비 배포가 도는 동안에는 새 앱 일감을 받지 않아요(`/next?slots=0`: 신호만 받음). 정비는 돌던 앱 일감이 다 끝난 뒤 시작해요.
+- 앱 일감 Claude 는 `~/dev/factory/app-claude-settings.json` 으로 정비 폴더(`selfdev`, `supervisor-src`)와 공장 설정·비밀 파일을 고치거나 읽지 못하게 막아요(파일 도구 기준).
 
 ## 설정 값 (`supervisor.config.json`)
 | 이름 | 기본값 | 뜻 |

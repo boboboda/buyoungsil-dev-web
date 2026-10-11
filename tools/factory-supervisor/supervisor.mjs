@@ -265,14 +265,71 @@ ${releaseRules(job)}${RULES_END}
 `;
 }
 
+// 앱 일감 Claude 가 정비 쪽 폴더(정비 체크아웃·감독 프로그램 실행 체크아웃)와 공장 설정·비밀 파일을 건드리지 않게 막는 설정.
+// 정비는 앱 폴더를, 앱 일감은 정비 폴더를 고치지 않는다(작업과 커밋이 서로 섞이지 않게). 못 만들면 null(설정 없이 실행)
+function appPermissionSettings() {
+  try {
+    const file = path.join(cfg.workDir, "app-claude-settings.json");
+    // 권한 규칙의 절대 경로는 //경로. 윈도우 경로는 POSIX 꼴로(C:\Users\x → //c/Users/x)
+    const abs = (p) => path.resolve(p).replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_, d) => d.toLowerCase()).replace(/^\/+/, "");
+    const deny = [];
+    for (const d of [expand(cfg.selfdevDir || "~/dev/factory/selfdev"), path.join(cfg.workDir, "supervisor-src")]) {
+      deny.push(`Edit(//${abs(d)}/**)`); // Edit 규칙이 Write 등 모든 파일 수정 도구를 막는다
+    }
+    const root = abs(cfg.workDir);
+    deny.push(`Edit(//${root}/*.json)`, `Edit(//${root}/*.sh)`, `Edit(//${root}/secrets.env)`);
+    deny.push(`Read(//${root}/supervisor.config.json)`, `Read(//${root}/secrets.env)`);
+    fs.writeFileSync(file, JSON.stringify({ permissions: { deny } }, null, 2));
+    return file.replace(/\\/g, "/");
+  } catch {
+    return null;
+  }
+}
+
 function git(dir, args) {
   return spawnSync("git", args, { cwd: dir, encoding: "utf8", shell: false });
 }
 
 // 일감마다(새 폴더 포함) .gitignore 에 공장 파일·키 파일 패턴이 없으면 덧붙인다(기존 내용 유지)
 function ensureGitignore(dir) {
+  if (isExternalRepo(dir)) return ensureExclude(dir);
   addIgnoreLines(dir, [".factory/", ".env", "local.properties", ...KEY_IGNORE]);
 }
+
+// ───────── 외부 저장소(가져와서 고치는 기존 저장소) ─────────
+// 앱 폴더에 .factory/external 이 있거나 'prod' 원격이 있으면 외부 저장소로 본다(예: 서버에 바로 배포되는 image-upload-server).
+// 외부 저장소에서는 감독 프로그램이 커밋하지 않고(수정 전 저장·결과 커밋 없음), 공장 파일은 추적되지 않는
+// .git/info/exclude 로만 뺀다(.gitignore 도 건드리지 않음). 코드 커밋은 일감 Claude 가 직접 하고, 배포 브랜치에 공장 문서가 섞이지 않는다.
+const FACTORY_FILES = [".factory/", "PLAN.md", "CHANGE_REQUEST.md", "RELEASE_REQUEST.md", "CLAUDE.local.md"];
+
+function isExternalRepo(dir) {
+  if (fs.existsSync(path.join(dir, ".factory", "external"))) return true;
+  if (!fs.existsSync(path.join(dir, ".git"))) return false;
+  return git(dir, ["remote"]).stdout?.split(/\r?\n/).some((r) => r.trim() === "prod") ?? false;
+}
+
+const isTracked = (dir, file) => git(dir, ["ls-files", "--error-unmatch", "--", file]).status === 0;
+
+// 외부 저장소의 공장 규칙 파일: 저장소가 CLAUDE.md 를 가지고 있으면 CLAUDE.local.md(추적 안 함)에, 아니면 CLAUDE.md(추적 안 함)에 쓴다
+const rulesFileFor = (dir) => (isExternalRepo(dir) && isTracked(dir, "CLAUDE.md") ? "CLAUDE.local.md" : "CLAUDE.md");
+
+function ensureExclude(dir) {
+  const p = path.join(dir, ".git", "info", "exclude");
+  if (!fs.existsSync(path.dirname(p))) return;
+  const lines = [...FACTORY_FILES, ".env", "local.properties", ...KEY_IGNORE];
+  if (!isTracked(dir, "CLAUDE.md")) lines.push("CLAUDE.md");
+  const have = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+  const cur = new Set(have.split(/\r?\n/).map((l) => l.trim()));
+  const need = [...new Set(lines)].filter((l) => !cur.has(l));
+  if (need.length) fs.appendFileSync(p, (have && !have.endsWith("\n") ? "\n" : "") + "# 앱 공장 파일(감독 프로그램)\n" + need.join("\n") + "\n");
+}
+
+const EXTERNAL_NOTE = `
+## 외부 저장소 (이 폴더 전용)
+- 이 폴더는 원래 있던 저장소예요. 감독 프로그램은 이 폴더에 커밋하지 않아요. 코드 변경은 직접 의미 있는 커밋으로 남기세요(브랜치는 지시가 없으면 지금 브랜치).
+- 공장 파일(PLAN.md, CHANGE_REQUEST.md, RELEASE_REQUEST.md, 이 규칙 파일, .factory/)은 .git/info/exclude 로 git 에서 빠져 있어요. 커밋하거나 .gitignore 에 넣지 마세요.
+- push 는 지시문이 허락할 때만 하세요.
+`;
 
 // 앱 폴더 커밋(git add -A). 키 파일이 들어가려 하면 add·커밋을 하지 않고 job.keyBlocked 에 남긴다(완료 보고 때 통제실에 표시)
 function safeCommit(dir, job, message) {
@@ -332,9 +389,11 @@ function prepareDir(job) {
   fs.writeFileSync(path.join(dir, ".factory", "phase.txt"), `${firstPhase}\n`);
 
   // CLAUDE.md: 우리 블록만 갈아 끼우고 나머지는 그대로 둔다
-  const claudeMd = path.join(dir, "CLAUDE.md");
+  const external = isExternalRepo(dir);
+  const claudeMd = path.join(dir, rulesFileFor(dir));
   const fromServer = serverRules(job);
-  const block = fromServer ?? rulesFor(job);
+  let block = fromServer ?? rulesFor(job);
+  if (external) block = block.replace(RULES_END, `${EXTERNAL_NOTE}${RULES_END}`);
   job.rulesSource = fromServer ? "홈페이지" : "기본값(감독 프로그램 코드)";
   let text = fs.existsSync(claudeMd) ? fs.readFileSync(claudeMd, "utf8") : "";
   const b = text.indexOf(RULES_BEGIN);
@@ -344,11 +403,18 @@ function prepareDir(job) {
 
   ensureGitignore(dir);
   if (!fs.existsSync(path.join(dir, ".git"))) git(dir, ["init", "-q"]);
-  if (onExisting) safeCommit(dir, job, `${job.kind === "release" ? "출시 준비 전 저장" : "수정 전 저장"}: ${job.title}`);
+  if (onExisting && !external) safeCommit(dir, job, `${job.kind === "release" ? "출시 준비 전 저장" : "수정 전 저장"}: ${job.title}`);
   return dir;
 }
 
 function commitResult(dir, job) {
+  // 외부 저장소: 커밋하지 않는다(이번 일감에서 저장소를 가져왔으면 여기서 처음 알게 되므로 공장 파일을 이제 뺀다)
+  if (isExternalRepo(dir)) {
+    ensureExclude(dir);
+    const left = git(dir, ["status", "--porcelain"]).stdout?.trim();
+    log(`[${job.appSlug}] 외부 저장소라 커밋하지 않았어요${left ? ` (커밋 안 된 변경 ${left.split(/\r?\n/).length}개)` : ""}.`);
+    return false;
+  }
   return safeCommit(dir, job, `${job.kind === "new" ? "앱 공장" : job.kind === "release" ? "출시 준비" : "수정"}: ${job.title}`);
 }
 
@@ -661,6 +727,8 @@ async function runJob(job) {
   }
 
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", cfg.permissionMode, "--allowedTools", cfg.allowedTools];
+  const appSettings = appPermissionSettings();
+  if (appSettings) args.push("--settings", appSettings);
   if (cfg.model) args.push("--model", cfg.model);
 
   const child = spawn(cfg.claudeCmd, args, {
@@ -1078,9 +1146,11 @@ async function loop() {
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
         const extra = new URLSearchParams({ ...restartQuery(), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe") });
+        // 정비 지시나 정비 배포가 도는 동안에는 새 앱 일감을 받지 않는다(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌)
+        const take = maintenanceBusy() ? 0 : free;
         const r = await api(
           "GET",
-          `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}&subject=${encodeURIComponent(info.subject ?? "")}&${extra}`,
+          `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${take}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}&subject=${encodeURIComponent(info.subject ?? "")}&${extra}`,
         );
         notePoll(r.status === 200); // 새 버전 건강 확인(200 이면 확인됨)
         if (r.status === 200) {
