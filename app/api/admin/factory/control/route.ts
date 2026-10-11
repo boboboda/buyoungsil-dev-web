@@ -9,6 +9,7 @@ import {
   isAutoUpdateEnabled,
   isSupervisorEnabled,
   setAutoUpdateEnabled,
+  getSupervisorInfo,
   setSupervisorEnabled,
 } from "@/lib/factory/settings";
 
@@ -18,9 +19,10 @@ export const runtime = "nodejs";
 const ONLINE_MS = 90_000;
 
 async function snapshot() {
-  const [enabled, autoUpdate, last, running, approved] = await Promise.all([
+  const [enabled, autoUpdate, info, last, running, approved] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
+    getSupervisorInfo(),
     prisma.factoryWorkerToken.findFirst({
       where: { lastUsedAt: { not: null } },
       orderBy: { lastUsedAt: "desc" },
@@ -34,6 +36,8 @@ async function snapshot() {
   return {
     enabled,
     autoUpdate,
+    commit: info?.commit ?? null,
+    updateNote: info?.note ?? null,
     online: !!lastSeen && Date.now() - lastSeen.getTime() < ONLINE_MS,
     lastSeenAt: lastSeen,
     workerName: last?.name ?? null,

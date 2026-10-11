@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
-import { maybeUpdate, startupGuard } from "./update.mjs";
+import { maybeUpdate, reportInfo, startupGuard } from "./update.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -624,7 +624,11 @@ async function loop() {
     try {
       const free = cfg.slots - running.size;
       if (free > 0) {
-        const r = await api("GET", `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}`);
+        const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
+        const r = await api(
+          "GET",
+          `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${free}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}`,
+        );
         if (r.status === 200) {
           delay = cfg.pollSec * 1000;
           autoUpdate = r.data?.autoUpdate !== false;

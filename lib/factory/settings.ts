@@ -38,3 +38,36 @@ export async function setAutoUpdateEnabled(enabled: boolean): Promise<void> {
     update: { value },
   });
 }
+
+const INFO_KEY = "supervisorInfo";
+
+export interface SupervisorInfo {
+  commit: string;
+  note: string;
+  at: string;
+}
+
+export async function getSupervisorInfo(): Promise<SupervisorInfo | null> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: INFO_KEY } });
+
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value) as SupervisorInfo;
+  } catch {
+    return null;
+  }
+}
+
+/** 감독 프로그램이 알려 준 커밋·소식을 저장한다. 값이 바뀔 때만 쓴다(5초마다 오는 요청이 DB 를 두드리지 않게). */
+export async function saveSupervisorInfo(commit: string, note: string): Promise<void> {
+  const cur = await getSupervisorInfo();
+
+  if (cur && cur.commit === commit && cur.note === note) return;
+  const value = JSON.stringify({ commit, note, at: new Date().toISOString() });
+
+  await prisma.factorySetting.upsert({
+    where: { key: INFO_KEY },
+    create: { key: INFO_KEY, value },
+    update: { value },
+  });
+}

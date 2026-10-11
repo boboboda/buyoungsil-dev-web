@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { claimJobs, MAX_SLOTS, releaseExpiredLeases, WORKER_RE } from "@/lib/factory/jobs";
 import { fail, guardWorker } from "@/lib/factory/http";
-import { isAutoUpdateEnabled, isSupervisorEnabled } from "@/lib/factory/settings";
+import { isAutoUpdateEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,7 +25,14 @@ export async function GET(req: NextRequest) {
   const slotsRaw = Number(req.nextUrl.searchParams.get("slots") ?? "1");
   const slots = Number.isFinite(slotsRaw) ? Math.min(MAX_SLOTS, Math.max(1, Math.floor(slotsRaw))) : 1;
 
+  // 감독 프로그램이 알려 주는 현재 커밋·최근 업데이트 소식(선택). 형식이 이상하면 무시한다.
+  const commitRaw = req.nextUrl.searchParams.get("commit") ?? "";
+  const noteRaw = (req.nextUrl.searchParams.get("note") ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 150);
+  const commit = /^[0-9a-f]{7,40}$/.test(commitRaw) ? commitRaw : "";
+
   try {
+    if (commit) await saveSupervisorInfo(commit, noteRaw).catch(() => undefined);
+
     // 통제실에서 "일시 정지" 하면 일감을 내주지 않는다. (인증은 이미 통과했으니 "연결됨" 표시는 계속 갱신된다)
     const [enabled, autoUpdate] = await Promise.all([isSupervisorEnabled(), isAutoUpdateEnabled()]);
 

@@ -8,6 +8,8 @@ import { Button, Card, CardBody } from "@heroui/react";
 interface State {
   enabled: boolean;
   autoUpdate: boolean;
+  commit: string | null;
+  updateNote: string | null;
   online: boolean;
   lastSeenAt: string | null;
   workerName: string | null;
@@ -141,6 +143,10 @@ export default function SupervisorControl() {
               🔄 자동 업데이트: {s.autoUpdate ? "켜짐" : "꺼짐"}
               <span className="ml-1 text-xs text-default-500">
                 (PC 프로그램이 새 코드를 스스로 받아요)
+              </span>
+              <span className="mt-1 block text-xs text-default-500">
+                {s.commit ? `현재 버전 ${s.commit}` : "버전 정보 없음"}
+                {s.updateNote ? ` · ${s.updateNote}` : ""}
               </span>
             </span>
             <Button
