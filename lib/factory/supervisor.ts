@@ -40,6 +40,7 @@ export async function supervisorSnapshot() {
     enabled,
     autoUpdate,
     commit: info?.commit ?? null,
+    commitSubject: info?.subject ?? null, // 현재 커밋 메시지 첫 줄(무엇이 바뀌었는지)
     updateNote: info?.note ?? null,
     updateNoteAt: info?.at ?? null,
     // 아직 감독 프로그램이 받아 가지 않은 "지금 업데이트" 요청 시각

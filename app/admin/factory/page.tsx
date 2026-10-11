@@ -7,6 +7,7 @@ import FactoryControl from "@/components/admin/factory/FactoryControl";
 import SupervisorControl from "@/components/admin/factory/SupervisorControl";
 import RevisionSender from "@/components/admin/factory/RevisionSender";
 import AppProjectLinks from "@/components/admin/factory/AppProjectLinks";
+import FactoryOverview from "@/components/admin/factory/FactoryOverview";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,9 @@ export default function AdminFactoryPage() {
         </div>
       </div>
 
-      <SupervisorControl />
+      <FactoryOverview>
+        <SupervisorControl />
+      </FactoryOverview>
       <RevisionSender />
       <AppProjectLinks />
 

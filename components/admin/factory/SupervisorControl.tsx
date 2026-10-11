@@ -11,7 +11,9 @@ interface State {
   enabled: boolean;
   autoUpdate: boolean;
   commit: string | null;
+  commitSubject: string | null;
   updateNote: string | null;
+  updateNoteAt: string | null;
   updateNowRequestedAt: string | null;
   online: boolean;
   lastSeenAt: string | null;
@@ -71,6 +73,12 @@ export default function SupervisorControl() {
 
   // 1회성 신호: 감독 프로그램이 다음 확인(15초 안) 때 받아 가서, 돌고 있는 일감이 없으면 바로 새 버전을 확인한다
   const updateNow = async () => {
+    if (
+      !window.confirm(
+        "감독 프로그램을 지금 업데이트할까요?\n돌고 있는 일감이 없으면 새 버전을 받아 30초쯤 뒤 다시 켜져요.",
+      )
+    )
+      return;
     setBusy(true);
     setNotice(null);
     try {
@@ -84,7 +92,9 @@ export default function SupervisorControl() {
       };
 
       if (res.ok) setS(data);
-      setNotice(data.message ?? (res.ok ? "요청했어요." : "요청하지 못했어요."));
+      setNotice(
+        data.message ?? (res.ok ? "요청했어요." : "요청하지 못했어요."),
+      );
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     }
@@ -113,7 +123,9 @@ export default function SupervisorControl() {
       };
 
       if (res.ok) setS(data);
-      setNotice(data.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."));
+      setNotice(
+        data.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."),
+      );
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     }
@@ -145,10 +157,8 @@ export default function SupervisorControl() {
             <div className="font-semibold">🤖 감독 프로그램: {badge}</div>
             {s && (
               <div className="text-xs text-default-500">
-                진행 중 {s.running}개 · 승인 대기열 {s.approved}개 · 승인 기다림 {s.pending}개
-                {s.lastSeenAt
-                  ? ` · 마지막 응답 ${new Date(s.lastSeenAt).toLocaleTimeString("ko-KR")}`
-                  : ""}
+                진행 중 {s.running}개 · 승인된 대기 {s.approved}개 · 승인 기다림{" "}
+                {s.pending}개
               </div>
             )}
           </div>
@@ -164,17 +174,67 @@ export default function SupervisorControl() {
         </div>
         {hint && <p className="text-sm text-default-600">{hint}</p>}
         {s && (
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-default-50 p-2 text-xs sm:grid-cols-4">
+            <Item
+              label="연결"
+              value={s.online ? "🟢 연결됨" : "🔴 응답 없음"}
+            />
+            <Item label="작업 PC" value={s.workerName ?? "-"} />
+            <Item
+              label="마지막 응답"
+              value={
+                s.lastSeenAt
+                  ? new Date(s.lastSeenAt).toLocaleString("ko-KR")
+                  : "-"
+              }
+            />
+            <Item
+              label="일감 받기"
+              value={s.enabled ? "작동 중" : "⏸️ 일시 정지"}
+            />
+            <Item label="현재 버전" value={s.commit ?? "알 수 없음"} />
+            <Item
+              label="자동 업데이트"
+              value={s.autoUpdate ? "켜짐" : "꺼짐"}
+            />
+            <Item
+              label="진행 중 / 승인된 대기"
+              value={`${s.running} / ${s.approved}`}
+            />
+            <Item label="승인 기다림" value={`${s.pending}`} />
+            {s.commitSubject && (
+              <div className="col-span-2 sm:col-span-4">
+                <dt className="inline text-default-500">현재 버전 내용: </dt>
+                <dd className="inline break-words">{s.commitSubject}</dd>
+              </div>
+            )}
+            {s.updateNote && (
+              <div className="col-span-2 sm:col-span-4">
+                <dt className="inline text-default-500">
+                  최근 업데이트 소식:{" "}
+                </dt>
+                <dd className="inline break-words">
+                  {s.updateNote}
+                  {s.updateNoteAt
+                    ? ` (${new Date(s.updateNoteAt).toLocaleString("ko-KR")})`
+                    : ""}
+                </dd>
+              </div>
+            )}
+          </dl>
+        )}
+        {s && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-default-200 pt-2 text-sm">
             <span>
               🔄 자동 업데이트: {s.autoUpdate ? "켜짐" : "꺼짐"}
               <span className="ml-1 text-xs text-default-500">
                 (PC 프로그램이 새 코드를 스스로 받아요)
               </span>
-              <span className="mt-1 block text-xs text-default-500">
-                {s.commit ? `현재 버전 ${s.commit}` : "버전 정보 없음"}
-                {s.updateNote ? ` · ${s.updateNote}` : ""}
-                {s.updateNowRequestedAt ? " · 지금 업데이트 요청됨(PC가 받아 가는 중)" : ""}
-              </span>
+              {s.updateNowRequestedAt && (
+                <span className="mt-1 block text-xs text-default-500">
+                  지금 업데이트 요청됨(PC가 받아 가는 중)
+                </span>
+              )}
             </span>
             <div className="flex w-full gap-2 sm:w-auto">
               <Button
@@ -193,7 +253,7 @@ export default function SupervisorControl() {
                 variant="flat"
                 onPress={toggleAuto}
               >
-                {s.autoUpdate ? "끄기" : "켜기"}
+                {s.autoUpdate ? "자동 업데이트 끄기" : "자동 업데이트 켜기"}
               </Button>
             </div>
           </div>
@@ -202,5 +262,14 @@ export default function SupervisorControl() {
         <MaintenancePanel />
       </CardBody>
     </Card>
+  );
+}
+
+function Item({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-default-500">{label}</dt>
+      <dd className="truncate font-medium">{value}</dd>
+    </div>
   );
 }

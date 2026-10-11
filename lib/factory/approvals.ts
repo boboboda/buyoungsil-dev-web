@@ -9,7 +9,11 @@ import prisma from "@/lib/prisma";
 import { ID_RE, KIND_LABELS, adminAction } from "@/lib/factory/jobs";
 import { approveTurn, requestDeploy } from "@/lib/factory/maintenance";
 
-export const APPROVAL_ACTIONS = ["job_approve", "maintenance_approve", "deploy"] as const;
+export const APPROVAL_ACTIONS = [
+  "job_approve",
+  "maintenance_approve",
+  "deploy",
+] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 export type ApprovalVia = "통제실" | "텔레그램";
 
@@ -28,17 +32,30 @@ const JOB_STATE: Record<string, string> = {
   cancelled: "취소된 일감이에요",
 };
 
-export async function runApproval(action: ApprovalAction, id: string, via: ApprovalVia): Promise<ApprovalResult> {
-  if (!ID_RE.test(id)) return { ok: false, status: 400, message: "id 가 올바르지 않아요." };
+export async function runApproval(
+  action: ApprovalAction,
+  id: string,
+  via: ApprovalVia,
+): Promise<ApprovalResult> {
+  if (!ID_RE.test(id))
+    return { ok: false, status: 400, message: "id 가 올바르지 않아요." };
 
   switch (action) {
     case "job_approve": {
       const r = await adminAction(id, { action: "approve" });
 
-      if (r.ok || r.status !== 409) return { ok: r.ok, status: r.status, message: r.message };
-      const job = await prisma.factoryJob.findUnique({ where: { id }, select: { status: true } });
+      if (r.ok || r.status !== 409)
+        return { ok: r.ok, status: r.status, message: r.message };
+      const job = await prisma.factoryJob.findUnique({
+        where: { id },
+        select: { status: true },
+      });
 
-      return { ok: false, status: 409, message: `승인할 수 없어요: ${JOB_STATE[job?.status ?? ""] ?? r.message}.` };
+      return {
+        ok: false,
+        status: 409,
+        message: `승인할 수 없어요: ${JOB_STATE[job?.status ?? ""] ?? r.message}.`,
+      };
     }
     case "maintenance_approve":
       return approveTurn(id);
@@ -62,7 +79,15 @@ export async function approvalInbox() {
       where: { status: "pending" },
       orderBy: { createdAt: "asc" },
       take: 50,
-      select: { id: true, appSlug: true, title: true, kind: true, stack: true, source: true, createdAt: true },
+      select: {
+        id: true,
+        appSlug: true,
+        title: true,
+        kind: true,
+        stack: true,
+        source: true,
+        createdAt: true,
+      },
     }),
     prisma.factoryMaintenanceMessage.findMany({
       where: { role: "user", status: "awaiting_approval" },
@@ -102,17 +127,26 @@ export async function approvalInbox() {
 
 /** 감독 프로그램 업데이트 이력. 커밋을 GitHub 에 올린 정비 대화가 있으면 그 제목도 붙인다. */
 export async function supervisorUpdateHistory(limit = 40) {
-  const events = await prisma.factorySupervisorEvent.findMany({ orderBy: { id: "desc" }, take: limit });
-  const commits = [...new Set(events.filter((e) => e.fromCommit).map((e) => e.commit))];
+  const events = await prisma.factorySupervisorEvent.findMany({
+    orderBy: { id: "desc" },
+    take: limit,
+  });
+  const commits = [
+    ...new Set(events.filter((e) => e.fromCommit).map((e) => e.commit)),
+  ];
   const threads = commits.length
     ? await prisma.factoryMaintenance.findMany({
-        where: { OR: commits.map((c) => ({ pushedCommit: { startsWith: c } })) },
+        where: {
+          OR: commits.map((c) => ({ pushedCommit: { startsWith: c } })),
+        },
         select: { id: true, title: true, pushedCommit: true },
       })
     : [];
 
   return events.map((e) => {
-    const t = e.fromCommit ? threads.find((x) => x.pushedCommit?.startsWith(e.commit)) : undefined;
+    const t = e.fromCommit
+      ? threads.find((x) => x.pushedCommit?.startsWith(e.commit))
+      : undefined;
 
     return { ...e, thread: t ? { id: t.id, title: t.title } : null };
   });
@@ -146,7 +180,12 @@ export async function maintenanceSummary(limit = 30) {
     orderBy: { updatedAt: "desc" },
     take: limit,
     include: {
-      messages: { where: { role: "user" }, orderBy: { createdAt: "desc" }, take: 1, select: { status: true, createdAt: true } },
+      messages: {
+        where: { role: "user" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { status: true, createdAt: true },
+      },
       _count: { select: { messages: { where: { role: "user" } } } },
     },
   });
