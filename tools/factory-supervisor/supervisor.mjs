@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
-import { maybeUpdate, reportInfo, startupGuard } from "./update.mjs";
+import { maybeUpdate, reportInfo, requestUpdateNow, startupGuard } from "./update.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -632,6 +632,7 @@ async function loop() {
         if (r.status === 200) {
           delay = cfg.pollSec * 1000;
           autoUpdate = r.data?.autoUpdate !== false;
+          if (r.data?.updateNow === true) requestUpdateNow(); // 1회성 "지금 업데이트": 다음 루프에서 바로 확인
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
           if (nowPaused !== paused) {

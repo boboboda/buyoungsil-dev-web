@@ -106,6 +106,13 @@ function filesToCheck(entry = path.join(HERE, "supervisor.mjs"), seen = new Set(
 let lastCheck = Date.now(); // 시작 직후에는 확인하지 않는다
 let lastNote = "";
 let warnedNoLauncher = false;
+let forced = false; // 통제실·커넥터의 "지금 업데이트" 요청(/next 의 updateNow). 일감이 끝나는 대로 한 번 확인한다
+
+// /next 응답에 updateNow: true 가 오면 부른다. 다음 루프(15초 안)에서 주기·자동 업데이트 스위치와 상관없이 확인한다.
+export function requestUpdateNow() {
+  if (!forced) log("자동 업데이트 요청 받음(지금 업데이트): 돌고 있는 일감이 없으면 바로 확인해요.");
+  forced = true;
+}
 
 // 같은 건너뜀 사유는 바뀔 때만 한 번 남긴다(10분마다 같은 줄이 쌓이지 않게)
 function note(m) {
@@ -116,9 +123,14 @@ function note(m) {
 
 // 대기열 확인 루프에서 매번 부른다. 업데이트를 받으면 프로세스를 끝낸다(exit 0).
 export function maybeUpdate({ running, autoUpdate }) {
-  if (running > 0 || autoUpdate === false) return;
-  if (Date.now() - lastCheck < CHECK_EVERY_MS) return;
-  lastCheck = Date.now();
+  if (running > 0) return;
+  const now0 = Date.now();
+  if (!forced && (autoUpdate === false || now0 - lastCheck < CHECK_EVERY_MS)) return;
+  const manual = forced;
+  forced = false;
+  lastCheck = now0;
+  // 직접 요청한 확인은 결과를 매번 남긴다(상태 조회에서 보이게). 주기 확인은 같은 사유를 한 번만.
+  const say = manual ? (m) => { lastNote = m; log(m); } : note;
   if (!UNDER_LAUNCHER) {
     if (!warnedNoLauncher) log("자동 업데이트 건너뜀: 실행기(run-supervisor.sh) 밖에서 돌고 있어서 다시 띄워 줄 장치가 없어요.");
     warnedNoLauncher = true;
@@ -126,21 +138,21 @@ export function maybeUpdate({ running, autoUpdate }) {
   }
 
   const cur = head();
-  if (!cur) return note("자동 업데이트 건너뜀: git 저장소 안에서 실행 중이 아니에요.");
-  if (out(git(["rev-parse", "--abbrev-ref", "HEAD"])) !== "main") return note("자동 업데이트 건너뜀: main 브랜치가 아니에요.");
+  if (!cur) return say("자동 업데이트 건너뜀: git 저장소 안에서 실행 중이 아니에요.");
+  if (out(git(["rev-parse", "--abbrev-ref", "HEAD"])) !== "main") return say("자동 업데이트 건너뜀: main 브랜치가 아니에요.");
   const dirty = git(["status", "--porcelain", "--untracked-files=no"]);
-  if (dirty.status !== 0 || dirty.stdout.trim()) return note("자동 업데이트 건너뜀: 작업 트리에 커밋 안 된 변경이 있어요.");
+  if (dirty.status !== 0 || dirty.stdout.trim()) return say("자동 업데이트 건너뜀: 작업 트리에 커밋 안 된 변경이 있어요.");
 
   const f = git(["fetch", "-q", "origin", "main"], 120_000);
-  if (f.status !== 0) return note(`자동 업데이트 확인 실패(git fetch): ${errText(f)}`);
+  if (f.status !== 0) return say(`자동 업데이트 확인 실패(git fetch): ${errText(f)}`);
   const remote = out(git(["rev-parse", "origin/main"]));
-  if (!remote || remote === cur) return;
+  if (!remote || remote === cur) return manual ? say(`자동 업데이트 확인: 이미 최신 버전(${short(cur)})이에요.`) : undefined;
   if (git(["merge-base", "--is-ancestor", cur, remote]).status !== 0) {
-    return note(`자동 업데이트 건너뜀: 이 PC의 main(${short(cur)})이 origin/main(${short(remote)})과 갈라져 있어요.`);
+    return say(`자동 업데이트 건너뜀: 이 PC의 main(${short(cur)})이 origin/main(${short(remote)})과 갈라져 있어요.`);
   }
-  if ((readState().skip ?? []).includes(remote)) return note(`자동 업데이트 건너뜀: ${short(remote)} 는 전에 실패한 커밋이에요.`);
+  if ((readState().skip ?? []).includes(remote)) return say(`자동 업데이트 건너뜀: ${short(remote)} 는 전에 실패한 커밋이에요.`);
   const changed = out(git(["diff", "--name-only", cur, remote, "--", "."]));
-  if (!changed) return note(`자동 업데이트 건너뜀: 새 커밋(${short(remote)})에 감독 프로그램 변경이 없어요.`);
+  if (!changed) return say(`자동 업데이트 건너뜀: 새 커밋(${short(remote)})에 감독 프로그램 변경이 없어요.`);
 
   log(`자동 업데이트 시작: ${short(cur)} → ${short(remote)} (${changed.split("\n").join(", ")})`);
   const p = git(["pull", "--ff-only", "-q", "origin", "main"], 120_000);
