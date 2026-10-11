@@ -641,5 +641,38 @@ model FactoryApp {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ── 출시 (반자동) ──
+  releaseAccountId  String? // 배포 계정(FactoryReleaseAccount.id)
+  releaseStatus     String    @default("preparing") // preparing | package | review | testing | released
+  packageName       String? // Android applicationId (예: com.factory.my_app)
+  firstUploadDone   Boolean   @default(false) // 최초 1회 Play Console 직접 업로드를 마쳤는지(이후 API 업로드 가능)
+  testingStartedAt  DateTime? // 비공개 테스트 시작일(테스트가 필요한 계정)
+  testingDueAt      DateTime? // 완료 예정일(시작 + 14일)
+  testingNotifiedAt DateTime? // 완료 예정일 텔레그램 알림을 보낸 시각
+  releasePackage    Json? // 출시 준비 일감이 만든 스토어 문구·데이터 보안·콘텐츠 등급·체크리스트·방침 초안
+  releasePackageAt  DateTime?
+  releasePackageJob String? // 그 패키지를 만든 일감 id
+  aab               Json? // { path, size, versionName, versionCode, builtAt } (파일은 PC 에만 있다)
+  releaseAccount    FactoryReleaseAccount? @relation(fields: [releaseAccountId], references: [id], onDelete: SetNull)
+
   @@map("factory_apps")
+}
+
+// 스토어 배포 계정 프로필. 서명 키·서비스 계정 키는 PC 파일 경로만 저장한다(값과 비밀번호는 저장하지 않는다).
+model FactoryReleaseAccount {
+  id                    String       @id @default(cuid())
+  label                 String       @unique // "A", "B"
+  name                  String // 표시 이름
+  requiresTesting       Boolean      @default(false) // 비공개 테스트(12명·14일)가 필요한 계정인지
+  developerName         String? // 스토어에 보이는 개발자 이름
+  contactEmail          String? // 스토어·개인정보처리방침 연락 이메일
+  keystorePath          String? // PC 의 업로드 키(서명 키) 파일 경로
+  keyAlias              String? // 키 별칭
+  serviceAccountKeyPath String? // PC 의 Play Developer API 서비스 계정 JSON 경로
+  notes                 String?      @db.Text
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  apps                  FactoryApp[]
+
+  @@map("factory_release_accounts")
 }

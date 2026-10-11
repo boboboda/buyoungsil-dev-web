@@ -36,6 +36,10 @@ export const STACK_LABELS: Record<(typeof STACKS)[number], string> = {
   nestjs: "백엔드 API 서버 (NestJS, TypeScript)",
 };
 
+// 일감 종류. release = 출시 준비(완성된 앱만, 수정 지시처럼 기존 폴더에서 출시 자료를 만든다)
+export const JOB_KINDS = ["new", "revision", "release"] as const;
+export const KIND_LABELS: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비" };
+
 export const ACTIVE_STATUSES = ["pending", "approved", "running"] as const;
 export const JOB_STATUSES = ["pending", "approved", "running", "done", "failed", "cancelled"] as const;
 export const LOG_LEVELS = ["info", "warn", "error"] as const;

@@ -8,7 +8,7 @@
 //   TELEGRAM_APPROVE_BUTTONS  "true" 이면 알림에 [승인] 버튼을 붙인다
 //   FACTORY_PUBLIC_URL        (선택) 통제실 주소의 기본값은 https://www.buyoungsilcoding.com
 import prisma from "@/lib/prisma";
-import { ID_RE, adminAction } from "@/lib/factory/jobs";
+import { ID_RE, KIND_LABELS, adminAction } from "@/lib/factory/jobs";
 
 const API_TIMEOUT_MS = 5000;
 const MAX_BUTTON_AGE_SEC = 24 * 60 * 60; // 24시간이 지난 알림의 버튼은 무시한다
@@ -91,7 +91,7 @@ export async function notifyJobEvent(
 
     if (!job) return;
 
-    const kind = job.kind === "new" ? "새 앱" : "수정";
+    const kind = KIND_LABELS[job.kind] ?? "수정";
     let text: string;
 
     if (event === "pending") {
@@ -114,6 +114,20 @@ export async function notifyJobEvent(
       chat_id: chatId(),
       text,
       reply_markup: { inline_keyboard: [row] },
+    });
+  } catch {
+    console.error("[telegram] 알림 처리 실패");
+  }
+}
+
+// 일감과 상관없는 짧은 알림(출시 테스트 일정 등). 통제실 링크를 붙인다. 절대 던지지 않는다.
+export async function notifyText(text: string, path = "/admin/factory/release"): Promise<void> {
+  try {
+    if (!token() || !chatId()) return;
+    await tg("sendMessage", {
+      chat_id: chatId(),
+      text: text.slice(0, 900), // 줄바꿈은 살린다(cut 은 공백으로 합친다)
+      reply_markup: { inline_keyboard: [[{ text: "통제실 열기", url: `${publicUrl()}${path}` }]] },
     });
   } catch {
     console.error("[telegram] 알림 처리 실패");

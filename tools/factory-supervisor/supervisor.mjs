@@ -14,6 +14,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { maybeUpdate, reportInfo, requestUpdateNow, startupGuard } from "./update.mjs";
+import { releaseRules, reportPcPaths, sendOutbox } from "./release.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -213,7 +214,7 @@ ${stackRules(job)}
 - 진행 단계가 바뀔 때마다 .factory/phase.txt 에 한 단어(scaffold, code, build, screenshots, done 중 하나)를 덮어써 주세요.
 - 화면 스크린샷을 만들 수 있으면 .factory/screenshots/ 에 png 로 저장하세요(예: home.png, result.png). 못 만들면 건너뛰세요.
 - 마지막 응답은 한국어 3~6줄 결과 요약으로 하세요: 만든 화면, 분석/빌드 결과, 사람이 해야 할 일.
-${RULES_END}
+${releaseRules(job)}${RULES_END}
 `;
 }
 
@@ -233,7 +234,8 @@ function prepareDir(job) {
   if (!dir.startsWith(cfg.workDir + path.sep)) throw new Error("앱 폴더 경로가 올바르지 않아요.");
 
   const existed = fs.existsSync(dir);
-  if (job.kind === "revision" && !existed) {
+  const onExisting = job.kind === "revision" || job.kind === "release"; // 수정·출시 준비는 기존 폴더에서
+  if (onExisting && !existed) {
     throw new Error(`이 PC에 앱 폴더가 없어요: ${dir}. 원본을 만든 PC에서 실행하거나 폴더를 옮겨 주세요.`);
   }
 
@@ -242,6 +244,9 @@ function prepareDir(job) {
 
   if (job.kind === "revision") {
     fs.writeFileSync(path.join(dir, "CHANGE_REQUEST.md"), `# 수정 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n`);
+  } else if (job.kind === "release") {
+    fs.writeFileSync(path.join(dir, "RELEASE_REQUEST.md"), `# 출시 준비 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n`);
+    fs.mkdirSync(path.join(dir, ".factory", "outbox"), { recursive: true });
   } else {
     fs.writeFileSync(path.join(dir, "PLAN.md"), job.planMarkdown + "\n");
   }
@@ -259,20 +264,23 @@ function prepareDir(job) {
 
   ensureGitignore(dir);
   if (!fs.existsSync(path.join(dir, ".git"))) git(dir, ["init", "-q"]);
-  if (job.kind === "revision") {
+  if (onExisting) {
     git(dir, ["add", "-A"]);
-    git(dir, ["-c", "user.name=app-factory", "-c", "user.email=factory@localhost", "commit", "-q", "-m", `수정 전 저장: ${job.title}`]);
+    git(dir, ["-c", "user.name=app-factory", "-c", "user.email=factory@localhost", "commit", "-q", "-m", `${job.kind === "release" ? "출시 준비 전 저장" : "수정 전 저장"}: ${job.title}`]);
   }
   return dir;
 }
 
 function commitResult(dir, job) {
   git(dir, ["add", "-A"]);
-  const r = git(dir, ["-c", "user.name=app-factory", "-c", "user.email=factory@localhost", "commit", "-q", "-m", `${job.kind === "new" ? "앱 공장" : "수정"}: ${job.title}`]);
+  const r = git(dir, ["-c", "user.name=app-factory", "-c", "user.email=factory@localhost", "commit", "-q", "-m", `${job.kind === "new" ? "앱 공장" : job.kind === "release" ? "출시 준비" : "수정"}: ${job.title}`]);
   return r.status === 0;
 }
 
 function promptFor(job) {
+  if (job.kind === "release") {
+    return "RELEASE_REQUEST.md 에 적힌 출시 준비를 하세요. 앱 기능은 바꾸지 말고, CLAUDE.md 작업 규칙의 '출시 준비' 형식대로 .factory/outbox/ 에 결과를 저장하세요.";
+  }
   if (job.kind === "revision") {
     return "CHANGE_REQUEST.md 에 적힌 수정 내용만 이 앱에 반영하세요. 기존 기획은 PLAN.md 를 참고하되 요청 밖의 부분은 바꾸지 마세요. CLAUDE.md 의 작업 규칙을 따르세요.";
   }
@@ -596,6 +604,8 @@ async function runJob(job) {
       if (/^시간 초과/.test(st.stopped)) await finish(st, "failed", { failReason: st.stopped });
       // 취소·종료·서버 쪽 상태 변경이면 서버가 이미 정리했거나(또는 곧 정리) 하므로 보고하지 않는다
     } else if (st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
+      // outbox(출시 자료 등)는 일감이 아직 실행 중일 때 보내야 서버가 받는다
+      await sendOutbox({ dir, job, api, addLog: (level, m) => addLog(st, level, m) });
       const committed = commitResult(dir, job);
       const text = st.redact(String(st.result.result ?? st.lastText ?? "").trim());
       const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result.num_turns ? `, ${st.result.num_turns}턴` : ""}${committed ? ", 앱 폴더에 커밋함" : ""})`;
@@ -633,6 +643,7 @@ async function loop() {
           delay = cfg.pollSec * 1000;
           autoUpdate = r.data?.autoUpdate !== false;
           if (r.data?.updateNow === true) requestUpdateNow(); // 1회성 "지금 업데이트": 다음 루프에서 바로 확인
+          reportPcPaths(r.data?.pcPaths, api, log).catch(() => {}); // 배포 계정 키 파일이 있는지만 알린다
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
           if (nowPaused !== paused) {

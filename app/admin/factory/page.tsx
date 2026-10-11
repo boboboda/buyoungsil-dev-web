@@ -24,12 +24,20 @@ export default function AdminFactoryPage() {
             기획서를 승인하면 내 PC의 감독 프로그램이 가져가서 앱을 만들어요
           </p>
         </div>
+        <div className="flex flex-wrap gap-2">
+        <Link
+          className="rounded-lg bg-default-100 px-3 py-2 text-sm hover:bg-default-200"
+          href="/admin/factory/release"
+        >
+          📦 출시 패키지
+        </Link>
         <Link
           className="rounded-lg bg-default-100 px-3 py-2 text-sm hover:bg-default-200"
           href="/admin/factory/settings"
         >
           ⚙️ 설정 (PC 연결 토큰 · 키 이름)
         </Link>
+        </div>
       </div>
 
       <SupervisorControl />

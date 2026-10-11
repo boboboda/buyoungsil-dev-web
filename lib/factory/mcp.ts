@@ -395,8 +395,8 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
     );
   }
   if (!title) return text("title(표시할 앱 이름)이 필요해요.", true);
-  if (kind !== "new" && kind !== "revision")
-    return text("kind 는 new 또는 revision 이에요.", true);
+  if (kind !== "new" && kind !== "revision" && kind !== "release")
+    return text("kind 는 new, revision, release 중 하나예요.", true);
   if (
     stackArg !== undefined &&
     (typeof stackArg !== "string" ||
@@ -414,7 +414,7 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
   if (parentArg && !ID_RE.test(parentArg))
     return text("parentJobId 가 올바르지 않아요.", true);
   if (kind === "new" && parentArg)
-    return text("parentJobId 는 kind=revision 일 때만 쓸 수 있어요.", true);
+    return text("parentJobId 는 kind=revision/release 일 때만 쓸 수 있어요.", true);
 
   let priority = 0;
 
@@ -589,7 +589,7 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
         ok: true,
         id: job.id,
         message:
-          `${kind === "new" ? "새 앱" : "수정 지시"}를 등록했어요 (id: ${job.id}, appSlug: ${appSlug}). ` +
+          `${kind === "new" ? "새 앱" : kind === "release" ? "출시 준비 일감" : "수정 지시"}를 등록했어요 (id: ${job.id}, appSlug: ${appSlug}). ` +
           `승인 대기 상태예요. 관리자가 통제실(/admin/factory)에서 승인하면 제작이 시작돼요.`,
       } as EnqueueOk;
     },
