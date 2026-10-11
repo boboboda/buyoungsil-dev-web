@@ -265,7 +265,7 @@ async function linkProjectOnApprove(id: string): Promise<void> {
   try {
     const job = await prisma.factoryJob.findUnique({
       where: { id },
-      select: { kind: true, appSlug: true, title: true, planMarkdown: true },
+      select: { kind: true, appSlug: true, title: true, planMarkdown: true, stack: true },
     });
 
     if (job?.kind === "new") await ensureProjectForJob(job);
