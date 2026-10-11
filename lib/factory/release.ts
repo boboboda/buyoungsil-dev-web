@@ -708,7 +708,7 @@ export async function receiveReleasePackage(body: Record<string, unknown>): Prom
 
 const STAGES_BY_KIND: Record<ReleaseKind, string[]> = {
   first: ["key", "build", "sign", "store", "upload", "homepage"],
-  store: ["store", "homepage"],
+  store: ["icon", "screenshots", "video", "listing", "upload", "homepage"], // upload·homepage 는 감독 프로그램이 한다
   project: ["homepage"],
 };
 

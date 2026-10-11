@@ -41,6 +41,7 @@ export interface ReleaseJobInfo {
   failStageLabel: string | null;
   failReason: string | null;
   resumeFrom: string | null;
+  overwriteProject: boolean;
   logs: { at: string; level: string; message: string }[];
 }
 
@@ -70,14 +71,32 @@ export interface ReleaseApp {
   aab: { path: string; size: number | null; versionName: string | null; versionCode: number | null; builtAt: string | null } | null;
   customKeystorePath: string | null;
   customKeyAlias: string | null;
+  promoVideoUrl: string | null;
+  storeAssets: StoreAssets | null;
+  playMissing: string[]; // Play 업로드에 모자란 것(비면 가능)
   key: { source: "custom" | "account"; path: string; alias: string; password: KeyPasswordState } | null;
   keyScan: KeyScanApp | null;
   lastReleaseJob: ReleaseJobInfo | null;
 }
 
+// 스토어 자료(.factory/store/) 결과. 서버 lib/factory/storeAssets.ts 의 StoreAssets 와 같다
+export type StoreStageStatus = "ok" | "skipped" | "failed";
+export interface StoreAssets {
+  at: string;
+  jobId: string;
+  dir: string | null;
+  stages: Partial<Record<"icon" | "screenshots" | "video" | "listing" | "upload" | "homepage", { status: StoreStageStatus; note: string | null }>>;
+  images: Record<string, { width: number | null; height: number | null; size: number | null; url: string | null }>;
+  video: { path: string; size: number | null; durationSec: number | null } | null;
+  listing: Record<string, { title: string; shortDescription: string; fullDescription: string }> | null;
+  tools: string | null;
+  upload: { at: string; ok: boolean; note: string; changesNotSentForReview?: boolean } | null;
+  aabUpload: { at: string; ok: boolean; note: string; track: string | null; versionCode: number | null } | null;
+}
+
 export interface ReleaseOverview {
   statuses: { value: string; label: string }[];
-  kinds: { value: string; label: string }[];
+  kinds: { value: string; label: string; canOverwrite: boolean }[];
   testingDays: number;
   accounts: ReleaseAccount[];
   pcStatus: { at: string; items: PcPathItem[] } | null;

@@ -3,6 +3,8 @@
 // 콘텐츠 등급·체크리스트·방침 초안)와 AAB 정보(파일은 PC 에만), 비공개 테스트 일정.
 // [승인]: 종류(첫 출시 / 스토어 자료 수정 / 프로젝트 업데이트)를 고르면 일감을 만들고 바로 승인한다.
 // 출시 일감 진행 단계, 실패 단계·이유·최근 로그(서버가 비밀번호를 가림), 실패한 단계부터 [재시도].
+// 2단계: 홍보 영상 링크(YouTube, 앱별), 스토어 자료·Play 업로드 결과, Play 업로드에 모자란 것,
+// 스토어 자료 수정·프로젝트 업데이트 승인 때 '홈페이지 프로젝트도 덮어쓰기'(기본 꺼짐, 개인정보처리방침 제외).
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -10,6 +12,7 @@ import { Button, Card, CardBody, CardHeader, Chip } from "@heroui/react";
 
 import KeyPasswordForm from "./KeyPasswordForm";
 import KeyScanTable from "./KeyScanTable";
+import StoreAssetsView from "./StoreAssetsView";
 import { fmtDate, fmtSize, postRelease, type ReleaseApp, type ReleaseJobInfo, type ReleaseOverview } from "./releaseTypes";
 
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
@@ -86,8 +89,9 @@ const REMOVE_CONFIRM = "출시 패키지 목록에서 지울까요? 앱 소스�
 
 const KIND_HELP: Record<string, string> = {
   first: "키 준비 → AAB 빌드·서명 → 스토어 문구·체크리스트 → 홈페이지 프로젝트 빈 칸 채우기",
-  store: "스크린샷·스토어 문구·체크리스트만 다시 만들어요(Play 업로드·홈페이지 덮어쓰기는 다음 단계)",
-  project: "홈페이지 프로젝트 정보만 갱신해요(빈 칸만 채움). AAB·Play 업로드는 하지 않아요",
+  store:
+    "아이콘·대표 이미지(코드 생성) → 스크린샷(에뮬레이터) → 홍보 영상(HyperFrames, PC 에만) → 문구 → (조건이 맞으면) Play 등록정보·이미지 업로드 → 홈페이지 반영",
+  project: "홈페이지 프로젝트 정보만 갱신해요. AAB·Play 업로드는 하지 않아요",
 };
 
 const JOB_STATUS: Record<string, string> = {
@@ -107,7 +111,7 @@ function JobStatus({ job, kinds, busy, onRetry }: { job: ReleaseJobInfo; kinds: 
   return (
     <div className={`space-y-1 rounded-lg border p-2 text-sm ${failed ? "border-danger-200 bg-danger-50 dark:bg-danger-50/10" : "border-default-200"}`}>
       <div>
-        최근 출시 일감({kind}): <b>{JOB_STATUS[job.status] ?? job.status}</b>
+        최근 출시 일감({kind}{job.overwriteProject ? " · 홈페이지 덮어쓰기" : ""}): <b>{JOB_STATUS[job.status] ?? job.status}</b>
         {job.status === "running" && job.phase ? ` · 현재 단계: ${job.phaseLabel}` : ""}
         {job.finishedAt ? ` · ${new Date(job.finishedAt).toLocaleString("ko-KR")}` : ""}
       </div>
@@ -155,6 +159,9 @@ function AppRow({
   const [customAlias, setCustomAlias] = useState(app.customKeyAlias ?? "");
   // 패키지가 이미 있으면 보통 고치는 일이라 스토어 자료 수정을 먼저 보여 준다
   const [kind, setKind] = useState(app.releasePackage ? "store" : "first");
+  const [overwrite, setOverwrite] = useState(false);
+  const [video, setVideo] = useState(app.promoVideoUrl ?? "");
+  const canOverwrite = data.kinds.find((k) => k.value === kind)?.canOverwrite ?? false;
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const label = data.statuses.find((s) => s.value === app.releaseStatus)?.label ?? app.releaseStatus;
@@ -269,8 +276,15 @@ function AppRow({
             onPress={() => {
               const label = data.kinds.find((k) => k.value === kind)?.label ?? kind;
 
-              if (window.confirm(`${app.title}: '${label}' 일감을 만들고 바로 승인할까요?\n\n${KIND_HELP[kind] ?? ""}`)) {
-                call({ action: "enqueueRelease", appSlug: app.appSlug, kind, runNow: true });
+              const ow = canOverwrite && overwrite;
+              const owText = canOverwrite
+                ? ow
+                  ? "\n\n⚠️ 홈페이지 프로젝트의 기존 값(설명·대표 이미지·앱 링크·기술 스택)을 덮어써요(개인정보처리방침은 제외)."
+                  : "\n\n홈페이지 프로젝트는 빈 칸만 채워요."
+                : "";
+
+              if (window.confirm(`${app.title}: '${label}' 일감을 만들고 바로 승인할까요?\n\n${KIND_HELP[kind] ?? ""}${owText}`)) {
+                call({ action: "enqueueRelease", appSlug: app.appSlug, kind, runNow: true, overwriteProject: ow });
               }
             }}
           >
@@ -291,7 +305,40 @@ function AppRow({
           {!app.releaseAccountId && <span className="text-xs text-default-500">계정을 골라 저장하면 승인할 수 있어요</span>}
           {app.active && <span className="text-xs text-default-500">진행 중 일감이 있어요(삭제할 수 없어요)</span>}
         </div>
+        {canOverwrite && (
+          <label className="flex items-center gap-2 text-sm">
+            <input checked={overwrite} type="checkbox" onChange={(e) => setOverwrite(e.target.checked)} />
+            홈페이지 프로젝트도 덮어쓰기 (설명·대표 이미지·앱 링크·기술 스택. 개인정보처리방침은 제외. 끄면 빈 칸만 채움)
+          </label>
+        )}
         <p className="text-xs text-default-500">{KIND_HELP[kind]}</p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            aria-label="홍보 영상 링크"
+            className={`${input} sm:flex-1`}
+            placeholder="홍보 영상 링크 (https://www.youtube.com/watch?v=… 또는 https://youtu.be/…)"
+            value={video}
+            onChange={(e) => setVideo(e.target.value)}
+          />
+          <Button
+            className="min-h-11 sm:min-h-0"
+            isDisabled={busy || video.trim() === (app.promoVideoUrl ?? "")}
+            size="sm"
+            variant="flat"
+            onPress={() => call({ action: "savePromoVideo", appSlug: app.appSlug, url: video })}
+          >
+            링크 저장
+          </Button>
+        </div>
+        <p className="text-xs text-default-500">
+          영상은 YouTube 에 직접 올리고 링크만 넣어요(공개 또는 일부 공개, 퍼가기 허용, 광고 끔). 다음 &apos;스토어 자료 수정&apos; 업로드 때 Play 등록정보 영상에
+          들어가요.
+        </p>
+        {app.playMissing.length > 0 ? (
+          <p className="text-xs text-warning-600">Play 업로드 안 됨(스토어 자료·업데이트 AAB) — 부족한 것: {app.playMissing.join(" / ")}</p>
+        ) : (
+          <p className="text-xs text-success-600">Play 업로드 조건 충족: 스토어 자료 수정은 등록정보·이미지를, 첫 출시는 업데이트 AAB 를 비공개 테스트 트랙에 올려요.</p>
+        )}
         {account?.playConsoleUrl && (
           <a className="text-sm text-primary underline" href={account.playConsoleUrl} rel="noopener noreferrer" target="_blank">
             ▶ Play Console (계정 {account.label}) 열기
@@ -319,6 +366,7 @@ function AppRow({
             {app.aab.versionName ?? "?"} ({app.aab.versionCode ?? "?"}) · 빌드 {app.aab.builtAt ? new Date(app.aab.builtAt).toLocaleString("ko-KR") : "-"}
           </p>
         )}
+        {app.storeAssets && <StoreAssetsView assets={app.storeAssets} />}
         {app.releasePackage ? (
           <div className="space-y-1">
             <div className="text-xs text-default-500">패키지 생성: {app.releasePackageAt ? new Date(app.releasePackageAt).toLocaleString("ko-KR") : "-"}</div>
