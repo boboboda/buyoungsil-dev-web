@@ -164,6 +164,12 @@ PIXELLAB_TOKEN=여기에값
 ```
 기획서에 필요한 키 이름이 적힌 지시만, 그 키만 Claude 에게 환경변수로 넘겨요. 로그와 결과 요약에 키 값이 나오면 `***` 로 가려요. 키 파일에 없으면 시작하지 않고 실패로 알려 줘요.
 
+통제실 설정의 **외부 서비스 키(환경변수)** 에서도 넣고·바꾸고·지울 수 있어요(`secrets.mjs`). 서버가 암호화해 잠깐 보관 → `/next` 의 `secretsPending` 을 보고
+`/api/factory/secrets` 에서 받아 `secrets.env` 의 그 이름 줄만 추가·교체·삭제(다른 줄·주석은 그대로, 바꾸기 전 `secrets.env.bak` 하나, 임시 파일 → 이름 바꾸기) →
+다 쓴 뒤에만 확인(ack)해서 서버 값을 지워요. 쓰기에 실패하면 확인하지 않아 다음에 다시 해요. 로그에는 이름과 이유만 남겨요.
+반영 뒤와 1시간마다 `secrets.env` 의 **이름만**(값 없음, `RELEASE_`·`FACTORY_` 등 예약 이름 제외) 서버에 알려 통제실 상태와 `list_secret_names` 에 써요.
+같은 영역의 AI 도구 상태는 1시간마다 `claude --version`·`claude auth status --json`(loggedIn 만)·`codex --version`·`codex login status`(종료 코드만) 결과로 만들어요. 자격 파일은 읽지 않아요.
+
 ## 앱 폴더 안에서 일어나는 일
 - `PLAN.md`(새 앱) 또는 `CHANGE_REQUEST.md`(수정)와 `CLAUDE.md`(작업 규칙)를 만들어 Claude 에게 읽혀요.
 - Claude 가 `.factory/phase.txt` 에 단계(scaffold, code, build, screenshots, done)를 쓰면 통제실에 단계로 보여요.
