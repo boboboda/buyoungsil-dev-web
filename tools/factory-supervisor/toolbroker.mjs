@@ -329,7 +329,7 @@ let toolBusy = false; // 이 PC 전체에서 도구는 한 번에 하나만 돈�
 /**
  * 일감 하나의 중계기. 일감의 AI 프로세스가 도는 동안 start() 로 몇 초마다 요청을 확인하고, 끝나면 stop().
  * opts: { appDir, jobId, engine, getSettings() → brokerSettings, toolkitDir, pythonCmd, requiredSecrets, secrets(이름→값, 이 일감에 허용된 것만),
- *         redact(s), log(m), onChange(), spawnImpl }
+ *         redact(s), log(m), onChange(), onResult(rec) (요청 하나가 끝날 때마다, rec.status 가 ok 면 결과 파일이 생겼을 수 있음), spawnImpl }
  */
 export function createBroker(opts) {
   const { appDir, jobId, engine = "claude", toolkitDir, pythonCmd = IS_WIN ? "python" : "python3", requiredSecrets = [], secrets = {}, onChange = () => {}, spawnImpl } = opts;
@@ -339,6 +339,7 @@ export function createBroker(opts) {
   // 비밀값은 어떤 경로로든 다시 한 번 가린다
   const redact = (s) => maskText(secretValues.reduce((acc, v) => acc.split(v).join("***"), redactBase(String(s ?? ""))));
   const log = opts.log ?? (() => {});
+  const onResult = opts.onResult ?? (() => {});
   const seen = new Set();
   const records = []; // 통제실에 보일 목록: { id, tool, status, at, ms, message }
   let timer = null;
@@ -372,6 +373,11 @@ export function createBroker(opts) {
     event(rec);
     log(`도구 요청 ${id} (${rec.tool}): ${rec.status}${rec.status === "ok" ? "" : ` - ${rec.message}`}`);
     onChange();
+    try {
+      onResult({ ...rec });
+    } catch {
+      /* 결과 알림 실패는 중계에 영향 없음 */
+    }
     return out;
   };
 
@@ -475,8 +481,25 @@ export function createBroker(opts) {
   };
 }
 
-/** 앱 폴더 작업 규칙(CLAUDE.md 공장 블록)에 붙일 사용법. 중계가 꺼져 있으면 붙이지 않는다 */
-export function brokerRules(mode) {
+/** 툴킷 tools.json 에 실제로 있는 이미지 도구만 골라 안내한다(없는 도구 이름을 가리키지 않게). 툴킷이 없거나 이미지 도구가 없으면 "" */
+export function imageToolRules(toolkitDir) {
+  if (!toolkitDir) return "";
+  const m = loadToolkitManifest(toolkitDir);
+  if (!m.ok) return "";
+  const gen = ["pixel-codex", "pixel-generate"].filter((n) => Object.hasOwn(m.tools, n));
+  if (!gen.length) return "";
+  const lines = [
+    `- 작업 중 이미지가 필요하면 toolkit.run 으로 ${gen.map((n) => `\`${n}\``).join(" 또는 ")} 를 요청하세요. 결과는 .factory/assets/(git 무시)에 생기고 통제실 일감 상세에서 볼 수 있어요.`,
+    "- 결과 파일과 report.json 을 확인해서 이상하면(채움 비율 낮음, 색 수·크기 문제, 그림이 어색함) 설명이나 인자를 바꿔 다시 요청하세요(일감당 요청 한도 안에서). 같은 인자로 반복하지 마세요.",
+  ];
+  if (Object.hasOwn(m.tools, "asset-export")) {
+    lines.push("- 좋으면 직접 복사하지 말고 `asset-export` 도구로 앱의 assets 폴더에 넣은 뒤, 코드에서 그 경로를 쓰고 커밋하세요. .factory/ 안 파일은 커밋되지 않아요.");
+  }
+  return lines.join("\n") + "\n";
+}
+
+/** 앱 폴더 작업 규칙(CLAUDE.md 공장 블록)에 붙일 사용법. 중계가 꺼져 있으면 붙이지 않는다. toolkitDir 을 주면 툴킷에 있는 이미지 도구 안내도 붙인다 */
+export function brokerRules(mode, toolkitDir) {
   if (mode !== "report" && mode !== "allow") return "";
   const cli = TOOLREQ_PATH.replace(/\\/g, "/");
   return `
@@ -486,5 +509,5 @@ export function brokerRules(mode) {
 - 이 명령은 오래 걸릴 수 있으니 명령 제한 시간을 넉넉히(예: 360000ms) 주세요. 중간에 끊겼으면 \`node "${cli}" wait --id <요청ID>\` 로 이어서 기다리세요.
 - toolkit.run 의 args: { "command": "<tools.json 의 하위 명령>", "args": { 이름: 값 } }. 경로 인자는 앱 폴더 안 상대 경로만 돼요.
 - 결과: .factory/responses/<요청ID>.json(status ok|denied|failed|timeout, message, files), 만든 파일은 .factory/assets/ 아래. denied 면 이유를 읽고 같은 요청을 반복하지 마세요.
-`;
+${imageToolRules(toolkitDir)}`;
 }

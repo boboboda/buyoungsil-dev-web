@@ -39,6 +39,7 @@ import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStore
 import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames } from "./toolbroker.mjs";
 import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
+import { createAssetUploader } from "./assetupload.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -404,7 +405,7 @@ function prepareDir(job) {
   let block = fromServer ?? rulesFor(job);
   if (external) block = block.replace(RULES_END, `${EXTERNAL_NOTE}${RULES_END}`);
   // 도구 요청 중계가 켜져 있을 때만 사용법을 붙인다(꺼짐이면 예전 규칙 그대로)
-  const toolNote = brokerRules(toolBroker.mode);
+  const toolNote = brokerRules(toolBroker.mode, cfg.toolkitDir);
   if (toolNote) block = block.replace(RULES_END, `${toolNote}${RULES_END}`);
   job.rulesSource = fromServer ? "홈페이지" : "기본값(감독 프로그램 코드)";
   let text = fs.existsSync(claudeMd) ? fs.readFileSync(claudeMd, "utf8") : "";
@@ -651,6 +652,8 @@ async function finish(st, status, fields) {
     if ((await uploadShots(st)) === 0) break;
     await sleep(2000);
   }
+  // 도구 중계가 만든 이미지(.factory/assets/)도 마지막으로 한 번 더 올린다. 실패해도 일감 결과는 그대로
+  if (st.assets && st.reportable) await st.assets.upload();
   for (let i = 0; i < 10 && st.logs.length > 0 && st.reportable; i++) await flush(st);
   if (!st.reportable) return;
   for (let attempt = 1; attempt <= 4; attempt++) {
@@ -722,6 +725,9 @@ async function runJobUnlocked(job, lock) {
   running.set(job.id, st);
   readPhase(st);
   seedShots(st);
+  // 도구 중계 결과 이미지: 시작 때 이미 있던 파일(이전 일감 것)은 올리지 않는다
+  st.assets = createAssetUploader({ appDir: dir, jobId: job.id, post: (form) => api("POST", "/api/factory/screenshot", form), log: (level, m) => addLog(st, level, m) });
+  st.assets.seed();
   addLog(st, "info", `앱 폴더 준비 완료: ${dir} (작업 규칙: ${job.rulesSource})`);
 
   if (rel) {
@@ -795,6 +801,10 @@ async function runJobUnlocked(job, lock) {
     log: (m) => addLog(st, "info", m),
     onChange: () => {
       st.toolDirty = true;
+    },
+    // 요청이 ok 로 끝나면 새로 생긴 결과 이미지를 일감 이미지로 올린다(기다리지 않음, 실패해도 일감은 그대로)
+    onResult: (rec) => {
+      if (rec.status === "ok" && st.reportable) void st.assets.upload();
     },
   }).start();
 

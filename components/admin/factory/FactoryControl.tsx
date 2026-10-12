@@ -377,6 +377,9 @@ function JobDetailView({
   const [priority, setPriority] = useState(String(job.priority));
   const [aiEngine, setAiEngine] = useState<AiEngine>(job.aiEngine ?? "claude");
   const editable = job.status === "pending" || job.status === "approved";
+  // 감독 프로그램이 도구 중계 결과를 asset-<이름> 으로 올린다. 나머지는 스크린샷
+  const assets = job.images.filter((img) => img.label.startsWith("asset-"));
+  const shots = job.images.filter((img) => !img.label.startsWith("asset-"));
   const active =
     job.status === "pending" ||
     job.status === "approved" ||
@@ -551,11 +554,11 @@ function JobDetailView({
         )}
 
         {/* 스크린샷 */}
-        {job.images.length > 0 && (
+        {shots.length > 0 && (
           <section>
             <h3 className="mb-2 font-semibold">📷 스크린샷</h3>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {job.images.map((img) => (
+              {shots.map((img) => (
                 <a key={img.id} href={img.url} rel="noreferrer" target="_blank">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
@@ -568,6 +571,18 @@ function JobDetailView({
                     {img.label}
                   </p>
                 </a>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* 도구 중계(toolbroker)가 만든 이미지: label 이 asset- 로 시작 */}
+        {assets.length > 0 && (
+          <section>
+            <h3 className="mb-2 font-semibold">🎨 도구가 만든 이미지</h3>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {assets.map((img) => (
+                <AssetImage key={img.id} label={img.label} url={img.url} />
               ))}
             </div>
           </section>
@@ -646,6 +661,37 @@ function JobDetailView({
         </section>
       </CardBody>
     </Card>
+  );
+}
+
+// 128px 이하 도트 이미지는 칸에 맞게 확대하고 네모 픽셀이 뭉개지지 않게 pixelated 로 그린다. 누르면 원본(새 탭)
+function AssetImage({ label, url }: { label: string; url: string }) {
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const pixel = size !== null && size.w <= 128 && size.h <= 128;
+
+  return (
+    <a href={url} rel="noreferrer" target="_blank">
+      <div className="flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg border border-default-200 bg-default-100">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          alt={label}
+          className="h-full w-full object-contain"
+          loading="lazy"
+          src={url}
+          style={pixel ? { imageRendering: "pixelated" } : undefined}
+          onLoad={(e) =>
+            setSize({
+              w: e.currentTarget.naturalWidth,
+              h: e.currentTarget.naturalHeight,
+            })
+          }
+        />
+      </div>
+      <p className="mt-1 truncate text-center text-xs text-default-500">
+        {label.replace(/^asset-/, "")}
+        {size ? ` · ${size.w}×${size.h}` : ""}
+      </p>
+    </a>
   );
 }
 

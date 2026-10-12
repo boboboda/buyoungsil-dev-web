@@ -138,6 +138,10 @@ node <supervisor-src>\tools\factory-supervisor\toolreq.mjs status --id <요청ID
 
 요청서를 임시 파일로 쓴 뒤 이름을 바꿔 놓고, 응답 파일이 생길 때까지 명령 안에서 1초마다 확인한다(AI 토큰을 쓰지 않는다). 마지막 줄은 `TOOLREQ {"id","status","response","message"}`, 종료 코드는 ok 0, denied·failed 1, timeout·pending 2. AI의 명령 제한 시간이 기다림보다 짧을 수 있어 규칙에 "제한 시간을 넉넉히, 끊기면 wait"를 적어 둔다.
 
+**결과 이미지 올리기** (`tools/factory-supervisor/assetupload.mjs`): 요청이 `ok`로 끝날 때마다와 일감 종료 때, 일감 시작 뒤 `.factory/assets/`에 새로 생긴 이미지(png·jpeg·gif·webp, 10MB 이하, 이름이 `-raw.<확장자>`로 끝나는 원본 제외)를 스크린샷과 같은 `/api/factory/screenshot`으로 올린다. label은 `asset-<파일 이름(확장자 뺌)>`(영문·숫자·`_-` 40자), 같은 label이면 서버가 주소만 바꾼다. 경로+수정시각으로 이미 올린 파일을 기억해 두 번 올리지 않는다. 지시당 장수 한도(스크린샷과 같이 셈)·409에서는 그 일감의 이미지 올리기만 멈추고, 서버 오류(5xx·429·네트워크)는 3번까지 다음 기회에 다시 시도한다. 어느 경우든 일감은 실패시키지 않고 로그에는 파일 이름과 결과만 남긴다. 통제실 일감 상세는 `asset-` label을 **🎨 도구가 만든 이미지**로 따로 보여 주고, 128px 이하 도트 이미지는 확대해 `image-rendering: pixelated`로 그린다.
+
+**작업 규칙의 이미지 안내**: 툴킷 `tools.json`에 `pixel-codex`·`pixel-generate`가 있으면 있는 것만 이름을 적어 "이미지가 필요하면 요청 → report.json·결과 확인 → 이상하면 인자를 바꿔 다시 요청" 안내를 붙이고, `asset-export`가 있을 때만 "좋으면 `asset-export`로 assets 폴더에 넣고 커밋" 줄을 붙인다(`imageToolRules`).
+
 ## Skills, Subagents, MCP, Hooks 범위
 
 프로젝트의 `AGENTS.md`와 `.agents/skills/claude-harness/SKILL.md`는 기존 규칙과 필요한 Claude 스킬 원본을 읽도록 연결한다. 사용자 전역 스킬·플러그인을 복사하거나 자동 활성화하지 않았다. 일반 규칙·참조·로컬 스크립트는 설치된 의존성을 확인해 재사용할 수 있다. Claude 전용 Agent/Task/Workflow, 브라우저·Docs·메모리 도구는 실제 Codex 도구로 대응을 확인해야 하며 정의 파일을 그대로 활성화했다고 주장하지 않는다.
