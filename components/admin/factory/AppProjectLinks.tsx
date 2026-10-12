@@ -1,5 +1,6 @@
 // components/admin/factory/AppProjectLinks.tsx
-// 공장 앱 ↔ 홈페이지 Project 연결. 새 앱은 승인할 때 자동으로 만들어지고, 그 전에 만든 앱(saessak-hub 등)은 여기서 기존 Project 를 골라 잇는다.
+// 공장 앱 ↔ 홈페이지 Project 연결. 프로젝트는 출시 대상 앱에만 둔다(출시 패키지에 추가할 때 고르거나, 출시 카드에서 연결).
+// 여기서는 출시 대상 앱만 연결할 수 있고, 출시 대상이 아닌데 연결된 앱은 목록으로만 보여 주며 [연결 풀기]만 둔다(프로젝트는 지우지 않음).
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -11,6 +12,7 @@ interface AppRow {
   stack: string;
   projectId: string | null;
   projectTitle: string | null;
+  storeTarget: boolean;
 }
 
 interface ProjectRow {
@@ -68,7 +70,13 @@ export default function AppProjectLinks() {
     setBusy(null);
   };
 
-  const unlinkedCount = data?.apps.filter((a) => !a.projectId).length ?? 0;
+  const targets = data?.apps.filter((a) => a.storeTarget) ?? [];
+  // 출시 대상이 아닌데 프로젝트가 연결된 앱(새 앱 승인 때 자동으로 만들던 예전 연결 등)
+  const strays = data?.apps.filter((a) => !a.storeTarget && a.projectId) ?? [];
+  const unlinkedCount = targets.filter((a) => !a.projectId).length;
+  const unlink = (a: AppRow) => {
+    if (window.confirm(`${a.appSlug} 의 프로젝트 연결을 풀까요?\n(프로젝트는 지워지지 않아요)`)) save(a.appSlug, null);
+  };
 
   return (
     <Card className="mb-6">
@@ -76,7 +84,7 @@ export default function AppProjectLinks() {
         <div className="flex flex-col">
           <span className="font-semibold">🔗 홈페이지 프로젝트 연결</span>
           <span className="text-xs text-default-500">
-            새 앱은 승인할 때 프로젝트가 자동으로 만들어져요. 그 전에 만든 앱은 여기서 기존 프로젝트를 골라 이어 주세요.
+            프로젝트는 출시 대상 앱에만 연결해요. 출시 패키지에 추가할 때 고르거나, 출시 카드나 여기서 기존 프로젝트를 골라 이어 주세요.
           </span>
         </div>
         <Button className="min-h-11 w-full sm:min-h-0 sm:w-auto" size="sm" variant="flat" onPress={() => setOpen((v) => !v)}>
@@ -87,10 +95,10 @@ export default function AppProjectLinks() {
         <CardBody className="space-y-3">
           {!data ? (
             <p className="text-sm text-default-500">읽는 중…</p>
-          ) : data.apps.length === 0 ? (
-            <p className="text-sm text-default-500">아직 공장 앱이 없어요.</p>
+          ) : targets.length === 0 ? (
+            <p className="text-sm text-default-500">출시 대상인 앱이 없어요. 출시 패키지 화면에서 스토어에 올릴 앱을 추가하세요.</p>
           ) : (
-            data.apps.map((a) => {
+            targets.map((a) => {
               const selected = choice[a.appSlug] ?? "";
 
               return (
@@ -109,9 +117,7 @@ export default function AppProjectLinks() {
                         isDisabled={busy !== null}
                         size="sm"
                         variant="light"
-                        onPress={() => {
-                          if (window.confirm(`${a.appSlug} 의 프로젝트 연결을 풀까요?\n(프로젝트는 지워지지 않아요)`)) save(a.appSlug, null);
-                        }}
+                        onPress={() => unlink(a)}
                       >
                         연결 풀기
                       </Button>
@@ -144,6 +150,24 @@ export default function AppProjectLinks() {
                 </div>
               );
             })
+          )}
+          {strays.length > 0 && (
+            <div className="space-y-2 rounded-lg border border-warning-200 p-2">
+              <div className="text-sm font-medium">출시 대상이 아닌데 프로젝트가 연결된 앱 ({strays.length}개)</div>
+              <p className="text-xs text-default-500">
+                연결만 풀 수 있어요. 프로젝트는 지워지지 않으니, 홈페이지에 보이는 게 불편하면 관리자 프로젝트 화면에서 직접 지우거나 고치세요.
+              </p>
+              {strays.map((a) => (
+                <div key={a.appSlug} className="flex flex-wrap items-center gap-2 text-sm">
+                  <span>
+                    {a.title} <span className="text-xs text-default-500">({a.appSlug})</span> → {a.projectTitle}
+                  </span>
+                  <Button className="min-h-11 sm:min-h-0" isDisabled={busy !== null} size="sm" variant="light" onPress={() => unlink(a)}>
+                    연결 풀기
+                  </Button>
+                </div>
+              ))}
+            </div>
           )}
           {notice && <p className="text-sm text-default-600">{notice}</p>}
         </CardBody>

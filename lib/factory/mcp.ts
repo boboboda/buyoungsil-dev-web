@@ -216,7 +216,7 @@ export const FACTORY_TOOLS = [
     description:
       "출시 대상(통제실 출시 패키지 목록에 넣은 앱)인 완성된 앱들의 출시 상태를 돌려줍니다(대상이 아닌 앱은 대상아님 에 이름·종류만): 출시 단계(준비중/패키지 생성/검토/비공개 테스트/출시), 배포 계정(A/B)과 키 준비 상태(경로·PC 에 있는지만), " +
       "패키지 이름, 최초 업로드 여부, 비공개 테스트 시작·완료 예정일, 출시 패키지 요약(스토어 제목·짧은 설명·체크리스트 남은 할 일·찾은 SDK), AAB 정보(경로·크기·버전, 파일은 PC 에만), " +
-      "최근 출시 일감의 종류·현재 단계와 실패했으면 마지막 오류 요약(실패 단계·이유). 키 값·비밀번호는 담지 않아요.",
+      "최근 출시 일감의 종류·현재 단계와 실패했으면 마지막 오류 요약(실패 단계·이유), 연결된 홈페이지 프로젝트(홈페이지프로젝트: 연결 여부·제목). 키 값·비밀번호는 담지 않아요.",
     inputSchema: {
       type: "object",
       properties: {
@@ -426,6 +426,8 @@ async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResu
       홍보영상링크: a.promoVideoUrl,
       Play업로드: a.playMissing.length ? { 가능: false, 부족한것: a.playMissing } : { 가능: true },
       스토어자료: storeSummary(a.storeAssets),
+      // 연결된 홈페이지 프로젝트. 연결이 없으면 출시 일감의 홈페이지 반영·[홈페이지만 반영]이 거절된다(통제실 출시 카드에서 연결)
+      홈페이지프로젝트: a.projectId ? { 연결: true, 제목: a.projectTitle } : { 연결: false, 제목: null },
     })),
     ...(appSlug ? {} : { 대상아님: o.otherApps.map((a) => ({ appSlug: a.appSlug, 이름: a.displayName, 종류: a.stack })) }),
   });

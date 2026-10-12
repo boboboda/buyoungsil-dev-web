@@ -7,7 +7,6 @@
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { ensureProjectForJob } from "@/lib/factory/project";
 import { deleteReviewVideo } from "@/lib/factory/reviewVideo";
 import { maskSecrets } from "@/lib/factory/mask";
 import { AI_LABELS, isAiEngine, type AiEngine } from "@/lib/factory/ai";
@@ -322,20 +321,6 @@ async function explainNoChange(id: string, wanted: string): Promise<ActionResult
   return refuse(409, `지금 상태(${job.status})에서는 ${wanted} 할 수 없어요.`);
 }
 
-// 새 앱 일감을 승인하면 홈페이지 Project 를 만든다. 실패해도 승인은 그대로 둔다.
-async function linkProjectOnApprove(id: string): Promise<void> {
-  try {
-    const job = await prisma.factoryJob.findUnique({
-      where: { id },
-      select: { kind: true, appSlug: true, title: true, planMarkdown: true, stack: true },
-    });
-
-    if (job?.kind === "new") await ensureProjectForJob(job);
-  } catch (error) {
-    console.error("[factory] 홈페이지 프로젝트 만들기 실패:", error);
-  }
-}
-
 export async function adminAction(id: string, body: Record<string, unknown>): Promise<ActionResult> {
   const now = new Date();
   if (body.aiEngine !== undefined && !isAiEngine(body.aiEngine)) return refuse(400, "작업 AI는 Claude Code 또는 Codex를 골라 주세요.");
@@ -347,7 +332,7 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
         where: { id, status: "pending" },
         data: { status: "approved", approvedAt: now, ...engineData },
       });
-      if (res.count > 0) await linkProjectOnApprove(id);
+      // 홈페이지 Project 는 여기서 만들지 않는다(출시 대상 앱만: 출시 패키지에 추가할 때 연결·생성)
       return res.count > 0 ? done("승인했어요.") : explainNoChange(id, "승인");
     }
 

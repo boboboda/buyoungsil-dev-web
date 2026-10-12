@@ -707,11 +707,14 @@ export async function releaseOverview() {
   ]);
   const appBySlug = new Map(apps.map((a) => [a.appSlug, a]));
   const names = new Set(secretNames.map((s) => s.name));
-  // 카드 제목(앱 이름)용 홈페이지 프로젝트 제목
-  const projectIds = apps.map((a) => a.projectId).filter((x): x is string => !!x);
-  const projectTitle = new Map(
-    (projectIds.length ? await prisma.project.findMany({ where: { id: { in: projectIds } }, select: { id: true, title: true } }) : []).map((p) => [p.id, p.title]),
-  );
+  // 홈페이지 프로젝트: 카드 제목(앱 이름)·연결 표시용 제목, 연결 바꾸기에서 고를 목록(다른 앱에 연결된 건 linkedApp)
+  const allProjects = await prisma.project.findMany({ orderBy: { updatedAt: "desc" }, select: { id: true, title: true, platform: true, status: true } });
+  const projectTitle = new Map(allProjects.map((p) => [p.id, p.title]));
+  const linkedApp = new Map(apps.filter((a) => a.projectId).map((a) => [a.projectId as string, a.appSlug]));
+  const projectLink = (app: { projectId: string | null } | undefined) => ({
+    projectId: app?.projectId ?? null,
+    projectTitle: app?.projectId ? (projectTitle.get(app.projectId) ?? "(삭제된 프로젝트)") : null,
+  });
   // 앱별 키 조회 결과. 예전 결과에 시각이 없으면 전체 점검 시각. 전체 점검에 없던 앱은 PC 에 앱 폴더가 없는 것
   const keyScanOf = (slug: string): KeyScanApp | null => {
     const s = keyScan.apps.find((x) => x.appSlug === slug);
@@ -724,7 +727,16 @@ export async function releaseOverview() {
   const seen = new Set<string>();
   const rows = [];
   // 출시 대상이 아닌 앱(목록 아래 '출시 대상이 아닌 앱'). 이름·종류·마지막 일감 상태만
-  const others: { appSlug: string; displayName: string; stack: string; done: boolean; lastJob: { kind: string; status: string; createdAt: Date }; blockReason: string | null }[] = [];
+  const others: {
+    appSlug: string;
+    displayName: string;
+    stack: string;
+    done: boolean;
+    lastJob: { kind: string; status: string; createdAt: Date };
+    blockReason: string | null;
+    projectId: string | null;
+    projectTitle: string | null;
+  }[] = [];
   // 마지막 출시 일감의 최근 로그(마스킹). 진행 중이거나 실패한 것만
   const lastRelease = new Map<string, (typeof jobs)[number]>();
 
@@ -759,6 +771,7 @@ export async function releaseOverview() {
         done: mine.some((x) => x.status === "done"),
         lastJob: { kind: j.kind, status: j.status, createdAt: j.createdAt },
         blockReason: storeTargetBlockReason(j.stack),
+        ...projectLink(app),
       });
       continue;
     }
@@ -780,6 +793,8 @@ export async function releaseOverview() {
       nameSource: display.source,
       nameSourceLabel: APP_NAME_SOURCE_LABELS[display.source],
       appName: app?.appName ?? null,
+      // 연결된 홈페이지 프로젝트(없으면 null). [홈페이지만 반영]·출시 일감의 홈페이지 반영은 연결이 있어야 한다
+      ...projectLink(app),
       // 이미 첫 업로드를 마친 앱(비공개 테스트·출시 상태이거나 최초 AAB 체크): 카드 기본 종류를 스토어 수정으로
       alreadyReleased: !!app?.firstUploadDone || ["testing", "released"].includes(app?.releaseStatus ?? ""),
       requiresTesting: account?.requiresTesting ?? false,
@@ -921,6 +936,8 @@ export async function releaseOverview() {
     keyKinds: Object.entries(KEY_KINDS).map(([value, label]) => ({ value, label })),
     apps: rows,
     otherApps: others,
+    // 출시 카드·추가할 때 고를 홈페이지 프로젝트(linkedApp 이 있으면 이미 다른 앱에 연결됨)
+    projects: allProjects.map((p) => ({ ...p, linkedApp: linkedApp.get(p.id) ?? null })),
   };
 }
 

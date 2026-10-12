@@ -11,6 +11,7 @@
 // 스토어 자료 수정·프로젝트 업데이트는 승인 전에 갱신할 항목을 고른다(1개 이상. 고른 것만 만들고·올리고·반영).
 // '이 앱이 쓸 키'는 키 보관함에서 고른다(기본: 계정 기본 키). 고른 키를 [조회]하면 작업 PC 가 그 파일을 직접 확인한다.
 // 보조: '이 앱 폴더에서 키 파일 후보 찾기'(확장자 없는 JKS 도 찾음) → 보관함 [기존 키 등록]으로 넘긴다.
+// 홈페이지 프로젝트: 카드에서 연결 표시·바꾸기, [홈페이지만 반영](Play 없이 저장된 출시 자료로 덮어씀). 출시 패키지에 추가할 때 기존 프로젝트/새로 만들기/나중에 중 고른다.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -32,6 +33,7 @@ import {
   fmtSize,
   postRelease,
   type OtherApp,
+  type ProjectSyncResult,
   type ReadyItem,
   type ReleaseApp,
   type ReleaseJobInfo,
@@ -332,6 +334,120 @@ function StoreKeySummary({ app, busy, call }: { app: ReleaseApp; busy: boolean; 
   );
 }
 
+// 고를 수 있는 프로젝트: 연결 안 된 것 + 이 앱에 연결된 것(다른 앱에 연결된 건 뺀다)
+const pickableProjects = (data: ReleaseOverview, appSlug: string) => (data.projects ?? []).filter((p) => !p.linkedApp || p.linkedApp === appSlug);
+
+/** 홈페이지 프로젝트 연결 표시·바꾸기와 [홈페이지만 반영](Play 는 건드리지 않음) */
+function ProjectBox({
+  app,
+  data,
+  busy,
+  call,
+  setNotice,
+}: {
+  app: ReleaseApp;
+  data: ReleaseOverview;
+  busy: boolean;
+  call: (body: Record<string, unknown>) => void;
+  setNotice: (v: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState(app.projectId ?? "");
+  const [checking, setChecking] = useState(false);
+  const options = pickableProjects(data, app.appSlug);
+
+  useEffect(() => setPick(app.projectId ?? ""), [app.projectId]);
+
+  const syncHomepage = async () => {
+    if (!app.projectId) {
+      setNotice("먼저 프로젝트를 연결하세요. ([프로젝트 연결 바꾸기]에서 고를 수 있어요)");
+
+      return;
+    }
+    setChecking(true);
+    setNotice(null);
+    const { ok, data: d } = await postRelease({ action: "projectSyncPreview", appSlug: app.appSlug });
+    const p = d as Partial<ProjectSyncResult>;
+
+    setChecking(false);
+    if (!ok) {
+      setNotice(p.message ?? "미리보기를 읽지 못했어요.");
+
+      return;
+    }
+    const changes = [...(p.filled ?? []).map((k) => `· ${k} (빈 칸 채움): ${p.values?.[k] ?? ""}`), ...(p.overwritten ?? []).map((k) => `· ${k} (덮어씀): ${p.values?.[k] ?? ""}`)];
+    const rest = [
+      p.unchanged?.length ? `같아서 그대로: ${p.unchanged.join(", ")}` : "",
+      p.skipped?.length ? `건너뜀(서버에 값 없음): ${p.skipped.join(", ")}` : "",
+    ].filter(Boolean);
+
+    if (changes.length === 0) {
+      setNotice(`바꿀 항목이 없어요. ${rest.join(" / ")}`);
+
+      return;
+    }
+    const text =
+      `"${p.projectTitle ?? app.projectTitle}" 프로젝트를 저장된 출시 자료로 바꿀까요?\n\n${changes.join("\n")}` +
+      `${rest.length ? `\n\n${rest.join("\n")}` : ""}\n\nPlay·개인정보처리방침·공개 여부(상태)는 바꾸지 않아요.`;
+
+    if (window.confirm(text)) call({ action: "projectSync", appSlug: app.appSlug });
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-default-200 p-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span>
+          🏠 홈페이지 프로젝트: {app.projectId ? <b>{app.projectTitle}</b> : <span className="text-warning-700">연결 안 됨</span>}
+        </span>
+        <Button className="min-h-11 sm:min-h-0" isDisabled={busy} size="sm" variant="light" onPress={() => setOpen((v) => !v)}>
+          {open ? "닫기" : "프로젝트 연결 바꾸기"}
+        </Button>
+        <Button className="min-h-11 sm:min-h-0" isDisabled={busy || checking} size="sm" variant="flat" onPress={syncHomepage}>
+          {checking ? "확인 중…" : "홈페이지만 반영"}
+        </Button>
+      </div>
+      <p className="text-xs text-default-500">
+        [홈페이지만 반영]은 Play 를 건드리지 않고, 서버에 저장된 출시 자료(앱 이름·스토어 설명·대표 이미지·Play 주소·기술 스택)로 연결된 프로젝트를 덮어써요. 개인정보처리방침과
+        공개 여부는 그대로예요.
+      </p>
+      {open && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <select aria-label="연결할 홈페이지 프로젝트" className={`${input} sm:flex-1`} value={pick} onChange={(e) => setPick(e.target.value)}>
+            <option value="">프로젝트 고르기…</option>
+            {options.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.title} ({p.platform}, {p.status}){p.id === app.projectId ? " — 지금 연결됨" : ""}
+              </option>
+            ))}
+          </select>
+          <Button
+            className="min-h-11 sm:min-h-0"
+            color="primary"
+            isDisabled={busy || !pick || pick === app.projectId}
+            size="sm"
+            onPress={() => call({ action: "linkProject", appSlug: app.appSlug, projectId: pick })}
+          >
+            연결
+          </Button>
+          {app.projectId && (
+            <Button
+              className="min-h-11 sm:min-h-0"
+              isDisabled={busy}
+              size="sm"
+              variant="light"
+              onPress={() => {
+                if (window.confirm(`${app.displayName}: 홈페이지 프로젝트 연결을 풀까요?\n(프로젝트는 지워지지 않아요)`)) call({ action: "linkProject", appSlug: app.appSlug, projectId: null });
+              }}
+            >
+              연결 풀기
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const READY_MARK = (ok: boolean | null) => (ok === true ? "✅" : ok === false ? "⬜" : "⏳");
 
 function AppRow({
@@ -538,6 +654,7 @@ function AppRow({
             </a>
           )}
         </div>
+        <ProjectBox app={app} busy={busy} call={call} data={data} setNotice={setNotice} />
 
         {/* ── 종류(선택한 종류에 필요한 것만) ── */}
         <div className="space-y-3 rounded-lg border-2 border-default-200 p-3">
@@ -774,9 +891,9 @@ export default function ReleasePanel() {
     // 지운 앱의 행은 사라지니, 그 결과는 목록 위에 보여 준다
     if (d.apps && apps.some((a) => !d.apps?.some((x) => x.appSlug === a.appSlug))) setNotice(d.message ?? null);
   };
-  const addOrRemove = async (action: string, appSlug: string) => {
+  const addOrRemove = async (action: string, appSlug: string, extra: Record<string, unknown> = {}) => {
     setBusy(true);
-    const { data: d } = await postRelease({ action, appSlug });
+    const { data: d } = await postRelease({ ...extra, action, appSlug });
 
     onSaved(d);
     setNotice(d.message ?? "처리하지 못했어요.");
@@ -833,9 +950,24 @@ export default function ReleasePanel() {
 
 // 출시 대상이 아닌 앱(접힘). [출시 패키지에 추가]. 웹/서버 앱(nextjs·nestjs)은 버튼 없이 이유만.
 // 출시 대상이지만 아직 완성되지 않은 앱도 여기 한 줄로 보여 준다(완성되면 위 목록에 카드가 생김)
-function OtherApps({ data, busy, onCall }: { data: ReleaseOverview; busy: boolean; onCall: (action: string, appSlug: string) => void }) {
+function OtherApps({
+  data,
+  busy,
+  onCall,
+}: {
+  data: ReleaseOverview;
+  busy: boolean;
+  onCall: (action: string, appSlug: string, extra?: Record<string, unknown>) => void;
+}) {
   const others: OtherApp[] = data.otherApps ?? [];
   const unfinished = data.apps.filter((a) => !a.done);
+  // 추가할 때 연결할 홈페이지 프로젝트: "" = 나중에 연결, "new" = 새로 만들기, 그 밖 = 기존 프로젝트 id
+  const [projectChoice, setProjectChoice] = useState<Record<string, string>>({});
+  const add = (a: OtherApp) => {
+    const c = projectChoice[a.appSlug] ?? "";
+
+    onCall("addStoreTarget", a.appSlug, a.projectId ? {} : c === "new" ? { newProject: true } : c ? { projectId: c } : {});
+  };
 
   return (
     <details className="rounded-lg border border-default-200 p-3">
@@ -879,9 +1011,29 @@ function OtherApps({ data, busy, onCall }: { data: ReleaseOverview; busy: boolea
               {a.blockReason ? (
                 <span className="text-xs text-default-500">{a.blockReason}</span>
               ) : (
-                <Button className="min-h-11 sm:min-h-0" color="primary" isDisabled={busy} size="sm" variant="flat" onPress={() => onCall("addStoreTarget", a.appSlug)}>
-                  출시 패키지에 추가
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  {a.projectId ? (
+                    <span className="text-xs text-default-500">홈페이지 프로젝트: {a.projectTitle} (연결됨)</span>
+                  ) : (
+                    <select
+                      aria-label={`${a.displayName} 에 연결할 홈페이지 프로젝트`}
+                      className={`${input} sm:w-64`}
+                      value={projectChoice[a.appSlug] ?? ""}
+                      onChange={(e) => setProjectChoice((c) => ({ ...c, [a.appSlug]: e.target.value }))}
+                    >
+                      <option value="">홈페이지 프로젝트: 나중에 연결</option>
+                      <option value="new">새 프로젝트 만들기 (개발 중 상태로)</option>
+                      {pickableProjects(data, a.appSlug).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          기존: {p.title} ({p.platform}, {p.status})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <Button className="min-h-11 sm:min-h-0" color="primary" isDisabled={busy} size="sm" variant="flat" onPress={() => add(a)}>
+                    출시 패키지에 추가
+                  </Button>
+                </div>
               )}
             </li>
           ))}

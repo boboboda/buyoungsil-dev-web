@@ -166,6 +166,8 @@ export interface ReleaseApp {
   nameSource: "manual" | "store" | "project" | "job";
   nameSourceLabel: string;
   appName: string | null; // 직접 정한 앱 이름
+  projectId: string | null; // 연결된 홈페이지 프로젝트(없으면 null)
+  projectTitle: string | null; // 그 제목(지워졌으면 "(삭제된 프로젝트)")
   alreadyReleased: boolean; // 이미 첫 업로드를 마친 앱
   requiresTesting: boolean; // 비공개 테스트가 필요한 계정(개인 계정)
   readiness: Record<"first" | "store" | "update", ReadyItem[]>;
@@ -253,6 +255,29 @@ export interface OtherApp {
   done: boolean;
   lastJob: { kind: string; status: string; createdAt: string };
   blockReason: string | null;
+  projectId: string | null;
+  projectTitle: string | null;
+}
+
+// 고를 수 있는 홈페이지 프로젝트. linkedApp 이 있으면 이미 그 앱에 연결됨
+export interface ProjectOption {
+  id: string;
+  title: string;
+  platform: string;
+  status: string;
+  linkedApp: string | null;
+}
+
+// [홈페이지만 반영] 결과·미리보기(서버 lib/factory/project.ts 의 ProjectSyncResult 와 같다)
+export interface ProjectSyncResult {
+  ok: boolean;
+  message: string;
+  projectTitle?: string;
+  filled: string[];
+  overwritten: string[];
+  unchanged: string[];
+  skipped: string[];
+  values: Record<string, string>;
 }
 
 export const JOB_KIND_TEXT: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비" };
@@ -282,6 +307,7 @@ export interface ReleaseOverview {
   keyKinds: { value: string; label: string }[];
   apps: ReleaseApp[]; // 출시 대상인 앱만
   otherApps: OtherApp[];
+  projects?: ProjectOption[];
   message?: string;
 }
 

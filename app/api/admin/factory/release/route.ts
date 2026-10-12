@@ -9,6 +9,7 @@ import { registerKeyPassword } from "@/lib/factory/keyPasswords";
 import { enqueueReleaseJob } from "@/lib/factory/mcp";
 import prisma from "@/lib/prisma";
 import { savePromoVideoUrl } from "@/lib/factory/storeAssets";
+import { linkAppProject, linkProjectOnAdd, syncProjectFromPackage } from "@/lib/factory/project";
 import { requestUploadTest } from "@/lib/factory/uploadTest";
 import {
   createSharedKey,
@@ -84,7 +85,11 @@ async function keyTarget(body: Record<string, unknown>) {
 //                | { action: "vaultUntrack", keyId }  (앱 폴더 git 추적 해제 + .gitignore 보강 + 로컬 커밋. 파일·원격은 그대로)
 //       | { action: "requestKeyScan", appSlug? }  (appSlug 를 주면 그 앱 하나만 점검)
 //       | { action: "removeApps", appSlugs: string[] }  (출시 패키지 목록에서만 지움. 지시 기록·앱 소스·PC 파일은 그대로. 출시 대상 표시도 풂)
-//       | { action: "addStoreTarget", appSlug }  (출시 대상으로 표시 → 출시 패키지 목록에 보임. nextjs·nestjs 는 거부)
+//       | { action: "addStoreTarget", appSlug, projectId?, newProject? }  (출시 대상으로 표시 → 출시 패키지 목록에 보임. nextjs·nestjs 는 거부.
+//         projectId: 기존 홈페이지 프로젝트 연결, newProject: true 면 새로 만들어 연결, 둘 다 없으면 연결 안 함. 연결이 실패해도 추가는 그대로)
+//       | { action: "linkProject", appSlug, projectId: string | null }  (출시 카드에서 홈페이지 프로젝트 연결 바꾸기/풀기. 통제실 연결 카드와 같은 함수)
+//       | { action: "projectSyncPreview", appSlug }  (홈페이지만 반영 미리보기: 바뀔 항목만 돌려줌, 저장 안 함)
+//       | { action: "projectSync", appSlug }  (홈페이지만 반영: 저장된 출시 자료로 연결된 프로젝트를 덮어씀. Play·방침·공개 상태는 그대로)
 //       | { action: "removeStoreTarget", appSlug }  (출시 대상에서 빼기. 출시 데이터는 그대로)
 export async function POST(req: NextRequest) {
   const denied = await requireAdmin();
@@ -188,11 +193,31 @@ export async function POST(req: NextRequest) {
   } else if (action === "addStoreTarget" || action === "removeStoreTarget") {
     if (!APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 가 올바르지 않아요." }, { status: 400 });
     res = await setStoreTarget(appSlug, action === "addStoreTarget");
+    if (res.ok && action === "addStoreTarget") {
+      const projectId = typeof body?.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : null;
+      const link = await linkProjectOnAdd(appSlug, { projectId, newProject: body?.newProject === true });
+
+      res = { ...res, message: `${res.message} / ${link.message}` };
+    }
+  } else if (action === "linkProject") {
+    const projectId = body?.projectId === null ? null : typeof body?.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : undefined;
+
+    if (!APP_SLUG_RE.test(appSlug) || projectId === undefined) {
+      return NextResponse.json({ message: "appSlug 와 projectId(문자열, 또는 연결을 풀 때 null)가 필요해요." }, { status: 400 });
+    }
+    res = await linkAppProject(appSlug, projectId);
+  } else if (action === "projectSyncPreview" || action === "projectSync") {
+    if (!APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 가 올바르지 않아요." }, { status: 400 });
+    const r = await syncProjectFromPackage(appSlug, { dryRun: action === "projectSyncPreview" });
+
+    // 미리보기는 목록을 새로 읽지 않고 바뀔 항목만
+    if (action === "projectSyncPreview") return NextResponse.json(r, { status: r.status });
+    res = r;
   } else {
     return NextResponse.json(
       {
         message:
-          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, reviewDecision, videoLinkApply, videoLinkSkip, uploadTestStart, setKeyPassword, requestKeyScan, removeApps, addStoreTarget, removeStoreTarget, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
+          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, reviewDecision, videoLinkApply, videoLinkSkip, uploadTestStart, setKeyPassword, requestKeyScan, removeApps, addStoreTarget, removeStoreTarget, linkProject, projectSyncPreview, projectSync, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
       },
       { status: 400 },
     );
