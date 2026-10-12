@@ -2,10 +2,16 @@
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
+import { legacyRedirects } from './config/redirects.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const nextConfig = {
+  // 없어진 옛 주소 301 (config/redirects.mjs)
+  async redirects() {
+    return legacyRedirects;
+  },
   webpack: (config, { isServer }) => {
     // Lexical 관련 설정
     config.resolve.alias = {

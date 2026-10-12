@@ -50,16 +50,16 @@ export default function AboutPage() {
               </span>
             </li>
             <li>
-              <Link className="text-blue-600 hover:underline font-medium" href="/stories">
-                비개발자 이야기
+              <Link className="text-blue-600 hover:underline font-medium" href="/note?tab=stories">
+                개발노트 · 이야기
               </Link>
               <span className="block text-sm text-gray-500">
                 삽질기와 꿀팁, 개발하며 느낀 점을 이야기로 남깁니다.
               </span>
             </li>
             <li>
-              <Link className="text-blue-600 hover:underline font-medium" href="/work-request">
-                외주 신청
+              <Link className="text-blue-600 hover:underline font-medium" href="/contact?type=work">
+                외주 의뢰
               </Link>
               <span className="block text-sm text-gray-500">
                 앱·웹 제작 의뢰를 받습니다.
@@ -93,7 +93,7 @@ export default function AboutPage() {
           <h2 className="text-xl font-semibold mb-2">연락</h2>
           <p className="text-gray-700 dark:text-gray-300">
             <Link className="text-blue-600 hover:underline" href="/contact">
-              문의하기
+              문의·의뢰
             </Link>{" "}
             · {siteConfig.contactEmail}
           </p>

@@ -6,7 +6,7 @@ import { DiscordIcon, GithubIcon, KakaoIcon, YouTubeIcon } from "@/components/ic
 
 const footerLinks = [
   { label: "소개", href: "/about" },
-  { label: "문의", href: "/contact" },
+  { label: "문의·의뢰", href: "/contact" },
   { label: "개인정보처리방침", href: "/privacy" },
 ];
 

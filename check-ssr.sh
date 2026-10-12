@@ -17,9 +17,10 @@ PAGES=(
   "/|"
   "/about|콘텐츠 원칙"
   "/privacy|안전성 확보 조치"
-  "/contact|"
+  "/contact|무엇을 도와드릴까요"
+  "/contact?type=work|프로젝트 의뢰 안내"
   "/project|"
-  "/stories|"
+  "/note?tab=stories|삽질기"
   "/note|"
   "/note/flutter|"
 )

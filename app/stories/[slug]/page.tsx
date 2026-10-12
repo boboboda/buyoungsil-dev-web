@@ -24,7 +24,7 @@ export async function generateMetadata({ params }: StoryDetailPageProps): Promis
   }
 
   return {
-    title: story.metaTitle || `${story.title} | 비개발자 이야기`,
+    title: story.metaTitle || `${story.title} | 개발노트 이야기`,
     description: story.metaDescription || story.excerpt || story.title,
     keywords: story.tags,
   };
@@ -48,10 +48,10 @@ export default async function StoryDetailPage({ params }: StoryDetailPageProps) 
     <div className="container mx-auto px-4 py-8 max-w-4xl">
       {/* 뒤로가기 */}
       <Link 
-        href="/stories" 
+        href="/note?tab=stories"
         className="inline-flex items-center text-blue-600 hover:text-blue-800 mb-6"
       >
-        ← 목록으로
+        ← 이야기 목록으로
       </Link>
 
       {/* 헤더 */}

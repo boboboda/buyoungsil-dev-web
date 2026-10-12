@@ -16,11 +16,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: BASE, lastModified: now, changeFrequency: "daily", priority: 1.0 },
     { url: `${BASE}/note`, lastModified: now, changeFrequency: "weekly", priority: 0.9 },
     { url: `${BASE}/project`, lastModified: now, changeFrequency: "weekly", priority: 0.8 },
-    { url: `${BASE}/stories`, lastModified: now, changeFrequency: "weekly", priority: 0.8 },
-    { url: `${BASE}/release`, lastModified: now, changeFrequency: "monthly", priority: 0.7 },
-    { url: `${BASE}/work-request`, lastModified: now, changeFrequency: "monthly", priority: 0.6 },
+    // 이야기 목록은 개발노트 '이야기' 탭, 외주 의뢰는 문의·의뢰 페이지 탭 (옛 /stories·/release·/work-request 는 301)
+    { url: `${BASE}/note?tab=stories`, lastModified: now, changeFrequency: "weekly", priority: 0.8 },
+    { url: `${BASE}/contact`, lastModified: now, changeFrequency: "monthly", priority: 0.6 },
+    { url: `${BASE}/contact?type=work`, lastModified: now, changeFrequency: "monthly", priority: 0.6 },
     { url: `${BASE}/about`, lastModified: now, changeFrequency: "yearly", priority: 0.5 },
-    { url: `${BASE}/contact`, lastModified: now, changeFrequency: "yearly", priority: 0.5 },
     { url: `${BASE}/privacy`, lastModified: now, changeFrequency: "yearly", priority: 0.4 },
   ];
 
