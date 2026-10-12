@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { siteConfig } from "@/config/site";
+
 export default function CTASection() {
   return (
     <section className="w-full py-20 bg-gradient-to-r from-blue-600 to-purple-600 text-white">
@@ -13,8 +15,9 @@ export default function CTASection() {
 
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Link
-            href="https://open.kakao.com/o/ss0BBmVb"
+            href={siteConfig.links.kakao}
             target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-white text-blue-600 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-lg shadow-lg"
           >
             💬 카카오톡 오픈채팅
@@ -34,7 +37,8 @@ export default function CTASection() {
           </p>
           <div className="flex justify-center gap-6">
             <a
-              href="https://github.com/buyoungsil"
+              aria-label="GitHub"
+              href={siteConfig.links.github}
               target="_blank"
               rel="noopener noreferrer"
               className="hover:opacity-80 transition-opacity"

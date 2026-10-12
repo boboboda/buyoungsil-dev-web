@@ -2,6 +2,7 @@ import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { fetchStoryBySlug } from "@/serverActions/stories";
+import { siteConfig } from "@/config/site";
 
 // 글을 고치거나 올릴 때마다 바로 반영되도록, 이전에 만든 페이지를 재사용하지 않는다
 export const dynamic = "force-dynamic";
@@ -100,7 +101,7 @@ export default async function StoryDetailPage({ params }: StoryDetailPageProps) 
         <p className="text-center text-gray-600 dark:text-gray-400">
           이 글이 도움이 되셨나요? 궁금한 점이 있다면{" "}
           <a
-            href="https://open.kakao.com/o/ss0BBmVb"
+            href={siteConfig.links.kakao}
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-600 hover:text-blue-800 font-medium"

@@ -34,5 +34,6 @@ export const siteConfig = {
     youtube: "https://www.youtube.com/channel/UCRBQ2NAcJPVx2YMbhMywNKw",
     discord: "https://discord.gg/hFA8TMng",
     kakao: "https://open.kakao.com/o/ss0BBmVb", // 🔥 카카오톡 링크 추가
+    company: "https://cosysoft.buyoungsilcoding.com",
   },
 };
