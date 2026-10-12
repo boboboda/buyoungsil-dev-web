@@ -887,6 +887,7 @@ model FactoryTestApk {
   signerSha256 String? // 서명 인증서 SHA-256 지문(공개 정보)
   keyLabel     String? // 서명에 쓴 키 이름(표시용, 값 없음)
   chunkCount   Int
+  chunkSize    Int       @default(8388608) // 이 APK 의 조각 크기(마지막 조각만 작음). 예전 행은 8MB
   received     Int       @default(0)
   complete     Boolean   @default(false)
   createdAt    DateTime  @default(now())

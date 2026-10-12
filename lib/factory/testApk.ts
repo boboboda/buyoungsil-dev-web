@@ -1,6 +1,6 @@
 // lib/factory/testApk.ts
 // 출시 패키지 '시험용 APK'(출시 일감 종류 apk): 서명된 release APK 를 실기기 시험용으로 통제실에서 내려받는다.
-// - 감독 프로그램이 앱 폴더에서 만든 APK 를 검사(apksigner verify, 등록된 키와 서명 인증서 비교)한 뒤 8MB 조각으로 올린다(워커 토큰).
+// - 감독 프로그램이 앱 폴더에서 만든 APK 를 검사(apksigner verify, 등록된 키와 서명 인증서 비교)한 뒤 조각(TEST_APK_CHUNK, 기본 512KB)으로 올린다(워커 토큰).
 // - 공개 업로드 서버(주소만 알면 누구나 받음, 삭제 API 없음)가 아니라 DB 에 둔다: 관리자만 내려받고, 앱당 다 받은 것 최근 5개만 남긴다.
 // - 서명 키 파일·비밀번호는 여기 오지 않는다(서명 인증서 지문만, 공개 정보).
 import { createHash } from "node:crypto";
@@ -8,7 +8,11 @@ import { createHash } from "node:crypto";
 import prisma from "@/lib/prisma";
 
 export const TEST_APK_MAX = 200 * 1024 * 1024;
-export const TEST_APK_CHUNK = 8 * 1024 * 1024;
+// 조각 크기는 이 상수 하나로 정한다(시작 응답 chunkSize 로 감독 프로그램에 알려 주고, APK 마다 저장해 받을 때 그 값으로 검사).
+// nginx 의 `location /` 기본 본문 한도(client_max_body_size 1m)를 넘지 않게 512KB. 키우려면 nginx 에 이 주소 한도를 먼저 올린다.
+export const TEST_APK_CHUNK = 512 * 1024;
+// 조각 하나로 받을 수 있는 최대(예전 8MB 조각으로 시작한 것도 받게). 실제 크기 검사는 APK 마다 저장한 chunkSize 로 한다.
+export const TEST_APK_CHUNK_MAX = 8 * 1024 * 1024;
 export const TEST_APK_KEEP = 5;
 // 받다가 끊긴(다 못 받은) APK 는 이 시간이 지나면 지운다
 const STALE_MS = 6 * 60 * 60 * 1000;
@@ -139,6 +143,7 @@ export async function startTestApk(body: Record<string, unknown>): Promise<Res &
       signerSha256: signer && HEX64.test(signer) ? signer : null,
       keyLabel: str(body.keyLabel, 80),
       chunkCount: count,
+      chunkSize: TEST_APK_CHUNK,
     },
     select: { id: true },
   });
@@ -157,7 +162,7 @@ export async function receiveTestApkChunk(apkId: string, idx: number, data: Uint
 
   if (job?.status !== "running") return { ok: false, status: 409, message: `지시가 실행 중이 아닙니다(${job?.status ?? "없음"}).` };
   if (!Number.isInteger(idx) || idx < 0 || idx >= apk.chunkCount) return { ok: false, status: 400, message: "조각 번호가 올바르지 않아요." };
-  const expect = idx === apk.chunkCount - 1 ? apk.size - idx * TEST_APK_CHUNK : TEST_APK_CHUNK;
+  const expect = idx === apk.chunkCount - 1 ? apk.size - idx * apk.chunkSize : apk.chunkSize;
 
   if (data.length !== expect) return { ok: false, status: 400, message: `조각 크기가 맞지 않아요(${data.length}/${expect}).` };
   await prisma.factoryTestApkChunk.upsert({
