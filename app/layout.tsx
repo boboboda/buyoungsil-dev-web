@@ -13,7 +13,6 @@ import { fontSans } from "@/config/fonts";
 import AdFooter from "@/components/main/adFooter";
 import NavBar from "@/components/main/navBar";
 import NavbarVisibilityWrapper from "@/lib/wrappers/NavbarWrapper";
-import SponsorModal from "@/components/main/sponsorModal";
 import VisitorTracker from "@/components/main/visitorTracker";
 import HideInApp from "@/components/main/HideInApp";
 
@@ -114,7 +113,6 @@ export default async function RootLayout({
             <main className="flex-grow w-full min-h-screen">{children}</main>
 
             <HideInApp>
-              <SponsorModal />
               <VisitorTracker />
             </HideInApp>
           </div>

@@ -21,7 +21,6 @@ import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 import { YouTubeIcon, DiscordIcon, GithubIcon, KakaoIcon } from "@/components/icons";
 import { siteConfig } from "@/config/site";
 import { ThemeSwitch } from "@/components/theme-switch";
-import { useModalStore } from "@/store/sponsorStore";
 import { useCachedSession } from "@/app/hooks/user/useCachedSession";
 import { useIdleLogout } from "@/app/hooks/auth/useIdleLogout";
 
@@ -42,8 +41,6 @@ export default function NavBar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
-
-  const { openSponsorModal } = useModalStore((state) => state);
 
   useEffect(() => {
     setPath(pathname.split("/").slice(0, 2).join("/"));
@@ -123,17 +120,6 @@ export default function NavBar() {
                   </a>
                 </li>
               ))}
-
-              <button
-                className="relative inline-flex items-center tap-highlight-transparent outline-none
-                  text-xl text-slate-500 font-semibold
-                  hover:opacity-80 hover:text-slate-100
-                  active:opacity-disabled transition-opacity cursor-pointer
-                  bg-transparent border-none p-0 font-inherit"
-                onClick={openSponsorModal}
-              >
-                후원
-              </button>
             </ul>
           </div>
 
@@ -382,20 +368,6 @@ export default function NavBar() {
                   </NextLink>
                 </li>
               ))}
-              <li className="list-none">
-                <button
-                  className="flex items-center w-full min-h-[44px] px-2 rounded-lg text-base font-semibold
-                    text-slate-600 dark:text-slate-300 bg-transparent border-none cursor-pointer
-                    active:bg-gray-100 dark:active:bg-gray-800"
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    openSponsorModal();
-                  }}
-                >
-                  💖 후원
-                </button>
-              </li>
             </ul>
 
             {/* 모바일 로그인 + 소셜 */}
