@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import AiEngineSelect from "./AiEngineSelect";
 import { AI_LABELS, type AiEngine } from "@/lib/factory/ai";
+import type { ToolRequestRecord } from "@/lib/factory/toolBroker";
 
 type Status =
   | "pending"
@@ -49,6 +50,7 @@ interface JobDetail extends JobRow {
   planMarkdown: string;
   images: { id: string; label: string; url: string; createdAt: string }[];
   logs: { id: number; at: string; level: string; message: string }[];
+  toolRequests?: ToolRequestRecord[] | null; // 도구 요청 중계 목록(예전 서버면 없음)
 }
 
 interface Usage {
@@ -523,6 +525,29 @@ function JobDetailView({
             <b>결과 요약</b>
             <p className="mt-1 whitespace-pre-wrap">{job.summary}</p>
           </div>
+        )}
+
+        {/* 도구 요청 중계 */}
+        {Array.isArray(job.toolRequests) && job.toolRequests.length > 0 && (
+          <section>
+            <h3 className="mb-2 font-semibold">🧰 도구 요청 ({job.toolRequests.length})</h3>
+            <ul className="space-y-1 text-sm">
+              {job.toolRequests.map((t) => (
+                <li key={t.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 break-all">
+                  <span className="text-default-500">{when(t.at)}</span>
+                  <code>{t.tool}</code>
+                  <Chip
+                    color={t.status === "ok" ? "success" : t.status === "denied" ? "warning" : "danger"}
+                    size="sm"
+                    variant="flat"
+                  >
+                    {t.status}
+                  </Chip>
+                  {t.message && t.status !== "ok" && <span className="text-xs text-default-500">{t.message}</span>}
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
 
         {/* 스크린샷 */}

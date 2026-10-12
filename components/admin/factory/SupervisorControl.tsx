@@ -7,6 +7,7 @@ import { Button, Card, CardBody } from "@heroui/react";
 
 import MaintenancePanel from "./MaintenancePanel";
 import DefaultAiSettings from "./DefaultAiSettings";
+import ToolBrokerSettings from "./ToolBrokerSettings";
 
 interface State {
   enabled: boolean;
@@ -371,6 +372,7 @@ export default function SupervisorControl() {
         )}
         {notice && <p className="text-sm text-default-600">{notice}</p>}
         <DefaultAiSettings />
+        <ToolBrokerSettings />
         <MaintenancePanel />
       </CardBody>
     </Card>

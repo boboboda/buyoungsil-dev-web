@@ -9,6 +9,7 @@ import TelegramSetup from "@/components/admin/factory/TelegramSetup";
 import WorkerTokens from "@/components/admin/factory/WorkerTokens";
 import WorkRules from "@/components/admin/factory/WorkRules";
 import DefaultAiSettings from "@/components/admin/factory/DefaultAiSettings";
+import ToolBrokerSettings from "@/components/admin/factory/ToolBrokerSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,7 @@ export default function AdminFactorySettingsPage() {
 
       <div className="space-y-6">
         <DefaultAiSettings />
+        <ToolBrokerSettings />
         <TelegramSetup />
         <WorkerTokens />
         <SecretNames />

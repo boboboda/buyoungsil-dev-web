@@ -9,6 +9,7 @@ import {
   getPendingUpdateNow,
   getSupervisorInfo,
   getSupervisorRuntime,
+  getToolBrokerSettings,
   isAutoDeployEnabled,
   isAutoUpdateEnabled,
   isSupervisorEnabled,
@@ -31,7 +32,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -48,12 +49,14 @@ export async function supervisorSnapshot() {
     prisma.factoryJob.count({ where: { status: "approved" } }),
     prisma.factoryJob.count({ where: { status: "pending" } }),
     getDefaultAiEngine(),
+    getToolBrokerSettings(),
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
 
   return {
     defaultAiEngine,
+    toolBroker, // 도구 요청 중계 설정(모드·상한)
     enabled,
     autoUpdate,
     autoDeploy, // 정비 대기열이 모두 끝나면 자동 배포(기본 꺼짐)

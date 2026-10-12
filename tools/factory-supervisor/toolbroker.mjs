@@ -1,0 +1,490 @@
+// 도구 요청 중계기 (감독 프로그램 안에서만 돈다)
+// AI(Claude·Codex)는 앱 폴더의 .factory/requests/<id>.json 에 요청서만 쓰고, 감독 프로그램이 허용 목록의 도구만 대신 실행해
+// .factory/responses/<id>.json 과 .factory/assets/ 로 결과를 돌려준다. AI 의 샌드박스·네트워크 정책은 바꾸지 않는다.
+// - 임의 셸 명령은 없다. 도구는 고정 배열로 실행하고(shell:false) 경로는 앱 폴더 안으로만 받는다.
+// - 비밀값은 도구 프로세스의 환경변수로만 넘기고 요청·응답·로그·이벤트에는 남기지 않는다.
+// 사용법·규약: docs/ai-harness.md 의 "도구 요청 중계" 절.
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { maskText } from "./release.mjs";
+
+const IS_WIN = process.platform === "win32";
+
+export const TOOL_MODES = ["off", "report", "allow"];
+export const TOOL_MODE_LABELS = { off: "꺼짐", report: "보고만", allow: "허용" };
+// 통제실 설정이 없거나 이상하면 이 값을 쓴다
+export const BROKER_DEFAULTS = { mode: "off", maxRequests: 30, toolTimeoutSec: 180 };
+const LIMITS = {
+  maxRequestsCap: 200,
+  toolTimeoutCapSec: 900,
+  requestBytes: 16 * 1024,
+  manifestBytes: 64 * 1024,
+  outputBytes: 64 * 1024,
+  outputSummary: 1500,
+  files: 50,
+  pollMs: 3000,
+};
+export const REQUEST_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const TOOL_NAME_RE = /^[a-z][a-z0-9_.-]{0,39}$/;
+const SUBCOMMAND_RE = /^[a-z][a-z0-9_-]{0,39}$/;
+const ARG_NAME_RE = /^[a-z][a-z0-9_]{0,39}$/;
+const SECRET_NAME_RE = /^[A-Z][A-Z0-9_]{1,63}$/;
+export const TOOLREQ_PATH = fileURLToPath(new URL("./toolreq.mjs", import.meta.url));
+
+/** /api/factory/next 의 toolBroker 값 → 정리된 설정. 없거나 이상하면 꺼짐(예전 서버 포함) */
+export function brokerSettings(v) {
+  const o = v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  const int = (x, d, lo, hi) => (Number.isInteger(x) ? Math.min(hi, Math.max(lo, x)) : d);
+  return {
+    mode: TOOL_MODES.includes(o.mode) ? o.mode : BROKER_DEFAULTS.mode,
+    maxRequests: int(o.maxRequests, BROKER_DEFAULTS.maxRequests, 1, LIMITS.maxRequestsCap),
+    toolTimeoutSec: int(o.toolTimeoutSec, BROKER_DEFAULTS.toolTimeoutSec, 5, LIMITS.toolTimeoutCapSec),
+  };
+}
+
+// ───────── 경로 ─────────
+const isLink = (p) => {
+  try {
+    return fs.lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
+/** 앱 폴더 안의 실제 디렉터리(.factory/<name>)를 만든다. 중간 경로가 심볼릭 링크·파일이면 거부 */
+export function factoryDir(appDir, name) {
+  const base = path.join(appDir, ".factory");
+  for (const p of [base, path.join(base, name)]) {
+    if (fs.existsSync(p) || isLink(p)) {
+      const s = fs.lstatSync(p);
+      if (s.isSymbolicLink() || !s.isDirectory()) throw new Error(`${path.relative(appDir, p)} 는 실제 폴더여야 해요.`);
+    } else fs.mkdirSync(p);
+  }
+  return path.join(base, name);
+}
+
+/** AI 가 준 상대 경로 → 앱 폴더 안의 정규화된 상대 경로. 절대경로·..·심볼릭 링크(있는 부분)는 거부 */
+export function safeAppPath(appDir, rel) {
+  if (typeof rel !== "string" || !rel || rel.length > 300) return { ok: false, reason: "경로는 1~300자 문자열이어야 해요." };
+  if (/[\0\r\n]/.test(rel)) return { ok: false, reason: "경로에 허용하지 않는 문자가 있어요." };
+  if (path.isAbsolute(rel) || path.win32.isAbsolute(rel) || /^[A-Za-z]:/.test(rel) || rel.startsWith("\\\\")) return { ok: false, reason: "절대 경로는 쓸 수 없어요." };
+  const parts = rel.split(/[\\/]+/).filter(Boolean);
+  if (!parts.length || parts.some((p) => p === ".." || p === ".")) return { ok: false, reason: "경로에 . 이나 .. 은 쓸 수 없어요." };
+  if (parts[0] === ".git") return { ok: false, reason: ".git 안은 쓸 수 없어요." };
+  const root = path.resolve(appDir);
+  const full = path.resolve(root, ...parts);
+  if (!full.startsWith(root + path.sep)) return { ok: false, reason: "앱 폴더 밖 경로예요." };
+  let cur = root;
+  for (const p of parts) {
+    cur = path.join(cur, p);
+    if (isLink(cur)) return { ok: false, reason: "심볼릭 링크 경로는 쓸 수 없어요." };
+    if (!fs.existsSync(cur)) break;
+  }
+  return { ok: true, rel: parts.join("/"), full };
+}
+
+// ───────── 요청서 ─────────
+/** 요청서 파일 → { ok, req } | { ok:false, reason }. 파일 이름의 id 와 본문 id 가 같아야 한다 */
+export function readRequest(file, fileId) {
+  let st;
+  try {
+    st = fs.lstatSync(file);
+  } catch {
+    return { ok: false, reason: "요청서를 읽지 못했어요." };
+  }
+  if (st.isSymbolicLink() || !st.isFile()) return { ok: false, reason: "요청서는 실제 파일이어야 해요(심볼릭 링크 거부)." };
+  if (st.size > LIMITS.requestBytes) return { ok: false, reason: `요청서가 너무 커요(${LIMITS.requestBytes}바이트까지).` };
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, ""));
+  } catch {
+    return { ok: false, reason: "요청서가 JSON 형식이 아니에요." };
+  }
+  return validateRequest(raw, fileId);
+}
+
+export function validateRequest(raw, fileId) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: "요청서는 { id, tool, args } 객체여야 해요." };
+  const extra = Object.keys(raw).filter((k) => !["id", "tool", "args"].includes(k));
+  if (extra.length) return { ok: false, reason: `모르는 항목: ${extra.slice(0, 5).join(", ")}` };
+  if (typeof raw.id !== "string" || !REQUEST_ID_RE.test(raw.id) || raw.id !== fileId) return { ok: false, reason: "id 는 파일 이름과 같아야 해요(영문·숫자·_-, 64자까지)." };
+  if (typeof raw.tool !== "string" || !TOOL_NAME_RE.test(raw.tool)) return { ok: false, reason: "tool 이름 형식이 올바르지 않아요." };
+  if (!Object.hasOwn(ADAPTERS, raw.tool)) return { ok: false, reason: `허용 목록에 없는 도구예요: ${raw.tool} (허용: ${Object.keys(ADAPTERS).join(", ")})` };
+  const args = raw.args === undefined ? {} : raw.args;
+  if (!args || typeof args !== "object" || Array.isArray(args)) return { ok: false, reason: "args 는 객체여야 해요." };
+  return { ok: true, req: { id: raw.id, tool: raw.tool, args } };
+}
+
+// ───────── 게임 툴킷 목록(tools.json) ─────────
+/** factory/game-toolkit/tools.json 을 읽고 검증한다. 없으면 { ok:false, missing:true } */
+export function loadToolkitManifest(toolkitDir) {
+  const file = path.join(toolkitDir || "", "tools.json");
+  if (!toolkitDir || !fs.existsSync(toolkitDir) || !fs.existsSync(file)) return { ok: false, missing: true, reason: "툴킷이 없어요(game-toolkit/tools.json 을 찾지 못했어요)." };
+  try {
+    const st = fs.lstatSync(file);
+    if (st.isSymbolicLink() || !st.isFile()) return { ok: false, reason: "tools.json 은 실제 파일이어야 해요." };
+    if (st.size > LIMITS.manifestBytes) return { ok: false, reason: "tools.json 이 너무 커요." };
+    return validateManifest(JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, "")), toolkitDir);
+  } catch (e) {
+    return { ok: false, reason: `tools.json 을 읽지 못했어요: ${maskText(e.message).slice(0, 200)}` };
+  }
+}
+
+export function validateManifest(m, toolkitDir) {
+  if (!m || typeof m !== "object" || m.version !== 1 || !m.tools || typeof m.tools !== "object" || Array.isArray(m.tools)) {
+    return { ok: false, reason: 'tools.json 형식: { "version": 1, "tools": { ... } }' };
+  }
+  const tools = {};
+  for (const [name, t] of Object.entries(m.tools)) {
+    const bad = (why) => ({ ok: false, reason: `tools.json 의 '${String(name).slice(0, 40)}': ${why}` });
+    if (!SUBCOMMAND_RE.test(name)) return bad("하위 명령 이름은 영문 소문자·숫자·_- 40자까지예요.");
+    if (!t || typeof t !== "object") return bad("객체여야 해요.");
+    if (typeof t.entry !== "string" || !/^[A-Za-z0-9_][A-Za-z0-9_./-]{0,99}\.py$/.test(t.entry) || t.entry.split("/").some((p) => p === ".." || p === "." || !p)) return bad("entry 는 툴킷 폴더 안의 .py 상대 경로여야 해요.");
+    const entryFull = path.resolve(toolkitDir, ...t.entry.split("/"));
+    if (!entryFull.startsWith(path.resolve(toolkitDir) + path.sep)) return bad("entry 가 툴킷 폴더 밖이에요.");
+    const args = [];
+    for (const a of t.args ?? []) {
+      if (!a || typeof a !== "object" || !ARG_NAME_RE.test(a.name ?? "")) return bad("args 의 name 은 영문 소문자·숫자·_ 40자까지예요.");
+      if (!["string", "int", "path"].includes(a.type)) return bad(`args '${a.name}' 의 type 은 string|int|path 예요.`);
+      if (args.some((x) => x.name === a.name)) return bad(`args '${a.name}' 가 두 번 있어요.`);
+      args.push({ name: a.name, type: a.type, required: a.required === true });
+    }
+    if (t.args !== undefined && !Array.isArray(t.args)) return bad("args 는 배열이어야 해요.");
+    const secrets = t.secrets ?? [];
+    if (!Array.isArray(secrets) || secrets.some((s) => typeof s !== "string" || !SECRET_NAME_RE.test(s))) return bad("secrets 는 키 이름(대문자·숫자·_) 배열이에요.");
+    const timeoutSec = t.timeoutSec === undefined ? 120 : t.timeoutSec;
+    if (!Number.isInteger(timeoutSec) || timeoutSec < 1 || timeoutSec > LIMITS.toolTimeoutCapSec) return bad(`timeoutSec 는 1~${LIMITS.toolTimeoutCapSec} 정수예요.`);
+    tools[name] = { entry: t.entry, entryFull, args, timeoutSec, network: t.network === true, secrets: [...new Set(secrets)] };
+  }
+  return { ok: true, tools };
+}
+
+/** 툴킷 목록에 선언된 비밀값 이름(중계가 켜져 있으면 AI 환경에서 빼고 도구에만 준다) */
+export function toolkitSecretNames(toolkitDir) {
+  const m = loadToolkitManifest(toolkitDir);
+  return m.ok ? [...new Set(Object.values(m.tools).flatMap((t) => t.secrets))] : [];
+}
+
+// ───────── 도구 어댑터 ─────────
+// 어댑터 인터페이스: { name, cost(args) → 비용 단위(정수), validate(args, ctx) → { ok, value } | { ok:false, reason, status? }, run(value, ctx) → 응답 }
+// run 의 결과: { status: ok|failed|timeout, message, files?: [상대경로], output?, result? }. 비밀값은 ctx.secretsFor 로만 받는다.
+// PixelLab 같은 외부 서비스는 다음 단계에 이 인터페이스로 추가한다(이번 단계에는 없음).
+const echoAdapter = {
+  name: "echo",
+  cost: () => 0,
+  validate(args) {
+    const text = JSON.stringify(args);
+    if (text.length > 4000) return { ok: false, reason: "echo 의 args 는 4000자까지예요." };
+    return { ok: true, value: args };
+  },
+  async run(value) {
+    return { status: "ok", message: "echo: 받은 args 를 그대로 돌려줘요(중계 경로 확인용).", result: value };
+  },
+};
+
+const toolkitAdapter = {
+  name: "toolkit.run",
+  cost: () => 1,
+  validate(args, ctx) {
+    const keys = Object.keys(args);
+    if (keys.some((k) => !["command", "args"].includes(k))) return { ok: false, reason: 'toolkit.run 의 args 는 { "command", "args" } 만 받아요.' };
+    if (typeof args.command !== "string" || !SUBCOMMAND_RE.test(args.command)) return { ok: false, reason: "command(하위 명령 이름) 형식이 올바르지 않아요." };
+    const manifest = loadToolkitManifest(ctx.toolkitDir);
+    if (!manifest.ok) return { ok: false, status: manifest.missing ? "failed" : "denied", reason: manifest.reason };
+    const tool = Object.hasOwn(manifest.tools, args.command) ? manifest.tools[args.command] : null;
+    if (!tool) return { ok: false, reason: `tools.json 에 없는 하위 명령이에요: ${args.command}` };
+    const given = args.args === undefined ? {} : args.args;
+    if (!given || typeof given !== "object" || Array.isArray(given)) return { ok: false, reason: "toolkit.run 의 args.args 는 객체여야 해요." };
+    const unknown = Object.keys(given).filter((k) => !tool.args.some((a) => a.name === k));
+    if (unknown.length) return { ok: false, reason: `선언되지 않은 인자: ${unknown.slice(0, 5).join(", ")}` };
+    const argv = [];
+    for (const a of tool.args) {
+      const v = given[a.name];
+      if (v === undefined || v === null) {
+        if (a.required) return { ok: false, reason: `필수 인자가 없어요: ${a.name}` };
+        continue;
+      }
+      if (a.type === "int") {
+        if (!Number.isSafeInteger(v)) return { ok: false, reason: `${a.name} 은 정수여야 해요.` };
+        argv.push(`--${a.name}=${v}`);
+      } else if (a.type === "path") {
+        const p = safeAppPath(ctx.appDir, v);
+        if (!p.ok) return { ok: false, reason: `${a.name}: ${p.reason}` };
+        argv.push(`--${a.name}=${p.rel}`);
+      } else {
+        if (typeof v !== "string" || v.length > 500 || /[\0\r\n]/.test(v)) return { ok: false, reason: `${a.name} 은 줄바꿈 없는 500자 이하 문자열이어야 해요.` };
+        argv.push(`--${a.name}=${v}`);
+      }
+    }
+    // 네트워크·비밀값이 필요한 도구는 '허용' 모드이면서 이 일감의 requiredSecrets 에 이름이 있을 때만
+    if (tool.network || tool.secrets.length) {
+      if (ctx.mode !== "allow") return { ok: false, reason: "네트워크·키가 필요한 도구는 '허용' 모드에서만 실행해요." };
+      const missing = tool.secrets.filter((n) => !ctx.requiredSecrets.includes(n));
+      if (missing.length) return { ok: false, reason: `이 일감에 허용되지 않은 키가 필요해요: ${missing.join(", ")} (일감의 필요한 키에 넣어야 해요)` };
+      const absent = tool.secrets.filter((n) => !ctx.hasSecret(n));
+      if (absent.length) return { ok: false, status: "failed", reason: `이 PC 의 키 파일에 없는 키: ${absent.join(", ")}` };
+    }
+    if (!fs.existsSync(tool.entryFull) || isLink(tool.entryFull)) return { ok: false, status: "failed", reason: `툴킷 진입점이 없어요: ${tool.entry}` };
+    return { ok: true, value: { command: args.command, tool, argv } };
+  },
+  async run({ command, tool, argv }, ctx) {
+    const assets = factoryDir(ctx.appDir, "assets");
+    const env = { PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1", FACTORY_APP_DIR: ctx.appDir, FACTORY_ASSETS_DIR: assets, FACTORY_REQUEST_ID: ctx.requestId };
+    // AI·감독 프로그램의 환경(토큰 등)은 물려주지 않는다. 실행에 필요한 최소 변수 + 이 도구에 선언된 키만
+    for (const k of ["PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG"]) {
+      if (process.env[k] !== undefined) env[k] = process.env[k];
+    }
+    Object.assign(env, ctx.secretsFor(tool.secrets));
+    const timeoutSec = Math.min(tool.timeoutSec, ctx.toolTimeoutSec);
+    const started = Date.now();
+    const r = await runFixed(ctx.pythonCmd, [tool.entryFull, command, ...argv], { cwd: ctx.appDir, env, timeoutMs: timeoutSec * 1000, spawnImpl: ctx.spawnImpl, onChild: ctx.onChild });
+    const files = listNewFiles(ctx.appDir, assets, started);
+    const output = ctx.redact(r.output).slice(-LIMITS.outputSummary);
+    if (r.timedOut) return { status: "timeout", message: `도구 실행 시간 초과(${timeoutSec}초)`, files, output };
+    if (r.error) return { status: "failed", message: `도구를 실행하지 못했어요: ${ctx.redact(r.error).slice(0, 300)}`, files, output };
+    return { status: r.code === 0 ? "ok" : "failed", message: r.code === 0 ? `${command} 완료` : `${command} 실패(종료 코드 ${r.code})`, files, output };
+  },
+};
+
+export const ADAPTERS = Object.freeze({ echo: echoAdapter, "toolkit.run": toolkitAdapter });
+
+function killTree(child) {
+  if (!child?.pid || child.exitCode !== null) return;
+  try {
+    if (IS_WIN) spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: 5000 });
+    else process.kill(-child.pid, "SIGKILL");
+  } catch {
+    /* 이미 끝남 */
+  }
+}
+
+// 셸 없이 고정 배열로 실행. 출력은 뒤쪽 64KB 만 모은다
+function runFixed(command, args, { cwd, env, timeoutMs, spawnImpl = spawn, onChild = () => {} }) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawnImpl(command, args, { cwd, env, shell: false, windowsHide: true, detached: !IS_WIN, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (e) {
+      resolve({ error: e.message, output: "" });
+      return;
+    }
+    onChild(child);
+    let output = "";
+    let timedOut = false;
+    let done = false;
+    const add = (d) => {
+      output = (output + d).slice(-LIMITS.outputBytes);
+    };
+    child.stdout?.on("data", add);
+    child.stderr?.on("data", add);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child);
+    }, timeoutMs);
+    const end = (v) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      onChild(null);
+      resolve({ output, timedOut, ...v });
+    };
+    child.on("error", (e) => end({ error: e.message }));
+    child.on("close", (code) => end({ code }));
+  });
+}
+
+function listNewFiles(appDir, dir, since) {
+  const out = [];
+  const walk = (d, depth) => {
+    if (depth > 4 || out.length >= LIMITS.files) return;
+    let names = [];
+    try {
+      names = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of names) {
+      const full = path.join(d, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) walk(full, depth + 1);
+      else if (e.isFile()) {
+        try {
+          if (fs.statSync(full).mtimeMs >= since - 1000) out.push(path.relative(appDir, full).split(path.sep).join("/"));
+        } catch {
+          /* 사라짐 */
+        }
+      }
+      if (out.length >= LIMITS.files) return;
+    }
+  };
+  walk(dir, 0);
+  return out.sort();
+}
+
+// ───────── 중계기 ─────────
+let toolBusy = false; // 이 PC 전체에서 도구는 한 번에 하나만 돈다(여러 일감이 동시에 돌아도)
+
+/**
+ * 일감 하나의 중계기. 일감의 AI 프로세스가 도는 동안 start() 로 몇 초마다 요청을 확인하고, 끝나면 stop().
+ * opts: { appDir, jobId, engine, getSettings() → brokerSettings, toolkitDir, pythonCmd, requiredSecrets, secrets(이름→값, 이 일감에 허용된 것만),
+ *         redact(s), log(m), onChange(), spawnImpl }
+ */
+export function createBroker(opts) {
+  const { appDir, jobId, engine = "claude", toolkitDir, pythonCmd = IS_WIN ? "python" : "python3", requiredSecrets = [], secrets = {}, onChange = () => {}, spawnImpl } = opts;
+  const getSettings = opts.getSettings ?? (() => brokerSettings(null));
+  const redactBase = opts.redact ?? ((s) => s);
+  const secretValues = Object.values(secrets).filter((v) => typeof v === "string" && v.length >= 4);
+  // 비밀값은 어떤 경로로든 다시 한 번 가린다
+  const redact = (s) => maskText(secretValues.reduce((acc, v) => acc.split(v).join("***"), redactBase(String(s ?? ""))));
+  const log = opts.log ?? (() => {});
+  const seen = new Set();
+  const records = []; // 통제실에 보일 목록: { id, tool, status, at, ms, message }
+  let timer = null;
+  let ticking = null;
+  let stopped = false;
+  let child = null;
+  let handled = 0;
+
+  const event = (rec) => {
+    try {
+      const file = path.join(appDir, ".factory", "ai-events.jsonl");
+      if (isLink(file)) return;
+      fs.appendFileSync(file, JSON.stringify({ engine, phase: "tool-request", taskId: jobId, requestId: rec.id, tool: rec.tool, status: rec.status, ms: rec.ms, at: rec.at }) + "\n", { mode: 0o600 });
+    } catch {
+      /* 기록 실패는 무시 */
+    }
+  };
+
+  const respond = (id, tool, body, startedAt) => {
+    const dir = factoryDir(appDir, "responses");
+    const file = path.join(dir, `${id}.json`);
+    if (isLink(file)) throw new Error("응답 파일 자리에 심볼릭 링크가 있어요.");
+    const finishedAt = new Date();
+    const out = JSON.parse(JSON.stringify({ id, tool, ...body, startedAt: startedAt.toISOString(), finishedAt: finishedAt.toISOString() }, (_k, v) => (typeof v === "string" ? redact(v) : v)));
+    const tmp = path.join(dir, `.${id}.${process.pid}.tmp`);
+    fs.writeFileSync(tmp, JSON.stringify(out, null, 2) + "\n", { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    const rec = { id, tool: tool ?? "?", status: out.status, at: startedAt.toISOString(), ms: finishedAt - startedAt, message: String(out.message ?? "").slice(0, 200) };
+    records.push(rec);
+    if (records.length > 100) records.shift();
+    event(rec);
+    log(`도구 요청 ${id} (${rec.tool}): ${rec.status}${rec.status === "ok" ? "" : ` - ${rec.message}`}`);
+    onChange();
+    return out;
+  };
+
+  async function handle(id, file) {
+    const startedAt = new Date();
+    const settings = getSettings();
+    handled++; // 거부된 요청도 센다
+    if (handled > settings.maxRequests) return respond(id, null, { status: "denied", message: `이 일감의 도구 요청 상한(${settings.maxRequests}개)을 넘었어요.`, files: [] }, startedAt);
+    const parsed = readRequest(file, id);
+    if (!parsed.ok) return respond(id, null, { status: "denied", message: parsed.reason, files: [] }, startedAt);
+    const { req } = parsed;
+    const adapter = ADAPTERS[req.tool];
+    const ctx = {
+      appDir,
+      requestId: id,
+      mode: settings.mode,
+      toolkitDir,
+      pythonCmd,
+      requiredSecrets,
+      toolTimeoutSec: settings.toolTimeoutSec,
+      hasSecret: (n) => requiredSecrets.includes(n) && typeof secrets[n] === "string" && secrets[n] !== "",
+      secretsFor: (names) => Object.fromEntries(names.filter((n) => requiredSecrets.includes(n) && typeof secrets[n] === "string").map((n) => [n, secrets[n]])),
+      redact,
+      spawnImpl,
+      onChild: (c) => {
+        child = c;
+      },
+    };
+    const v = adapter.validate(req.args, ctx);
+    if (!v.ok) return respond(id, req.tool, { status: v.status ?? "denied", message: v.reason, files: [] }, startedAt);
+    if (settings.mode === "report") return respond(id, req.tool, { status: "denied", message: "보고만 모드: 요청은 기록했지만 실행하지 않았어요.", files: [] }, startedAt);
+    const r = await adapter.run(v.value, ctx);
+    return respond(id, req.tool, { status: r.status, message: r.message, files: r.files ?? [], ...(r.output ? { output: r.output } : {}), ...(r.result !== undefined ? { result: r.result } : {}), cost: adapter.cost(req.args) }, startedAt);
+  }
+
+  /** 한 번 확인: 응답이 없는 새 요청을 처리한다(꺼짐 모드면 아무것도 하지 않는다) */
+  async function tick() {
+    if (stopped || ticking) return ticking;
+    ticking = (async () => {
+      if (getSettings().mode === "off") return;
+      const reqDir = path.join(appDir, ".factory", "requests");
+      if (!fs.existsSync(reqDir) && !isLink(reqDir)) return;
+      let names;
+      try {
+        factoryDir(appDir, "requests");
+        names = fs.readdirSync(reqDir).filter((n) => n.endsWith(".json")).sort();
+      } catch (e) {
+        log(`도구 요청 폴더를 읽지 못했어요: ${redact(e.message)}`);
+        return;
+      }
+      for (const name of names) {
+        if (stopped) return;
+        if (seen.has(name)) continue;
+        const id = name.slice(0, -5);
+        if (!REQUEST_ID_RE.test(id)) {
+          seen.add(name);
+          log(`도구 요청 파일 이름이 올바르지 않아 건너뛰어요: ${name.slice(0, 80)}`);
+          continue;
+        }
+        if (fs.existsSync(path.join(appDir, ".factory", "responses", `${id}.json`))) {
+          seen.add(name); // 이미 응답함(지난 실행 포함)
+          continue;
+        }
+        if (getSettings().mode === "off") return;
+        if (toolBusy) return; // 다른 일감의 도구가 도는 중: 다음 확인 때
+        seen.add(name);
+        toolBusy = true;
+        try {
+          await handle(id, path.join(reqDir, name));
+        } catch (e) {
+          try {
+            respond(id, null, { status: "failed", message: `중계 오류: ${redact(e.message).slice(0, 300)}`, files: [] }, new Date());
+          } catch {
+            log(`도구 요청 ${id} 응답을 쓰지 못했어요: ${redact(e.message)}`);
+          }
+        } finally {
+          toolBusy = false;
+          child = null;
+        }
+      }
+    })().finally(() => {
+      ticking = null;
+    });
+    return ticking;
+  }
+
+  return {
+    tick,
+    start(pollMs = LIMITS.pollMs) {
+      if (!timer && !stopped) timer = setInterval(() => void tick(), pollMs);
+      return this;
+    },
+    /** 일감이 끝나거나 취소되면: 확인을 멈추고 돌던 도구도 끈다 */
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+      timer = null;
+      killTree(child);
+    },
+    list: () => records.map((r) => ({ ...r })),
+  };
+}
+
+/** 앱 폴더 작업 규칙(CLAUDE.md 공장 블록)에 붙일 사용법. 중계가 꺼져 있으면 붙이지 않는다 */
+export function brokerRules(mode) {
+  if (mode !== "report" && mode !== "allow") return "";
+  const cli = TOOLREQ_PATH.replace(/\\/g, "/");
+  return `
+## 도구 요청 (감독 프로그램 중계${mode === "report" ? ", 지금은 보고만 모드라 실행되지 않음" : ""})
+- 외부 서비스·게임 툴킷이 필요하면 직접 실행하거나 키를 찾지 말고 요청서를 보내세요. 감독 프로그램이 허용된 도구만 대신 실행해요.
+- args 를 JSON 파일로 쓴 뒤 한 줄로: \`node "${cli}" submit --tool <echo|toolkit.run> --args-file <json파일>\` (응답이 올 때까지 기다렸다가 상태와 응답 파일 경로를 출력해요. 기본 5분)
+- 이 명령은 오래 걸릴 수 있으니 명령 제한 시간을 넉넉히(예: 360000ms) 주세요. 중간에 끊겼으면 \`node "${cli}" wait --id <요청ID>\` 로 이어서 기다리세요.
+- toolkit.run 의 args: { "command": "<tools.json 의 하위 명령>", "args": { 이름: 값 } }. 경로 인자는 앱 폴더 안 상대 경로만 돼요.
+- 결과: .factory/responses/<요청ID>.json(status ok|denied|failed|timeout, message, files), 만든 파일은 .factory/assets/ 아래. denied 면 이유를 읽고 같은 요청을 반복하지 마세요.
+`;
+}

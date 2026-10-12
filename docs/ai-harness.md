@@ -92,6 +92,52 @@ Codex는 `workspace-write`, `approval_policy=never`, 셸 네트워크 차단으�
 
 정비는 기존 감독 스크립트 문법 검사·타입 검사를 유지한다. Codex가 Git 메타데이터를 쓰지 못해 변경만 남기면 감독 프로그램이 작업 트리를 검사한 뒤 로컬 커밋한다. 원격 rebase로 HEAD가 바뀌면 다시 검사한다. 검사 실패 파일은 보존하고 같은 정비 대화에서 수정할 수 있다. 키 파일이 커밋에 포함되면 중단한다. GitHub push와 서버 배포는 기존 감독 프로그램·승인 흐름이 담당한다.
 
+## 도구 요청 중계 (1단계)
+
+Codex의 샌드박스·네트워크·승인 정책은 그대로 두고, 외부 도구(앞으로 `factory\game-toolkit`의 PixelLab 등)는 감독 프로그램이 대신 실행한다. AI(Claude·Codex)는 요청서만 쓰고, 감독이 허용 목록의 도구만 실행해 결과를 앱 폴더에 돌려준다. 키는 AI 프로세스에 들어가지 않는다.
+
+**스위치**: 통제실 설정(주사용 AI 옆) **도구 요청 중계** — `꺼짐`(기본) / `보고만` / `허용`, 일감당 요청 수(기본 30, 1~200), 도구 제한 시간(기본 180초, 5~900). 서버 `factory_settings.toolBroker`(JSON)에 저장되고 `/api/factory/next` 응답의 `toolBroker`로 감독이 폴링 때 받아 간다. 값이 없으면(예전 서버) 감독은 꺼짐으로 본다.
+
+- 꺼짐: 요청 폴더를 보지 않고 작업 규칙에도 사용법을 넣지 않는다. 기존 일감 동작과 같다.
+- 보고만: 요청을 검증·기록하지만 실행하지 않는다. 응답은 `denied`, 메시지 "보고만 모드".
+- 허용: 검증을 통과한 요청만 실행한다.
+- 꺼짐이 아니면 일감 시작 때 앱 폴더 작업 규칙(CLAUDE.md 공장 블록, Codex는 `project_doc_fallback_filenames`로 같은 파일)에 사용법 몇 줄을 붙이고, `tools.json`의 `secrets`에 선언된 키는 그 일감의 AI 환경변수에서 빼고 도구 프로세스에만 준다.
+
+**규약** (`tools/factory-supervisor/toolbroker.mjs`)
+
+- 요청서: `<앱>/.factory/requests/<요청ID>.json` = `{ "id", "tool", "args" }`. ID는 영문·숫자·`_-` 64자까지, 파일 이름과 같아야 한다. 다른 키는 거부한다.
+- 응답: `<앱>/.factory/responses/<요청ID>.json` = `{ id, tool, status: ok|denied|failed|timeout, message, files: [앱 폴더 기준 상대 경로], output?(마스킹된 출력 끝 1500자), result?(echo), cost, startedAt, finishedAt }`. 만든 파일은 `.factory/assets/` 아래. 응답의 모든 문자열은 이 일감의 키 값·작업 PC 토큰·비밀번호 모양을 가린 뒤 쓴다. 응답이 이미 있는 요청은 다시 처리하지 않는다(재실행에도).
+- 검증: 요청서 16KB 상한, 심볼릭 링크·파일 아닌 요청 거부, `.factory`·`requests`·`responses`·`assets`는 실제 폴더여야 함, tool은 허용 목록(`echo`, `toolkit.run`)만, 경로 인자는 앱 폴더 안 상대 경로만(`..`·`.`·절대경로·드라이브·UNC·`.git`·링크가 낀 경로 거부). 실패하면 `denied`와 이유.
+- 상한: 일감당 요청 수(거부된 요청도 센다) 초과는 `denied`. 도구 실행은 PC 전체에서 한 번에 하나만 돌고, 나머지 요청은 줄을 서서 다음 확인(3초) 때 처리한다.
+- 수명: 일감의 AI 프로세스가 도는 동안만 3초마다 확인한다. AI가 끝나거나 취소·시간 초과로 멈추면 확인을 멈추고 돌던 도구도 끈다.
+- 기록: `.factory/ai-events.jsonl`에 `{ engine, phase: "tool-request", taskId, requestId, tool, status, ms, at }`만 남긴다(args·출력·키 없음). 통제실에는 진행 보고의 `toolRequests`(요청ID·도구·상태·시각·소요·짧은 메시지)를 보내 `factory_jobs.toolRequests`(추가 마이그레이션 `20261017090000_add_factory_tool_requests`)에 저장하고 일감 상세 **🧰 도구 요청**에 보여 준다.
+
+**허용 도구**
+
+- `echo`: args(4000자까지)를 응답 `result`에 그대로 돌려준다. 중계 경로 확인용.
+- `toolkit.run`: args `{ "command": "<하위명령>", "args": { 이름: 값 } }`. `<toolkitDir>/tools.json`에 **선언된 하위 명령만** `python <toolkitDir>\<entry> <하위명령> --이름=값 ...` 고정 배열로 셸 없이 실행한다. 작업 폴더는 앱 폴더, 제한 시간은 `min(timeoutSec, 통제실 제한 시간)`. 환경변수는 PATH·SystemRoot·TEMP 등 실행에 필요한 최소값과 `FACTORY_APP_DIR`·`FACTORY_ASSETS_DIR`·`FACTORY_REQUEST_ID`, 그 도구에 선언된 키뿐이다(감독·AI의 다른 환경은 물려주지 않는다). 툴킷 폴더나 `tools.json`이 없으면 `failed` "툴킷이 없어요".
+- `toolkitDir`는 `supervisor.config.json`의 `toolkitDir`(비우면 `<workDir>/game-toolkit` = `~/dev/factory/game-toolkit`), 파이썬은 `pythonCmd`(기본 `python`).
+
+`tools.json` 형식:
+
+```json
+{ "version": 1, "tools": { "<하위명령>": { "entry": "cli.py", "args": [ { "name": "size", "type": "string|int|path", "required": true } ], "timeoutSec": 120, "network": false, "secrets": [] } } }
+```
+
+하위 명령은 영문 소문자·숫자·`_-` 40자, `entry`는 툴킷 폴더 안의 `.py` 상대 경로, 인자 이름은 영문 소문자·숫자·`_`. `string`은 줄바꿈 없는 500자, `int`는 정수, `path`는 위 경로 규칙. 선언되지 않은 인자·필수 인자 누락은 거부한다. `network: true`이거나 `secrets`가 있는 도구는 모드가 **허용**이고 그 이름이 일감의 `requiredSecrets`에 모두 있을 때만 실행한다(이 PC 키 파일에 값이 없으면 `failed`). `network: false`는 선언일 뿐 OS 수준 차단은 아니다. 툴킷 코드는 신뢰된 코드로 취급한다.
+
+**어댑터 인터페이스**: `{ name, cost(args) → 비용 단위, validate(args, ctx) → { ok, value } | { ok: false, reason, status? }, run(value, ctx) → { status, message, files?, output?, result? } }`. 키는 `ctx.secretsFor(이름들)`로만 받는다. **PixelLab은 API 형식을 확인한 뒤 다음 단계에 이 인터페이스로 추가한다**(이번 단계에는 없고, 외부 호출도 하지 않는다).
+
+**AI 쪽 도우미** (`tools/factory-supervisor/toolreq.mjs`, 외부 의존 없음, 앱 폴더에서 실행):
+
+```powershell
+node <supervisor-src>\tools\factory-supervisor\toolreq.mjs submit --tool echo --args-file args.json   # 기본 5분 대기(--timeout-sec, 최대 1800)
+node <supervisor-src>\tools\factory-supervisor\toolreq.mjs wait --id <요청ID>                          # 끊긴 기다림 이어서
+node <supervisor-src>\tools\factory-supervisor\toolreq.mjs status --id <요청ID>                        # 기다리지 않고 지금 상태
+```
+
+요청서를 임시 파일로 쓴 뒤 이름을 바꿔 놓고, 응답 파일이 생길 때까지 명령 안에서 1초마다 확인한다(AI 토큰을 쓰지 않는다). 마지막 줄은 `TOOLREQ {"id","status","response","message"}`, 종료 코드는 ok 0, denied·failed 1, timeout·pending 2. AI의 명령 제한 시간이 기다림보다 짧을 수 있어 규칙에 "제한 시간을 넉넉히, 끊기면 wait"를 적어 둔다.
+
 ## Skills, Subagents, MCP, Hooks 범위
 
 프로젝트의 `AGENTS.md`와 `.agents/skills/claude-harness/SKILL.md`는 기존 규칙과 필요한 Claude 스킬 원본을 읽도록 연결한다. 사용자 전역 스킬·플러그인을 복사하거나 자동 활성화하지 않았다. 일반 규칙·참조·로컬 스크립트는 설치된 의존성을 확인해 재사용할 수 있다. Claude 전용 Agent/Task/Workflow, 브라우저·Docs·메모리 도구는 실제 Codex 도구로 대응을 확인해야 하며 정의 파일을 그대로 활성화했다고 주장하지 않는다.
@@ -120,7 +166,7 @@ Claude의 기존 상태·Git 백업 훅은 유지한다. 별도의 공장 지시
 
 ## 검증 결과와 미확인 사항
 
-구현 환경에서 TypeScript 전체 검사, 모든 감독 `.mjs` 문법 검사, Prisma 스키마 검증을 수행한다. 테스트 명령은 `npm run test:ai-harness`이며 설치된 Node 테스트 API와 TypeScript/React를 사용한다.
+구현 환경에서 TypeScript 전체 검사, 모든 감독 `.mjs` 문법 검사, Prisma 스키마 검증을 수행한다. 테스트 명령은 `npm run test:ai-harness`이며 설치된 Node 테스트 API와 TypeScript/React를 사용한다. 도구 요청 중계 시험은 `tests/toolbroker.test.mjs`(같은 명령으로 실행)이고, `toolkit.run`은 파이썬 대신 node로 가짜 진입점을 실행한다.
 
 자식 프로세스 생성이 `EPERM`으로 차단되는 이 환경에서는 실제 가짜 CLI·Git·컴파일러 실행 시험 4개를 명시적으로 건너뛴다. API 조건·SQL 바인딩·세션 분리·잠금·인계·마스킹·selector와 가짜 프로세스 스트림·검증 실패·타임아웃 시험은 실행한다. 운영 DB 동시성·실제 AI 인증·MCP 연결·브라우저 화면·스케줄러·배포·자동 업데이트의 실환경 시험은 별도다.
 
@@ -129,3 +175,13 @@ Claude의 기존 상태·Git 백업 훅은 유지한다. 별도의 공장 지시
 새 일감을 일시 정지하고 관리 세션이 모두 끝난 뒤 Codex 선택을 끈다. 대기 중인 Codex 일감·정비는 관리자가 Claude로 변경하거나 취소한다. 새 서버를 유지하면 구버전 감독 프로그램도 Claude 작업만 받는다. 서버까지 구버전으로 되돌릴 때는 **남아 있는 Codex 일감이 없어야 한다**. 예전 서버는 AI 필터를 모르기 때문이다.
 
 추가 DB 열은 남겨 두어 기존 Claude 세션과 데이터를 보존한다. 작업 파일·실패 변경·커밋·인계 파일을 삭제하거나 `reset --hard`로 정리하지 않는다. 기존 `.claude` 파일과 스케줄러가 보존되어 있어 기존 실행 경로로 복귀할 수 있다.
+
+## 다음 단계: 부모-자식 일감 연결 (설계 메모, 아직 만들지 않음)
+
+이번 단계에는 Claude → Codex 위임(하위 일감)을 만들지 않았다. 훅의 재귀 방지(`factory-hook.mjs`: 감독이 띄운 AI는 `FACTORY_LAUNCHER=1`이면 등록을 건너뜀)도 그대로다. 다음 단계에서 필요한 점:
+
+- **깊이 1**: 부모 일감만 자식 하나(또는 몇 개)를 만들 수 있고, 자식은 다시 위임하지 못한다. 자식 요청도 이 중계 규약(요청서 → 감독 검증)으로 받는 것이 자연스럽다(`tool: "delegate"` 같은 허용 도구).
+- **승인**: 자식은 별도 승인을 받지 않고 부모 승인에 포함한다. 대신 부모의 `aiEngine`·`requiredSecrets`·범위를 넘을 수 없게 감독이 잘라 낸다.
+- **폴더 잠금 충돌**(코드로 확인): `ai-runner.mjs`의 `acquireWorkspace`는 정규화한 작업 폴더 경로의 sha256으로 `~/dev/factory/.ai-locks/<hash>.json`을 `wx`(이미 있으면 실패)로 연다. 부모가 같은 앱 폴더의 잠금을 잡고 있는 동안 자식이 같은 폴더로 `acquireWorkspace`를 부르면 `EEXIST` → "이 작업 폴더는 다른 AI 작업이 사용 중입니다"로 **막힌다**. 또 `supervisor.mjs`의 대기열 루프는 같은 `appSlug`가 이미 돌고 있으면 새 일감을 `failEarly`로 실패시킨다. 따라서 자식은 (a) 부모가 잡은 잠금을 물려받는 별도 경로(부모 토큰 확인 후 `setChild`로 자식 PID 기록)로 같은 폴더에서 순차 실행하거나, (b) 별도 작업 폴더(worktree 등)에서 돌고 결과만 합쳐야 한다. 부모 AI가 도는 동안 같은 폴더를 동시에 쓰는 것은 피한다(부모를 기다리게 하고 자식을 실행하는 순차 방식이 단순하다).
+- **결과 자동 반환**: 자식이 끝나면 감독이 요약·변경 파일·검증 결과를 부모의 응답 파일(`.factory/responses/<id>.json`)로 돌려주고, 부모는 `toolreq wait`로 받는다. 자식 실패·시간 초과도 같은 상태값(failed·timeout)으로 돌려준다.
+- **상한·기록**: 자식 수·시간을 부모의 요청 수 상한에 포함하고, 이벤트·통제실 목록에 부모-자식 관계(부모 일감 ID)를 남긴다.

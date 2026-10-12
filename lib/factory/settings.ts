@@ -2,6 +2,7 @@
 // 통제실 설정값: 감독 프로그램 활성화(일시 정지), 자동 업데이트, 감독 프로그램 버전 정보, "지금 업데이트" 1회성 요청.
 import prisma from "@/lib/prisma";
 import { isAiEngine, type AiEngine } from "@/lib/factory/ai";
+import { isToolBrokerMode, normalizeToolBroker, type ToolBrokerSettings } from "@/lib/factory/toolBroker";
 
 const DEFAULT_AI_KEY = "defaultAiEngine";
 
@@ -14,6 +15,32 @@ export async function getDefaultAiEngine(): Promise<AiEngine> {
 export async function setDefaultAiEngine(engine: AiEngine): Promise<void> {
   if (!isAiEngine(engine)) throw new Error("작업 AI가 올바르지 않아요.");
   await prisma.factorySetting.upsert({ where: { key: DEFAULT_AI_KEY }, create: { key: DEFAULT_AI_KEY, value: engine }, update: { value: engine } });
+}
+
+const TOOL_BROKER_KEY = "toolBroker";
+
+/** 도구 요청 중계 설정. 값이 없거나 이상하면 기본값(꺼짐) */
+export async function getToolBrokerSettings(): Promise<ToolBrokerSettings> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: TOOL_BROKER_KEY } });
+  let raw: unknown = null;
+
+  try {
+    raw = row?.value ? JSON.parse(row.value) : null;
+  } catch {
+    raw = null;
+  }
+
+  return normalizeToolBroker(raw);
+}
+
+export async function setToolBrokerSettings(input: Partial<ToolBrokerSettings>): Promise<ToolBrokerSettings> {
+  if (input.mode !== undefined && !isToolBrokerMode(input.mode)) throw new Error("도구 요청 중계 모드가 올바르지 않아요.");
+  const next = normalizeToolBroker({ ...(await getToolBrokerSettings()), ...input });
+  const value = JSON.stringify(next);
+
+  await prisma.factorySetting.upsert({ where: { key: TOOL_BROKER_KEY }, create: { key: TOOL_BROKER_KEY, value }, update: { value } });
+
+  return next;
 }
 
 const KEY = "supervisorEnabled";

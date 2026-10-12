@@ -26,6 +26,7 @@ function loadTs(relative, dependencies = {}) {
   return module.exports;
 }
 const ai = loadTs("lib/factory/ai.ts");
+const toolBroker = loadTs("lib/factory/toolBroker.ts", { "@/lib/factory/mask": { maskSecrets: (v) => v } });
 function fixture(t, git = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "factory-ai-test-"));
   t.after(() => {
@@ -43,6 +44,7 @@ function jobModule(prisma) {
     "@/lib/factory/project": { ensureProjectForJob: async () => {} },
     "@/lib/factory/reviewVideo": { deleteReviewVideo: async () => {} },
     "@/lib/factory/mask": { maskSecrets: (v) => v },
+    "@/lib/factory/toolBroker": toolBroker,
   });
 }
 function maintenanceModule(prisma) {
@@ -325,6 +327,7 @@ test("primary AI persists, defaults to Claude, and rejects invalid values withou
   const settings = loadTs("lib/factory/settings.ts", {
     "@/lib/prisma": { __esModule: true, default: { factorySetting: { findUnique: async () => row, upsert: async q => { row = q.create; } } } },
     "@/lib/factory/ai": ai,
+    "@/lib/factory/toolBroker": toolBroker,
   });
   assert.equal(await settings.getDefaultAiEngine(), "claude");
   await settings.setDefaultAiEngine("codex");

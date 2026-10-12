@@ -5,7 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
 import { isAiEngine, AI_LABELS } from "@/lib/factory/ai";
-import { setDefaultAiEngine } from "@/lib/factory/settings";
+import { setDefaultAiEngine, setToolBrokerSettings } from "@/lib/factory/settings";
+import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS } from "@/lib/factory/toolBroker";
 import { runSupervisorAction, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +28,7 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json().catch(() => null)) as {
     defaultAiEngine?: unknown;
+    toolBroker?: unknown;
     enabled?: unknown;
     autoUpdate?: unknown;
     autoDeploy?: unknown;
@@ -38,6 +40,30 @@ export async function POST(req: NextRequest) {
     if (!isAiEngine(body.defaultAiEngine)) return NextResponse.json({ message: "주사용 AI를 골라 주세요." }, { status: 400 });
     await setDefaultAiEngine(body.defaultAiEngine);
     return NextResponse.json({ ...(await supervisorSnapshot()), message: `주사용 AI를 ${AI_LABELS[body.defaultAiEngine]}로 저장했어요. 새 지시부터 적용돼요.` });
+  }
+
+  // 도구 요청 중계: { toolBroker: { mode: off|report|allow, maxRequests?, toolTimeoutSec? } }
+  if (body && Object.hasOwn(body, "toolBroker")) {
+    const tb = body.toolBroker as Record<string, unknown> | null;
+
+    if (!tb || typeof tb !== "object" || Array.isArray(tb) || !isToolBrokerMode(tb.mode)) {
+      return NextResponse.json({ message: "도구 요청 중계 모드(꺼짐·보고만·허용)를 골라 주세요." }, { status: 400 });
+    }
+    for (const k of ["maxRequests", "toolTimeoutSec"] as const) {
+      if (tb[k] !== undefined && !(typeof tb[k] === "number" && Number.isInteger(tb[k]))) {
+        return NextResponse.json({ message: "요청 수·제한 시간은 정수여야 해요." }, { status: 400 });
+      }
+    }
+    const saved = await setToolBrokerSettings({
+      mode: tb.mode,
+      ...(typeof tb.maxRequests === "number" ? { maxRequests: tb.maxRequests } : {}),
+      ...(typeof tb.toolTimeoutSec === "number" ? { toolTimeoutSec: tb.toolTimeoutSec } : {}),
+    });
+
+    return NextResponse.json({
+      ...(await supervisorSnapshot()),
+      message: `도구 요청 중계를 '${TOOL_BROKER_MODE_LABELS[saved.mode]}'(일감당 ${saved.maxRequests}개, ${saved.toolTimeoutSec}초)로 저장했어요. 감독 프로그램이 다음 확인 때 받아 가요.`,
+    });
   }
 
   let action: SupervisorAction | null = null;

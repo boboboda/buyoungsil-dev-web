@@ -37,6 +37,7 @@ import { maybeRestart, onRestartSignal, readRestartMark, restartPending, restart
 import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
 import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
+import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames } from "./toolbroker.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -65,6 +66,8 @@ const DEFAULTS = {
   model: "",
   selfdevDir: "~/dev/factory/selfdev", // 공장 정비 전용 체크아웃
   deployRemote: "serverpc:git-server/repo/developWeb.git", // 정비 [배포] 때 push 할 서버 배포 저장소(고정)
+  toolkitDir: "", // 게임 툴킷(파이썬 도구) 폴더. 비우면 <workDir>/game-toolkit (도구 요청 중계의 toolkit.run)
+  pythonCmd: IS_WIN ? "python" : "python3",
 };
 
 const stamp = () => new Date().toLocaleTimeString("ko-KR", { hour12: false });
@@ -87,6 +90,7 @@ function loadConfig() {
   c.serverUrl = String(c.serverUrl).replace(/\/+$/, "");
   c.workDir = path.resolve(expand(c.workDir));
   c.secretsFile = path.resolve(expand(c.secretsFile));
+  c.toolkitDir = c.toolkitDir ? path.resolve(expand(c.toolkitDir)) : path.join(c.workDir, "game-toolkit");
   c.slots = Math.min(4, Math.max(1, Math.floor(Number(c.slots) || 2)));
   c.pollSec = Math.max(5, Number(c.pollSec) || 15);
   c.heartbeatSec = Math.min(120, Math.max(5, Number(c.heartbeatSec) || 20));
@@ -398,6 +402,9 @@ function prepareDir(job) {
   const fromServer = serverRules(job);
   let block = fromServer ?? rulesFor(job);
   if (external) block = block.replace(RULES_END, `${EXTERNAL_NOTE}${RULES_END}`);
+  // 도구 요청 중계가 켜져 있을 때만 사용법을 붙인다(꺼짐이면 예전 규칙 그대로)
+  const toolNote = brokerRules(toolBroker.mode);
+  if (toolNote) block = block.replace(RULES_END, `${toolNote}${RULES_END}`);
   job.rulesSource = fromServer ? "홈페이지" : "기본값(감독 프로그램 코드)";
   let text = fs.existsSync(claudeMd) ? fs.readFileSync(claudeMd, "utf8") : "";
   const b = text.indexOf(RULES_BEGIN);
@@ -599,7 +606,8 @@ async function flush(st, extra = {}) {
       await uploadShots(st);
       if (!st.reportable) return false;
       const batch = st.logs.splice(0, 50);
-      const body = { jobId: st.job.id, logs: batch, ...(st.phaseDirty ? { phase: st.phase } : {}), ...extra };
+      const toolDirty = st.toolDirty;
+      const body = { jobId: st.job.id, logs: batch, ...(st.phaseDirty ? { phase: st.phase } : {}), ...(toolDirty && st.broker ? { toolRequests: st.broker.list() } : {}), ...extra };
       let r;
       try {
         r = await api("POST", "/api/factory/report", body);
@@ -610,6 +618,7 @@ async function flush(st, extra = {}) {
       }
       if (r.status === 200) {
         st.phaseDirty = false;
+        if (toolDirty) st.toolDirty = false;
         return true;
       }
       if (r.status === 409) {
@@ -646,7 +655,8 @@ async function finish(st, status, fields) {
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
       readPhase(st);
-      const r = await api("POST", "/api/factory/report", { jobId: st.job.id, logs: st.logs.splice(0, 50), phase: status === "done" ? "done" : st.phase, status, ...fields });
+      const tools = st.broker?.list() ?? [];
+      const r = await api("POST", "/api/factory/report", { jobId: st.job.id, logs: st.logs.splice(0, 50), phase: status === "done" ? "done" : st.phase, status, ...(tools.length ? { toolRequests: tools } : {}), ...fields });
       if (r.status === 200) return log(`[${st.job.appSlug}] 보고 완료: ${status}`);
       if (r.status === 409) return log(`[${st.job.appSlug}] 최종 보고가 거부됨(이미 ${r.data?.status ?? "다른 상태"})`);
       log(`[${st.job.appSlug}] 최종 보고 거부: ${r.status}`);
@@ -754,17 +764,38 @@ async function runJobUnlocked(job, lock) {
   }
 
   const appSettings = appPermissionSettings();
+  // 도구 요청 중계가 켜져 있으면 툴킷 도구에 선언된 키는 AI 환경에서 빼고 도구 프로세스에만 준다(꺼짐이면 예전 그대로)
+  const toolOnly = toolBroker.mode === "off" ? [] : toolkitSecretNames(cfg.toolkitDir);
+  const aiSecrets = Object.fromEntries(Object.entries(allowed).filter(([k]) => !toolOnly.includes(k)));
+  if (toolOnly.some((k) => k in allowed)) addLog(st, "info", `도구 전용 키는 AI 환경에 넣지 않았어요: ${toolOnly.filter((k) => k in allowed).join(", ")}`);
   recordLifecycle(dir, job.aiEngine, "session-start", job.id);
   const child = startAi(job.aiEngine, cfg, {
     settings: job.aiEngine === "claude" ? appSettings : undefined,
     cwd: dir,
-    env: { ...process.env, ...allowed, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id },
+    env: { ...process.env, ...aiSecrets, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id },
   });
   lock.setChild(child.pid || null);
   const decode = eventDecoder(job.aiEngine);
   st.child = child;
   child.stdin.on("error", () => {});
   child.stdin.end(handoffPrompt(dir, promptFor(job)));
+  // 도구 요청 중계: AI 가 도는 동안만 몇 초마다 .factory/requests/ 를 본다(꺼짐 모드면 아무것도 하지 않음)
+  const reqSecrets = job.requiredSecrets ?? [];
+  st.broker = createBroker({
+    appDir: dir,
+    jobId: job.id,
+    engine: job.aiEngine,
+    getSettings: () => toolBroker,
+    toolkitDir: cfg.toolkitDir,
+    pythonCmd: cfg.pythonCmd,
+    requiredSecrets: reqSecrets,
+    secrets: Object.fromEntries(reqSecrets.filter((n) => secrets[n]).map((n) => [n, secrets[n]])),
+    redact: st.redact,
+    log: (m) => addLog(st, "info", m),
+    onChange: () => {
+      st.toolDirty = true;
+    },
+  }).start();
 
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
     let ev;
@@ -815,6 +846,7 @@ async function runJobUnlocked(job, lock) {
     });
     child.on("close", (c) => resolve(c ?? -1));
   });
+  st.broker.stop();
   clearInterval(beat);
   clearTimeout(timer);
   clearTimeout(st.resultTimer);
@@ -1172,6 +1204,7 @@ async function finishVideoLink(st, { summary }) {
 let paused = false;
 let autoUpdate = true; // 통제실 스위치. /next 응답에 autoUpdate: false 가 오면 끈다(필드가 없으면 켜짐)
 let defaultAiEngine = null;
+let toolBroker = brokerSettings(null); // 통제실 '도구 요청 중계' 설정. 값이 없으면(예전 서버) 꺼짐
 
 async function loop() {
   let delay = cfg.pollSec * 1000;
@@ -1203,6 +1236,9 @@ async function loop() {
             defaultAiEngine = r.data.defaultAiEngine;
             log(`주사용 AI: ${ENGINE_LABELS[defaultAiEngine]} (새 지시 기본값, 개별 AI 선택 유지)`);
           }
+          const nextBroker = brokerSettings(r.data?.toolBroker);
+          if (nextBroker.mode !== toolBroker.mode) log(`도구 요청 중계: ${TOOL_MODE_LABELS[nextBroker.mode]}`);
+          toolBroker = nextBroker;
           if (r.data?.restart === true) onRestartSignal(log); // 1회성 "감독 재시작"(실행기 밖이면 이유만 알리고 하지 않음)
           // 재시작 대기 중에는 아무것도 받지 않는다(홈페이지도 hold=1 이면 일감·신호를 넘기지 않음). 진행 중인 작업은 끝까지
           if (restartPending()) {
