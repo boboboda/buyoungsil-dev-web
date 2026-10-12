@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { brokerRules, brokerSettings, createBroker, loadToolkitManifest, readRequest, safeAppPath, TOOLREQ_PATH, validateRequest } from "../toolbroker.mjs";
@@ -162,6 +163,18 @@ test("per-job request limit denies the overflow", async (t) => {
   assert.match(response(f.app, "a3").message, /상한\(2개\)/);
 });
 
+test("no per-job request limit by default: old limit(30) + 3 requests are all answered", async (t) => {
+  const f = fixture(t);
+  const ids = Array.from({ length: 33 }, (_, i) => `n${String(i).padStart(2, "0")}`);
+  for (const id of ids) request(f.app, id, "echo", {});
+  for (const settings of [{ mode: "allow" }, { mode: "allow", maxRequests: 0 }, { mode: "allow", maxRequests: null }]) {
+    fs.rmSync(path.join(f.app, ".factory", "responses"), { recursive: true, force: true });
+    const { b } = broker(f, settings);
+    await b.tick();
+    assert.deepEqual(new Set(ids.map((id) => response(f.app, id).status)), new Set(["ok"]), JSON.stringify(settings));
+  }
+});
+
 test("stopped broker no longer answers", async (t) => {
   const f = fixture(t);
   const { b } = broker(f, { mode: "allow" });
@@ -237,8 +250,10 @@ test("toolkit.run refuses undeclared commands, bad args, path escapes and secret
 const FAKE_CLI = `
 const fs = require("node:fs"), path = require("node:path");
 const [cmd, ...args] = process.argv.slice(2);
-if (cmd === "slow") setTimeout(() => {}, 60000);
-else {
+if (cmd === "slow") {
+  fs.writeFileSync(path.join(process.env.FACTORY_ASSETS_DIR, "slow.pid"), String(process.pid));
+  setTimeout(() => {}, Number(args.find((a) => a.startsWith("--sec="))?.slice(6) || 60) * 1000);
+} else {
   fs.writeFileSync(path.join(process.env.FACTORY_ASSETS_DIR, "sprite.png"), "png");
   console.log("cmd=" + cmd + " args=" + args.join(" ") + " cwd=" + path.basename(process.cwd()));
   console.log("token=" + process.env.PIXEL_TOKEN + " leak=" + process.env.FACTORY_TEST_LEAK);
@@ -278,6 +293,94 @@ test("toolkit.run stops a tool at its time limit", { skip: !canSpawn && "자식 
   assert.ok(Date.now() - started < 20_000);
 });
 
+// 가짜 자식 프로세스(spawnImpl)와 가짜 시계로 305초짜리 도구를 흉내 낸다
+function fakeSpawn() {
+  const children = [];
+  const spawnImpl = () => {
+    const c = new EventEmitter();
+    c.exitCode = null;
+    children.push(c);
+    return c;
+  };
+  return { children, spawnImpl };
+}
+async function until(cond, ms = 5000) {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error("기다림 초과");
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+test("no tool time limit by default: a 305s tool runs to the end (old 180s setting would stop it)", async (t) => {
+  const f = fixture(t);
+  toolkit(f, { codex: { entry: "cli.py", timeoutSec: 900 } }, "");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const run = async (settings, id) => {
+    request(f.app, id, "toolkit.run", { command: "codex" });
+    const { children, spawnImpl } = fakeSpawn();
+    const done = broker(f, settings, { spawnImpl }).b.tick();
+    await until(() => children.length === 1);
+    t.mock.timers.tick(305_000); // 305초 지남
+    children[0].exitCode = 0;
+    children[0].emit("close", 0);
+    await done;
+    return response(f.app, id);
+  };
+  assert.equal((await run({ mode: "allow" }, "long1")).status, "ok");
+  assert.equal((await run({ mode: "allow", toolTimeoutSec: 0 }, "long2")).status, "ok");
+  assert.equal((await run({ mode: "allow", toolTimeoutSec: null }, "long3")).status, "ok");
+  // 값을 직접 넣으면 그 제한은 지금까지처럼 지킨다
+  const limited = await run({ mode: "allow", toolTimeoutSec: 180 }, "long4");
+  assert.equal(limited.status, "timeout");
+  assert.match(limited.message, /180초/);
+});
+
+// 실제 300초 이상 sleep 하는 가짜 도구(느려서 FACTORY_SLOW_TESTS=1 일 때만)
+test("real 310s fake tool runs to the end without a time limit", { skip: (!canSpawn && "자식 프로세스를 띄울 수 없는 환경") || (process.env.FACTORY_SLOW_TESTS !== "1" && "FACTORY_SLOW_TESTS=1 일 때만"), timeout: 400_000 }, async (t) => {
+  const f = fixture(t);
+  toolkit(f, { slow: { entry: "cli.py", args: [{ name: "sec", type: "int" }], timeoutSec: 900 } }, FAKE_CLI.replace("setTimeout(() => {}", "setTimeout(() => console.log('slept')"));
+  request(f.app, "real1", "toolkit.run", { command: "slow", args: { sec: 310 } });
+  const started = Date.now();
+  await broker(f, { mode: "allow" }).b.tick();
+  const r = response(f.app, "real1");
+  assert.equal(r.status, "ok", JSON.stringify(r));
+  assert.match(r.output, /slept/);
+  assert.ok(Date.now() - started >= 310_000);
+});
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("stopping the broker (job done, cancelled or supervisor shutdown) kills the running tool process", { skip: !canSpawn && "자식 프로세스를 띄울 수 없는 환경" }, async (t) => {
+  const f = fixture(t);
+  toolkit(f, { slow: { entry: "cli.py", args: [{ name: "sec", type: "int" }], timeoutSec: 900 } }, FAKE_CLI);
+  request(f.app, "k1", "toolkit.run", { command: "slow", args: { sec: 600 } });
+  request(f.app, "k2", "echo", {});
+  const { b } = broker(f, { mode: "allow" });
+  const pidFile = path.join(f.app, ".factory", "assets", "slow.pid");
+  const started = Date.now();
+  const done = b.tick();
+  await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8").length > 0, 15_000);
+  const pid = Number(fs.readFileSync(pidFile, "utf8"));
+  assert.equal(alive(pid), true);
+  b.stop();
+  await done;
+  assert.ok(Date.now() - started < 30_000);
+  await until(() => !alive(pid), 10_000);
+  assert.notEqual(response(f.app, "k1").status, "ok");
+  // 멈춘 뒤에는 다음 요청을 처리하지 않고, 다른 일감의 중계기는 바로 도구를 돌릴 수 있다(한 번에 하나 잠금이 풀림)
+  assert.equal(hasResponse(f.app, "k2"), false);
+  await broker(f, { mode: "allow" }).b.tick();
+  assert.equal(response(f.app, "k2").status, "ok");
+});
+
 test("toolreq submit waits in one command and prints the response", { skip: !canSpawn && "자식 프로세스를 띄울 수 없는 환경" }, async (t) => {
   const f = fixture(t);
   const argsFile = path.join(f.dir, "args.json");
@@ -301,10 +404,24 @@ test("toolreq submit waits in one command and prints the response", { skip: !can
 
 // ───────── 서버 쪽 ─────────
 test("server settings default to off and clamp limits; reports keep only names, status and time", () => {
-  assert.deepEqual(serverBroker.normalizeToolBroker(null), { mode: "off", maxRequests: 30, toolTimeoutSec: 180 });
+  // 기본은 요청 수·제한 시간 모두 제한 없음(0). 값을 넣으면 지금까지처럼 범위로 맞춘다
+  assert.deepEqual(serverBroker.normalizeToolBroker(null), { mode: "off", maxRequests: 0, toolTimeoutSec: 0 });
   assert.deepEqual(serverBroker.normalizeToolBroker({ mode: "allow", maxRequests: 9999, toolTimeoutSec: 1 }), { mode: "allow", maxRequests: 200, toolTimeoutSec: 5 });
+  assert.deepEqual(serverBroker.normalizeToolBroker({ mode: "allow", maxRequests: 0, toolTimeoutSec: -5 }), { mode: "allow", maxRequests: 0, toolTimeoutSec: 0 });
   assert.equal(serverBroker.normalizeToolBroker({ mode: "all" }).mode, "off");
-  assert.deepEqual(brokerSettings({ mode: "allow", maxRequests: 9999 }), { mode: "allow", maxRequests: 200, toolTimeoutSec: 180 });
+  assert.deepEqual(brokerSettings(null), { mode: "off", maxRequests: 0, toolTimeoutSec: 0 });
+  assert.deepEqual(brokerSettings({ mode: "allow", maxRequests: 9999 }), { mode: "allow", maxRequests: 200, toolTimeoutSec: 0 });
+  assert.deepEqual(brokerSettings({ mode: "allow", maxRequests: 0, toolTimeoutSec: null }), { mode: "allow", maxRequests: 0, toolTimeoutSec: 0 });
+  assert.deepEqual(brokerSettings({ mode: "allow", maxRequests: 30, toolTimeoutSec: 180 }), { mode: "allow", maxRequests: 30, toolTimeoutSec: 180 });
+  // 감독 프로그램에는 제한 없음을 null 로 보낸다. 예전 감독 프로그램(0 은 하한 1·5 로 올림)은 null 이면 자기 기본값 30·180 을 쓴다
+  const wire = serverBroker.toolBrokerForSupervisor({ mode: "allow", maxRequests: 0, toolTimeoutSec: 0 });
+  assert.deepEqual(wire, { mode: "allow", maxRequests: null, toolTimeoutSec: null });
+  const oldInt = (x, d, lo, hi) => (Number.isInteger(x) ? Math.min(hi, Math.max(lo, x)) : d);
+  assert.deepEqual([oldInt(wire.maxRequests, 30, 1, 200), oldInt(wire.toolTimeoutSec, 180, 5, 900)], [30, 180]);
+  assert.deepEqual(brokerSettings(wire), { mode: "allow", maxRequests: 0, toolTimeoutSec: 0 });
+  assert.deepEqual(serverBroker.toolBrokerForSupervisor({ mode: "allow", maxRequests: 7, toolTimeoutSec: 60 }), { mode: "allow", maxRequests: 7, toolTimeoutSec: 60 });
+  assert.equal(serverBroker.toolBrokerLimitLabel(0, "초"), "제한 없음");
+  assert.equal(serverBroker.toolBrokerLimitLabel(60, "초"), "60초");
   assert.equal(serverBroker.cleanToolRequests("x"), null);
   const at = new Date().toISOString();
   const rows = serverBroker.cleanToolRequests([
@@ -327,9 +444,18 @@ test("server stores the broker setting as JSON and survives corrupt values", asy
   });
   assert.equal((await settings.getToolBrokerSettings()).mode, "off");
   await settings.setToolBrokerSettings({ mode: "report" });
-  assert.deepEqual(await settings.getToolBrokerSettings(), { mode: "report", maxRequests: 30, toolTimeoutSec: 180 });
+  assert.deepEqual(await settings.getToolBrokerSettings(), { mode: "report", maxRequests: 0, toolTimeoutSec: 0 });
   await settings.setToolBrokerSettings({ maxRequests: 5 });
   assert.equal((await settings.getToolBrokerSettings()).mode, "report");
+  assert.equal((await settings.getToolBrokerSettings()).maxRequests, 5); // 새로 저장한 값은 지킨다
+  assert.equal(JSON.parse(row.value).limitsVersion, 2);
+  // 예전 코드가 저장한 값(버전 표시 없음, 30개·180초)은 모드만 살리고 제한 없음으로 읽는다. 저장값은 그대로 둔다
+  const legacy = JSON.stringify({ mode: "allow", maxRequests: 30, toolTimeoutSec: 180 });
+  row = { value: legacy };
+  assert.deepEqual(await settings.getToolBrokerSettings(), { mode: "allow", maxRequests: 0, toolTimeoutSec: 0 });
+  assert.equal(row.value, legacy);
+  await settings.setToolBrokerSettings({ mode: "allow" });
+  assert.deepEqual(JSON.parse(row.value), { mode: "allow", maxRequests: 0, toolTimeoutSec: 0, limitsVersion: 2 });
   await assert.rejects(settings.setToolBrokerSettings({ mode: "root" }));
   row = { value: "{broken" };
   assert.equal((await settings.getToolBrokerSettings()).mode, "off");

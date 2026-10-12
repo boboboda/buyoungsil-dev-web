@@ -9,22 +9,25 @@ export const TOOL_BROKER_MODE_LABELS: Record<ToolBrokerMode, string> = { off: "�
 
 export interface ToolBrokerSettings {
   mode: ToolBrokerMode;
-  maxRequests: number; // 일감당 도구 요청 수 상한
-  toolTimeoutSec: number; // 도구 한 번 실행 제한 시간
+  maxRequests: number; // 일감당 도구 요청 수 상한. 0 = 제한 없음
+  toolTimeoutSec: number; // 도구 한 번 실행 제한 시간. 0 = 제한 없음
 }
 
-// 감독 프로그램(toolbroker.mjs BROKER_DEFAULTS)과 같은 기본값
-export const TOOL_BROKER_DEFAULTS: ToolBrokerSettings = { mode: "off", maxRequests: 30, toolTimeoutSec: 180 };
+// 감독 프로그램(toolbroker.mjs BROKER_DEFAULTS)과 같은 기본값: 요청 수·제한 시간 모두 제한 없음
+export const TOOL_BROKER_DEFAULTS: ToolBrokerSettings = { mode: "off", maxRequests: 0, toolTimeoutSec: 0 };
+// 값을 넣었을 때의 범위(0 이하·빈 값은 제한 없음)
 export const TOOL_BROKER_LIMITS = { maxRequests: [1, 200], toolTimeoutSec: [5, 900] } as const;
+// 저장 형식 버전. 이 표시가 없는 저장값(예전 기본 30개·180초 시절)의 수치는 제한 없음으로 읽는다
+export const TOOL_BROKER_LIMITS_VERSION = 2;
 
 export function isToolBrokerMode(v: unknown): v is ToolBrokerMode {
   return typeof v === "string" && (TOOL_BROKER_MODES as readonly string[]).includes(v);
 }
 
 const clampInt = (v: unknown, d: number, [lo, hi]: readonly [number, number]) =>
-  typeof v === "number" && Number.isInteger(v) ? Math.min(hi, Math.max(lo, v)) : d;
+  typeof v === "number" && Number.isInteger(v) ? (v <= 0 ? 0 : Math.min(hi, Math.max(lo, v))) : d;
 
-/** 저장값·입력값 → 정리된 설정(모르는 값은 기본값) */
+/** 저장값·입력값 → 정리된 설정(모르는 값은 기본값, 0 이하는 제한 없음) */
 export function normalizeToolBroker(v: unknown): ToolBrokerSettings {
   const o = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
@@ -33,6 +36,24 @@ export function normalizeToolBroker(v: unknown): ToolBrokerSettings {
     maxRequests: clampInt(o.maxRequests, TOOL_BROKER_DEFAULTS.maxRequests, TOOL_BROKER_LIMITS.maxRequests),
     toolTimeoutSec: clampInt(o.toolTimeoutSec, TOOL_BROKER_DEFAULTS.toolTimeoutSec, TOOL_BROKER_LIMITS.toolTimeoutSec),
   };
+}
+
+/** DB 저장값 → 설정. 버전 표시가 없는 예전 저장값은 모드만 살리고 수치는 제한 없음으로 읽는다(저장값 자체는 지우지 않음) */
+export function readStoredToolBroker(v: unknown): ToolBrokerSettings {
+  const o = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+  return o.limitsVersion === TOOL_BROKER_LIMITS_VERSION ? normalizeToolBroker(o) : normalizeToolBroker({ mode: o.mode });
+}
+
+/** 감독 프로그램(/api/factory/next)에 보낼 값. 제한 없음(0)은 null 로 보낸다:
+ *  예전 감독 프로그램은 0 을 하한(1개·5초)으로 올리지만 null 이면 자기 기본값(30개·180초)을 써서 지금까지처럼 돈다 */
+export function toolBrokerForSupervisor(s: ToolBrokerSettings) {
+  return { mode: s.mode, maxRequests: s.maxRequests > 0 ? s.maxRequests : null, toolTimeoutSec: s.toolTimeoutSec > 0 ? s.toolTimeoutSec : null };
+}
+
+/** 화면·메시지용: 0 → "제한 없음" */
+export function toolBrokerLimitLabel(n: number, unit: string): string {
+  return n > 0 ? `${n}${unit}` : "제한 없음";
 }
 
 export interface ToolRequestRecord {

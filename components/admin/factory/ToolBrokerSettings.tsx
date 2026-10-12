@@ -63,18 +63,19 @@ export default function ToolBrokerSettings() {
     }
   };
 
-  // 범위 밖 값은 저장할 때 서버가 상한·하한으로 맞춘다
+  // 비워 두거나 0 이면 제한 없음. 범위 밖 값은 저장할 때 서버가 상한·하한으로 맞춘다
   const num = (k: "maxRequests" | "toolTimeoutSec", label: string) => (
     <label className="flex items-center gap-1 text-sm">
       <span className="text-default-500">{label}</span>
       <input
-        className="w-20 rounded border border-default-300 bg-transparent px-2 py-1"
+        className="w-24 rounded border border-default-300 bg-transparent px-2 py-1"
         disabled={!loaded || busy}
         max={TOOL_BROKER_LIMITS[k][1]}
-        min={TOOL_BROKER_LIMITS[k][0]}
+        min={0}
+        placeholder="제한 없음"
         type="number"
-        value={s[k]}
-        onChange={(e) => setS({ ...s, [k]: Math.floor(Number(e.target.value)) || 0 })}
+        value={s[k] > 0 ? s[k] : ""}
+        onChange={(e) => setS({ ...s, [k]: Math.max(0, Math.floor(Number(e.target.value)) || 0) })}
       />
     </label>
   );
@@ -108,6 +109,9 @@ export default function ToolBrokerSettings() {
         </Button>
       </div>
       <p className="text-xs text-default-500">{MODE_HELP[s.mode]}</p>
+      <p className="text-xs text-default-500">
+        일감당 요청·제한 시간은 비워 두면 제한 없음이에요. 제한이 없어도 일감이 끝나거나 취소되거나 감독 프로그램이 꺼지면 돌던 도구는 정리돼요.
+      </p>
       {notice && (
         <p className="text-sm" role="status">
           {notice}

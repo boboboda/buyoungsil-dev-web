@@ -14,8 +14,9 @@ const IS_WIN = process.platform === "win32";
 
 export const TOOL_MODES = ["off", "report", "allow"];
 export const TOOL_MODE_LABELS = { off: "꺼짐", report: "보고만", allow: "허용" };
-// 통제실 설정이 없거나 이상하면 이 값을 쓴다
-export const BROKER_DEFAULTS = { mode: "off", maxRequests: 30, toolTimeoutSec: 180 };
+// 통제실 설정이 없거나 이상하면 이 값을 쓴다. maxRequests·toolTimeoutSec 의 0 = 제한 없음(기본)
+// 제한 없음이어도 일감이 끝나거나 취소되거나 감독 프로그램이 꺼지면 stop() 이 돌던 도구를 끈다
+export const BROKER_DEFAULTS = { mode: "off", maxRequests: 0, toolTimeoutSec: 0 };
 const LIMITS = {
   maxRequestsCap: 200,
   toolTimeoutCapSec: 900,
@@ -33,10 +34,10 @@ const ARG_NAME_RE = /^[a-z][a-z0-9_]{0,39}$/;
 const SECRET_NAME_RE = /^[A-Z][A-Z0-9_]{1,63}$/;
 export const TOOLREQ_PATH = fileURLToPath(new URL("./toolreq.mjs", import.meta.url));
 
-/** /api/factory/next 의 toolBroker 값 → 정리된 설정. 없거나 이상하면 꺼짐(예전 서버 포함) */
+/** /api/factory/next 의 toolBroker 값 → 정리된 설정. 없거나 이상하면 꺼짐(예전 서버 포함). 수치가 없거나 0 이하면 제한 없음(0) */
 export function brokerSettings(v) {
   const o = v && typeof v === "object" && !Array.isArray(v) ? v : {};
-  const int = (x, d, lo, hi) => (Number.isInteger(x) ? Math.min(hi, Math.max(lo, x)) : d);
+  const int = (x, d, lo, hi) => (Number.isInteger(x) ? (x <= 0 ? 0 : Math.min(hi, Math.max(lo, x))) : d);
   return {
     mode: TOOL_MODES.includes(o.mode) ? o.mode : BROKER_DEFAULTS.mode,
     maxRequests: int(o.maxRequests, BROKER_DEFAULTS.maxRequests, 1, LIMITS.maxRequestsCap),
@@ -237,7 +238,8 @@ const toolkitAdapter = {
       if (process.env[k] !== undefined) env[k] = process.env[k];
     }
     Object.assign(env, ctx.secretsFor(tool.secrets));
-    const timeoutSec = Math.min(tool.timeoutSec, ctx.toolTimeoutSec);
+    // 통제실 제한 시간이 0(제한 없음)이면 tools.json 에 도구가 선언한 시간만 쓴다
+    const timeoutSec = ctx.toolTimeoutSec > 0 ? Math.min(tool.timeoutSec, ctx.toolTimeoutSec) : tool.timeoutSec;
     const started = Date.now();
     const r = await runFixed(ctx.pythonCmd, [tool.entryFull, command, ...argv], { cwd: ctx.appDir, env, timeoutMs: timeoutSec * 1000, spawnImpl: ctx.spawnImpl, onChild: ctx.onChild });
     const files = listNewFiles(ctx.appDir, assets, started);
@@ -385,7 +387,7 @@ export function createBroker(opts) {
     const startedAt = new Date();
     const settings = getSettings();
     handled++; // 거부된 요청도 센다
-    if (handled > settings.maxRequests) return respond(id, null, { status: "denied", message: `이 일감의 도구 요청 상한(${settings.maxRequests}개)을 넘었어요.`, files: [] }, startedAt);
+    if (settings.maxRequests > 0 && handled > settings.maxRequests) return respond(id, null, { status: "denied", message: `이 일감의 도구 요청 상한(${settings.maxRequests}개)을 넘었어요.`, files: [] }, startedAt);
     const parsed = readRequest(file, id);
     if (!parsed.ok) return respond(id, null, { status: "denied", message: parsed.reason, files: [] }, startedAt);
     const { req } = parsed;

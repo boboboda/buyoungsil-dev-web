@@ -1332,6 +1332,7 @@ function shutdown() {
   for (const st of running.values()) {
     st.stopped = "감독 프로그램 종료";
     killTree(st.child);
+    st.broker?.stop(); // 돌던 도구 프로세스도 바로 끈다(AI 종료를 기다리지 않음)
   }
   setTimeout(() => process.exit(0), 1500);
 }

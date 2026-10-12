@@ -2,7 +2,7 @@
 // 통제실 설정값: 감독 프로그램 활성화(일시 정지), 자동 업데이트, 감독 프로그램 버전 정보, "지금 업데이트" 1회성 요청.
 import prisma from "@/lib/prisma";
 import { isAiEngine, type AiEngine } from "@/lib/factory/ai";
-import { isToolBrokerMode, normalizeToolBroker, type ToolBrokerSettings } from "@/lib/factory/toolBroker";
+import { isToolBrokerMode, normalizeToolBroker, readStoredToolBroker, TOOL_BROKER_LIMITS_VERSION, type ToolBrokerSettings } from "@/lib/factory/toolBroker";
 
 const DEFAULT_AI_KEY = "defaultAiEngine";
 
@@ -30,13 +30,13 @@ export async function getToolBrokerSettings(): Promise<ToolBrokerSettings> {
     raw = null;
   }
 
-  return normalizeToolBroker(raw);
+  return readStoredToolBroker(raw);
 }
 
 export async function setToolBrokerSettings(input: Partial<ToolBrokerSettings>): Promise<ToolBrokerSettings> {
   if (input.mode !== undefined && !isToolBrokerMode(input.mode)) throw new Error("도구 요청 중계 모드가 올바르지 않아요.");
   const next = normalizeToolBroker({ ...(await getToolBrokerSettings()), ...input });
-  const value = JSON.stringify(next);
+  const value = JSON.stringify({ ...next, limitsVersion: TOOL_BROKER_LIMITS_VERSION });
 
   await prisma.factorySetting.upsert({ where: { key: TOOL_BROKER_KEY }, create: { key: TOOL_BROKER_KEY, value }, update: { value } });
 

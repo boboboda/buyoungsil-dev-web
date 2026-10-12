@@ -10,7 +10,7 @@
 //   새 감독 프로그램은 started(시작 시각 ISO)·boot(restart|start)·ffmpeg·ffprobe("버전 | 경로" 또는 "없음")·restartWait(1)·restartFail(이유)도 보낸다.
 //   [감독 재시작]을 누르면 다음 응답 한 번에 { jobs: [], restart: true } 가 간다(started 를 보내는 감독 프로그램에만. 받아 가면 지운다. 그 응답에는 일감·신호를 싣지 않는다).
 //   재시작을 기다리는 감독 프로그램은 hold=1 을 붙인다: 일감·정비·1회성 신호를 하나도 넘기지 않고(유실 방지) { jobs: [], restartHold: true } 만 돌려준다.
-//   toolBroker: { mode: off|report|allow, maxRequests, toolTimeoutSec } 가 붙는다(도구 요청 중계, 기본 꺼짐. lib/factory/toolBroker.ts).
+//   toolBroker: { mode: off|report|allow, maxRequests, toolTimeoutSec } 가 붙는다(도구 요청 중계, 기본 꺼짐. 수치 null = 제한 없음. lib/factory/toolBroker.ts).
 //   각 job 에 rules(CLAUDE.md 작업 규칙 본문)·prompt(첫 지시문)가 붙는다(lib/factory/rules.ts, 통제실에서 고칠 수 있음).
 //   감독 프로그램은 이 값이 없으면 자기 코드 안 기본값을 쓴다.
 //   공장 정비: 대기열 맨 앞 지시가 승인돼 있으면 maintenance: { turnId, threadId, title, text, sessionId, deployBundling: true, queueLeft } 가 붙고
@@ -42,6 +42,7 @@ import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
 import { consumeRestart, consumeUpdateNow, getDefaultAiEngine, getToolBrokerSettings, isAutoUpdateEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
+import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -112,7 +113,7 @@ export async function GET(req: NextRequest) {
     void sweepReviewVideos(); // 7일 지난 검토 영상 정리(가끔)
     const extra = {
       defaultAiEngine,
-      ...(toolBroker ? { toolBroker } : {}), // 도구 요청 중계 설정(없으면 감독 프로그램은 꺼짐으로 본다)
+      ...(toolBroker ? { toolBroker: toolBrokerForSupervisor(toolBroker) } : {}), // 도구 요청 중계 설정(없으면 감독 프로그램은 꺼짐으로 본다)
       ...(updateNow ? { updateNow: true } : {}),
       ...(pcPaths.length ? { pcPaths } : {}),
       ...(keyPw ? { keyPasswordsPending: true } : {}),

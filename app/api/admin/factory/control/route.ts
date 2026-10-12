@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/factory/admin";
 import { isAiEngine, AI_LABELS } from "@/lib/factory/ai";
 import { setDefaultAiEngine, setToolBrokerSettings } from "@/lib/factory/settings";
-import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS } from "@/lib/factory/toolBroker";
+import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS, toolBrokerLimitLabel } from "@/lib/factory/toolBroker";
 import { runSupervisorAction, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
 
 export const dynamic = "force-dynamic";
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ...(await supervisorSnapshot()),
-      message: `도구 요청 중계를 '${TOOL_BROKER_MODE_LABELS[saved.mode]}'(일감당 ${saved.maxRequests}개, ${saved.toolTimeoutSec}초)로 저장했어요. 감독 프로그램이 다음 확인 때 받아 가요.`,
+      message: `도구 요청 중계를 '${TOOL_BROKER_MODE_LABELS[saved.mode]}'(일감당 요청 ${toolBrokerLimitLabel(saved.maxRequests, "개")}, 제한 시간 ${toolBrokerLimitLabel(saved.toolTimeoutSec, "초")})로 저장했어요. 감독 프로그램이 다음 확인 때 받아 가요.`,
     });
   }
 
