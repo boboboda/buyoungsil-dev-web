@@ -142,7 +142,7 @@ export const authOptions: NextAuthOptions = {
 
           return true;
         } catch (error) {
-          console.error("signIn callback 에러:", error);
+          console.error("signIn callback 에러:", error instanceof Error ? error.name : "unknown");
           return true;
         }
       }
@@ -151,42 +151,18 @@ export const authOptions: NextAuthOptions = {
     },
 
     jwt: async ({ token, user, account, trigger, session }) => {
-      console.log("\n=================== JWT 콜백 시작");
-      console.log("🔥 JWT 콜백 - trigger:", trigger);
-      console.log("🔥 JWT 콜백 - user:", user);
-      console.log("🔥 JWT 콜백 - account:", account);
-      console.log("🔥 JWT 콜백 - existing token:", token);
-
       if (user && account) {
-        console.log("🆕 새로운 로그인 또는 회원가입");
-
         if (account.provider === "google" || account.provider === "github") {
-          console.log("🔑 OAuth 로그인:", account.provider);
-
           const dbUser = await prisma.user.findUnique({
             where: { email: user.email! },
             select: { id: true, role: true, name: true, email: true },
           });
 
-          console.log("DB 조회 결과:", dbUser);
-
           token.id = dbUser?.id || user.id;
           token.role = dbUser?.role || "user";
-
-          console.log("OAuth 토큰 설정:", {
-            id: token.id,
-            role: token.role,
-            fromDB: !!dbUser,
-          });
         } else {
-          console.log("🔑 Credentials 로그인");
           token.id = user.id;
           token.role = user.role || "user";
-
-          console.log("Credentials 토큰 설정:", {
-            id: token.id,
-            role: token.role,
-          });
         }
 
         token.name = user.name;
@@ -197,16 +173,8 @@ export const authOptions: NextAuthOptions = {
         token.isNewSignUp = user.isNewSignUp || false;
       } else if (!token.provider && account) {
         token.provider = account.provider;
-        console.log("🔄 Provider 정보만 추가:", account.provider);
       } else if (trigger === "update") {
-        console.log("🔄 세션 업데이트 트리거");
         token = { ...token, ...session };
-      } else {
-        console.log("♻️ 기존 토큰 재사용:", {
-          id: token.id,
-          role: token.role,
-          provider: token.provider,
-        });
       }
 
       if (!token.provider) {
@@ -230,7 +198,7 @@ export const authOptions: NextAuthOptions = {
             }
           }
         } catch (error) {
-          console.error("세션 버전 확인 실패(건너뜀):", error);
+          console.error("세션 버전 확인 실패(건너뜀):", error instanceof Error ? error.name : "unknown");
         }
       }
 
@@ -258,9 +226,6 @@ export const authOptions: NextAuthOptions = {
       } else {
         console.log("❌ 토큰이 없어서 세션 매핑 실패");
       }
-
-      console.log("🔥 SESSION 콜백 종료 - 최종 세션:", session);
-      console.log("=================== SESSION 콜백 끝\n");
 
       return session;
     },

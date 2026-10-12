@@ -1,6 +1,7 @@
 "use server";
 
 import prisma from "@/lib/prisma";
+import { assertAdmin } from "@/lib/auth/assertAdmin";
 import { revalidatePath } from "next/cache";
 
 export interface WorkRequestFormData {
@@ -44,6 +45,7 @@ export async function createWorkRequest(data: WorkRequestFormData) {
 
 // 모든 외주 신청 조회
 export async function fetchAllWorkRequests() {
+  await assertAdmin();
   try {
     const workRequests = await prisma.workRequest.findMany({
       orderBy: { createdAt: 'desc' }
@@ -58,6 +60,7 @@ export async function fetchAllWorkRequests() {
 
 // 특정 외주 신청 조회
 export async function fetchWorkRequestById(id: string) {
+  await assertAdmin();
   try {
     const workRequest = await prisma.workRequest.findUnique({
       where: { id }
@@ -76,6 +79,7 @@ export async function updateWorkRequestStatus(
   status: string, 
   adminNote?: string
 ) {
+  await assertAdmin();
   try {
     const workRequest = await prisma.workRequest.update({
       where: { id },
@@ -102,6 +106,7 @@ export async function updateWorkRequestStatus(
 
 // 외주 신청 삭제
 export async function deleteWorkRequest(id: string) {
+  await assertAdmin();
   try {
     await prisma.workRequest.delete({
       where: { id }

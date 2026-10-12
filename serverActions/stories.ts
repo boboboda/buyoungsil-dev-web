@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import moment from "moment";
 import prisma from "@/lib/prisma";
+import { assertAdmin } from "@/lib/auth/assertAdmin";
 import type { Story, StoryCategory } from "@/types";
 import { generateSlug } from "@/lib/utils/slugify"; // ⭐ 추가
 
@@ -91,6 +92,7 @@ export async function fetchStoriesByCategory(category: StoryCategory): Promise<S
 
 // 🔥 관리자용 - 모든 스토리 (공개/비공개 포함)
 export async function fetchAllStoriesAdmin() {
+  await assertAdmin();
   const stories = await prisma.story.findMany({
     orderBy: { createdAt: 'desc' }
   });
@@ -123,6 +125,7 @@ export async function createStory(data: {
   metaTitle?: string;
   metaDescription?: string;
 }) {
+  await assertAdmin();
   // 1단계: 임시 slug로 먼저 생성
   const story = await prisma.story.create({
     data: {
@@ -165,6 +168,7 @@ export async function updateStory(id: string, data: Partial<{
   metaTitle: string;
   metaDescription: string;
 }>) {
+  await assertAdmin();
   const story = await prisma.story.update({
     where: { id },
     data: {
@@ -181,12 +185,14 @@ export async function updateStory(id: string, data: Partial<{
 }
 
 export async function deleteStory(id: string) {
+  await assertAdmin();
   await prisma.story.delete({ where: { id } });
   revalidatePath('/stories');
   revalidatePath('/admin/stories');
 }
 
 export async function toggleStoryPublish(id: string) {
+  await assertAdmin();
   const story = await prisma.story.findUnique({
     where: { id },
     select: { isPublished: true }

@@ -5,6 +5,7 @@ import moment from "moment";
 
 import { App } from "@/types/index";
 import prisma from "@/lib/prisma";
+import { assertAdmin } from "@/lib/auth/assertAdmin";
 
 function formatAppData(app: any): App {
   return {
@@ -30,6 +31,7 @@ function formatAppData(app: any): App {
 // 통합된 앱 등록 함수 - 파일 업로드 및 DB 저장 모두 처리
 // 수정된 addApp 함수 (이미지 업로드 부분 제거)
 export async function addApp(formData: FormData) {
+  await assertAdmin();
   try {
     // FormData에서 값 추출
     const title = formData.get("title") as string;
@@ -129,6 +131,7 @@ export async function fetchAppByName(name: string): Promise<App | null> {
 
 // 앱 삭제하기
 export async function deleteApp(id: string): Promise<App | null> {
+  await assertAdmin();
   try {
     // 앱 존재 여부 확인
     const app = await prisma.app.findUnique({
@@ -173,6 +176,7 @@ export async function updateApp({
   tags?: { name: string; color: string }[];
   databaseId?: string;
 }): Promise<App | null> {
+  await assertAdmin();
   try {
     // 앱 존재 여부 확인
     const existingApp = await prisma.app.findUnique({

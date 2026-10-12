@@ -123,19 +123,6 @@ export async function middleware(request: NextRequest) {
   const userAgent = request.headers.get("user-agent") || "";
   const clientIP = getClientIP(request);
 
-  console.log("미들웨어 엔드포인트:", pathname);
-
-  // 🔍 헤더 디버깅 (signin 페이지만)
-  if (pathname === '/signin') {
-    console.log('=== HEADERS DEBUG ===');
-    console.log('x-forwarded-proto:', request.headers.get('x-forwarded-proto'));
-    console.log('x-forwarded-host:', request.headers.get('x-forwarded-host'));
-    console.log('host:', request.headers.get('host'));
-    console.log('url:', request.url);
-    console.log('protocol:', request.nextUrl.protocol);
-    console.log('====================');
-  }
-
   // ========================================
   // 1️⃣ 보안 체크 (최우선)
   // ========================================
@@ -209,24 +196,8 @@ export async function middleware(request: NextRequest) {
     secureCookie: isProduction,
   });
 
-  // 🔍 임시 디버그: /admin 요청일 때만 상세 로그
-  if (pathname.startsWith("/admin")) {
-    console.log("=== ADMIN AUTH DEBUG ===");
-    console.log("NODE_ENV:", process.env.NODE_ENV);
-    console.log("VERCEL_ENV:", process.env.VERCEL_ENV);
-    console.log("isProduction:", isProduction);
-    console.log("찾고 있는 쿠키 이름:", cookieName);
-    console.log(
-      "들어온 쿠키 목록:",
-      request.cookies.getAll().map((c) => c.name),
-    );
-    console.log("AUTH_SECRET 존재 여부:", !!secret);
-    console.log("getToken 결과:", session);
-    console.log("========================");
-  }
-
   if (session && (pathname === "/signup" || pathname === "/signin")) {
-    console.log("인증된 사용자 리다이렉트:", session.email ?? "알 수 없음");
+    console.log("인증된 사용자 리다이렉트");
     return NextResponse.redirect(new URL("/", request.url));
   }
 
@@ -239,8 +210,7 @@ export async function middleware(request: NextRequest) {
       console.log("어드민 페이지 접근 시도: 권한 없음");
       return NextResponse.redirect(new URL("/", request.url));
     }
-    console.log("어드민 페이지 접근 허용:", session.email);
-  }
+      }
 
     // ========================================
   // 4️⃣ 방문자 기록

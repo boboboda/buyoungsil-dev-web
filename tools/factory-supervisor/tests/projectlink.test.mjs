@@ -103,8 +103,8 @@ function loadProject(prisma) {
   const appName = loadTs("lib/factory/appName.ts", { "@/lib/prisma": prisma, "@/lib/factory/storeAssets": storeAssets });
   return loadTs("lib/factory/project.ts", {
     "@/lib/prisma": prisma,
-    "@/serverActions/projects": {
-      createProject: async (data) => {
+    "@/lib/projects/createProjectRecord": {
+      createProjectRecord: async (data) => {
         const id = `p-new-${prisma.state.created.length + 1}`;
         prisma.state.created.push(data);
         prisma.state.projects.push({ id, name: id, coverImage: null, appLink: null, privacyPolicy: null, ...data });

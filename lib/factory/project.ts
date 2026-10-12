@@ -7,7 +7,7 @@
 //   설명·대표 이미지·앱 링크·기술 스택을 바꾼다. 개인정보처리방침은 그때도 빈 칸일 때만 채운다.
 //   단 '개인정보처리방침 갱신'을 고른 일감(privacyOverwrite)은 덮어쓰기 선택과 상관없이 방침을 바꾼다([[ ]] 검사는 그대로).
 import prisma from "@/lib/prisma";
-import { createProject } from "@/serverActions/projects";
+import { createProjectRecord } from "@/lib/projects/createProjectRecord";
 import { hasUnfilledPlaceholder } from "@/lib/privacy/template";
 import { readStoreAssets } from "@/lib/factory/storeAssets";
 import { storeTitleOf } from "@/lib/factory/appName";
@@ -48,7 +48,7 @@ export async function ensureProjectForJob(job: {
   if (app?.projectId) return { projectId: app.projectId, created: false };
 
   const shape = projectShapeForStack(job.stack);
-  const res = await createProject({
+  const res = await createProjectRecord({
     title: job.title,
     description: summarizePlan(job.planMarkdown),
     status: "in-progress",

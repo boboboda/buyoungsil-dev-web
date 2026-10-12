@@ -46,7 +46,6 @@ export default function NavBar() {
   const { openSponsorModal } = useModalStore((state) => state);
 
   useEffect(() => {
-    console.log("Current pathname:", pathname);
     setPath(pathname.split("/").slice(0, 2).join("/"));
     setMenuOpen(false); // 페이지 이동 시 모바일 메뉴 닫기
   }, [pathname]);

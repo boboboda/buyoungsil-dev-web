@@ -3,83 +3,22 @@
 
 import { revalidatePath } from "next/cache";
 import prisma from "@/lib/prisma";
-import { generateSlug } from "@/lib/utils/slugify";
 import { ensureAnalyticsApp } from "@/lib/analytics/registerApp";
-
-interface CreateProjectData {
-  title: string;
-  description: string;
-  status: "released" | "in-progress" | "backend";
-  platform: string;
-  coverImage?: string;
-  appLink?: string;
-  progress?: number;
-  techStack?: string[];
-  privacyPolicy?: string;
-  tags?: Array<{ name: string; color: string }>;
-}
-
-// 빈 문자열/공백만 있는 처리방침은 null 로 저장 (탭 숨김 판단 기준)
-function normalizePrivacyPolicy(value?: string | null): string | null {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
-}
+import { assertAdmin } from "@/lib/auth/assertAdmin";
+import {
+  createProjectRecord,
+  normalizePrivacyPolicy,
+  type CreateProjectData,
+} from "@/lib/projects/createProjectRecord";
 
 // ========================================
 // 프로젝트 CRUD
 // ========================================
 
-// Project 생성
+// Project 생성 (본체는 lib/projects/createProjectRecord.ts, 앱 공장도 같이 씀)
 export async function createProject(data: CreateProjectData) {
-  try {
-    // 1단계: slug 없이 먼저 생성
-    const project = await prisma.project.create({
-      data: {
-        name: 'temp', // 임시 name
-        title: data.title,
-        description: data.description,
-        status: data.status,
-        platform: data.platform,
-        coverImage: data.coverImage,
-        appLink: data.appLink,
-        progress: data.status === "released" ? 100 : data.progress || 0,        techStack: data.techStack || [],
-        privacyPolicy: normalizePrivacyPolicy(data.privacyPolicy),
-        privacyUpdatedAt: normalizePrivacyPolicy(data.privacyPolicy) ? new Date() : null,
-        tags: {
-          create: data.tags || []
-        }
-      },
-      include: {
-        tags: true
-      }
-    });
-
-    // 2단계: ID로 실제 name(slug) 생성
-    const finalName = generateSlug(data.title, project.id);
-
-    // 3단계: name 업데이트
-    const updatedProject = await prisma.project.update({
-      where: { id: project.id },
-      data: { name: finalName },
-      include: {
-        tags: true
-      }
-    });
-
-    // 분석 앱 자동 등록 (실패해도 프로젝트 생성은 그대로 성공)
-    await ensureAnalyticsApp(updatedProject);
-
-    revalidatePath("/project");
-    revalidatePath("/admin/projects");
-
-    return {
-      success: true,
-      data: updatedProject
-    };
-  } catch (error) {
-    console.error("Project 생성 실패:", error);
-    throw new Error("프로젝트 생성 중 오류가 발생했습니다.");
-  }
+  await assertAdmin();
+  return createProjectRecord(data);
 }
 
 // Project 수정
@@ -90,6 +29,7 @@ export async function updateProject(
   id: string,
   data: Partial<CreateProjectData>
 ) {
+  await assertAdmin();
   try {
     // ❌ 기존: tags를 제외하고 업데이트만 함
     // const { tags, ...updateData } = data;
@@ -161,6 +101,7 @@ export async function updateProject(
 
 // Project 삭제
 export async function deleteProject(id: string) {
+  await assertAdmin();
   try {
     await prisma.project.delete({
       where: { id }
@@ -211,6 +152,7 @@ interface CreateProjectLogData {
 }
 
 export async function createProjectLog(data: CreateProjectLogData) {
+  await assertAdmin();
   try {
     const log = await prisma.projectLog.create({
       data: {
@@ -236,6 +178,7 @@ export async function createProjectLog(data: CreateProjectLogData) {
 }
 
 export async function deleteProjectLog(id: string) {
+  await assertAdmin();
   try {
     await prisma.projectLog.delete({
       where: { id }
@@ -267,6 +210,7 @@ interface RevenueData {
 }
 
 export async function createOrUpdateRevenue(data: RevenueData) {
+  await assertAdmin();
   try {
     const total = data.adsense + data.inapp;
 
@@ -316,6 +260,7 @@ export async function createOrUpdateRevenue(data: RevenueData) {
 }
 
 export async function deleteRevenue(id: string) {
+  await assertAdmin();
   try {
     await prisma.revenue.delete({
       where: { id }
@@ -335,6 +280,7 @@ export async function deleteRevenue(id: string) {
 // ========================================
 
 export async function addProjectTag(projectId: string, name: string, color: string) {
+  await assertAdmin();
   try {
     const tag = await prisma.projectTag.create({
       data: {
@@ -355,6 +301,7 @@ export async function addProjectTag(projectId: string, name: string, color: stri
 }
 
 export async function deleteProjectTag(tagId: string) {
+  await assertAdmin();
   try {
     await prisma.projectTag.delete({
       where: { id: tagId }

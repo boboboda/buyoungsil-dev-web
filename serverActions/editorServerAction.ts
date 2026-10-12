@@ -6,52 +6,10 @@ import { Note } from "@/store/editorSotre"
 import { NoteCategory } from "@/types";
 import moment from "moment";
 import { revalidatePath } from "next/cache";
-import { cache } from 'react';
-import { Prisma } from "@prisma/client";
-
-// Json 컬럼에 null 을 그대로 넣으면 Prisma 가 오류를 내므로 Prisma.DbNull 로 바꿔서 저장한다.
-function toJsonOrDbNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull {
-  if (!value) return Prisma.DbNull;
-
-  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
-}
-
-export async function addEdtiorServer(reqData: string) {
-  console.log("에디터서버 db 추가 실행")
-
-  const note: Note = JSON.parse(reqData)
-  
-  try {
-    // 노트 ID로 기존 문서 검색
-    const existingNote = await prisma.developNote.findUnique({
-      where: { noteId: note.noteId! }
-    })
-
-    if (existingNote) {
-      throw new Error('이미 존재하는 문서입니다.')
-    }
-
-    // 새 노트 생성
-    const result = await prisma.developNote.create({
-      data: {
-        noteId: note.noteId!,
-        title: note.title,
-        mainCategory: note.mainCategory || null,
-        subCategory: toJsonOrDbNull(note.subCategory),
-        level: note.level || 'BEGINNER',
-        content: note.content
-      }
-    })
-
-    return { success: true }
-  } catch (error) {
-    console.error('db 에러', error)
-    return { success: false }
-  }
-}
-
+import { assertAdmin } from "@/lib/auth/assertAdmin";
 
 export async function findOneEditorServer(noteId: string) {
+  await assertAdmin();
   try {
     const numbericNoteId = parseInt(noteId)
 
@@ -59,8 +17,6 @@ export async function findOneEditorServer(noteId: string) {
     const note = await prisma.developNote.findUnique({
       where: { noteId: numbericNoteId }
     })
-
-    console.log('server one data', note)
 
     if (!note) {
       return null
@@ -70,54 +26,6 @@ export async function findOneEditorServer(noteId: string) {
   } catch (error) {
     console.error('db 에러', error)
     throw error
-  }
-}
-
-export async function findOneAndUpdateEditorServer(noteId: string, reqData: string) {
-  try {
-    const numbericNoteId = parseInt(noteId)
-    const note = JSON.parse(reqData)
-
-    console.log("노트아이디", numbericNoteId)
-
-    // 노트 업데이트
-    const updatedNote = await prisma.developNote.update({
-      where: { noteId: numbericNoteId },
-      data: {
-        title: note.title,
-        mainCategory: note.mainCategory || null,
-        subCategory: toJsonOrDbNull(note.subCategory),
-        level: note.level || 'BEGINNER',
-        content: note.content
-      }
-    })
-
-    console.log('update one data', updatedNote)
-
-    return { success: true }
-  } catch (error) {
-    console.error('db 에러', error)
-    return { success: false }
-  }
-}
-
-export async function deleteOneEditorServer(noteId: string) {
-  try {
-    const numbericNoteId = parseInt(noteId)
-    
-    console.log("노트아이디", numbericNoteId)
-
-    // 노트 삭제
-    const result = await prisma.developNote.delete({
-      where: { noteId: numbericNoteId }
-    })
-
-    console.log('delete one data', result)
-
-    return { success: true }
-  } catch (error) {
-    console.error('db 에러', error)
-    return { success: false }
   }
 }
 
@@ -174,6 +82,7 @@ export async function fetchPublishedNotes(): Promise<string> {
 
 // 노트 ID로 단일 노트 가져오기
 export async function fetchNoteById(noteId: number) {
+  await assertAdmin();
   const note = await prisma.developNote.findUnique({
     where: { noteId }
   });
@@ -188,6 +97,7 @@ export async function fetchNoteById(noteId: number) {
 // 🔥 노트 공개/비공개 토글
 export async function toggleNotePublish(noteId: number) {
   "use server";
+  await assertAdmin();
   
   try {
     const note = await prisma.developNote.findUnique({
@@ -218,6 +128,7 @@ export async function toggleNotePublish(noteId: number) {
 
 // 🔥 새로 추가: 관리자용 (모든 노트 가져오기)
 export async function allFetchEditorServerAdmin() {
+  await assertAdmin();
   const notes = await prisma.developNote.findMany({
     orderBy: {
       noteId: "desc"  // 최신순으로 정렬
@@ -239,19 +150,4 @@ export async function allFetchEdtiorServer() {
   });
   
   return JSON.stringify(notes);
-}
-
-export async function getMaxNoteId() {
-  "use server";
-  
-  const maxNote = await prisma.developNote.findFirst({
-    orderBy: {
-      noteId: 'desc'  // 내림차순으로 정렬
-    },
-    select: {
-      noteId: true
-    }
-  });
-  
-  return maxNote?.noteId || 0;
 }
