@@ -31,6 +31,11 @@
 
 새 서비스를 추가한 예: `cosysoft-site` → 서버1 포트 3101, 도메인 `cosysoft.buyoungsilcoding.com`.
 
+## DB
+
+- `prisma/migrations`의 마이그레이션은 컨테이너가 시작할 때 자동 적용된다. 기존 데이터를 지우는 마이그레이션은 만들지 않는다.
+- 스키마 변경이 있는 배포는 배포 전 DB 백업.
+
 ## SSH
 
 - 앱 일감은 작업 PC의 `serverpc`, `serverpc2` 별칭으로 비밀번호 없이 접속된다(`cosysoft-site`에서 실제로 성공함).

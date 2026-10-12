@@ -33,6 +33,7 @@ import {
   retryRelease,
   reviewDecision,
   saveReleaseAccount,
+  setStoreTarget,
   updateAppRelease,
 } from "@/lib/factory/release";
 
@@ -82,7 +83,9 @@ async function keyTarget(body: Record<string, unknown>) {
 //                | { action: "vaultCheck", keyId }  (PC 가 그 파일을 확인) | { action: "vaultRetry", keyId }  (실패한 공용 키 만들기 다시)
 //                | { action: "vaultUntrack", keyId }  (앱 폴더 git 추적 해제 + .gitignore 보강 + 로컬 커밋. 파일·원격은 그대로)
 //       | { action: "requestKeyScan", appSlug? }  (appSlug 를 주면 그 앱 하나만 점검)
-//       | { action: "removeApps", appSlugs: string[] }  (출시 패키지 목록에서만 지움. 지시 기록·앱 소스·PC 파일은 그대로)
+//       | { action: "removeApps", appSlugs: string[] }  (출시 패키지 목록에서만 지움. 지시 기록·앱 소스·PC 파일은 그대로. 출시 대상 표시도 풂)
+//       | { action: "addStoreTarget", appSlug }  (출시 대상으로 표시 → 출시 패키지 목록에 보임. nextjs·nestjs 는 거부)
+//       | { action: "removeStoreTarget", appSlug }  (출시 대상에서 빼기. 출시 데이터는 그대로)
 export async function POST(req: NextRequest) {
   const denied = await requireAdmin();
 
@@ -182,11 +185,14 @@ export async function POST(req: NextRequest) {
 
     if (slugs.length > 50 || slugs.some((s) => !APP_SLUG_RE.test(s))) return NextResponse.json({ message: "appSlugs 가 올바르지 않아요." }, { status: 400 });
     res = await removeAppRelease(slugs);
+  } else if (action === "addStoreTarget" || action === "removeStoreTarget") {
+    if (!APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 가 올바르지 않아요." }, { status: 400 });
+    res = await setStoreTarget(appSlug, action === "addStoreTarget");
   } else {
     return NextResponse.json(
       {
         message:
-          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, reviewDecision, videoLinkApply, videoLinkSkip, uploadTestStart, setKeyPassword, requestKeyScan, removeApps, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
+          "action 은 saveAccount, updateApp, enqueueRelease, savePromoVideo, retryRelease, reviewDecision, videoLinkApply, videoLinkSkip, uploadTestStart, setKeyPassword, requestKeyScan, removeApps, addStoreTarget, removeStoreTarget, vaultCreate, vaultRegister, vaultUpdate, vaultDelete, vaultCheck, vaultRetry, vaultUntrack 중 하나예요.",
       },
       { status: 400 },
     );

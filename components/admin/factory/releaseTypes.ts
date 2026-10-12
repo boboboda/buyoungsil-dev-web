@@ -245,6 +245,28 @@ export interface UploadTestReport {
   steps: UploadTestStep[];
 }
 
+// 출시 대상이 아닌 앱(출시 패키지 화면 아래 목록). blockReason 이 있으면(nextjs·nestjs) 추가할 수 없다
+export interface OtherApp {
+  appSlug: string;
+  displayName: string;
+  stack: string;
+  done: boolean;
+  lastJob: { kind: string; status: string; createdAt: string };
+  blockReason: string | null;
+}
+
+export const JOB_KIND_TEXT: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비" };
+export const JOB_STATUS_TEXT: Record<string, string> = {
+  pending: "승인 대기",
+  approved: "승인됨",
+  running: "진행 중",
+  review: "검토 대기",
+  linkwait: "영상 링크 대기",
+  done: "완료",
+  failed: "실패",
+  cancelled: "취소",
+};
+
 export interface ReleaseOverview {
   statuses: { value: string; label: string }[];
   kinds: { value: string; label: string; hint: string; canOverwrite: boolean; items: UpdateItem[]; selectable: boolean; review: boolean }[];
@@ -258,7 +280,8 @@ export interface ReleaseOverview {
     last: Partial<Record<"video" | "image" | "big", UploadTestReport>>;
   };
   keyKinds: { value: string; label: string }[];
-  apps: ReleaseApp[];
+  apps: ReleaseApp[]; // 출시 대상인 앱만
+  otherApps: OtherApp[];
   message?: string;
 }
 

@@ -21,6 +21,7 @@ import {
   updateItemsText,
 } from "@/lib/factory/release";
 import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
+import { NOT_TARGET_MESSAGE, isStoreTarget } from "@/lib/factory/storeTarget";
 import {
   ACTIVE_STATUSES,
   APP_SLUG_RE,
@@ -213,7 +214,7 @@ export const FACTORY_TOOLS = [
   {
     name: "get_release_status",
     description:
-      "완성된 앱들의 출시 상태를 돌려줍니다: 출시 단계(준비중/패키지 생성/검토/비공개 테스트/출시), 배포 계정(A/B)과 키 준비 상태(경로·PC 에 있는지만), " +
+      "출시 대상(통제실 출시 패키지 목록에 넣은 앱)인 완성된 앱들의 출시 상태를 돌려줍니다(대상이 아닌 앱은 대상아님 에 이름·종류만): 출시 단계(준비중/패키지 생성/검토/비공개 테스트/출시), 배포 계정(A/B)과 키 준비 상태(경로·PC 에 있는지만), " +
       "패키지 이름, 최초 업로드 여부, 비공개 테스트 시작·완료 예정일, 출시 패키지 요약(스토어 제목·짧은 설명·체크리스트 남은 할 일·찾은 SDK), AAB 정보(경로·크기·버전, 파일은 PC 에만), " +
       "최근 출시 일감의 종류·현재 단계와 실패했으면 마지막 오류 요약(실패 단계·이유). 키 값·비밀번호는 담지 않아요.",
     inputSchema: {
@@ -234,7 +235,7 @@ export const FACTORY_TOOLS = [
       "first 와 store 는 자료를 만든 뒤 '검토 대기'에서 관리자가 통제실에서 확인해야([이대로 진행]) Play 업로드·홈페이지 반영·완료가 돼요. " +
       "store(스토어 수정): 고른 항목(이미지·문구·영상 링크·개인정보처리방침)을 만들고, 승인 뒤 조건이 맞으면 Play 등록정보·이미지 업로드, (overwriteProject 면) 홈페이지 프로젝트도 덮어쓰기. " +
       "update(앱 업데이트, 기능 추가): updateText(필수) 대로 코드 수정·시험 → 버전 올림 → 서명 AAB → 최초 업로드한 앱이면 비공개 테스트 트랙 업로드(프로덕션 아님). 최초 AAB 업로드 완료가 체크된 앱만. " +
-      "project(프로젝트 업데이트)는 예전 종류(호환용). 먼저 통제실 출시 패키지에서 배포 계정을 골라 둬야 해요. " +
+      "project(프로젝트 업데이트)는 예전 종류(호환용). 출시 대상(통제실 출시 패키지 목록에 넣은 앱)만 받아요. 먼저 통제실 출시 패키지에서 배포 계정을 골라 둬야 해요. " +
       "끝나면 get_factory_job 과 get_release_status 로 확인하세요.",
     inputSchema: {
       type: "object",
@@ -354,9 +355,12 @@ async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResu
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
   const o = await releaseOverview();
   const label = (v: string) => o.statuses.find((s) => s.value === v)?.label ?? v;
+  // 출시 대상(출시 패키지 목록)인 앱만. 대상이 아닌 앱은 이름·종류만 따로
   const apps = o.apps.filter((a) => a.done && (!appSlug || a.appSlug === appSlug));
 
-  if (appSlug && apps.length === 0) return text(`${appSlug} 라는 완성된 앱이 없어요.`, true);
+  if (appSlug && apps.length === 0) {
+    return text(o.otherApps.some((a) => a.appSlug === appSlug) ? `${appSlug}: ${NOT_TARGET_MESSAGE}` : `${appSlug} 라는 완성된 앱이 없어요.`, true);
+  }
   const summarize = (pkg: Record<string, unknown> | null) => {
     if (!pkg) return null;
     const listing = (pkg.storeListing ?? {}) as Record<string, { title?: string; shortDescription?: string }>;
@@ -423,6 +427,7 @@ async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResu
       Play업로드: a.playMissing.length ? { 가능: false, 부족한것: a.playMissing } : { 가능: true },
       스토어자료: storeSummary(a.storeAssets),
     })),
+    ...(appSlug ? {} : { 대상아님: o.otherApps.map((a) => ({ appSlug: a.appSlug, 이름: a.displayName, 종류: a.stack })) }),
   });
 }
 
@@ -432,6 +437,8 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
 
   if (!APP_SLUG_RE.test(appSlug)) return text("appSlug 가 올바르지 않아요.", true);
+  // 출시 대상(출시 패키지 목록)인 앱만 출시 일감을 받는다. 아무것도 저장하기 전에 확인한다
+  if (!isStoreTarget(await prisma.factoryApp.findUnique({ where: { appSlug }, select: { storeTarget: true } }))) return text(`${appSlug}: ${NOT_TARGET_MESSAGE}`, true);
   if (args.kind !== undefined && !isReleaseKind(args.kind)) return text("kind 는 first, store, update 중 하나예요(project 는 예전 종류).", true);
   const kind = isReleaseKind(args.kind) ? args.kind : "first";
   if (args.overwriteProject !== undefined && typeof args.overwriteProject !== "boolean") return text("overwriteProject 는 true/false 예요.", true);

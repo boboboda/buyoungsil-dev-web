@@ -17,6 +17,7 @@ import { deleteReviewVideo, reviewVideoInfo } from "@/lib/factory/reviewVideo";
 import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import { uploadTestState } from "@/lib/factory/uploadTest";
 import { APP_NAME_SOURCE_LABELS, cleanAppName, pickAppName, storeTitleOf } from "@/lib/factory/appName";
+import { isStoreTarget, storeTargetBlockReason } from "@/lib/factory/storeTarget";
 
 // 출시 일감 종류. 종류마다 서버가 만드는 지시문과 허용 동작(outbox 파일·키 준비)이 다르다.
 // project(프로젝트 업데이트)는 예전 종류: 예전 일감 기록이 읽히고 커넥터 호환으로만 받는다(통제실에서는 고르지 않음. 홈페이지만 고치려면 store + 덮어쓰기)
@@ -722,6 +723,8 @@ export async function releaseOverview() {
   const pwByRef = new Map(keyPasswords.map((k) => [k.keyRef, k]));
   const seen = new Set<string>();
   const rows = [];
+  // 출시 대상이 아닌 앱(목록 아래 '출시 대상이 아닌 앱'). 이름·종류·마지막 일감 상태만
+  const others: { appSlug: string; displayName: string; stack: string; done: boolean; lastJob: { kind: string; status: string; createdAt: Date }; blockReason: string | null }[] = [];
   // 마지막 출시 일감의 최근 로그(마스킹). 진행 중이거나 실패한 것만
   const lastRelease = new Map<string, (typeof jobs)[number]>();
 
@@ -744,15 +747,26 @@ export async function releaseOverview() {
     const mine = jobs.filter((x) => x.appSlug === j.appSlug);
     const app = appBySlug.get(j.appSlug);
     const removedAt = app?.releaseRemovedAt ?? null;
+    const jobTitle = mine.find((x) => x.kind === "new")?.title ?? j.title;
+    const display = pickAppName({ appName: app?.appName, storeTitle: storeTitleOf(app), projectTitle: app?.projectId ? projectTitle.get(app.projectId) : null, jobTitle });
 
-    // 목록에서 지운 앱은 그 뒤에 새 일감이 생기기 전까지 숨긴다(지시 기록은 그대로 남아 있다)
-    if (removedAt && !mine.some((x) => x.createdAt > removedAt)) continue;
+    // 목록에는 출시 대상으로 표시한 앱만(앱 행이 없으면 대상 아님). 새 일감이 생겨도 저절로 들어오지 않는다
+    if (!isStoreTarget(app)) {
+      others.push({
+        appSlug: j.appSlug,
+        displayName: display.name,
+        stack: j.stack,
+        done: mine.some((x) => x.status === "done"),
+        lastJob: { kind: j.kind, status: j.status, createdAt: j.createdAt },
+        blockReason: storeTargetBlockReason(j.stack),
+      });
+      continue;
+    }
+    // [삭제]는 출시 대상 표시도 푼다. 다시 추가한 앱은 지운 시각 이전의 출시 일감을 결과로 보이지 않는다
     const lastRelease = mine.find((x) => x.kind === "release" && (!removedAt || x.createdAt > removedAt)) ?? null;
     const account = accounts.find((a) => a.id === app?.releaseAccountId) ?? null;
     const key = effectiveKey(app ?? null, account);
     const pw = key ? pwByRef.get(key.ref) : undefined;
-    const jobTitle = mine.find((x) => x.kind === "new")?.title ?? j.title;
-    const display = pickAppName({ appName: app?.appName, storeTitle: storeTitleOf(app), projectTitle: app?.projectId ? projectTitle.get(app.projectId) : null, jobTitle });
     const scan = keyScanOf(j.appSlug);
     const vk = key?.keyId ? vaultById.get(key.keyId) : undefined;
     const legacyKeyPc = key && !key.keyId ? pcStatus?.items.find((i) => i.path === key.path && (i.key.endsWith(".keystore"))) : undefined;
@@ -906,6 +920,7 @@ export async function releaseOverview() {
     uploadTest: await uploadTestState(), // 통제실 '업로드 시험' 진행·마지막 결과
     keyKinds: Object.entries(KEY_KINDS).map(([value, label]) => ({ value, label })),
     apps: rows,
+    otherApps: others,
   };
 }
 
@@ -1028,11 +1043,35 @@ export async function removeAppRelease(appSlugs: string[]): Promise<{ ok: boolea
     releasePackageJob: null,
     aab: Prisma.DbNull,
     releaseRemovedAt: new Date(),
+    storeTarget: false, // 삭제하면 출시 대상 표시도 푼다(다시 넣으려면 '출시 패키지에 추가')
   };
 
   await prisma.$transaction(slugs.map((appSlug) => prisma.factoryApp.upsert({ where: { appSlug }, create: { appSlug, ...data }, update: data })));
 
   return { ok: true, status: 200, message: `출시 패키지 목록에서 지웠어요: ${slugs.join(", ")}` };
+}
+
+/**
+ * 출시 대상 표시 켜기/끄기. 켜면 출시 패키지 목록에 보이고 출시 일감을 보낼 수 있다(nextjs·nestjs 는 안 됨).
+ * 끄기는 목록에서만 빠진다: 출시 데이터(배포 계정·패키지 이름·패키지·AAB 정보)는 그대로 남는다. 진행 중 일감이 있으면 막는다.
+ * 앱 행이 없으면(일감만 있는 앱) 켤 때 만든다.
+ */
+export async function setStoreTarget(appSlug: string, on: boolean): Promise<{ ok: boolean; status: number; message: string }> {
+  const jobs = await prisma.factoryJob.findMany({ where: { appSlug }, orderBy: { createdAt: "desc" }, select: { stack: true, status: true } });
+
+  if (jobs.length === 0) return { ok: false, status: 404, message: "그런 공장 앱이 없어요." };
+  if (on) {
+    const reason = storeTargetBlockReason(jobs[0].stack);
+
+    if (reason) return { ok: false, status: 400, message: `${appSlug}: ${reason}(종류 ${jobs[0].stack}).` };
+    await prisma.factoryApp.upsert({ where: { appSlug }, create: { appSlug, storeTarget: true }, update: { storeTarget: true } });
+
+    return { ok: true, status: 200, message: `출시 패키지에 추가했어요: ${appSlug}` };
+  }
+  if (jobs.some((j) => ["pending", "approved", "running"].includes(j.status))) return { ok: false, status: 409, message: `진행 중 일감이 있어요: ${appSlug}` };
+  await prisma.factoryApp.updateMany({ where: { appSlug }, data: { storeTarget: false } });
+
+  return { ok: true, status: 200, message: `출시 대상에서 뺐어요: ${appSlug} (출시 데이터는 그대로예요. 다시 추가하면 이어서 써요)` };
 }
 
 /** 완료 예정일이 지난 비공개 테스트를 한 번씩 알린다. /next 에서 가끔 부른다. 던지지 않는다. */

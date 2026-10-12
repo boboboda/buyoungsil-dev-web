@@ -24,7 +24,19 @@ import { KeyCheckView, KeyError, UntrackView } from "./KeyVault";
 import StoreAssetsView from "./StoreAssetsView";
 import UploadTestBox from "./UploadTestBox";
 import { BuildResultView, FirstVideoPanel, LinkWaitPanel, ListingCopy, ReviewPanel, isYoutubeUrl } from "./ReleaseReview";
-import { KEY_PASSWORD_TEXT, fmtDate, fmtSize, postRelease, type ReadyItem, type ReleaseApp, type ReleaseJobInfo, type ReleaseOverview } from "./releaseTypes";
+import {
+  JOB_KIND_TEXT,
+  JOB_STATUS_TEXT,
+  KEY_PASSWORD_TEXT,
+  fmtDate,
+  fmtSize,
+  postRelease,
+  type OtherApp,
+  type ReadyItem,
+  type ReleaseApp,
+  type ReleaseJobInfo,
+  type ReleaseOverview,
+} from "./releaseTypes";
 
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
 
@@ -71,7 +83,11 @@ function PackageView({ pkg }: { pkg: Record<string, unknown> }) {
   );
 }
 
-const REMOVE_CONFIRM = "출시 패키지 목록에서 지울까요? 앱 소스와 PC 의 파일은 지워지지 않아요";
+// [출시 데이터 삭제]: 출시 데이터를 비우고 출시 대상에서도 뺀다 / [출시 대상에서 빼기]: 목록에서만 빠지고 출시 데이터는 남는다
+const REMOVE_CONFIRM =
+  "출시 데이터를 삭제할까요?\n\n지워지는 것: 배포 계정 선택·출시 상태·패키지 이름·최초 AAB 업로드 체크·비공개 테스트 일정·출시 패키지(스토어 문구·체크리스트)·AAB 정보. 출시 대상에서도 빠져요.\n남는 것: 앱 소스·지시 기록·홈페이지 프로젝트·PC 의 AAB·키 파일.";
+const UNTARGET_CONFIRM =
+  "출시 대상에서 뺄까요?\n\n출시 패키지 목록에서만 빠져요(아래 '출시 대상이 아닌 앱'으로 옮겨짐). 지워지는 것은 없어요.\n남는 것: 배포 계정·패키지 이름·출시 패키지·AAB 정보 등 출시 데이터 전부. 다시 추가하면 이어서 써요.";
 
 const KIND_HELP: Record<string, string> = {
   first: "키 준비 → AAB 빌드·서명 → 스토어 문구·체크리스트·이미지·영상 → 검토 대기 → (이대로 진행) 홈페이지 빈 칸 채우기 + 최초 AAB 안내(Console 에 직접 올림)",
@@ -608,20 +624,31 @@ function AppRow({
             </Button>
             <Button
               className="min-h-11 sm:min-h-0"
+              isDisabled={busy || app.active}
+              size="sm"
+              variant="flat"
+              onPress={() => {
+                if (window.confirm(`${app.displayName}: ${UNTARGET_CONFIRM}`)) call({ action: "removeStoreTarget", appSlug: app.appSlug });
+              }}
+            >
+              출시 대상에서 빼기
+            </Button>
+            <Button
+              className="min-h-11 sm:min-h-0"
               color="danger"
               isDisabled={busy || app.active}
               size="sm"
               variant="light"
               onPress={() => {
-                if (window.confirm(`${app.displayName} 를 ${REMOVE_CONFIRM}`)) call({ action: "removeApps", appSlugs: [app.appSlug] });
+                if (window.confirm(`${app.displayName}: ${REMOVE_CONFIRM}`)) call({ action: "removeApps", appSlugs: [app.appSlug] });
               }}
             >
-              삭제
+              출시 데이터 삭제
             </Button>
             {lacking.length > 0 && <span className="text-xs text-warning-600">승인하려면: {lacking.map((r) => r.label).join(", ")}</span>}
             {app.active && (
               <span className="text-xs text-default-500">
-                {app.lastReleaseJob?.status === "review" ? "검토 대기 중인 일감이 있어요(먼저 아래에서 결정하세요)" : "진행 중 일감이 있어요(삭제할 수 없어요)"}
+                {app.lastReleaseJob?.status === "review" ? "검토 대기 중인 일감이 있어요(먼저 아래에서 결정하세요)" : "진행 중 일감이 있어요(빼기·삭제할 수 없어요)"}
               </span>
             )}
           </div>
@@ -714,8 +741,16 @@ export default function ReleasePanel() {
     // 지운 앱의 행은 사라지니, 그 결과는 목록 위에 보여 준다
     if (d.apps && apps.some((a) => !d.apps?.some((x) => x.appSlug === a.appSlug))) setNotice(d.message ?? null);
   };
+  const addOrRemove = async (action: string, appSlug: string) => {
+    setBusy(true);
+    const { data: d } = await postRelease({ action, appSlug });
+
+    onSaved(d);
+    setNotice(d.message ?? "처리하지 못했어요.");
+    setBusy(false);
+  };
   const removePicked = async () => {
-    if (!picked.length || !window.confirm(`${picked.length}개 앱을 ${REMOVE_CONFIRM}\n\n${picked.join(", ")}`)) return;
+    if (!picked.length || !window.confirm(`${picked.length}개 앱: ${REMOVE_CONFIRM}\n\n${picked.join(", ")}`)) return;
     setBusy(true);
     const { data: d } = await postRelease({ action: "removeApps", appSlugs: picked });
 
@@ -730,9 +765,9 @@ export default function ReleasePanel() {
       {apps.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <Button color="danger" isDisabled={busy || picked.length === 0} size="sm" variant="flat" onPress={removePicked}>
-            선택 삭제{picked.length ? ` (${picked.length})` : ""}
+            선택한 앱 출시 데이터 삭제{picked.length ? ` (${picked.length})` : ""}
           </Button>
-          <span className="text-xs text-default-500">출시 패키지 목록에서만 빠져요. 앱 소스·지시 기록·PC 의 AAB·키 파일은 그대로예요.</span>
+          <span className="text-xs text-default-500">출시 데이터를 비우고 출시 대상에서도 빼요. 앱 소스·지시 기록·PC 의 AAB·키 파일은 그대로예요.</span>
           {notice && <span className="text-sm text-default-600">{notice}</span>}
         </div>
       )}
@@ -744,7 +779,7 @@ export default function ReleasePanel() {
         </Card>
       )}
       {apps.length === 0 ? (
-        <p className="text-sm text-default-500">완성된 앱이 없어요.</p>
+        <p className="text-sm text-default-500">출시 대상인 완성된 앱이 없어요. 아래 &apos;출시 대상이 아닌 앱&apos;에서 스토어에 올릴 앱을 추가하세요.</p>
       ) : (
         apps.map((a) => (
           <AppRow
@@ -757,6 +792,68 @@ export default function ReleasePanel() {
           />
         ))
       )}
+      {notice && apps.length === 0 && <p className="text-sm text-default-600">{notice}</p>}
+      <OtherApps busy={busy} data={data} onCall={addOrRemove} />
     </div>
+  );
+}
+
+// 출시 대상이 아닌 앱(접힘). [출시 패키지에 추가]. 웹/서버 앱(nextjs·nestjs)은 버튼 없이 이유만.
+// 출시 대상이지만 아직 완성되지 않은 앱도 여기 한 줄로 보여 준다(완성되면 위 목록에 카드가 생김)
+function OtherApps({ data, busy, onCall }: { data: ReleaseOverview; busy: boolean; onCall: (action: string, appSlug: string) => void }) {
+  const others: OtherApp[] = data.otherApps ?? [];
+  const unfinished = data.apps.filter((a) => !a.done);
+
+  return (
+    <details className="rounded-lg border border-default-200 p-3">
+      <summary className="cursor-pointer text-sm font-medium">출시 대상이 아닌 앱 ({others.length}개)</summary>
+      <p className="mt-1 text-xs text-default-500">앱스토어·플레이스토어에 실제로 올릴 앱만 출시 패키지에 추가하세요. 새 앱은 저절로 들어오지 않아요.</p>
+      {unfinished.length > 0 && (
+        <div className="mt-2 space-y-1 text-sm">
+          <div className="text-xs text-default-500">출시 대상이지만 아직 완성되지 않은 앱(완성되면 위에 카드가 생겨요)</div>
+          {unfinished.map((a) => (
+            <div key={a.appSlug} className="flex flex-wrap items-center gap-2">
+              <span>
+                {a.displayName} <span className="text-xs text-default-500">({a.appSlug} · {a.stack})</span>
+              </span>
+              <Button
+                isDisabled={busy || a.active}
+                size="sm"
+                variant="light"
+                onPress={() => {
+                  if (window.confirm(`${a.displayName}: ${UNTARGET_CONFIRM}`)) onCall("removeStoreTarget", a.appSlug);
+                }}
+              >
+                출시 대상에서 빼기
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {others.length === 0 ? (
+        <p className="mt-2 text-sm text-default-500">없어요.</p>
+      ) : (
+        <ul className="mt-2 divide-y divide-default-100">
+          {others.map((a) => (
+            <li key={a.appSlug} className="flex flex-col gap-1 py-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 text-sm">
+                <div className="truncate font-medium">{a.displayName}</div>
+                <div className="text-xs text-default-500">
+                  {`${a.appSlug} · ${a.stack} · 마지막 일감: ${JOB_KIND_TEXT[a.lastJob.kind] ?? a.lastJob.kind} ${JOB_STATUS_TEXT[a.lastJob.status] ?? a.lastJob.status} (${fmtDate(a.lastJob.createdAt)})`}
+                  {a.done ? "" : " · 아직 완성 전"}
+                </div>
+              </div>
+              {a.blockReason ? (
+                <span className="text-xs text-default-500">{a.blockReason}</span>
+              ) : (
+                <Button className="min-h-11 sm:min-h-0" color="primary" isDisabled={busy} size="sm" variant="flat" onPress={() => onCall("addStoreTarget", a.appSlug)}>
+                  출시 패키지에 추가
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </details>
   );
 }
