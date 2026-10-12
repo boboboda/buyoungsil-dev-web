@@ -18,14 +18,14 @@ export default function RecentNotes({ notes }: RecentNotesProps) {
   };
 
   return (
-    <section className="w-full py-20 bg-white dark:bg-gray-900">
+    <section className="w-full py-16 md:py-20 bg-white dark:bg-gray-900">
       <div className="container mx-auto px-4 max-w-6xl">
-        <div className="text-center mb-12">
+        <div className="text-center mb-10 md:mb-12">
           <h2 className="text-3xl md:text-4xl font-bold mb-4">
             📚 최근 개발 노트
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-400">
-            실전 개발 과정에서 얻은 인사이트를 공유합니다
+            앱을 만들며 겪은 과정과 배운 점을 기록합니다
           </p>
         </div>
 
@@ -70,7 +70,7 @@ export default function RecentNotes({ notes }: RecentNotesProps) {
             href="/note"
             className="inline-flex items-center gap-2 px-8 py-4 border-2 border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-600 dark:hover:border-blue-400 transition-colors font-semibold text-lg"
           >
-            모든 노트 보기 →
+            전체 보기 →
           </Link>
         </div>
       </div>

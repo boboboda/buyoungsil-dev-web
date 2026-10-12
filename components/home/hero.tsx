@@ -2,66 +2,28 @@ import Link from "next/link";
 import Animation from "./animation"; // 🔥 기존 애니메이션 import
 
 interface HeroProps {
-  todayVisitors: number;
-  totalVisitors: number;
   totalProjects: number;
   totalNotes: number;
-  totalUsers: number;
-  daysRunning: number;
 }
 
-export default function Hero({ 
-  todayVisitors, 
-  totalVisitors, 
-  totalProjects, 
-  totalNotes,
-  totalUsers,
-  daysRunning
-}: HeroProps) {
+// 통계는 DB 에서 센 실제 값만 쓴다. 0 이면 그 숫자는 숨긴다.
+export default function Hero({ totalProjects, totalNotes }: HeroProps) {
   const stats = [
-    {
-      icon: "📅",
-      value: daysRunning,
-      label: "홈페이지 운영",
-      suffix: "일째",
-      color: "from-blue-500 to-cyan-500"
-    },
-    {
-      icon: "👥",
-      value: totalUsers,
-      label: "가입자",
-      suffix: "명",
-      color: "from-purple-500 to-pink-500"
-    },
-    {
-      icon: "👋",
-      value: todayVisitors,
-      label: "오늘 방문자",
-      suffix: "명",
-      color: "from-green-500 to-emerald-500"
-    },
-    {
-      icon: "🌟",
-      value: totalVisitors,
-      label: "총 방문자",
-      suffix: "명",
-      color: "from-orange-500 to-red-500"
-    },
     {
       icon: "💼",
       value: totalProjects,
-      label: "프로젝트",
+      label: "만든 앱·프로젝트",
       suffix: "개",
       color: "from-blue-600 to-purple-600"
     },
     {
       icon: "📚",
       value: totalNotes,
-      label: "개발노트",
+      label: "공개 개발노트",
       suffix: "개",
       color: "from-indigo-500 to-blue-500"
     }
-  ];
+  ].filter((stat) => stat.value > 0);
 
   return (
     <section className="relative w-full py-12 md:py-20 overflow-hidden">
@@ -76,12 +38,12 @@ export default function Hero({
       <div className="relative container mx-auto px-4 max-w-7xl">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
           
-          {/* 왼쪽: 텍스트 & 통계 */}
-          <div className="space-y-6 text-center lg:text-left order-2 lg:order-1">
+          {/* 왼쪽: 텍스트 & 통계 (모바일에서도 소개·버튼이 먼저 보이게 위에 둔다) */}
+          <div className="space-y-6 text-center lg:text-left">
             {/* 뱃지 */}
             <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-100 dark:bg-blue-900 rounded-full text-sm font-medium text-blue-800 dark:text-blue-200 animate-fade-in">
               <span className="animate-pulse">🤖</span>
-              AI로 앱 만들기
+              앱·웹 개발 · 외주 제작
             </div>
 
             {/* 메인 타이틀 */}
@@ -93,18 +55,17 @@ export default function Hero({
 
             {/* 서브 타이틀 */}
             <p className="text-lg md:text-xl text-gray-600 dark:text-gray-300 leading-relaxed animate-fade-in-up animation-delay-200">
-              비개발자 출신 개발자가{" "}
               <span className="font-bold text-blue-600 dark:text-blue-400">AI</span>를 활용해
-              <br />
-              실제 서비스를 만들고 운영하는 과정을 공유합니다
+              모바일 앱과 웹 서비스를 직접 만들고, 앱·웹 제작 의뢰도 받습니다
             </p>
 
-            {/* 실시간 통계 카드 */}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 pt-4 animate-fade-in-up animation-delay-400">
+            {/* 통계 카드 (보여줄 숫자가 없으면 통째로 숨김) */}
+            {stats.length > 0 && (
+            <div className="grid grid-cols-2 gap-3 pt-4 max-w-md mx-auto lg:mx-0 animate-fade-in-up animation-delay-400">
               {stats.map((stat, index) => (
                 <div
                   key={index}
-                  className="relative p-4 rounded-xl bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 group cursor-pointer"
+                  className="relative p-4 rounded-xl bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 group"
                 >
                   {/* 호버 그라데이션 */}
                   <div className={`absolute inset-0 rounded-xl bg-gradient-to-r ${stat.color} opacity-0 group-hover:opacity-20 transition-opacity duration-300`} />
@@ -122,6 +83,7 @@ export default function Hero({
                 </div>
               ))}
             </div>
+            )}
 
             {/* CTA 버튼 */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start pt-6 animate-fade-in-up animation-delay-600">
@@ -130,23 +92,23 @@ export default function Hero({
                 className="group relative px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl overflow-hidden font-semibold text-lg shadow-lg hover:shadow-2xl transition-all duration-300"
               >
                 <span className="relative z-10 flex items-center justify-center gap-2">
-                  프로젝트 둘러보기
+                  프로젝트 보기
                   <span className="group-hover:translate-x-1 transition-transform">→</span>
                 </span>
                 <div className="absolute inset-0 bg-gradient-to-r from-purple-600 to-blue-600 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
               </Link>
               <Link
-                href="/note"
-                className="px-8 py-4 border-2 border-gray-300 dark:border-gray-600 rounded-xl hover:border-blue-600 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-gray-800 transition-all duration-300 font-semibold text-lg"
+                href="/contact?type=work"
+                className="px-8 py-4 text-center border-2 border-gray-300 dark:border-gray-600 rounded-xl hover:border-blue-600 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-gray-800 transition-all duration-300 font-semibold text-lg"
               >
-                개발 노트 읽기
+                외주 문의
               </Link>
             </div>
           </div>
 
           {/* 오른쪽: 브랜드 캐릭터 애니메이션 🔥 */}
-          <div className="flex justify-center lg:justify-end order-1 lg:order-2 animate-fade-in-up animation-delay-800">
-            <div className="relative w-full max-w-md lg:max-w-lg">
+          <div className="flex justify-center lg:justify-end animate-fade-in-up animation-delay-800">
+            <div className="relative w-full max-w-[16rem] sm:max-w-md lg:max-w-lg">
               <Animation />
             </div>
           </div>
