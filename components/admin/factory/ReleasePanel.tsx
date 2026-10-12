@@ -283,14 +283,52 @@ function KeyBox({
           쓸 키가 없어요. 설정 → 키 보관함에서 만들거나 등록한 뒤, 계정 기본 키로 고르거나 여기서 고르세요(키 파일이 없으면 만들지 않고 멈춰요).
         </p>
       )}
-      <AppKeyLookup
-        appSlug={app.appSlug}
-        busy={busy}
-        request={app.keyScanRequest}
-        scan={app.keyScan}
-        onLookup={() => call({ action: "requestKeyScan", appSlug: app.appSlug })}
-      />
+      {/* 후보 찾기는 키가 없거나 조회에서 파일이 없을 때만. 이미 찾은 결과·요청 중이면 계속 보여요 */}
+      {(!app.key || app.key.check?.exists === false || app.keyScan || app.keyScanRequest) && (
+        <AppKeyLookup
+          appSlug={app.appSlug}
+          busy={busy}
+          request={app.keyScanRequest}
+          scan={app.keyScan}
+          onLookup={() => call({ action: "requestKeyScan", appSlug: app.appSlug })}
+        />
+      )}
     </div>
+  );
+}
+
+/** AAB 를 만들지 않는 종류(스토어 수정·프로젝트 갱신): 키는 필요 없어서 한 줄 요약 + 접힌 자세히(지금 키·조회만) */
+function StoreKeySummary({ app, busy, call }: { app: ReleaseApp; busy: boolean; call: (body: Record<string, unknown>) => void }) {
+  return (
+    <details className="rounded-lg border border-default-200 p-2 text-sm">
+      <summary className="cursor-pointer text-default-500">
+        🔑 키 필요 없음 (이 종류는 AAB 를 만들지 않아요) · 등록된 키: {app.key ? (app.key.name ?? app.key.path) : "없음"}
+      </summary>
+      <div className="mt-2 space-y-1">
+        {app.key ? (
+          <>
+            <div className="text-xs">
+              지금 쓰는 키: <b>{app.key.name ?? app.key.path}</b> ({app.key.source === "custom" ? "이 앱에 고른 키" : "계정 기본 키"}
+              {app.key.production ? " · 🛡 운영 키" : ""}) · <code className="break-all">{app.key.path}</code> · 별칭 {app.key.alias}
+            </div>
+            <KeyCheckView alias={app.key.alias} check={app.key.check} />
+            {app.key.keyId && (
+              <Button
+                className="min-h-11 sm:min-h-0"
+                isDisabled={busy || !!app.key.checking}
+                size="sm"
+                variant="flat"
+                onPress={() => app.key?.keyId && call({ action: "vaultCheck", keyId: app.key.keyId })}
+              >
+                {app.key.checking ? "조회 중…" : "🔍 조회"}
+              </Button>
+            )}
+          </>
+        ) : (
+          <p className="text-xs text-default-500">등록된 키가 없어요. 첫 출시·앱 업데이트를 할 때 고르면 돼요.</p>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -530,12 +568,7 @@ function AppRow({
           <p className="text-xs text-default-500">순서: {KIND_HELP[kind]}</p>
 
           {isStore ? (
-            <details className="rounded-lg border border-default-200 p-2 text-sm">
-              <summary className="cursor-pointer text-default-500">🔑 키: 이 종류는 AAB 를 만들지 않아 키가 필요 없어요</summary>
-              <div className="mt-2">
-                <KeyBox acc={acc} app={app} busy={busy} call={call} data={data} keyId={keyId} setKeyId={setKeyId} />
-              </div>
-            </details>
+            <StoreKeySummary app={app} busy={busy} call={call} />
           ) : (
             <KeyBox acc={acc} app={app} busy={busy} call={call} data={data} keyId={keyId} setKeyId={setKeyId} />
           )}
