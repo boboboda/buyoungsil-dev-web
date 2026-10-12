@@ -145,6 +145,12 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - 서버 코드가 바뀌었으면 "배포 필요". 대기열이 다 끝난 뒤 한 번 안내하고(급하면 통제실 [지금 배포]), 사람이 통제실·텔레그램에서 [배포]를 누르면 가장 최근 정비 커밋(GitHub main 에 있는 것만)을 `deployRemote`(기본 `serverpc:git-server/repo/developWeb.git`)로 push 해요. 서버는 커밋 해시만 보내요. 설정에서 "대기열 끝나면 자동 배포"를 켤 수 있어요(기본 꺼짐).
 - 서버가 `maintenance.deployBundling` 을 보내지 않으면(예전 서버) 예전 방식 그대로 해요.
 
+## 작업 후 컨텍스트 정리 (`compact.mjs`)
+- 일감·정비가 성공으로 끝나면(검증·커밋·push 뒤, 완료 보고 전) 감독 프로그램이 이어 쓸 Claude 세션에 `claude -p --resume <세션>` 으로 `/compact` 를 걸어 맥락을 요약해요. 정비는 완료 보고 전에 끝나므로 다음 지시보다 먼저 끝나요.
+- Claude 세션만, 다시 이어 쓸 세션만(정비 대화, 이전 세션을 이어받은 일감). 지금 앱 일감은 새 세션으로 시작해서 건너뛰어요. 실패한 작업·Codex 는 건드리지 않아요.
+- 2분 안에 안 끝나거나 실패해도 작업은 실패가 아니에요. 일감 로그·정비 결과에 "컨텍스트 정리(/compact) 완료" 또는 "컨텍스트 정리 건너뜀: 사유" 한 줄만 남겨요.
+- 끄기: 통제실 감독 프로그램 카드의 "작업 후 컨텍스트 정리"(FactorySetting `compactAfterJob`, 기본 켜짐) 또는 PC 환경변수 `FACTORY_COMPACT_AFTER_JOB=0`.
+
 ## 서버 설정 도구 (`serverctl.mjs`, 공장 정비 전용)
 - 정비 Claude 는 서버 설정(nginx, 서버 `.env.local`, 재빌드)을 이 도구로만 바꿔요. ssh·scp·docker·sudo·nginx·systemctl 직접 호출, `~/.ssh` 읽기, 실행 폴더 수정은 `--settings` 권한 규칙으로 막혀 있어요.
 - 정비 Claude 는 실행 폴더(`supervisor-src`)의 사본만 써요(정비 폴더 사본은 Claude 가 고칠 수 있어서).

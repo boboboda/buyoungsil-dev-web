@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
 import { isAiEngine, AI_LABELS } from "@/lib/factory/ai";
-import { setDefaultAiEngine, setToolBrokerSettings } from "@/lib/factory/settings";
+import { setCompactAfterJobEnabled, setDefaultAiEngine, setToolBrokerSettings } from "@/lib/factory/settings";
 import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS, toolBrokerLimitLabel } from "@/lib/factory/toolBroker";
 import { runSupervisorAction, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
 
@@ -20,7 +20,7 @@ export async function GET() {
   return NextResponse.json(await supervisorSnapshot());
 }
 
-// 본문: { enabled: boolean } | { autoUpdate: boolean } | { autoDeploy: boolean } | { updateNow: true } | { restart: true }
+// 본문: { enabled: boolean } | { autoUpdate: boolean } | { autoDeploy: boolean } | { compactAfterJob: boolean } | { updateNow: true } | { restart: true }
 export async function POST(req: NextRequest) {
   const denied = await requireAdmin();
 
@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     enabled?: unknown;
     autoUpdate?: unknown;
     autoDeploy?: unknown;
+    compactAfterJob?: unknown;
     updateNow?: unknown;
     restart?: unknown;
   } | null;
@@ -40,6 +41,19 @@ export async function POST(req: NextRequest) {
     if (!isAiEngine(body.defaultAiEngine)) return NextResponse.json({ message: "주사용 AI를 골라 주세요." }, { status: 400 });
     await setDefaultAiEngine(body.defaultAiEngine);
     return NextResponse.json({ ...(await supervisorSnapshot()), message: `주사용 AI를 ${AI_LABELS[body.defaultAiEngine]}로 저장했어요. 새 지시부터 적용돼요.` });
+  }
+
+  // 작업 후 컨텍스트 정리(/compact): { compactAfterJob: boolean }
+  if (body && Object.hasOwn(body, "compactAfterJob")) {
+    if (typeof body.compactAfterJob !== "boolean") return NextResponse.json({ message: "compactAfterJob 은 true/false 여야 해요." }, { status: 400 });
+    await setCompactAfterJobEnabled(body.compactAfterJob);
+
+    return NextResponse.json({
+      ...(await supervisorSnapshot()),
+      message: body.compactAfterJob
+        ? "작업 후 컨텍스트 정리를 켰어요. 감독 프로그램이 다음 확인 때 받아 가요."
+        : "작업 후 컨텍스트 정리를 껐어요. 감독 프로그램이 다음 확인 때 받아 가요.",
+    });
   }
 
   // 도구 요청 중계: { toolBroker: { mode: off|report|allow, maxRequests?, toolTimeoutSec? } }

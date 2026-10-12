@@ -13,6 +13,7 @@ interface State {
   enabled: boolean;
   autoUpdate: boolean;
   autoDeploy?: boolean; // 예전 서버에는 없다
+  compactAfterJob?: boolean; // 예전 서버에는 없다
   commit: string | null;
   commitSubject: string | null;
   updateNote: string | null;
@@ -367,6 +368,25 @@ export default function SupervisorControl() {
               }}
             >
               {s.autoDeploy ? "자동 배포 끄기" : "자동 배포 켜기"}
+            </Button>
+          </div>
+        )}
+        {s && s.compactAfterJob !== undefined && (
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span>
+              🧹 작업 후 컨텍스트 정리: {s.compactAfterJob ? "켜짐" : "꺼짐"}
+              <span className="ml-1 text-xs text-default-500">
+                (기본 켜짐. 성공한 정비·이어받은 일감의 Claude 세션을 /compact 로 요약해 다음 작업의 토큰을 줄여요. Codex·실패한 작업은 건드리지 않아요)
+              </span>
+            </span>
+            <Button
+              className="min-h-11 w-full sm:min-h-0 sm:w-auto"
+              isDisabled={busy}
+              size="sm"
+              variant="flat"
+              onPress={() => toggleAuto({ compactAfterJob: !s.compactAfterJob })}
+            >
+              {s.compactAfterJob ? "컨텍스트 정리 끄기" : "컨텍스트 정리 켜기"}
             </Button>
           </div>
         )}

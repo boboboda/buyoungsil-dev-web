@@ -39,7 +39,7 @@ import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
 import { maintenanceForNext, maintenanceHold } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
-import { consumeRestart, consumeUpdateNow, getDefaultAiEngine, getToolBrokerSettings, isAutoUpdateEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
+import { consumeRestart, consumeUpdateNow, getDefaultAiEngine, getToolBrokerSettings, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
 import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
     }
 
     // 통제실에서 "일시 정지" 하면 일감을 내주지 않는다. (인증은 이미 통과했으니 "연결됨" 표시는 계속 갱신된다)
-    const [enabled, autoUpdate, defaultAiEngine, toolBroker] = await Promise.all([isSupervisorEnabled(), isAutoUpdateEnabled(), getDefaultAiEngine(), getToolBrokerSettings().catch(() => undefined)]);
+    const [enabled, autoUpdate, defaultAiEngine, toolBroker, compactAfterJob] = await Promise.all([isSupervisorEnabled(), isAutoUpdateEnabled(), getDefaultAiEngine(), getToolBrokerSettings().catch(() => undefined), isCompactAfterJobEnabled().catch(() => true)]);
     // 1회성 신호: 받아 가는 순간 지운다. 정지 중이어도 업데이트는 할 수 있게 같이 보낸다.
     const updateNow = await consumeUpdateNow().catch(() => false);
     const pcPaths = await pcPathsToCheck().catch(() => []);
@@ -113,6 +113,7 @@ export async function GET(req: NextRequest) {
     void sweepReviewVideos(); // 7일 지난 검토 영상 정리(가끔)
     const extra = {
       defaultAiEngine,
+      compactAfterJob, // 작업 후 컨텍스트 정리(/compact). false 면 감독 프로그램이 하지 않는다
       ...(toolBroker ? { toolBroker: toolBrokerForSupervisor(toolBroker) } : {}), // 도구 요청 중계 설정(없으면 감독 프로그램은 꺼짐으로 본다)
       ...(updateNow ? { updateNow: true } : {}),
       ...(pcPaths.length ? { pcPaths } : {}),

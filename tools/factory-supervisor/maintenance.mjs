@@ -14,6 +14,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { acquireWorkspace, engineOf, ENGINE_LABELS, eventDecoder, excludeHarnessState, handoffPrompt, pendingChangesPolicy, recordLifecycle, redactAiText, saveHandoff, startAi } from "./ai-runner.mjs";
 import { keyFilesToCommit } from "./keyguard.mjs";
+import { compactSession } from "./compact.mjs";
 
 const IS_WIN = process.platform === "win32";
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -237,6 +238,12 @@ async function runTurnUnlocked(m, ctx, lock) {
     recordLifecycle(dir, m.aiEngine, done.ok ? "done" : "failed", m.turnId);
     try { saveHandoff(dir, { engine: m.aiEngine, taskId: m.turnId, threadId: m.threadId, sessionId: done.sessionId, status: done.ok ? "done" : "failed", summary: done.text, verification: done.pushedCommit ? "passed-before-push" : "see-result" }, redact); }
     catch (e) { addLog(`상태 인계 기록 실패: ${e.message}`); }
+    // 성공한 지시만: 이 정비 대화가 이어 쓸 Claude 세션을 /compact 로 정리한다(완료 보고 전이라 다음 지시보다 먼저 끝난다). 실패해도 결과는 그대로
+    if (done.ok) {
+      const c = await compactSession({ engine: m.aiEngine, sessionId: done.sessionId, reusable: true, enabled: ctx.compactEnabled ? ctx.compactEnabled() : true, cwd: dir, cfg, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, childEnv: { ...process.env, FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId } });
+      log(`[정비] ${c.line}`);
+      done.text = `${done.text}\n— ${c.line}`;
+    }
     await flush();
     for (let i = 1; i <= 4; i++) {
       const r = await post(ctx, { action: "report", turnId: m.turnId, done });

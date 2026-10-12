@@ -12,6 +12,7 @@ import {
   getToolBrokerSettings,
   isAutoDeployEnabled,
   isAutoUpdateEnabled,
+  isCompactAfterJobEnabled,
   isSupervisorEnabled,
   requestRestart,
   requestUpdateNow,
@@ -32,7 +33,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -50,6 +51,7 @@ export async function supervisorSnapshot() {
     prisma.factoryJob.count({ where: { status: "pending" } }),
     getDefaultAiEngine(),
     getToolBrokerSettings(),
+    isCompactAfterJobEnabled(),
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
@@ -60,6 +62,7 @@ export async function supervisorSnapshot() {
     enabled,
     autoUpdate,
     autoDeploy, // 정비 대기열이 모두 끝나면 자동 배포(기본 꺼짐)
+    compactAfterJob, // 작업 후 컨텍스트 정리(/compact, 기본 켜짐)
     commit: info?.commit ?? null,
     commitSubject: info?.subject ?? null, // 현재 커밋 메시지 첫 줄(무엇이 바뀌었는지)
     updateNote: info?.note ?? null,

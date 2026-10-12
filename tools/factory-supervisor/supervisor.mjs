@@ -30,6 +30,7 @@ import {
   syncKeyPasswords,
 } from "./release.mjs";
 import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
+import { compactSession } from "./compact.mjs";
 import { runKeyTasks } from "./keyvault.mjs";
 import { runUploadTest } from "./uploadtest.mjs";
 import { refreshPathFromRegistry, toolLabel } from "./pcenv.mjs";
@@ -892,6 +893,9 @@ async function runJobUnlocked(job, lock) {
       // outbox(출시 자료 등)는 일감이 아직 실행 중일 때 보내야 서버가 받는다
       await sendOutbox({ dir, job, api, addLog: (level, m) => addLog(st, level, m) });
       const committed = commitResult(dir, job);
+      // 작업 후 컨텍스트 정리: 앱 일감은 지금 새 세션으로 시작하므로(--resume 없음) 이어 쓸 세션이 없어 건너뛴다. 기록만 남긴다
+      const compacted = await compactSession({ engine: job.aiEngine, sessionId: st.sessionId, reusable: false, enabled: compactAfterJob, cwd: dir, cfg, settings: job.aiEngine === "claude" ? appSettings : undefined });
+      addLog(st, "info", compacted.line);
       const text = st.redact(String(st.result.result ?? st.lastText ?? "").trim());
       const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result.num_turns ? `, ${st.result.num_turns}턴` : ""}${committed ? ", 앱 폴더에 커밋함" : ""})`;
       await finish(st, "done", { summary: (text || "완료(요약 없음)").slice(0, 3800) + footer });
@@ -1215,6 +1219,7 @@ async function finishVideoLink(st, { summary }) {
 let paused = false;
 let autoUpdate = true; // 통제실 스위치. /next 응답에 autoUpdate: false 가 오면 끈다(필드가 없으면 켜짐)
 let defaultAiEngine = null;
+let compactAfterJob = true; // 통제실 '작업 후 컨텍스트 정리'. /next 에 compactAfterJob: false 가 오면 끈다(필드가 없으면 켜짐)
 let toolBroker = brokerSettings(null); // 통제실 '도구 요청 중계' 설정. 값이 없으면(예전 서버) 꺼짐
 // secrets.env 를 고치는 일(키 비밀번호·외부 서비스 키·이름 보고)은 한 줄로 세워 차례로 한다(동시에 쓰지 않게). 던지지 않는다
 let secretsChain = Promise.resolve();
@@ -1257,6 +1262,7 @@ async function loop() {
             aiToolStatus(cfg).then((v) => (aiTools = v), () => {});
           }
           autoUpdate = r.data?.autoUpdate !== false;
+          compactAfterJob = r.data?.compactAfterJob !== false;
           if (["claude", "codex"].includes(r.data?.defaultAiEngine) && defaultAiEngine !== r.data.defaultAiEngine) {
             defaultAiEngine = r.data.defaultAiEngine;
             log(`주사용 AI: ${ENGINE_LABELS[defaultAiEngine]} (새 지시 기본값, 개별 AI 선택 유지)`);
@@ -1294,7 +1300,7 @@ async function loop() {
           if (r.data?.uploadTest) runUploadTest({ test: r.data.uploadTest, api, log }).catch(() => {});
           if (r.data?.keyScan === true) runKeyScan({ api, log, workDir: cfg.workDir, only: Array.isArray(r.data?.keyScanApps) ? r.data.keyScanApps : null }).catch(() => {});
           // 공장 정비 지시·[배포] 요청(앱 일감과 따로. 정비는 돌던 앱 일감이 없을 때만 시작)
-          onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) });
+          onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) });
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
           if (nowPaused !== paused) {

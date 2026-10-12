@@ -160,6 +160,21 @@ export async function consumeUpdateNow(): Promise<boolean> {
   return count > 0;
 }
 
+const COMPACT_KEY = "compactAfterJob";
+
+/** 일감·정비가 성공으로 끝나면 감독 프로그램이 이어 쓸 Claude 세션을 /compact 로 정리할지. 값이 없으면 켜짐. */
+export async function isCompactAfterJobEnabled(): Promise<boolean> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: COMPACT_KEY } });
+
+  return row?.value !== "false";
+}
+
+export async function setCompactAfterJobEnabled(enabled: boolean): Promise<void> {
+  const value = enabled ? "true" : "false";
+
+  await prisma.factorySetting.upsert({ where: { key: COMPACT_KEY }, create: { key: COMPACT_KEY, value }, update: { value } });
+}
+
 const AUTO_DEPLOY_KEY = "maintenanceAutoDeploy";
 
 /** 정비 대기열이 모두 끝나면 자동 배포할지. 값이 없으면 꺼짐. */
