@@ -11,7 +11,9 @@ import { useCachedSession } from "@/app/hooks/user/useCachedSession";
 import {
   canAccessContent,
   getAccessMessage,
+  resolveUserRole,
 } from "@/lib/utils/access-control";
+import { UserRole } from "@/types/access-control";
 import SimpleModal from "@/components/modal/simpleModal";
 import ReadLexicalEditor from "./ReadLexicalEditor";
 import { RelatedNoteSummary } from "./RelatedNotes";
@@ -20,8 +22,6 @@ import { noteHref } from "@/lib/note/noteUtils";
 interface GroupedNotes {
   [key: string]: Note[];
 }
-
-type UserRole = "guest" | "user" | "supporter" | "admin";
 
 // 레벨 설정
 const LEVEL_CONFIG = {
@@ -93,22 +93,11 @@ export default function NoteItemView({
   } | null>(null);
 
   // 사용자 역할 결정
-  const userRole: UserRole = useMemo(() => {
-    if (!isAuthenticated || !session?.user) {
-      return "guest";
-    }
-
-    switch (session.user.role) {
-      case "admin":
-        return "admin";
-      case "supporter":
-        return "supporter";
-      case "user":
-        return "user";
-      default:
-        return "guest";
-    }
-  }, [isAuthenticated, session?.user]);
+  const userRole: UserRole = useMemo(
+    () =>
+      resolveUserRole(isAuthenticated && !!session?.user, session?.user?.role),
+    [isAuthenticated, session?.user],
+  );
 
   // 레벨 기반 그룹핑
   const groupedNotesByLevel = useMemo(() => {
@@ -181,16 +170,16 @@ export default function NoteItemView({
 
       case "ADVANCED":
         return {
-          title: "💎 고급 콘텐츠",
+          title: "🔒 고급 콘텐츠",
           content:
-            "고급 콘텐츠는 후원자 전용입니다.\n\n후원해주시면 모든 프리미엄 콘텐츠를 이용하실 수 있습니다.",
-          confirmText: "후원하기",
+            "고급 콘텐츠는 회원가입이 필요합니다.\n\n무료로 가입하시면 고급 콘텐츠까지 모두 이용하실 수 있습니다.",
+          confirmText: "로그인 / 회원가입",
           confirmAction: () => {
             onOpenChange();
-            router.push("/support");
+            router.push("/signin");
           },
           showCancel: true,
-          confirmColor: "warning" as const,
+          confirmColor: "primary" as const,
         };
 
       default:
@@ -371,8 +360,6 @@ export default function NoteItemView({
                 className={`px-3 py-1 rounded-full text-xs font-bold ${
                   userRole === "admin"
                     ? "bg-purple-200 text-purple-900 dark:bg-purple-800 dark:text-purple-200"
-                    : userRole === "supporter"
-                    ? "bg-yellow-200 text-yellow-900 dark:bg-yellow-800 dark:text-yellow-200"
                     : userRole === "user"
                     ? "bg-blue-200 text-blue-900 dark:bg-blue-800 dark:text-blue-200"
                     : "bg-gray-200 text-gray-900 dark:bg-gray-600 dark:text-gray-200"
@@ -380,8 +367,6 @@ export default function NoteItemView({
               >
                 {userRole === "admin"
                   ? "👑 관리자"
-                  : userRole === "supporter"
-                  ? "💎 후원자"
                   : userRole === "user"
                   ? "👤 회원"
                   : "👥 게스트"}
@@ -390,10 +375,8 @@ export default function NoteItemView({
             <div className="text-xs text-gray-600 dark:text-gray-400">
               {userRole === "admin"
                 ? "모든 콘텐츠 접근 가능"
-                : userRole === "supporter"
-                ? "🟢🟡🔴 모든 레벨 접근"
                 : userRole === "user"
-                ? "🟢🟡 초급, 중급 접근"
+                ? "🟢🟡🔴 모든 레벨 접근"
                 : "🟢 초급만 접근 가능"}
             </div>
           </div>

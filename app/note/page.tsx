@@ -28,7 +28,7 @@ export default async function NotePage() {
             실전 개발 경험과 노하우를 기술 스택별로 정리했습니다
           </p>
           <p className="mt-2 text-sm text-gray-500 dark:text-gray-500">
-            💡 레벨별 접근: 🟢초급(전체) 🟡중급(회원) 🔴고급(후원자)
+            💡 레벨별 접근: 🟢초급(전체) 🟡중급(회원) 🔴고급(회원)
           </p>
         </div>
 
