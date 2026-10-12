@@ -134,6 +134,15 @@ node supervisor.mjs      # 끄려면 Ctrl+C
   재시도가 `upload` 면 Claude 없이 업로드부터 다시 해요. 서비스 계정 키 내용·토큰은 어디에도 쓰지 않아요.
 - 시험용: `FACTORY_PLAY_API_BASE` 환경변수로 API 주소를 바꿀 수 있어요(토큰 주소는 서비스 계정 JSON 의 token_uri).
 
+## 시험용 APK (`apk.mjs`, 출시 일감 종류 `apk`)
+- 통제실 출시 패키지 카드의 '시험용 APK' 에서 요청해요. 키 준비는 첫 출시와 같아요(앱 자체 key.properties 우선, 없으면 보관함 키를 `FACTORY_KEYSTORE_*` 환경변수로). 키는 만들지 않아요.
+- AI 가 `flutter build apk --release` 로 만들고 `.factory/apk.json`({path, versionName, versionCode})을 남기면, 감독 프로그램이:
+  경로 확인(앱 폴더 안의 .apk, 200MB 이하) → `apksigner verify --print-certs`(build-tools 의 apksigner.jar 를 Java 로) → 디버그 키 거절 →
+  등록된 키(JKS 는 비밀번호 없이, PKCS12 는 keytool 에 비밀번호를 환경변수로)와 서명 인증서 SHA-256 비교 → 앱 폴더 커밋 →
+  `/api/factory/test-apk` 로 정보(크기·SHA-256·버전·빌드 시각·커밋·서명 지문)를 보내고 8MB 조각으로 올려요(홈페이지가 SHA-256 다시 확인).
+- 단계: key → build → sign(apksigner 확인) → upload. 재시도가 `upload` 면 AI 없이 확인·업로드만 다시 해요. Play 는 건드리지 않아요.
+- 홈페이지는 APK 를 DB 에 두고 관리자만 내려받게 해요(앱당 최근 5개). 키 파일·비밀번호는 보내지 않아요.
+
 ## 공장 정비 (`maintenance.mjs`)
 - 공장 자체(홈페이지·감독 프로그램 코드)를 고치는 대화형 스레드예요. 앱 일감과 따로 돌아요(통제실 감독 프로그램 카드, 커넥터 `maintenance_*`).
 - 정비 지시가 대기·진행 중이면 서버가 새 앱 일감을 내주지 않고, 감독 프로그램은 돌던 앱 일감이 끝나면 정비를 시작해요.

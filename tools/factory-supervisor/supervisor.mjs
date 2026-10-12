@@ -30,6 +30,7 @@ import {
   syncKeyPasswords,
 } from "./release.mjs";
 import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
+import { expectedSigner, gitCommitOf, judgeSignature, readApkInfo, sha256File, uploadTestApk, verifyApk } from "./apk.mjs";
 import { compactSession } from "./compact.mjs";
 import { runKeyTasks } from "./keyvault.mjs";
 import { runUploadTest } from "./uploadtest.mjs";
@@ -391,6 +392,8 @@ function prepareDir(job) {
     fs.writeFileSync(path.join(dir, "RELEASE_REQUEST.md"), `# 출시 준비 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n${resumeSection(job)}${redo}${env}`);
     fs.mkdirSync(path.join(dir, ".factory", "outbox"), { recursive: true });
     fs.rmSync(path.join(dir, ".factory", "fail.json"), { force: true }); // 지난 시도의 실패 표시는 지운다
+    // 시험용 APK: 새로 시작하면 지난 APK 정보는 지운다(재시도는 그대로 써서 이어 간다)
+    if (job.release?.kind === "apk" && !job.release.resumeFrom) fs.rmSync(path.join(dir, ".factory", "apk.json"), { force: true });
   } else {
     fs.writeFileSync(path.join(dir, "PLAN.md"), job.planMarkdown + "\n");
   }
@@ -767,6 +770,7 @@ async function runJobUnlocked(job, lock) {
       }
     }
     Object.assign(allowed, key.env);
+    st.keyEnv = key.env; // 시험용 APK: 서명 인증서 비교에 쓴다(값은 보고하지 않음)
     st.redact = (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets).filter((v) => !key.secrets.includes(v))], key.secrets)(s));
     if (key.note) addLog(st, "info", key.note);
   }
@@ -1038,6 +1042,51 @@ async function reviewHandoff(st, { summary, lines, items }) {
   await finish(st, "review", { summary: (summary + extra).slice(0, 3900) + (committed ? " (앱 폴더에 커밋함)" : "") });
 }
 
+// 시험용 APK 마무리: .factory/apk.json 의 APK → 서명 확인(apksigner, 디버그 키 거절, 등록된 키와 비교) → 앱 폴더 커밋 → 홈페이지로 조각 업로드.
+// Play·outbox·홈페이지 프로젝트는 건드리지 않는다. 재시도가 upload 면 Claude 없이 여기부터(키 비교용 정보는 다시 준비)
+async function finishApk(st, { summary }) {
+  const { job, dir } = st;
+  const fail = (stage, reason) => finish(st, "failed", { failReason: st.redact(reason).slice(0, 1800), failStage: stage });
+  setPhase(st, "sign");
+  const info = readApkInfo(dir, { maxBytes: Number(job.release?.apk?.maxBytes) || undefined });
+  if (!info.ok) return fail("build", info.reason);
+  let keyEnv = st.keyEnv;
+  if (!keyEnv) {
+    try {
+      const k = prepareReleaseKey({ job, dir, secrets: readSecrets(), log: () => {} });
+      keyEnv = k.ok ? k.env : {};
+    } catch {
+      keyEnv = {};
+    }
+  }
+  const verify = verifyApk(info.file);
+  const expected = expectedSigner({ dir, env: keyEnv });
+  const judged = judgeSignature(verify, expected);
+  if (!judged.ok) return fail("sign", judged.reason);
+  addLog(st, "info", `apksigner 확인 통과(${verify.schemes.join("·") || "서명"}), 서명 인증서 SHA-256 ${judged.signerSha256.slice(0, 12)}…${judged.note ? ` · ${judged.note}` : ""}`);
+  commitResult(dir, job); // 서명 설정을 고쳤으면 그 상태로 커밋한 뒤 커밋을 적는다
+  const meta = {
+    jobId: job.id,
+    size: info.size,
+    sha256: sha256File(info.file),
+    versionName: info.versionName,
+    versionCode: info.versionCode,
+    builtAt: info.builtAt,
+    gitCommit: gitCommitOf(dir),
+    signerSha256: judged.signerSha256,
+    keyLabel: job.release?.apk?.keyLabel ?? expected.label ?? null,
+  };
+  setPhase(st, "upload");
+  const up = await uploadTestApk({ file: info.file, meta, api, log: (m) => addLog(st, "info", m) });
+  if (!up.ok) return fail("upload", up.message);
+  const lines = [
+    `시험용 APK: ${path.relative(dir, info.file).replace(/\\/g, "/")} · ${mb(info.size)} · 버전 ${info.versionName ?? "?"}(${info.versionCode ?? "?"})`,
+    `SHA-256 ${meta.sha256.slice(0, 12)}… · 커밋 ${meta.gitCommit ?? "-"} · 서명 ${judged.signerSha256.slice(0, 12)}…${judged.note ? `(${judged.note})` : ""}`,
+    "통제실 출시 패키지 카드의 '시험용 APK' 에서 내려받을 수 있어요(관리자만, 앱당 최근 5개).",
+  ];
+  await finish(st, "done", { summary: `${summary}\n${lines.map((l) => `- ${l}`).join("\n")}`.slice(0, 3900) });
+}
+
 // 출시 일감 마무리: (checkFail 이면) fail.json 확인 → (검토 단계가 있고 승인 전이면) 검토 대기로 →
 // (스토어 수정) 자료 검사 → Play 업로드 → 홈페이지(이미지·outbox) → 앱 폴더 커밋 → 완료/실패 보고
 // from: 재시도·승인 뒤 시작 단계(review | upload | homepage). homepage 면 Play 업로드는 건너뛴다
@@ -1061,6 +1110,7 @@ async function finishRelease(st, { summary, checkFail = false, from = null }) {
     }
   }
   if (review && review.approved !== true) return reviewHandoff(st, { summary, lines, items });
+  if (kind === "apk") return finishApk(st, { summary });
   if (kind === "store" && from === "videolink") return finishVideoLink(st, { summary });
   if (review) lines.push("검토 승인됨([이대로 진행])");
 

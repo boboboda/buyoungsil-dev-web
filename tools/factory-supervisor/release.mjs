@@ -225,7 +225,7 @@ export function findKeytool() {
  */
 export function prepareReleaseKey({ job, dir, secrets, log }) {
   const k = job.release?.key;
-  if (!["first", "update"].includes(job.release?.kind) || !k) return { ok: true, env: {}, secrets: [], note: null };
+  if (!["first", "update", "apk"].includes(job.release?.kind) || !k) return { ok: true, env: {}, secrets: [], note: null };
   const own = appKeyProperties(dir);
   if (own) return { ok: true, env: {}, secrets: [], note: `앱 자체 키 설정(${path.relative(dir, own)})을 그대로 써요(건드리지 않음).` };
 
@@ -357,7 +357,7 @@ export function jksInfo(buf) {
       o += 4;
       const der = buf.subarray(o, o + l);
       o += l;
-      return sha1Hex(der);
+      return { sha1: sha1Hex(der), sha256: createHash("sha256").update(der).digest("hex") }; // sha256: 시험용 APK 서명 비교용(소문자 hex)
     };
     for (let i = 0; i < n && i < 20; i++) {
       const tag = buf.readUInt32BE(o);
@@ -374,11 +374,12 @@ export function jksInfo(buf) {
           const h = cert();
           if (c === 0) first = h;
         }
-        aliases.push({ alias, sha1: first });
+        aliases.push({ alias, sha1: first?.sha1 ?? null, sha256: first?.sha256 ?? null });
       } else if (tag === 2) {
-        aliases.push({ alias, sha1: cert() });
+        const h = cert();
+        aliases.push({ alias, sha1: h.sha1, sha256: h.sha256 });
       } else {
-        aliases.push({ alias, sha1: null }); // JCEKS 비밀 키 등: 더 읽지 않는다
+        aliases.push({ alias, sha1: null, sha256: null }); // JCEKS 비밀 키 등: 더 읽지 않는다
         break;
       }
     }
