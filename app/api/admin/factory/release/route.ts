@@ -67,7 +67,7 @@ async function keyTarget(body: Record<string, unknown>) {
 }
 
 // 본문: { action: "saveAccount", ...계정 } | { action: "updateApp", appSlug, releaseAccountId?, releaseStatus?, packageName?, firstUploadDone?, customKeystorePath?, customKeyAlias? }
-//       | { action: "enqueueRelease", appSlug, kind?: first|store|update(|project 예전), runNow?, overwriteProject? }  (통제실 '승인'은 runNow: true 로 일감 생성 + 승인.
+//       | { action: "enqueueRelease", appSlug, kind?: first|store|update|apk(시험용 APK)(|project 예전), runNow?, overwriteProject? }  (통제실 '승인'은 runNow: true 로 일감 생성 + 승인.
 //         overwriteProject: store/project 만, 홈페이지 프로젝트 기존 값도 덮어쓰기. 기본 꺼짐.
 //         updateItems: store/project 는 필수(1개 이상). store=images|listing|video|privacy, project=description|cover|privacy)
 //       | { action: "savePromoVideo", appSlug, url }  (홍보 영상 YouTube 링크. 빈 값이면 지움)
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
   } else if (action === "enqueueRelease") {
     if (!APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 가 올바르지 않아요." }, { status: 400 });
     if (body?.kind !== undefined && !isReleaseKind(body.kind)) {
-      return NextResponse.json({ message: "kind 는 first, store, project 중 하나예요." }, { status: 400 });
+      return NextResponse.json({ message: "kind 는 first, store, update, apk 중 하나예요(project 는 예전 종류)." }, { status: 400 });
     }
     const kind = isReleaseKind(body?.kind) ? body.kind : "first";
 

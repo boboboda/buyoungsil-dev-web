@@ -870,3 +870,38 @@ model FactoryReviewVideoChunk {
   @@id([jobId, idx])
   @@map("factory_review_video_chunks")
 }
+
+// 출시 패키지 '시험용 APK': 감독 프로그램이 서명된 release APK 를 8MB 조각으로 올리고, 통제실(관리자만)이 내려받는다.
+// 공개 업로드 서버가 아니라 DB 에 둔다(관리자 전용 주소·삭제 가능). 앱당 다 받은 것 최근 5개만 남긴다. 키·비밀번호는 없다.
+model FactoryTestApk {
+  id           String    @id @default(cuid())
+  appSlug      String
+  jobId        String // 만든 출시 일감(releaseKind=apk)
+  fileName     String // 서버가 정한 내려받기 이름(영문·숫자·._- 만)
+  size         Int // 전체 바이트
+  sha256       String // 감독 프로그램이 잰 값. 다 받으면 서버가 다시 재서 맞아야 complete
+  versionName  String?
+  versionCode  Int?
+  builtAt      DateTime?
+  gitCommit    String? // 앱 폴더 커밋(짧은 해시, 고친 채면 +dirty)
+  signerSha256 String? // 서명 인증서 SHA-256 지문(공개 정보)
+  keyLabel     String? // 서명에 쓴 키 이름(표시용, 값 없음)
+  chunkCount   Int
+  received     Int       @default(0)
+  complete     Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  chunks       FactoryTestApkChunk[]
+
+  @@index([appSlug, createdAt])
+  @@map("factory_test_apks")
+}
+
+model FactoryTestApkChunk {
+  apkId String
+  idx   Int
+  data  Bytes
+  apk   FactoryTestApk @relation(fields: [apkId], references: [id], onDelete: Cascade)
+
+  @@id([apkId, idx])
+  @@map("factory_test_apk_chunks")
+}

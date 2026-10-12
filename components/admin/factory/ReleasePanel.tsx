@@ -23,6 +23,7 @@ import { AI_LABELS, type TaskAiEngine } from "@/lib/factory/ai";
 import AppKeyLookup from "./AppKeyLookup";
 import { KeyCheckView, KeyError, UntrackView } from "./KeyVault";
 import StoreAssetsView from "./StoreAssetsView";
+import TestApkBox from "./TestApkBox";
 import UploadTestBox from "./UploadTestBox";
 import { BuildResultView, FirstVideoPanel, LinkWaitPanel, ListingCopy, ReviewPanel, isYoutubeUrl } from "./ReleaseReview";
 import {
@@ -820,6 +821,9 @@ function AppRow({
           />
         )}
 
+        {/* ── 시험용 APK(출시 일감과 따로) ── */}
+        <TestApkBox app={app} busy={busy} call={call} />
+
         {app.requiresTesting && app.testingStartedAt && (
           <p className="text-sm">
             🧪 비공개 테스트 {fmtDate(app.testingStartedAt)} 시작 → {fmtDate(app.testingDueAt)} 완료 예정
@@ -869,7 +873,12 @@ export default function ReleasePanel() {
   // 진행 중이거나 대기 중인 출시 일감이 있으면 15초마다 단계를 새로 읽는다
   // [키 조회] 결과를 기다리는 앱이 있어도 새로 읽는다
   const live = !!data?.apps.some(
-    (a) => (a.lastReleaseJob && ["pending", "approved", "running"].includes(a.lastReleaseJob.status)) || a.keyScanRequest || a.key?.checking || a.key?.untracking,
+    (a) =>
+      (a.lastReleaseJob && ["pending", "approved", "running"].includes(a.lastReleaseJob.status)) ||
+      (a.testApk?.job && ["pending", "approved", "running"].includes(a.testApk.job.status)) ||
+      a.keyScanRequest ||
+      a.key?.checking ||
+      a.key?.untracking,
   );
 
   useEffect(() => {

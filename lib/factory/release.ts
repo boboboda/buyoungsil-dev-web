@@ -18,16 +18,19 @@ import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import { uploadTestState } from "@/lib/factory/uploadTest";
 import { APP_NAME_SOURCE_LABELS, cleanAppName, pickAppName, storeTitleOf } from "@/lib/factory/appName";
 import { isStoreTarget, storeTargetBlockReason } from "@/lib/factory/storeTarget";
+import { TEST_APK_MAX, apkReadiness, apkStackSupported, listTestApks } from "@/lib/factory/testApk";
 
 // 출시 일감 종류. 종류마다 서버가 만드는 지시문과 허용 동작(outbox 파일·키 준비)이 다르다.
 // project(프로젝트 업데이트)는 예전 종류: 예전 일감 기록이 읽히고 커넥터 호환으로만 받는다(통제실에서는 고르지 않음. 홈페이지만 고치려면 store + 덮어쓰기)
-export const RELEASE_KINDS = ["first", "store", "update", "project"] as const;
+// apk(시험용 APK): 실기기 시험용 서명 release APK 를 만들어 통제실에서 내려받는다. Play 는 건드리지 않는다(출시 카드의 '시험용 APK' 영역에서만 요청)
+export const RELEASE_KINDS = ["first", "store", "update", "project", "apk"] as const;
 export type ReleaseKind = (typeof RELEASE_KINDS)[number];
 export const RELEASE_KIND_LABELS: Record<ReleaseKind, string> = {
   first: "첫 출시",
   store: "스토어 수정",
   update: "앱 업데이트(기능 추가)",
   project: "프로젝트 업데이트(예전)",
+  apk: "시험용 APK",
 };
 // 종류 옆 한 줄 설명
 export const RELEASE_KIND_HINTS: Record<ReleaseKind, string> = {
@@ -35,6 +38,7 @@ export const RELEASE_KIND_HINTS: Record<ReleaseKind, string> = {
   store: "Play 스토어 정보 바꾸기(이미지·문구·영상 링크·개인정보처리방침) → 검토 → Play 업로드",
   update: "기능을 추가해 새 버전 내기(코드 수정·시험 → 버전 올림 → AAB → 비공개 테스트 트랙)",
   project: "예전 종류: 홈페이지 프로젝트 정보만(지금은 스토어 수정 + 홈페이지 덮어쓰기)",
+  apk: "등록된 서명 키로 release APK 를 만들어 통제실에서 내려받기(실기기 시험용). Play 는 건드리지 않아요",
 };
 // 통제실에서 고를 수 있는 종류(예전 종류 제외)
 export const SELECTABLE_KINDS: ReleaseKind[] = ["first", "store", "update"];
@@ -77,6 +81,7 @@ const OUTBOX_BY_KIND: Record<ReleaseKind, string[]> = {
   store: ["release.json", "project.json"],
   update: ["release.json", "project.json"],
   project: ["project.json"],
+  apk: [], // APK 는 outbox 가 아니라 감독 프로그램이 /api/factory/test-apk 로 올린다
 };
 // 홈페이지 프로젝트 '덮어쓰기'를 고를 수 있는 종류(첫 출시는 늘 빈 칸만 채운다). 앱 업데이트는 이 체크가 '홈페이지 프로젝트도 반영'
 export const OVERWRITE_KINDS: ReleaseKind[] = ["store", "project", "update"];
@@ -609,10 +614,11 @@ type ReadyInput = {
   keyPassword: string; // none | waiting | delivered
   ownKeyProperties: boolean; // 앱 폴더에 key.properties 가 있음(키 후보 찾기 결과)
   serviceAccountExists: boolean | null; // PC 에 서비스 계정 키 파일이 있는지(감독 프로그램 확인). 모르면 null
+  stack?: string | null; // 앱 종류(시험용 APK 지원 여부)
 };
 
 /** 종류마다 승인 전에 필요한 준비. 저장된 값 기준(카드에서 고친 뒤 [저장]해야 반영) */
-export function releaseReadiness(r: ReadyInput): Record<"first" | "store" | "update", ReadyItem[]> {
+export function releaseReadiness(r: ReadyInput): Record<"first" | "store" | "update" | "apk", ReadyItem[]> {
   const account: ReadyItem = { label: "배포 계정 선택", ok: !!r.app?.releaseAccountId && !!r.account, note: r.account ? `계정 ${r.account.label}` : "카드에서 계정을 골라 [저장]" };
   const pkg: ReadyItem = { label: "패키지 이름", ok: !!r.app?.packageName, note: r.app?.packageName ?? "카드에서 패키지 이름을 넣고 [저장]" };
   const own = r.ownKeyProperties;
@@ -645,6 +651,16 @@ export function releaseReadiness(r: ReadyInput): Record<"first" | "store" | "upd
     store: keep([account, pkg, sa, saFile, firstUpload]),
     // 앱 업데이트(업데이트 내용은 카드에서 입력할 때 확인)
     update: keep([account, pkg, key, password, keyFile, sa, saFile, firstUpload]),
+    // 시험용 APK: 서명 키만 있으면 된다(서비스 계정·최초 업로드 필요 없음). 출시 카드의 '시험용 APK' 영역에서 따로 본다
+    apk: apkReadiness({
+      stack: r.stack ?? null,
+      accountLabel: r.app?.releaseAccountId && r.account ? r.account.label : null,
+      packageName: r.app?.packageName ?? null,
+      key: r.key,
+      keyPassword: r.keyPassword,
+      keyFileExists: r.keyCheckExists,
+      ownKeyProperties: r.ownKeyProperties,
+    }),
   };
 }
 
@@ -724,6 +740,7 @@ export async function releaseOverview() {
     return keyScan.at ? { appSlug: slug, keys: [], keyProperties: [], missing: true, at: keyScan.at } : null;
   };
   const pwByRef = new Map(keyPasswords.map((k) => [k.keyRef, k]));
+  const testApks = await listTestApks([...new Set(jobs.map((j) => j.appSlug))]);
   const seen = new Set<string>();
   const rows = [];
   // 출시 대상이 아닌 앱(목록 아래 '출시 대상이 아닌 앱'). 이름·종류·마지막 일감 상태만
@@ -740,7 +757,7 @@ export async function releaseOverview() {
   // 마지막 출시 일감의 최근 로그(마스킹). 진행 중이거나 실패한 것만
   const lastRelease = new Map<string, (typeof jobs)[number]>();
 
-  for (const j of jobs) if (j.kind === "release" && !lastRelease.has(j.appSlug)) lastRelease.set(j.appSlug, j);
+  for (const j of jobs) if (j.kind === "release" && j.releaseKind !== "apk" && !lastRelease.has(j.appSlug)) lastRelease.set(j.appSlug, j);
   const logJobs = [...lastRelease.values()].filter((j) => ["running", "failed", "review"].includes(j.status)).slice(0, 30);
   const videos = await reviewVideoInfo([...lastRelease.values()].filter((j) => j.status === "review").map((j) => j.id));
   const logs = new Map(
@@ -776,7 +793,9 @@ export async function releaseOverview() {
       continue;
     }
     // [삭제]는 출시 대상 표시도 푼다. 다시 추가한 앱은 지운 시각 이전의 출시 일감을 결과로 보이지 않는다
-    const lastRelease = mine.find((x) => x.kind === "release" && (!removedAt || x.createdAt > removedAt)) ?? null;
+    const lastRelease = mine.find((x) => x.kind === "release" && x.releaseKind !== "apk" && (!removedAt || x.createdAt > removedAt)) ?? null;
+    // 시험용 APK 일감은 출시 일감 표시(검토·반영 상태)와 섞지 않고 '시험용 APK' 영역에 따로
+    const lastApk = mine.find((x) => x.kind === "release" && x.releaseKind === "apk" && (!removedAt || x.createdAt > removedAt)) ?? null;
     const account = accounts.find((a) => a.id === app?.releaseAccountId) ?? null;
     const key = effectiveKey(app ?? null, account);
     const pw = key ? pwByRef.get(key.ref) : undefined;
@@ -808,6 +827,7 @@ export async function releaseOverview() {
         keyPassword: pw?.state ?? "none",
         ownKeyProperties: !!scan && !scan.missing && scan.keyProperties.length > 0,
         serviceAccountExists: saPc ? saPc.exists : null,
+        stack: j.stack,
       }),
       stack: j.stack,
       done: mine.some((x) => x.status === "done"),
@@ -850,6 +870,23 @@ export async function releaseOverview() {
           }
         : null,
       keyScan: keyScanOf(j.appSlug),
+      // 시험용 APK: 최근 요청 일감(진행·실패 표시)과 내려받을 수 있는 APK(최신순 최대 5개)
+      testApk: {
+        supported: apkStackSupported(j.stack),
+        job: lastApk
+          ? {
+              id: lastApk.id,
+              status: lastApk.status,
+              phase: lastApk.phase,
+              phaseLabel: stageLabel(lastApk.phase),
+              createdAt: lastApk.createdAt,
+              finishedAt: lastApk.finishedAt,
+              failStageLabel: lastApk.status === "failed" ? stageLabel(lastApk.failStage ?? lastApk.phase) : null,
+              failReason: lastApk.status === "failed" ? (maskSecrets(lastApk.failReason)?.slice(0, 1000) ?? null) : null,
+            }
+          : null,
+        files: testApks.get(j.appSlug) ?? [],
+      },
       // 출시 카드 [키 조회] 진행 상태(요청·가져간 시각). 결과가 오면 사라진다
       keyScanRequest: keyScan.appRequests[j.appSlug] ?? null,
       lastReleaseJob: lastRelease
@@ -1196,6 +1233,7 @@ const STAGES_BY_KIND: Record<ReleaseKind, string[]> = {
   store: ["icon", "screenshots", "video", "listing", "review", "upload", "homepage"], // review·upload·homepage 는 감독 프로그램(privacy 단계는 갱신 항목으로 고를 때만)
   update: ["code", "test", "version", "key", "build", "sign", "upload", "homepage"],
   project: ["homepage"],
+  apk: ["key", "build", "sign", "upload"], // sign = apksigner 확인, upload = 홈페이지로 올리기(감독 프로그램)
 };
 // 예전(검토 단계가 없던) 일감의 단계. 재시도·표시에만 쓴다
 const LEGACY_STAGES: Partial<Record<ReleaseKind, string[]>> = {
@@ -1417,6 +1455,28 @@ export async function buildReleasePlan(
     return { ok: true, plan: lines.join("\n"), requiredSecrets: [] };
   }
 
+  if (kind === "apk") {
+    const lines = [
+      ...head,
+      "이 지시는 **실기기 시험용 서명 release APK 를 만드는 일**이에요. 앱 기능·버전·스토어 자료는 바꾸지 마세요. Play Console·Play API 는 건드리지 않아요.",
+      "",
+      ...keySection("단계 key → build"),
+      "## 단계 build: release APK 만들기",
+      "- Flutter: `flutter build apk --release` (모든 ABI 가 든 APK 하나). 버전(pubspec.yaml 의 version)은 지금 값 그대로 두세요.",
+      "- 서명은 반드시 위 키로(앱 자체 key.properties 또는 FACTORY_KEYSTORE_* 환경변수). 디버그 키로 서명되면 감독 프로그램이 거절해요.",
+      "  서명 설정이 아직 없으면 android/app/build.gradle(.kts) 의 signingConfigs.release 만 고치세요(환경변수를 읽게). 그 밖의 코드는 바꾸지 마세요.",
+      '- 다 만들면 `.factory/apk.json` 에 {"path": "build/app/outputs/flutter-apk/app-release.apk", "versionName": "1.0.0", "versionCode": 1} 를 쓰세요(경로는 앱 폴더 기준).',
+      "- APK 는 PC 에만 두세요. 서버로 올리는 일(검사·홈페이지 업로드)은 감독 프로그램이 해요(sign = apksigner 확인, upload).",
+      "",
+      "## 하지 말 것",
+      "- AAB·Play 업로드·스토어 자료·홈페이지 프로젝트 반영. 키 파일 복사·커밋, 비밀번호를 파일·로그·JSON 에 쓰기, 새 키 만들기.",
+      "",
+      stageSection(kind),
+    ];
+
+    return { ok: true, plan: lines.join("\n"), requiredSecrets: [] };
+  }
+
   if (kind === "update") {
     const lastVersion = (app?.aab as { versionName?: string | null; versionCode?: number | null } | null) ?? null;
     const lines = [
@@ -1527,7 +1587,7 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
     const kind = releaseKindOf(r?.releaseKind);
     const app = apps.find((a) => a.appSlug === j.appSlug) ?? null;
     const acc = app?.releaseAccount ?? null;
-    const key = kind === "first" || kind === "update" ? effectiveKey(app, acc) : null;
+    const key = kind === "first" || kind === "update" || kind === "apk" ? effectiveKey(app, acc) : null;
     const names = key ? keySecretNames(key.ref) : null;
     const items = jobUpdateItems(kind, r?.updateItems);
     const reviewRequired = r?.reviewRequired === true;
@@ -1552,8 +1612,10 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
       // Play Developer API 업로드(감독 프로그램이 직접): 스토어 자료 수정 = 등록정보·이미지, 첫 출시 = 업데이트 AAB → 비공개 테스트 트랙.
       // 서비스 계정 키는 경로만 준다(감독 프로그램이 읽어 토큰을 받고, 내용은 어디에도 보내지 않는다). missing 이 있으면 업로드하지 않는다.
       // 첫 출시(검토 단계가 있는 새 일감)는 Play 에 올리지 않는다(최초 AAB 는 사람이 Console 에 직접). 예전 첫 출시 일감만 업데이트 AAB 업로드.
+      // 시험용 APK: 올릴 수 있는 최대 크기(감독 프로그램이 미리 확인)
+      ...(kind === "apk" ? { apk: { maxBytes: TEST_APK_MAX, keyLabel: key ? (key.name ?? key.path) : null } } : {}),
       play:
-        kind === "project" || (kind === "first" && reviewRequired)
+        kind === "project" || kind === "apk" || (kind === "first" && reviewRequired)
           ? null
           : {
               packageName: app?.packageName ?? null,

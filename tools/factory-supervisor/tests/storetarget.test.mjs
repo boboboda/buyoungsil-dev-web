@@ -23,6 +23,8 @@ function loadTs(relative, dependencies = {}) {
 }
 
 const storeTarget = loadTs("lib/factory/storeTarget.ts");
+// 시험용 APK: 준비 조건은 실제 함수, 목록은 비움(이 시험은 APK 를 보지 않는다)
+const testApk = { ...loadTs("lib/factory/testApk.ts", { "@/lib/prisma": {} }), listTestApks: async () => new Map() };
 const { NOT_TARGET_MESSAGE, NON_STORE_REASON, shouldBackfillStoreTarget, storeTargetBlockReason } = storeTarget;
 
 // ───── 가짜 DB ─────
@@ -100,6 +102,7 @@ function loadRelease(prisma) {
     "@/lib/factory/uploadTest": { uploadTestState: async () => null },
     "@/lib/factory/appName": appName,
     "@/lib/factory/storeTarget": storeTarget,
+    "@/lib/factory/testApk": testApk,
   });
 }
 
@@ -114,6 +117,7 @@ function loadMcp(prisma, release) {
     "@/lib/factory/release": release,
     "@/lib/factory/storeAssets": { readStoreAssets: () => null, savePromoVideoUrl: async () => ({ ok: true }) },
     "@/lib/factory/storeTarget": storeTarget,
+    "@/lib/factory/testApk": testApk,
     "@/lib/factory/jobs": {
       ACTIVE_STATUSES: ["pending", "approved", "running"],
       APP_SLUG_RE: /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/,

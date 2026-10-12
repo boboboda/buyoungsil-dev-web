@@ -15,7 +15,7 @@ import { releaseAppName } from "@/lib/factory/appName";
 
 const API_TIMEOUT_MS = 5000;
 // lib/factory/release.ts 의 라벨과 같게(그 파일이 이 파일을 불러서, 순환을 피하려고 여기 따로 둔다)
-const RELEASE_KIND_TEXT: Record<string, string> = { first: "첫 출시", store: "스토어 수정", update: "앱 업데이트(기능 추가)", project: "프로젝트 업데이트(예전)" };
+const RELEASE_KIND_TEXT: Record<string, string> = { first: "첫 출시", store: "스토어 수정", update: "앱 업데이트(기능 추가)", project: "프로젝트 업데이트(예전)", apk: "시험용 APK" };
 const STAGE_TEXT: Record<string, string> = { key: "키", build: "빌드", sign: "서명", store: "스토어 자료", upload: "업로드", homepage: "홈페이지 반영", scaffold: "준비", review: "검토 대기", code: "코드 수정", test: "시험", version: "버전 올림" };
 const MAX_BUTTON_AGE_SEC = 24 * 60 * 60; // 24시간이 지난 알림의 버튼은 무시한다
 

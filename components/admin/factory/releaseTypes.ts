@@ -170,7 +170,7 @@ export interface ReleaseApp {
   projectTitle: string | null; // 그 제목(지워졌으면 "(삭제된 프로젝트)")
   alreadyReleased: boolean; // 이미 첫 업로드를 마친 앱
   requiresTesting: boolean; // 비공개 테스트가 필요한 계정(개인 계정)
-  readiness: Record<"first" | "store" | "update", ReadyItem[]>;
+  readiness: Record<"first" | "store" | "update" | "apk", ReadyItem[]>;
   stack: string;
   done: boolean;
   active: boolean;
@@ -208,6 +208,36 @@ export interface ReleaseApp {
   keyScan: KeyScanApp | null;
   keyScanRequest: { requestedAt: string; takenAt: string | null } | null; // [키 조회] 진행 중
   lastReleaseJob: ReleaseJobInfo | null;
+  testApk: TestApkState; // 시험용 APK(출시 일감과 따로 표시)
+}
+
+// 출시 패키지 '시험용 APK': 최근 요청 일감과 내려받을 수 있는 APK(최신순 최대 5개). 서버 lib/factory/testApk.ts
+export interface TestApkFile {
+  id: string;
+  fileName: string;
+  size: number;
+  sha256: string;
+  versionName: string | null;
+  versionCode: number | null;
+  builtAt: string | null;
+  gitCommit: string | null;
+  signerSha256: string | null;
+  keyLabel: string | null;
+  createdAt: string;
+}
+export interface TestApkState {
+  supported: boolean; // 앱 종류가 지원되는지(지금은 Flutter 만)
+  job: {
+    id: string;
+    status: string;
+    phase: string | null;
+    phaseLabel: string;
+    createdAt: string;
+    finishedAt: string | null;
+    failStageLabel: string | null;
+    failReason: string | null;
+  } | null;
+  files: TestApkFile[];
 }
 
 // 스토어 자료(.factory/store/) 결과. 서버 lib/factory/storeAssets.ts 의 StoreAssets 와 같다

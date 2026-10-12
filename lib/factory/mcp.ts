@@ -244,8 +244,8 @@ export const FACTORY_TOOLS = [
         aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 홈페이지의 주사용 AI" },
         kind: {
           type: "string",
-          enum: ["first", "store", "update", "project"],
-          description: "first=첫 출시(기본) | store=스토어 수정 | update=앱 업데이트(기능 추가) | project=프로젝트 업데이트(예전, 호환용)",
+          enum: ["first", "store", "update", "project", "apk"],
+          description: "first=첫 출시(기본) | store=스토어 수정 | update=앱 업데이트(기능 추가) | project=프로젝트 업데이트(예전, 호환용) | apk=시험용 APK(등록된 서명 키로 release APK 를 만들어 통제실에서 내려받기, Play 는 안 건드림. Flutter 만)",
         },
         overwriteProject: {
           type: "boolean",
@@ -441,7 +441,7 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
   if (!APP_SLUG_RE.test(appSlug)) return text("appSlug 가 올바르지 않아요.", true);
   // 출시 대상(출시 패키지 목록)인 앱만 출시 일감을 받는다. 아무것도 저장하기 전에 확인한다
   if (!isStoreTarget(await prisma.factoryApp.findUnique({ where: { appSlug }, select: { storeTarget: true } }))) return text(`${appSlug}: ${NOT_TARGET_MESSAGE}`, true);
-  if (args.kind !== undefined && !isReleaseKind(args.kind)) return text("kind 는 first, store, update 중 하나예요(project 는 예전 종류).", true);
+  if (args.kind !== undefined && !isReleaseKind(args.kind)) return text("kind 는 first, store, update, apk 중 하나예요(project 는 예전 종류).", true);
   const kind = isReleaseKind(args.kind) ? args.kind : "first";
   if (args.overwriteProject !== undefined && typeof args.overwriteProject !== "boolean") return text("overwriteProject 는 true/false 예요.", true);
   // 홈페이지 프로젝트 덮어쓰기(앱 업데이트는 '홈페이지 프로젝트도 반영')는 store/project/update 만(기본 꺼짐)
