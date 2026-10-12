@@ -8,6 +8,7 @@ import {
   DropdownTrigger,
   DropdownMenu,
   DropdownItem,
+  DropdownSection,
   Link,
   Skeleton,
 } from "@heroui/react";
@@ -83,6 +84,26 @@ export default function NavBar() {
     }
   };
 
+  // 메뉴 강조: 첫 경로가 메뉴 주소이거나 그 메뉴에 묶인 주소(activePaths)면 켠다
+  const isNavActive = (item: (typeof siteConfig.navItems)[number]) =>
+    path === item.href || (item.activePaths ?? []).includes(path);
+
+  // 관리자 드롭다운 항목 (PC·모바일 같은 목록: config/site.ts 의 adminNavItems)
+  const adminDropdownItems =
+    user?.role === "admin" ? (
+      <DropdownSection key="admin" showDivider title="관리자">
+        {siteConfig.adminNavItems.map((item) => (
+          <DropdownItem
+            key={item.key}
+            textValue={item.label}
+            onPress={() => router.push(item.href)}
+          >
+            <p>{item.label}</p>
+          </DropdownItem>
+        ))}
+      </DropdownSection>
+    ) : null;
+
   return (
     <div className="w-full max-w-[1400px] flex flex-col mt-2 md:mt-[20px] md:items-center justify-end md:justify-center">
       <div className="w-full">
@@ -113,7 +134,7 @@ export default function NavBar() {
                       active:opacity-disabled transition-opacity
                       data-[active=true]:text-[#0072F5]
                       data-[active=true]:dark:text-[#0072F5]"
-                    data-active={path === item.href ? true : false}
+                    data-active={isNavActive(item)}
                     href={item.href}
                   >
                     {item.label}
@@ -194,98 +215,7 @@ export default function NavBar() {
                           <p>{user?.email}</p>
                         </DropdownItem>
 
-                        {user?.role === "admin" ? (
-                          <>
-                            <DropdownItem
-                              key="adminDashboard"
-                              textValue="adminDashboard"
-                              onClick={() => router.push("/admin")}
-                            >
-                              <p>📊 관리자 대시보드</p>
-                            </DropdownItem>
-
-                            <DropdownItem
-                              key="adminProjects"
-                              textValue="adminProjects"
-                              onClick={() => router.push("/admin/projects")}
-                            >
-                              <p>💼 프로젝트 관리</p>
-                            </DropdownItem>
-
-                            <DropdownItem
-                              key="adminNotes"
-                              textValue="adminNotes"
-                              onClick={() => router.push("/admin/notes")}
-                            >
-                              <p>📚 개발노트 관리</p>
-                            </DropdownItem>
-
-                            <DropdownItem
-                              key="adminCategories"
-                              textValue="adminCategories"
-                              onClick={() => router.push("/admin/categories")}
-                            >
-                              <p>🏷️ 카테고리 관리</p>
-                            </DropdownItem>
-
-                            <DropdownItem
-                              key="adminDrafts"
-                              textValue="adminDrafts"
-                              onClick={() => router.push("/admin/drafts")}
-                            >
-                              <p>📥 초안함</p>
-                            </DropdownItem>
-
-                            <DropdownItem
-                              key="adminFactory"
-                              textValue="adminFactory"
-                              onClick={() => router.push("/admin/factory")}
-                            >
-                              <p>🏭 앱 공장</p>
-                            </DropdownItem>
-
-                            <DropdownItem
-                              key="adminStories"
-                              textValue="adminStories"
-                              onClick={() => router.push("/admin/stories")}
-                            >
-                              <p>😅 스토리 관리</p>
-                            </DropdownItem>
-
-                            {/* 🔥 외주 관리 추가 */}
-                            <DropdownItem
-                              key="adminWorks"
-                              textValue="adminWorks"
-                              onClick={() => router.push("/admin/works")}
-                            >
-                              <p>💻 외주 신청 관리</p>
-                            </DropdownItem>
-
-                            <DropdownItem
-                              key="adminLogs"
-                              textValue="adminLogs"
-                              onClick={() => router.push("/admin/logs/create")}
-                            >
-                              <p>📋 개발 로그 작성</p>
-                            </DropdownItem>
-
-                            <DropdownItem
-                              key="adminRevenues"
-                              textValue="adminRevenues"
-                              onClick={() => router.push("/admin/revenues/create")}
-                            >
-                              <p>💰 수익 데이터 입력</p>
-                            </DropdownItem>
-
-                            <DropdownItem
-                              key="adminAnalytics"
-                              textValue="adminAnalytics"
-                              onClick={() => router.push("/admin/analytics")}
-                            >
-                              <p>📈 앱 분석</p>
-                            </DropdownItem>
-                          </>
-                        ) : null}
+                        {adminDropdownItems}
 
                         <DropdownItem
                           key="logoutAll"
@@ -361,7 +291,7 @@ export default function NavBar() {
                       text-slate-600 dark:text-slate-300
                       active:bg-gray-100 dark:active:bg-gray-800
                       data-[active=true]:text-[#0072F5]"
-                    data-active={path === item.href}
+                    data-active={isNavActive(item)}
                     href={item.href}
                   >
                     {item.label}
@@ -421,58 +351,7 @@ export default function NavBar() {
                         <p className="text-xs">{user?.email}</p>
                       </DropdownItem>
 
-                      {user?.role === "admin" ? (
-                        <>
-                          <DropdownItem
-                            key="adminDashboard"
-                            textValue="adminDashboard"
-                            onClick={() => router.push("/admin")}
-                          >
-                            <p>📊 대시보드</p>
-                          </DropdownItem>
-
-                          <DropdownItem
-                            key="adminDrafts"
-                            textValue="adminDrafts"
-                            onClick={() => router.push("/admin/drafts")}
-                          >
-                            <p>📥 초안함</p>
-                          </DropdownItem>
-
-                          <DropdownItem
-                            key="adminFactory"
-                            textValue="adminFactory"
-                            onClick={() => router.push("/admin/factory")}
-                          >
-                            <p>🏭 앱 공장</p>
-                          </DropdownItem>
-
-                          <DropdownItem
-                            key="adminAnalytics"
-                            textValue="adminAnalytics"
-                            onClick={() => router.push("/admin/analytics")}
-                          >
-                            <p>📈 앱 분석</p>
-                          </DropdownItem>
-
-                          {/* 🔥 외주 관리 추가 */}
-                          <DropdownItem
-                            key="adminWorks"
-                            textValue="adminWorks"
-                            onClick={() => router.push("/admin/works")}
-                          >
-                            <p>💻 외주 관리</p>
-                          </DropdownItem>
-
-                          <DropdownItem
-                            key="adminWrite"
-                            textValue="adminWrite"
-                            onClick={() => router.push("/admin/write")}
-                          >
-                            <p>개발노트 쓰기</p>
-                          </DropdownItem>
-                        </>
-                      ) : null}
+                      {adminDropdownItems}
 
                       <DropdownItem
                         key="logoutAll"
