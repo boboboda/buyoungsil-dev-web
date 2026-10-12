@@ -8,7 +8,8 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: "프로젝트 | 코딩천재 부영실",
-  description: "AI로 만든 모바일/웹 프로젝트 모음. 출시된 앱부터 개발 중인 프로젝트까지 모두 공개합니다.",
+  description: "AI로 만든 모바일/웹 프로젝트 모음. 스토어에 출시된 앱부터 개발 중인 프로젝트까지 모두 공개합니다.",
+  alternates: { canonical: "/project" },
   keywords: ["프로젝트", "앱 개발", "웹 개발", "Flutter", "Next.js", "AI 개발"],
 };
 
