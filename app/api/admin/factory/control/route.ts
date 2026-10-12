@@ -4,6 +4,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
+import { isAiEngine, AI_LABELS } from "@/lib/factory/ai";
+import { setDefaultAiEngine } from "@/lib/factory/settings";
 import { runSupervisorAction, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
 
 export const dynamic = "force-dynamic";
@@ -24,12 +26,19 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
 
   const body = (await req.json().catch(() => null)) as {
+    defaultAiEngine?: unknown;
     enabled?: unknown;
     autoUpdate?: unknown;
     autoDeploy?: unknown;
     updateNow?: unknown;
     restart?: unknown;
   } | null;
+
+  if (body && Object.hasOwn(body, "defaultAiEngine")) {
+    if (!isAiEngine(body.defaultAiEngine)) return NextResponse.json({ message: "주사용 AI를 골라 주세요." }, { status: 400 });
+    await setDefaultAiEngine(body.defaultAiEngine);
+    return NextResponse.json({ ...(await supervisorSnapshot()), message: `주사용 AI를 ${AI_LABELS[body.defaultAiEngine]}로 저장했어요. 새 지시부터 적용돼요.` });
+  }
 
   let action: SupervisorAction | null = null;
 

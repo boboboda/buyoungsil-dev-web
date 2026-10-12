@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Chip } from "@heroui/react";
 import AiEngineSelect from "./AiEngineSelect";
-import { AI_LABELS, type AiEngine } from "@/lib/factory/ai";
+import { AI_LABELS, type AiEngine, type TaskAiEngine } from "@/lib/factory/ai";
 
 interface Msg {
   aiEngine?: AiEngine;
@@ -96,7 +96,7 @@ export default function MaintenancePanel() {
   const [data, setData] = useState<Data | null>(null);
   const [sel, setSel] = useState<string>("new");
   const [text, setText] = useState("");
-  const [aiEngine, setAiEngine] = useState<AiEngine>("claude");
+  const [aiEngine, setAiEngine] = useState<TaskAiEngine>("default");
   const [showLogs, setShowLogs] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -426,7 +426,7 @@ export default function MaintenancePanel() {
 
       {canSend ? (
         <div className="space-y-2">
-          <AiEngineSelect value={aiEngine} onChange={setAiEngine} disabled={busy} />
+          <AiEngineSelect allowDefault value={aiEngine} onChange={setAiEngine} disabled={busy} />
           <p className="text-xs text-default-500">선택한 AI로 차례대로 처리해요. AI를 바꾸면 이전 결과와 현재 작업 파일을 전달해요.</p>
           <textarea
             className="min-h-[80px] w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm"
@@ -440,7 +440,7 @@ export default function MaintenancePanel() {
             color="primary"
             isDisabled={busy || text.trim().length < 5}
             size="sm"
-            onPress={() => post({ action: "send", text, aiEngine, ...(sel !== "new" ? { threadId: sel } : {}) })}
+            onPress={() => post({ action: "send", text, aiEngine: aiEngine === "default" ? undefined : aiEngine, ...(sel !== "new" ? { threadId: sel } : {}) })}
           >
             {busy ? "보내는 중…" : sel === "new" ? "새 정비 시작" : thread?.activeTurn ? "대기열에 이어서 지시" : "이어서 지시"}
           </Button>

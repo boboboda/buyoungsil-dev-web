@@ -1,6 +1,20 @@
 // lib/factory/settings.ts
 // 통제실 설정값: 감독 프로그램 활성화(일시 정지), 자동 업데이트, 감독 프로그램 버전 정보, "지금 업데이트" 1회성 요청.
 import prisma from "@/lib/prisma";
+import { isAiEngine, type AiEngine } from "@/lib/factory/ai";
+
+const DEFAULT_AI_KEY = "defaultAiEngine";
+
+/** Existing rows keep their AI. This setting is resolved only when a new instruction omits an AI. */
+export async function getDefaultAiEngine(): Promise<AiEngine> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: DEFAULT_AI_KEY } });
+  return isAiEngine(row?.value) ? row.value : "claude";
+}
+
+export async function setDefaultAiEngine(engine: AiEngine): Promise<void> {
+  if (!isAiEngine(engine)) throw new Error("작업 AI가 올바르지 않아요.");
+  await prisma.factorySetting.upsert({ where: { key: DEFAULT_AI_KEY }, create: { key: DEFAULT_AI_KEY, value: engine }, update: { value: engine } });
+}
 
 const KEY = "supervisorEnabled";
 

@@ -36,7 +36,7 @@ const ID = /^[A-Za-z0-9_-]{1,40}$/;
 
 export const MAINTENANCE_INSTRUCTIONS =
   " 공장 정비(공장 자체 = 홈페이지·감독 프로그램 코드를 고치는 일)는 앱 일감과 따로예요: maintenance_list 로 정비 대화 목록을, " +
-  "maintenance_get(threadId) 로 대화·결과·배포 상태를 보고, maintenance_send(text, threadId?) 로 지시해요(threadId 를 주면 같은 Claude 세션에 이어서). " +
+  "maintenance_get(threadId) 로 대화·결과·배포 상태를 보고, maintenance_send(text, threadId?) 로 지시해요(threadId 를 주면 선택한 AI의 독립 세션에 이어서). " +
   "처리 중이어도 지시는 대기열에 쌓이고(응답에 몇 번째인지 나와요), 감독 프로그램이 보낸 순서대로 하나씩 처리해요. 앞 지시가 실패하면 대기열이 멈추고 관리자가 다음을 정해요. " +
   "채팅에서 보낸 지시는 관리자가 승인해야 시작하고(미리 승인 가능), 정비가 대기·진행 중이면 새 앱 일감은 멈춰요. 결과는 검사를 통과해야 GitHub 에 올라가고, " +
   "서버 배포는 대기열이 다 끝난 뒤 관리자가 통제실·텔레그램에서 [배포]를 눌러야 해요(채팅에서는 배포 못 함). 앱 만들기·고치기는 enqueue_app_job 을 쓰세요.";
@@ -67,14 +67,14 @@ export const MAINTENANCE_TOOLS = [
   {
     name: "maintenance_send",
     description:
-      "공장 정비 지시를 보냅니다(관리자 승인 뒤 차례가 되면 시작). threadId 를 주면 그 정비 대화에 이어서(같은 Claude 세션), 없으면 새 정비를 만들어요. " +
+      "공장 정비 지시를 보냅니다(관리자 승인 뒤 차례가 되면 시작). threadId 를 주면 그 정비 대화에서 선택한 AI의 세션에 이어서, 없으면 새 정비를 만들어요. " +
       "처리 중이거나 승인 대기인 지시가 있어도 대기열에 쌓이고, 응답에 '대기 N번째(앞에 M개)'가 나와요. " +
       "홈페이지(Next.js)·감독 프로그램(tools/factory-supervisor) 코드를 고치는 일만 보내세요. 서버 설정(nginx, .env)·PC 환경은 여기서 못 고쳐요.",
     inputSchema: {
       type: "object",
       properties: {
         text: { type: "string", description: "지시 내용(5~8000자). 무엇을 왜 고칠지 구체적으로" },
-        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 Claude Code" },
+        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 홈페이지의 주사용 AI" },
         threadId: { type: "string", description: "이어서 할 정비 id (선택)" },
       },
       required: ["text"],

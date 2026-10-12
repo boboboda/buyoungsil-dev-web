@@ -4,11 +4,52 @@
 
 ## 홈페이지에서 선택
 
+- 통제실 또는 `/admin/factory/settings`의 **주사용 AI**에서 기본 AI를 저장한다. 서버 `factory_settings.defaultAiEngine`에 유지되어 새로고침·다른 기기·API/MCP/훅에도 적용된다. 초기값은 Claude Code다. 이미 등록한 작업과 세션은 바꾸지 않는다.
+- 수정·출시·정비 입력의 **주사용 AI** 선택은 등록할 때 서버에서 기본값을 결정한다. 기본값을 읽는 동안 등록해도 오래된 Claude 선택을 보내지 않는다. 개별 Claude/Codex 선택은 기본값보다 우선한다.
+
 - `/admin/factory`: 일감 상세의 **작업 AI**를 고른 뒤 승인한다. 새 앱·수정·출시 일감 모두 적용된다. 승인된 대기 일감은 **AI 적용**, 실패한 일감은 AI 선택 후 **다시 시도**를 사용한다.
 - **수정 지시 바로 보내기**: AI를 선택해 등록한다. 기존 즉시 승인 옵션은 유지된다.
 - **공장 정비**: 지시마다 AI를 선택한다. 아직 시작하지 않은 지시와 실패한 지시는 대화 안의 선택기로 바꿀 수 있다. 실행 중인 지시는 AI를 바꿀 수 없으며, 다음 지시를 다른 AI로 보내 인계한다.
 - `/admin/factory/release`: 출시 일감 등록 시 AI를 선택한다. 기존 키 준비·검토 승인·업로드·배포 조건은 유지된다. 실패 일감의 AI 변경은 일반 일감 상세에서 할 수 있다.
-- 선택값을 보내지 않은 기존 API/MCP 호출과 기존 DB 행은 `claude`가 기본이다. 설치·로그인·실행 실패 시 다른 AI로 자동 전환하지 않는다.
+- 선택값을 보내지 않은 API/MCP 호출은 홈페이지 주사용 AI를 따른다(설정이 없으면 `claude`). 기존 DB 행은 계속 원래 AI다. 설치·로그인·실행 실패 시 다른 AI로 자동 전환하지 않는다.
+
+## Claude·Codex 지시 훅
+
+`factory-hook.mjs`는 공장 정비 지시를 기존 서버 대기열에 등록한다. AI나 별도 감독을 실행하지 않는다. 기존 스케줄러의 감독이 승인된 지시를 받아 AI별 세션·잠금·부모 검증·결과 보고를 수행한다.
+
+기존 실행본을 업데이트한 뒤 설치한다:
+
+```powershell
+node C:\Users\kju90\dev\factory\supervisor-src\tools\factory-supervisor\install-factory-hooks.mjs --dry-run
+node C:\Users\kju90\dev\factory\supervisor-src\tools\factory-supervisor\install-factory-hooks.mjs
+```
+
+설치기는 기존 `~/.claude/settings.json`과 `~/.codex/hooks.json`을 백업하고 SessionStart·UserPromptSubmit 명령만 추가한다. Claude 상태/백업 훅·인증·Codex config.toml은 유지한다. Codex는 공식 훅 정책에 따라 `/hooks`에서 새 두 훅을 검토·신뢰해야 한다. 훅 신뢰 우회 옵션이나 신뢰 해시 조작은 사용하지 않는다. Claude 설정은 새 CLI 세션에서 확인한다.
+
+두 AI의 일반 입력에서 사용한다(슬래시 명령 해석기와 충돌하지 않는 `공장:` 접두사를 권장):
+
+```text
+공장: codex 관리자 화면의 오류 메시지를 수정해 줘
+공장: claude 감독 프로그램의 타임아웃 처리를 점검해 줘
+공장: 주사용 AI로 이 기능을 점검해 줘
+공장: codex --thread <정비ID> 앞 지시 결과를 확인하고 이어서 수정해 줘
+공장: status <정비ID>
+```
+
+일반 대화는 전송하지 않는다. 감독이 실행 중인 하위 AI에서는 훅 등록을 건너뛰어 재귀 일감을 만들지 않는다. 지시 등록·결과 조회 뒤 현재 프롬프트를 차단해 같은 지시를 지금 세션에서도 실행하는 중복을 막는다. 실패해도 현재 세션에서 대신 실행하지 않는다. 등록된 훅 지시는 통제실·텔레그램 승인 전까지 `awaiting_approval`이며, 기본 AI 설정 변경·승인·배포를 요청할 수 없다.
+
+네이티브 훅 신뢰 전에도 실행기를 직접 사용할 수 있다. 지시 본문은 stdin으로만 전달하고 설정 토큰은 출력하지 않는다:
+
+```powershell
+'관리자 화면의 오류 메시지를 점검해 줘' | node tools/factory-supervisor/factory-hook.mjs submit --ai codex
+node tools/factory-supervisor/factory-hook.mjs status <정비ID>
+```
+
+`FACTORY_CONFIG` 또는 기존 `~/dev/factory/supervisor.config.json`의 HTTPS 서버 주소·작업 PC 토큰을 재사용한다. `/api/factory/hooks`는 작업 PC 인증·요청 수 제한·본문 크기 제한을 적용한다. 서버의 요청 ID로 재시도를 중복 제거하고 새 대화·지시를 하나의 DB 트랜잭션으로 생성한다. Claude 이벤트에 turn ID가 없으면 transcript 파일 메타데이터, 없으면 60초의 로컬 receipt를 사용한다. 동일 이벤트 재시도는 같은 지시가 되며, 반복해서 별도 지시를 보낼 때는 새 턴 또는 명시적 요청 ID를 사용한다. `/factory`와 `factory:` 접두사도 어댑터에서 처리하지만 CLI의 슬래시 명령 인식은 별개다.
+
+이 훅은 공장 정비용이다. 새 앱·앱 수정·출시는 홈페이지 및 기존 앱 MCP 등록 경로를 사용하며, 그곳도 주사용 AI 기본값을 따른다.
+
+공식 동작 참고: https://learn.chatgpt.com/docs/hooks (비관리 훅의 정의별 사용자 신뢰 검토).
 
 ## 서버 계약과 구버전 보호
 
@@ -57,7 +98,7 @@ Codex는 `workspace-write`, `approval_policy=never`, 셸 네트워크 차단으�
 
 자체 MCP 서버의 앱·출시·정비 등록 도구에는 선택 AI 필드를 추가했다. 승인은 계속 기존 경로가 담당한다. Codex MCP 연결·자격증명은 별도이며 실제 연결·Google OAuth 재인증은 이번 구현에서 실행하지 않았다.
 
-Claude의 전역 상태·Git 백업 훅은 수정하지 않았다. Codex를 Claude 상태/캐시 사용량으로 위장하지 않는다. 공통 필수 검사와 실행 감사는 실행기에서 보장하며, 네이티브 Codex 훅에 Claude 이벤트를 그대로 이식하지 않았다. Codex 원격 Git 백업·전용 사용량 대시보드는 아직 연결하지 않았다.
+Claude의 기존 상태·Git 백업 훅은 유지한다. 별도의 공장 지시 훅만 두 AI의 SessionStart·UserPromptSubmit에 추가한다. Codex를 Claude 상태/캐시 사용량으로 위장하지 않는다. 공통 필수 검사와 실행 감사는 실행기에서 보장한다. Codex 원격 Git 백업·전용 사용량 대시보드는 아직 연결하지 않았다.
 
 ## 설정과 적용 순서
 

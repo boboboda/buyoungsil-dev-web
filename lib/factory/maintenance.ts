@@ -15,7 +15,7 @@ import prisma from "@/lib/prisma";
 import { isAiEngine, type AiEngine } from "@/lib/factory/ai";
 import { maskSecrets } from "@/lib/factory/mask";
 import { notifyDeployReady, notifyMaintenance, notifyText } from "@/lib/factory/telegram";
-import { getSettingValue, isAutoDeployEnabled, setSettingValue } from "@/lib/factory/settings";
+import { getDefaultAiEngine, getSettingValue, isAutoDeployEnabled, setSettingValue } from "@/lib/factory/settings";
 
 export const TURN_ACTIVE = ["queued", "running"] as const;
 const QUEUE_STATES = ["awaiting_approval", "queued", "running"];
@@ -177,7 +177,7 @@ export async function queueAction(action: "skip" | "retry" | "clear", via: strin
 /** 새 정비(threadId 없음) 또는 기존 정비에 이어서 지시. source=통제실 이면 바로 대기열, 채팅이면 승인 대기. 처리 중이어도 대기열에 쌓는다. */
 export async function sendMaintenance(input: { threadId?: unknown; text?: unknown; aiEngine?: unknown; source: "통제실" | "채팅" }): Promise<Result> {
   if (input.aiEngine !== undefined && !isAiEngine(input.aiEngine)) return fail(400, "작업 AI가 올바르지 않아요.");
-  const aiEngine = isAiEngine(input.aiEngine) ? input.aiEngine : "claude";
+  const aiEngine = isAiEngine(input.aiEngine) ? input.aiEngine : await getDefaultAiEngine();
   const text = clean(input.text, MAX_TEXT);
 
   if (text.length < 5) return fail(400, "지시를 5자 이상 적어 주세요.");

@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 
 import prisma from "@/lib/prisma";
 import { isAiEngine } from "@/lib/factory/ai";
+import { getDefaultAiEngine } from "@/lib/factory/settings";
 import { notifyJobEvent } from "@/lib/factory/telegram";
 import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
 import {
@@ -168,7 +169,7 @@ export const FACTORY_TOOLS = [
           type: "string",
           description: `기획서(새 앱) 또는 고칠 내용(수정). ${MIN_PLAN}~${MAX_PLAN}자, 마크다운`,
         },
-        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 Claude Code" },
+        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 홈페이지의 주사용 AI" },
         stack: {
           type: "string",
           enum: [...STACKS],
@@ -238,7 +239,7 @@ export const FACTORY_TOOLS = [
       type: "object",
       properties: {
         appSlug: { type: "string", description: "완성된 앱 이름 (list_factory_jobs 의 appSlug)" },
-        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 Claude Code" },
+        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 홈페이지의 주사용 AI" },
         kind: {
           type: "string",
           enum: ["first", "store", "update", "project"],
@@ -645,7 +646,7 @@ type EnqueueOk = { ok: true; id: string; message: string };
 
 export async function enqueue(args: Record<string, unknown>): Promise<ToolResult> {
   if (args.aiEngine !== undefined && !isAiEngine(args.aiEngine)) return text("작업 AI는 claude 또는 codex만 쓸 수 있어요.", true);
-  const aiEngine = isAiEngine(args.aiEngine) ? args.aiEngine : "claude";
+  const aiEngine = isAiEngine(args.aiEngine) ? args.aiEngine : await getDefaultAiEngine();
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
   const title = clean(args.title, 80);
   const kind = args.kind === undefined ? "new" : args.kind;

@@ -11,6 +11,8 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { acquireWorkspace, engineOf, eventDecoder, excludeHarnessState, handoffPrompt, harnessFile, invocation, lockPath, pendingChangesPolicy, recoverWorkspace, redactAiText, saveHandoff, verificationCommands, verifyWorkspace } from "../ai-runner.mjs";
 import { checkSwiftSources } from "../swift-source-check.mjs";
+import { bridgeRequest, hookRequestId, parseFactoryPrompt, runBridge } from "../factory-hook.mjs";
+import { installFactoryHooks, mergeFactoryHooks } from "../install-factory-hooks.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -49,7 +51,7 @@ function maintenanceModule(prisma) {
     "@/lib/factory/ai": ai,
     "@/lib/factory/mask": { maskSecrets: (v) => v },
     "@/lib/factory/telegram": { notifyDeployReady: async () => {}, notifyMaintenance: async () => {}, notifyText: async () => {} },
-    "@/lib/factory/settings": { getSettingValue: async () => null, isAutoDeployEnabled: async () => false, setSettingValue: async () => {} },
+    "@/lib/factory/settings": { getDefaultAiEngine: async () => "codex", getSettingValue: async () => null, isAutoDeployEnabled: async () => false, setSettingValue: async () => {} },
   });
 }
 
@@ -316,4 +318,174 @@ test("Windows Swift source delivery is checked without claiming compilation", (t
   fs.writeFileSync(path.join(dir, "project.yml"), "name: Example");
   fs.writeFileSync(path.join(dir, "App.swift"), "import SwiftUI");
   assert.deepEqual(checkSwiftSources(dir), { ok: true, scope: "source-only", note: "Swift 소스와 XcodeGen 구성 확인. 컴파일·앱 실행은 Mac에서 별도 검증해야 합니다." });
+});
+
+test("primary AI persists, defaults to Claude, and rejects invalid values without writing", async () => {
+  let row = null;
+  const settings = loadTs("lib/factory/settings.ts", {
+    "@/lib/prisma": { __esModule: true, default: { factorySetting: { findUnique: async () => row, upsert: async q => { row = q.create; } } } },
+    "@/lib/factory/ai": ai,
+  });
+  assert.equal(await settings.getDefaultAiEngine(), "claude");
+  await settings.setDefaultAiEngine("codex");
+  assert.equal(await settings.getDefaultAiEngine(), "codex");
+  await assert.rejects(settings.setDefaultAiEngine("invalid"));
+  assert.equal(row.value, "codex");
+  row = { value: "corrupt" };
+  assert.equal(await settings.getDefaultAiEngine(), "claude");
+});
+
+test("new maintenance uses primary AI; explicit Claude overrides Codex without changing existing turns", async () => {
+  const messages = [];
+  const maint = maintenanceModule({
+    factoryMaintenance: { create: async () => ({ id: "thread" }) },
+    factoryMaintenanceMessage: { create: async q => { messages.push(q.data); return { id: "turn", createdAt: new Date() }; }, count: async () => 0 },
+  });
+  assert.equal((await maint.sendMaintenance({ text: "새 정비 지시입니다", source: "통제실" })).ok, true);
+  assert.equal(messages[0].aiEngine, "codex");
+  assert.equal((await maint.sendMaintenance({ text: "Claude 지시입니다", aiEngine: "claude", source: "채팅" })).ok, true);
+  assert.equal(messages[1].aiEngine, "claude");
+  assert.equal(messages[1].status, "awaiting_approval");
+  assert.equal(messages[0].aiEngine, "codex");
+});
+
+function hookFixture(defaultEngine = "codex") {
+  const messages = new Map();
+  const threads = new Map();
+  let notifications = 0;
+  const createMessage = async ({ data }) => {
+    if (messages.has(data.id)) throw Object.assign(new Error("duplicate"), { code: "P2002" });
+    messages.set(data.id, { ...data }); return data;
+  };
+  const db = {
+    factoryMaintenanceMessage: { findUnique: async q => messages.get(q.where.id) || null, create: createMessage },
+    factoryMaintenance: {
+      findUnique: async q => threads.get(q.where.id) || null,
+      update: async q => ({ ...threads.get(q.where.id), ...q.data }),
+      create: async ({ data }) => {
+        if (threads.has(data.id)) throw Object.assign(new Error("duplicate"), { code: "P2002" });
+        const { messages: nested, ...thread } = data;
+        threads.set(data.id, { ...thread, status: "open" });
+        await createMessage({ data: { ...nested.create, maintenanceId: data.id } });
+        return thread;
+      },
+    },
+    $transaction: fn => fn(db),
+  };
+  const hooks = loadTs("lib/factory/hook-tasks.ts", {
+    "@/lib/prisma": { __esModule: true, default: db },
+    "@/lib/factory/ai": ai,
+    "@/lib/factory/settings": { getDefaultAiEngine: async () => defaultEngine },
+    "@/lib/factory/mask": { maskSecrets: value => value.replaceAll("secret-fixture", "***") },
+    "@/lib/factory/telegram": { notifyMaintenance: async () => { notifications++; } },
+  });
+  return { hooks, messages, threads, notifications: () => notifications };
+}
+
+test("hook boundary rejects invalid AI, extra approval/deploy flags, oversized text and bad identities", () => {
+  const { hooks } = hookFixture();
+  const valid = { requestId: "request-identity-123456", provider: "claude", text: "정비 지시를 보내세요" };
+  assert.ok(hooks.parseHookSubmission(valid));
+  for (const patch of [{ aiEngine: "default" }, { approved: true }, { deploy: true }, { requestId: "short" }, { text: "x".repeat(8001) }, { threadId: "../../secret" }, { provider: "other" }]) assert.equal(hooks.parseHookSubmission({ ...valid, ...patch }), null);
+});
+
+test("hook queue uses primary AI, preserves approval gate, masks text and deduplicates concurrent retry", async () => {
+  const f = hookFixture();
+  const request = { requestId: "request-identity-123456", provider: "claude", text: "지시 secret-fixture 테스트" };
+  const [a, b] = await Promise.all([f.hooks.submitHookTask(request), f.hooks.submitHookTask(request)]);
+  assert.equal(a.ok, true); assert.equal(b.ok, true);
+  assert.equal(a.turnId, b.turnId);
+  assert.equal(f.messages.size, 1); assert.equal(f.threads.size, 1); assert.equal(f.notifications(), 1);
+  const turn = f.messages.get(a.turnId);
+  assert.equal(turn.aiEngine, "codex"); assert.equal(turn.status, "awaiting_approval"); assert.equal(turn.source, "Claude 훅");
+  assert.ok(!turn.text.includes("secret-fixture"));
+  assert.equal((await f.hooks.submitHookTask({ ...request, text: "다른 지시를 보내요" })).status, 409);
+});
+
+test("hook explicit engine and continuation retain existing thread and reject closed threads", async () => {
+  const f = hookFixture();
+  f.threads.set("existing", { status: "open" });
+  const body = { requestId: "request-identity-123456", provider: "codex", aiEngine: "claude", threadId: "existing", text: "기존 정비를 이어서 해요" };
+  const r = await f.hooks.submitHookTask(body);
+  assert.equal(r.aiEngine, "claude"); assert.equal(r.threadId, "existing");
+  f.threads.set("closed", { status: "closed" });
+  assert.equal((await f.hooks.submitHookTask({ ...body, requestId: "request-identity-999999", threadId: "closed" })).status, 409);
+  assert.equal(f.messages.size, 1);
+});
+
+test("factory command parses literal instructions without executing shell content; ordinary prompts are untouched", () => {
+  assert.equal(parseFactoryPrompt("일반 지시를 실행해 주세요"), null);
+  assert.equal(parseFactoryPrompt("/factory-other codex 지시"), null);
+  assert.deepEqual(parseFactoryPrompt("/factory codex --thread abc 고칠 내용 $(echo secret); `command`"), { action: "submit", aiEngine: "codex", threadId: "abc", text: "고칠 내용 $(echo secret); `command`" });
+  assert.deepEqual(parseFactoryPrompt("/factory 기본 설정을 이용하세요"), { action: "submit", text: "기본 설정을 이용하세요" });
+  assert.deepEqual(parseFactoryPrompt("공장: codex 기능을 수정해 주세요"), { action: "submit", aiEngine: "codex", text: "기능을 수정해 주세요" });
+  assert.deepEqual(parseFactoryPrompt("/factory status abc"), { action: "status", threadId: "abc" });
+  assert.throws(() => parseFactoryPrompt("/factory codex"));
+  const event = { session_id: "session", turn_id: "turn", prompt: "instruction" };
+  assert.equal(hookRequestId("codex", event), hookRequestId("codex", event));
+  assert.notEqual(hookRequestId("claude", event), hookRequestId("codex", event));
+});
+
+test("bridge puts credentials only in headers, refuses redirects and preserves request ID across retry", async () => {
+  const seen = [];
+  const transport = async (url, opts) => { seen.push({ url, opts }); return { ok: true, json: async () => ({ ok: true }) }; };
+  const cfg = { origin: "https://example.test", token: "header-only-secret" };
+  const body = { requestId: "request-identity-123456", text: "지시를 등록하세요", provider: "codex" };
+  await bridgeRequest(cfg, "submit", body, transport); await bridgeRequest(cfg, "submit", body, transport);
+  assert.equal(seen[0].opts.redirect, "error");
+  assert.equal(seen[0].opts.headers.Authorization, "Bearer header-only-secret");
+  assert.ok(!String(seen[0].url).includes(cfg.token)); assert.ok(!seen[0].opts.body.includes(cfg.token));
+  assert.equal(seen[0].opts.body, seen[1].opts.body);
+});
+
+test("ordinary and supervisor-owned hook prompts never read credentials or contact the server", async () => {
+  const out = [];
+  assert.equal(await runBridge(["--hook", "--provider", "codex"], [JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "일반 대화입니다" })], v => out.push(v), () => {}, { FACTORY_CONFIG: "missing-file" }), 0);
+  assert.equal(await runBridge(["--hook", "--provider", "codex"], [JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "/factory codex 지시를 실행하세요" })], v => out.push(v), () => {}, { FACTORY_LAUNCHER: "1", FACTORY_CONFIG: "missing-file" }), 0);
+  assert.deepEqual(out, []);
+});
+
+test("native bridge blocks duplicate local execution after submit and after failure, while SessionStart remains advisory", async t => {
+  const dir = fixture(t);
+  const file = path.join(dir, "config.json");
+  const token = "private-fixture-worker-token";
+  fs.writeFileSync(file, JSON.stringify({ serverUrl: "https://example.test", token }));
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  let submitted;
+  globalThis.fetch = async (url, opts) => {
+    submitted = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ message: "승인 대기", aiEngine: "codex", threadId: "thread", turnId: "turn" }) };
+  };
+  const output = [];
+  const event = { hook_event_name: "UserPromptSubmit", session_id: "session", turn_id: "turn", prompt: `공장: codex 지시 ${token} 테스트` };
+  await runBridge(["--hook", "--provider", "claude"], [JSON.stringify(event)], v => output.push(JSON.parse(v)), () => {}, { FACTORY_CONFIG: file });
+  assert.equal(output[0].decision, "block"); assert.equal(submitted.provider, "claude"); assert.equal(submitted.aiEngine, "codex");
+  assert.ok(!submitted.text.includes(token));
+  globalThis.fetch = async () => { throw new Error(token); };
+  output.length = 0;
+  await runBridge(["--hook", "--provider", "codex"], [JSON.stringify(event)], v => output.push(JSON.parse(v)), () => {}, { FACTORY_CONFIG: file });
+  assert.equal(output[0].decision, "block"); assert.ok(!output[0].reason.includes(token));
+  output.length = 0;
+  await runBridge(["--hook"], [JSON.stringify({ hook_event_name: "SessionStart" })], v => output.push(JSON.parse(v)), () => {}, { FACTORY_CONFIG: file });
+  assert.ok(output[0].systemMessage); assert.equal(output[0].decision, undefined);
+});
+
+test("hook installation preserves existing Claude and Codex hooks, is idempotent, and dry run does not write", t => {
+  const home = fixture(t);
+  const bridge = path.join(home, "bridge.mjs"); fs.writeFileSync(bridge, "// fixture");
+  fs.mkdirSync(path.join(home, ".claude"));
+  const file = path.join(home, ".claude/settings.json");
+  const before = { env: { EXISTING: "unchanged" }, hooks: { Stop: [{ hooks: [{ command: "keep-backup" }] }], SessionStart: [{ hooks: [{ command: "keep-status" }] }] } };
+  fs.writeFileSync(file, JSON.stringify(before));
+  installFactoryHooks({ home, bridge, dryRun: true });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), before);
+  assert.equal(fs.existsSync(path.join(home, ".codex/hooks.json")), false);
+  assert.ok(installFactoryHooks({ home, bridge }).every(x => x.changed));
+  assert.ok(installFactoryHooks({ home, bridge }).every(x => !x.changed));
+  const after = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.deepEqual(after.env, before.env); assert.deepEqual(after.hooks.Stop, before.hooks.Stop);
+  assert.equal(after.hooks.SessionStart[0].hooks[0].command, "keep-status");
+  assert.equal(after.hooks.UserPromptSubmit[0].hooks[0].timeout, 20);
+  assert.deepEqual(mergeFactoryHooks(after, after.hooks.UserPromptSubmit[0].hooks[0].command), after);
 });

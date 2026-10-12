@@ -35,7 +35,7 @@ import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
 import { maintenanceForNext, maintenanceHold } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
-import { consumeRestart, consumeUpdateNow, isAutoUpdateEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
+import { consumeRestart, consumeUpdateNow, getDefaultAiEngine, isAutoUpdateEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
 
@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
     }
 
     // 통제실에서 "일시 정지" 하면 일감을 내주지 않는다. (인증은 이미 통과했으니 "연결됨" 표시는 계속 갱신된다)
-    const [enabled, autoUpdate] = await Promise.all([isSupervisorEnabled(), isAutoUpdateEnabled()]);
+    const [enabled, autoUpdate, defaultAiEngine] = await Promise.all([isSupervisorEnabled(), isAutoUpdateEnabled(), getDefaultAiEngine()]);
     // 1회성 신호: 받아 가는 순간 지운다. 정지 중이어도 업데이트는 할 수 있게 같이 보낸다.
     const updateNow = await consumeUpdateNow().catch(() => false);
     const pcPaths = await pcPathsToCheck().catch(() => []);
@@ -100,6 +100,7 @@ export async function GET(req: NextRequest) {
     const uploadTest = await consumeUploadTest(); // 통제실 '업로드 시험'(한 번)
     void sweepReviewVideos(); // 7일 지난 검토 영상 정리(가끔)
     const extra = {
+      defaultAiEngine,
       ...(updateNow ? { updateNow: true } : {}),
       ...(pcPaths.length ? { pcPaths } : {}),
       ...(keyPw ? { keyPasswordsPending: true } : {}),

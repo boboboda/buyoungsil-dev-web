@@ -4,6 +4,7 @@
 // 감독 프로그램이 /api/factory/next 를 확인할 때 가져간다.
 import prisma from "@/lib/prisma";
 import {
+  getDefaultAiEngine,
   getPendingRestart,
   getPendingUpdateNow,
   getSupervisorInfo,
@@ -30,7 +31,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -46,11 +47,13 @@ export async function supervisorSnapshot() {
     prisma.factoryJob.count({ where: { status: "running" } }),
     prisma.factoryJob.count({ where: { status: "approved" } }),
     prisma.factoryJob.count({ where: { status: "pending" } }),
+    getDefaultAiEngine(),
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
 
   return {
+    defaultAiEngine,
     enabled,
     autoUpdate,
     autoDeploy, // 정비 대기열이 모두 끝나면 자동 배포(기본 꺼짐)

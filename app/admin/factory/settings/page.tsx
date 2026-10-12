@@ -8,6 +8,7 @@ import SecretNames from "@/components/admin/factory/SecretNames";
 import TelegramSetup from "@/components/admin/factory/TelegramSetup";
 import WorkerTokens from "@/components/admin/factory/WorkerTokens";
 import WorkRules from "@/components/admin/factory/WorkRules";
+import DefaultAiSettings from "@/components/admin/factory/DefaultAiSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,7 @@ export default function AdminFactorySettingsPage() {
       </div>
 
       <div className="space-y-6">
+        <DefaultAiSettings />
         <TelegramSetup />
         <WorkerTokens />
         <SecretNames />

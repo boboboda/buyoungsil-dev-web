@@ -1171,6 +1171,7 @@ async function finishVideoLink(st, { summary }) {
 // ───────────── 대기열 확인 ─────────────
 let paused = false;
 let autoUpdate = true; // 통제실 스위치. /next 응답에 autoUpdate: false 가 오면 끈다(필드가 없으면 켜짐)
+let defaultAiEngine = null;
 
 async function loop() {
   let delay = cfg.pollSec * 1000;
@@ -1198,6 +1199,10 @@ async function loop() {
         if (r.status === 200) {
           delay = cfg.pollSec * 1000;
           autoUpdate = r.data?.autoUpdate !== false;
+          if (["claude", "codex"].includes(r.data?.defaultAiEngine) && defaultAiEngine !== r.data.defaultAiEngine) {
+            defaultAiEngine = r.data.defaultAiEngine;
+            log(`주사용 AI: ${ENGINE_LABELS[defaultAiEngine]} (새 지시 기본값, 개별 AI 선택 유지)`);
+          }
           if (r.data?.restart === true) onRestartSignal(log); // 1회성 "감독 재시작"(실행기 밖이면 이유만 알리고 하지 않음)
           // 재시작 대기 중에는 아무것도 받지 않는다(홈페이지도 hold=1 이면 일감·신호를 넘기지 않음). 진행 중인 작업은 끝까지
           if (restartPending()) {
