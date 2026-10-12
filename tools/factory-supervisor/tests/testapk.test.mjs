@@ -9,7 +9,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-import { judgeSignature, parseApksigner, readApkInfo, uploadTestApk, isDebugCert } from "../apk.mjs";
+import { APK_CHUNK, judgeSignature, parseApksigner, readApkInfo, uploadTestApk, isDebugCert, why } from "../apk.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -222,12 +222,38 @@ test("워커 주소: 토큰이 없으면 막고, 8MB 넘는 조각은 읽기 전
       readJson: async (req) => ({ ok: true, body: await req.json() }),
       fail: (status, message) => NextResponse.json({ message }, { status }),
     },
-    "@/lib/factory/testApk": { TEST_APK_CHUNK: 8 * 1024 * 1024, startTestApk: async () => ({ ok: true, apkId: "a1" }), receiveTestApkChunk: async () => ({ ok: true }) },
+    "@/lib/factory/testApk": { TEST_APK_CHUNK_MAX: 8 * 1024 * 1024, startTestApk: async () => ({ ok: true, apkId: "a1" }), receiveTestApkChunk: async () => ({ ok: true }) },
   });
   const { NextRequest } = require("next/server");
   const put = (auth, len) => route.PUT(new NextRequest("http://x/api/factory/test-apk?apkId=a1&idx=0", { method: "PUT", headers: { authorization: auth, "content-length": String(len) }, body: "x" }));
   assert.equal((await put("Bearer no", 1)).status, 401);
   assert.equal((await put("Bearer ok", 8 * 1024 * 1024 + 1)).status, 413);
+});
+
+test("조각 크기: 상수 하나(기본 512KB, nginx 기본 1MB 아래)로 알려 주고, APK 마다 저장한 크기로 검사(크기가 달라도 이어붙이기·해시 확인)", async () => {
+  const db = fakeDb([runningApkJob]);
+  const t = loadApk(db);
+  assert.equal(t.TEST_APK_CHUNK, 512 * 1024);
+  assert.ok(t.TEST_APK_CHUNK < 1024 * 1024);
+  const data = Buffer.alloc(t.TEST_APK_CHUNK * 3 + 7, 2);
+  data[t.TEST_APK_CHUNK + 3] = 5;
+  const s = await t.startTestApk({ jobId: "jobapk", size: data.length, sha256: sha(data) });
+  assert.equal(s.chunkSize, t.TEST_APK_CHUNK);
+  assert.equal(s.count, 4);
+  assert.equal(db.s.apks[0].chunkSize, t.TEST_APK_CHUNK);
+  // 순서가 섞여도, 마지막 조각만 작아도 받는다
+  for (const i of [3, 1, 0]) assert.equal((await t.receiveTestApkChunk(s.apkId, i, data.subarray(i * s.chunkSize, (i + 1) * s.chunkSize))).complete, false);
+  assert.equal((await t.receiveTestApkChunk(s.apkId, 2, data.subarray(2 * s.chunkSize, 3 * s.chunkSize))).complete, true);
+
+  // 예전 8MB 로 시작한 행처럼 다른 크기가 저장돼 있으면 그 크기로 검사한다
+  const other = Buffer.from("0123456789abcdefXYZ");
+  const s2 = await t.startTestApk({ jobId: "jobapk", size: other.length, sha256: sha(other) });
+  const row = db.s.apks.find((a) => a.id === s2.apkId);
+  Object.assign(row, { chunkSize: 8, chunkCount: 3 });
+  assert.equal((await t.receiveTestApkChunk(s2.apkId, 0, other.subarray(0, 5))).status, 400); // 저장된 크기와 다름
+  assert.equal((await t.receiveTestApkChunk(s2.apkId, 0, other.subarray(0, 8))).complete, false);
+  assert.equal((await t.receiveTestApkChunk(s2.apkId, 2, other.subarray(16))).complete, false);
+  assert.equal((await t.receiveTestApkChunk(s2.apkId, 1, other.subarray(8, 16))).complete, true);
 });
 
 // ───── 감독 프로그램 ─────
@@ -312,6 +338,43 @@ test("조각 올리기: 시작 → 8MB 조각, 5xx 는 다시, 마지막에 comp
     const r2 = await uploadTestApk({ file, meta: { jobId: "j", size, sha256: "a".repeat(64) }, api: async (m) => (m === "POST" ? { status: 409, data: { message: "실행 중이 아님" } } : { status: 200, data: {} }) });
     assert.equal(r2.ok, false);
     assert.match(r2.message, /409/);
+    assert.match(r2.message, /실행 중이 아님/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("조각 올리기: 홈페이지가 정한 조각 크기(기본 512KB)를 따르고, 413 이면 응답 본문과 조각 크기를 사유에 남긴다", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "apkup-"));
+  try {
+    const file = path.join(dir, "a.apk");
+    const size = 512 * 1024 * 3 + 1;
+    fs.writeFileSync(file, Buffer.alloc(size, 4));
+    const meta = { jobId: "j", size, sha256: "a".repeat(64) };
+    const lens = [];
+    const ok = await uploadTestApk({
+      file,
+      meta,
+      api: async (m, p, body) => {
+        if (m === "POST") return { status: 200, data: { apkId: "apk1" } }; // chunkSize 없음 → 기본값
+        lens.push(body.length);
+        return { status: 200, data: { complete: p.endsWith("idx=3") } };
+      },
+    });
+    assert.equal(ok.ok, true, ok.message);
+    assert.equal(APK_CHUNK, 512 * 1024);
+    assert.deepEqual(lens, [APK_CHUNK, APK_CHUNK, APK_CHUNK, 1]);
+
+    // nginx 413: JSON 이 아닌 HTML 본문
+    const html = "<html><head><title>413 Request Entity Too Large</title></head><body><center><h1>413 Request Entity Too Large</h1></center><hr><center>nginx</center></body></html>";
+    const r = await uploadTestApk({ file, meta, api: async (m) => (m === "POST" ? { status: 200, data: { apkId: "apk1", chunkSize: 256 * 1024 } } : { status: 413, data: null, text: html }) });
+    assert.equal(r.ok, false);
+    assert.match(r.message, /조각 1\/7 올리기 거절\(413, 조각 262144바이트=256KB\)/);
+    assert.match(r.message, /응답 본문: 413 Request Entity Too Large .*nginx/);
+    // 본문도 없으면 그렇다고 적는다
+    const r3 = await uploadTestApk({ file, meta, api: async (m) => (m === "POST" ? { status: 200, data: { apkId: "apk1" } } : { status: 413, data: null, text: "" }) });
+    assert.match(r3.message, /413, 조각 524288바이트=512KB\).*응답 본문 없음/);
+    assert.equal(why({ status: 400, data: { message: "조각 크기가 맞지 않아요" } }), "조각 크기가 맞지 않아요");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

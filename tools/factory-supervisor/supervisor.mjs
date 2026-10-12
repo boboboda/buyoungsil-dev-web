@@ -162,12 +162,15 @@ async function api(method, pathname, body, { timeoutMs = 60_000 } = {}) {
   }
   const res = await fetch(cfg.serverUrl + pathname, { method, headers, body: payload, ...extra, signal: AbortSignal.timeout(timeoutMs) });
   let data = null;
+  // JSON 이 아닌 응답(nginx 413 HTML 등)도 실패 사유에 남길 수 있게 본문 앞부분을 text 로 같이 돌려준다
+  let text = "";
   try {
-    data = await res.json();
+    text = await res.text();
+    data = JSON.parse(text);
   } catch {
-    /* 본문 없음 */
+    /* 본문 없음·JSON 아님 */
   }
-  return { status: res.status, data };
+  return { status: res.status, data, text: data ? "" : text.slice(0, 2000) };
 }
 
 async function check() {

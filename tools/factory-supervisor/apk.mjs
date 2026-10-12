@@ -1,7 +1,7 @@
 // 앱 공장 감독 프로그램: 출시 패키지 '시험용 APK'(출시 일감 종류 apk)
 // - AI 가 앱 폴더에서 만든 서명 release APK(.factory/apk.json 에 경로·버전)를 감독 프로그램이 검사한다:
 //   경로는 앱 폴더 안의 .apk 만, apksigner verify 로 서명 확인, 디버그 키 거절, 등록된 키(또는 앱 자체 key.properties 의 키)와 서명 인증서 SHA-256 비교.
-// - 통과하면 크기·SHA-256·버전·빌드 시각·git 커밋을 붙여 /api/factory/test-apk 로 8MB 조각씩 올린다(관리자만 내려받기, 앱당 최근 5개).
+// - 통과하면 크기·SHA-256·버전·빌드 시각·git 커밋을 붙여 /api/factory/test-apk 로 조각씩 올린다(크기는 홈페이지가 정함, 기본 512KB)(관리자만 내려받기, 앱당 최근 5개).
 // - 키 파일·비밀번호는 홈페이지로 보내지 않는다. 비밀번호는 keytool 에 환경변수로만 넘기고(인자·로그에 없음), 서명 인증서 지문(공개 정보)만 보낸다.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -12,7 +12,9 @@ import path from "node:path";
 import { appKeyProperties, expandHome, findKeytool, jksInfo, maskText } from "./release.mjs";
 
 const IS_WIN = process.platform === "win32";
-export const APK_CHUNK = 8 * 1024 * 1024;
+// 홈페이지가 시작 응답에 chunkSize 를 주지 않을 때만 쓰는 조각 크기(홈페이지 TEST_APK_CHUNK 와 같게). nginx 기본 1MB 한도 아래.
+export const APK_CHUNK = 512 * 1024;
+const APK_CHUNK_MAX = 8 * 1024 * 1024;
 export const APK_MAX_DEFAULT = 200 * 1024 * 1024;
 const hex = (s) => String(s ?? "").toLowerCase().replace(/[^0-9a-f]/g, "");
 
@@ -233,14 +235,25 @@ export function gitCommitOf(dir) {
 // ───────── 올리기 ─────────
 
 /**
- * /api/factory/test-apk 로 올린다: 정보 먼저(POST) → 8MB 조각(PUT, 조각마다 3번까지 다시). 돌려주는 값: { ok, message }
+ * /api/factory/test-apk 로 올린다: 정보 먼저(POST) → 홈페이지가 정한 크기의 조각(PUT, 조각마다 3번까지 다시). 돌려주는 값: { ok, message }
  * api(method, path, body) 는 감독 프로그램의 홈페이지 호출(Buffer 본문은 그대로 보낸다).
  */
+const kb = (n) => (n >= 1024 * 1024 ? `${+(n / 1024 / 1024).toFixed(2)}MB` : `${+(n / 1024).toFixed(1)}KB`);
+
+/** 거절 사유: 홈페이지 JSON message, 없으면 응답 본문(nginx 413 HTML 등)을 태그 빼고 짧게 */
+export function why(r) {
+  if (r?.data?.message) return String(r.data.message);
+  const text = String(r?.text ?? "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  if (text) return `응답 본문: ${text.slice(0, 300)}`;
+  return r?.status === 413 ? "응답 본문 없음(앞단 프록시의 본문 크기 한도일 수 있음)" : "응답 본문 없음";
+}
+
 export async function uploadTestApk({ file, meta, api, log }) {
   const start = await api("POST", "/api/factory/test-apk", meta);
-  if (start.status !== 200 || !start.data?.apkId) return { ok: false, message: `APK 올리기 시작 거절(${start.status}): ${start.data?.message ?? ""}` };
+  if (start.status !== 200 || !start.data?.apkId) return { ok: false, message: `APK 올리기 시작 거절(${start.status}): ${why(start)}` };
   const { apkId } = start.data;
-  const chunk = Number(start.data.chunkSize) || APK_CHUNK;
+  const given = Number(start.data.chunkSize);
+  const chunk = Number.isInteger(given) && given > 0 && given <= APK_CHUNK_MAX ? given : APK_CHUNK;
   const count = Math.ceil(meta.size / chunk);
   const fd = fs.openSync(file, "r");
   try {
@@ -258,12 +271,12 @@ export async function uploadTestApk({ file, meta, api, log }) {
         if (r.status === 200 || (r.status >= 400 && r.status < 500 && r.status !== 429)) break;
         await new Promise((ok) => setTimeout(ok, 2000 * attempt));
       }
-      if (r.status !== 200) return { ok: false, message: `APK 조각 ${idx + 1}/${count} 올리기 거절(${r.status}): ${r.data?.message ?? ""}` };
+      if (r.status !== 200) return { ok: false, message: `APK 조각 ${idx + 1}/${count} 올리기 거절(${r.status}, 조각 ${chunk}바이트=${kb(chunk)}): ${why(r)}` };
       if (idx === count - 1 && r.data?.complete !== true) return { ok: false, message: `홈페이지가 APK 를 다 받지 못했어요: ${r.data?.message ?? ""}` };
       if (count > 2 && (idx + 1) % 5 === 0) log?.(`APK 올리는 중 ${idx + 1}/${count}`);
     }
   } finally {
     fs.closeSync(fd);
   }
-  return { ok: true, message: `APK 를 올렸어요(${count}조각, 홈페이지가 SHA-256 확인).` };
+  return { ok: true, message: `APK 를 올렸어요(${count}조각×${kb(chunk)}, 홈페이지가 SHA-256 확인).` };
 }
