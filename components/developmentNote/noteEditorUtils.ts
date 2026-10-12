@@ -26,8 +26,6 @@ export function $prepareNoteContent(note?: Note) {
   const root = $getRoot();
   
   console.log("🚀 $prepareNoteContent 실행");
-  console.log("📦 note:", note);
-  console.log("📄 content:", note?.content);
   
   // root 초기화
   root.clear();
@@ -56,7 +54,6 @@ export function $prepareNoteContent(note?: Note) {
       content = JSON.parse(content);
     }
 
-    console.log("📋 파싱된 content:", content);
     console.log("📋 content.type:", (content as any)?.type);
 
     // 🔥 TipTap Document 형식 (type: "doc")

@@ -452,7 +452,6 @@ function LogsTab({
 
 // ==================== 수익 탭 ====================
 function RevenuesTab({ revenues }: { revenues: Revenue[] }) {
-  console.log("RevenuesTab - revenues:", revenues); // ✅ 디버깅용
 
   // null/undefined 체크
   if (!revenues) {

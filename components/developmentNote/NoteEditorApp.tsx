@@ -39,8 +39,6 @@ function LoadContentForEditPlugin({ note, editorType }: { note?: Note; editorTyp
     }
 
     console.log("🔍 LoadContentForEditPlugin 실행 (편집 모드)");
-    console.log("📦 note:", note);
-    console.log("📄 content:", note.content);
 
     try {
       let content = note.content;
@@ -51,7 +49,6 @@ function LoadContentForEditPlugin({ note, editorType }: { note?: Note; editorTyp
         content = JSON.parse(content);
       }
 
-      console.log("📋 파싱된 content:", content);
       console.log("📋 content.type:", content?.type);
 
       // 🔥 TipTap Document 형식 (type: "doc")
@@ -84,7 +81,6 @@ function LoadContentForEditPlugin({ note, editorType }: { note?: Note; editorTyp
         return;
       }
 
-      console.log("⚠️ 알 수 없는 형식:", content);
       
     } catch (error) {
       console.error('❌ LoadContentForEditPlugin 에러:', error);

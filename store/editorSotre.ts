@@ -110,7 +110,6 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
           set({ hasLocalChanges: true });
         }
 
-        console.log("✅ 로컬 저장 (Lexical 형식):", newNote);
       },
       
       deleteLocal: async () => {
@@ -141,7 +140,6 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
             relatedNoteIds: note.relatedNoteIds ?? [],
           };
 
-          console.log("📤 저장할 데이터:", newData);
 
           const response = await fetch("/api/notes", {
             method: "POST",
@@ -157,7 +155,6 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
             console.log("✅ 서버 저장 성공");
             return true;
           } else {
-            console.log("❌ 서버 저장 실패", noteData);
             return false;
           }
         } catch (error) {
@@ -171,7 +168,6 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
         try {
           let note = get();
 
-          console.log("🔄 수정 노트 정보:", note);
 
           const newData = {
             title: note.title,
@@ -183,7 +179,6 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
           };
 
           if (newData && note.noteId) {
-            console.log("📤 수정할 데이터:", newData);
 
             const response = await fetch(`/api/notes/${note.noteId}`, {
               method: "PUT",
@@ -200,7 +195,6 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
               console.log("✅ 서버 업데이트 성공");
               return true;
             } else {
-              console.log("❌ 서버 업데이트 실패", result);
               return false;
             }
           } else {
@@ -248,7 +242,6 @@ export const createEditorStore = (initState: Note = defaultInitContent) => {
             return null;
           }
 
-          console.log("✅ 로컬 불러오기 (Lexical 형식):", parsedData);
           return parsedData;
         } catch (error) {
           console.error("❌ 로컬 불러오기 에러:", error);

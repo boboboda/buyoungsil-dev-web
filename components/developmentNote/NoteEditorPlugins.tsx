@@ -39,7 +39,6 @@ export default function NoteEditorPlugins({
       // 로컬 스토리지에 자동 저장
       saveToLocal();
       
-      console.log('Editor content changed:', json);
     });
   };
 

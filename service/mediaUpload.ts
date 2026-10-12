@@ -216,7 +216,6 @@ export class MediaUploadService {
     }
 
     const result = await response.json();
-    console.log("📋 서버 응답 데이터:", result);
 
     if (result.filename) {
       const finalUrl = `${this.config.customServerUrl}${result.url}`;

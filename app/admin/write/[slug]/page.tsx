@@ -18,7 +18,6 @@ export default async function DevelopNoteWrite({
 
   const note: Note = noteParsing;
 
-  console.log("editor note", note);
 
   return (
     <NoteStoreProvider>

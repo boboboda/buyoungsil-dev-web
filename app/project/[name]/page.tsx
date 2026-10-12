@@ -58,7 +58,6 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     notFound();
   }
 
-  console.log("🔍 revenues 데이터:", project.revenues); // ✅ 디버깅용
 
   // 🔥 로그에 noteId가 있으면 해당 노트 정보 조회
   const logsWithNotes = await Promise.all(
@@ -121,7 +120,6 @@ export default async function ProjectDetailPage({ params }: ProjectDetailPagePro
     }))
   };
 
-  console.log("✅ formattedProject.revenues:", formattedProject.revenues); // ✅ 디버깅용
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
