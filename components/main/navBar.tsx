@@ -331,7 +331,7 @@ export default function NavBar() {
                   rel="noopener noreferrer"
                   target="_blank"
                 >
-                  <DiscordIcon className="w-6 h-6" />
+                  <DiscordIcon className="w-6 h-6 text-[#5865F2]" />
                 </Link>
                 {/* 🔥 카카오톡 아이콘 추가 */}
                 <Link
@@ -339,7 +339,7 @@ export default function NavBar() {
                   rel="noopener noreferrer"
                   target="_blank"
                 >
-                  <KakaoIcon className="w-6 h-6 text-yellow-500" />
+                  <KakaoIcon className="w-6 h-6" />
                 </Link>
                 <ThemeSwitch />
               </div>
@@ -517,7 +517,7 @@ export default function NavBar() {
                   rel="noopener noreferrer"
                   target="_blank"
                 >
-                  <DiscordIcon className="w-5 h-5" />
+                  <DiscordIcon className="w-5 h-5 text-[#5865F2]" />
                 </Link>
                 {/* 🔥 카카오톡 아이콘 추가 */}
                 <Link
@@ -525,7 +525,7 @@ export default function NavBar() {
                   rel="noopener noreferrer"
                   target="_blank"
                 >
-                  <KakaoIcon className="w-5 h-5 text-yellow-500" />
+                  <KakaoIcon className="w-5 h-5" />
                 </Link>
               </div>
             </div>

@@ -58,12 +58,12 @@ export default function Footer() {
               </NextLink>
             ))}
           </nav>
-          <div className="flex gap-3 text-gray-500">
+          <div className="flex gap-3 text-gray-500 dark:text-gray-300">
             {socialLinks.map((link) => (
               <a
                 key={link.label}
                 aria-label={link.label}
-                className="hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
+                className="hover:text-gray-800 dark:hover:text-white transition-colors"
                 href={link.href}
                 rel="noopener noreferrer"
                 target="_blank"
