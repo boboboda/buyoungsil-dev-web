@@ -226,6 +226,9 @@ export interface SupervisorRuntime {
   boot?: string; // restart(재시작 요청으로 다시 켜짐) | start
   ffmpeg?: string; // "버전 | 경로" 또는 "없음"
   ffprobe?: string;
+  claudeTool?: string; // AI 도구 상태(읽기 전용): "버전 · 로그인됨|로그인 안 됨|로그인 확인 안 함" 또는 "없음"
+  codexTool?: string;
+  aiToolsAt?: string; // PC 가 AI 도구 상태를 확인한 시각
   restartWait?: boolean; // 재시작 요청을 받았고 진행 중 작업이 끝나길 기다리는 중
   restartFail?: string; // PC 가 알려 준 재시작 실패 이유
   restartTakenAt?: string; // 감독 프로그램이 재시작 요청을 받아 간 시각(새로 켜지면 지운다)

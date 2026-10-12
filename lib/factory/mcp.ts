@@ -5,6 +5,7 @@ import { createHash } from "crypto";
 import prisma from "@/lib/prisma";
 import { isAiEngine } from "@/lib/factory/ai";
 import { getDefaultAiEngine } from "@/lib/factory/settings";
+import { knownSecretNames } from "@/lib/factory/secretEntries";
 import { notifyJobEvent } from "@/lib/factory/telegram";
 import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
 import {
@@ -627,9 +628,8 @@ async function getJob(args: Record<string, unknown>): Promise<ToolResult> {
 }
 
 async function listSecretNames(): Promise<ToolResult> {
-  const names = await prisma.factorySecretName.findMany({
-    orderBy: { name: "asc" },
-  });
+  // 이름 카탈로그 + 통제실에서 등록한 키의 설명 + 작업 PC 가 알려 준 이름(값은 없음)
+  const names = await knownSecretNames();
 
   if (names.length === 0)
     return text(
@@ -714,9 +714,7 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
       return text("requiredSecrets 는 최대 10개예요.", true);
   }
   if (secrets.length > 0) {
-    const known = await prisma.factorySecretName.findMany({
-      select: { name: true },
-    });
+    const known = await knownSecretNames();
     const set = new Set(known.map((k) => k.name));
     const unknown = secrets.filter((s) => !set.has(s));
 

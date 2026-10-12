@@ -4,6 +4,7 @@ import { Metadata } from "next";
 import Link from "next/link";
 
 import ReleaseAccounts from "@/components/admin/factory/ReleaseAccounts";
+import SecretEntries from "@/components/admin/factory/SecretEntries";
 import SecretNames from "@/components/admin/factory/SecretNames";
 import TelegramSetup from "@/components/admin/factory/TelegramSetup";
 import WorkerTokens from "@/components/admin/factory/WorkerTokens";
@@ -38,6 +39,7 @@ export default function AdminFactorySettingsPage() {
         <ToolBrokerSettings />
         <TelegramSetup />
         <WorkerTokens />
+        <SecretEntries />
         <SecretNames />
         <ReleaseAccounts />
         <WorkRules />

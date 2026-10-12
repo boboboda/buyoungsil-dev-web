@@ -38,6 +38,7 @@ import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
 import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames } from "./toolbroker.mjs";
+import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -1205,6 +1206,13 @@ let paused = false;
 let autoUpdate = true; // 통제실 스위치. /next 응답에 autoUpdate: false 가 오면 끈다(필드가 없으면 켜짐)
 let defaultAiEngine = null;
 let toolBroker = brokerSettings(null); // 통제실 '도구 요청 중계' 설정. 값이 없으면(예전 서버) 꺼짐
+// secrets.env 를 고치는 일(키 비밀번호·외부 서비스 키·이름 보고)은 한 줄로 세워 차례로 한다(동시에 쓰지 않게). 던지지 않는다
+let secretsChain = Promise.resolve();
+const onSecrets = (fn) => (secretsChain = secretsChain.then(fn).catch(() => {}));
+const HOUR_MS = 60 * 60_000;
+let secretNamesReportedAt = 0; // PC 키 이름 보고(값 없음): 시작 때와 1시간마다, 반영 직후
+let aiTools = null; // AI 도구 상태(읽기 전용): 1시간마다 확인해 홈페이지가 받을 때까지 /next 에 붙인다
+let aiToolsCheckedAt = 0;
 
 async function loop() {
   let delay = cfg.pollSec * 1000;
@@ -1221,7 +1229,8 @@ async function loop() {
       if (free > 0) {
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
-        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe") });
+        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), ...(aiTools ?? {}) });
+        const sentTools = aiTools;
         // 정비 지시나 정비 배포가 도는 동안에는 새 앱 일감을 받지 않는다(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌)
         const take = maintenanceBusy() ? 0 : free;
         const r = await api(
@@ -1231,6 +1240,12 @@ async function loop() {
         notePoll(r.status === 200); // 새 버전 건강 확인(200 이면 확인됨)
         if (r.status === 200) {
           delay = cfg.pollSec * 1000;
+          if (aiTools === sentTools) aiTools = null; // 받았으니 다음 확인(1시간 뒤)까지 보내지 않는다
+          if (Date.now() - aiToolsCheckedAt > HOUR_MS) {
+            // 폴링이 된 뒤에만, 기다리지 않고 확인한다. 결과는 다음 /next 에 붙는다
+            aiToolsCheckedAt = Date.now();
+            aiToolStatus(cfg).then((v) => (aiTools = v), () => {});
+          }
           autoUpdate = r.data?.autoUpdate !== false;
           if (["claude", "codex"].includes(r.data?.defaultAiEngine) && defaultAiEngine !== r.data.defaultAiEngine) {
             defaultAiEngine = r.data.defaultAiEngine;
@@ -1251,10 +1266,18 @@ async function loop() {
           // 키 보관함 일(공용 키 만들기·키 파일 조회): 비밀번호를 먼저 받아 둔 뒤 처리한다
           const keyTasks = Array.isArray(r.data?.keyTasks) ? r.data.keyTasks : [];
           if (r.data?.keyPasswordsPending === true || keyTasks.length) {
-            (async () => {
+            onSecrets(async () => {
               if (r.data?.keyPasswordsPending === true) await syncKeyPasswords({ api, log, secretsFile: cfg.secretsFile });
               if (keyTasks.length) await runKeyTasks({ tasks: keyTasks, api, log, workDir: cfg.workDir, readSecrets });
-            })().catch(() => {});
+            });
+          }
+          // 통제실에서 입력·삭제한 외부 서비스 키: secrets.env 의 그 줄만 바꾸고 확인한 뒤 이름 목록을 알린다(값은 로그에 남기지 않음)
+          if (r.data?.secretsPending === true) {
+            secretNamesReportedAt = Date.now();
+            onSecrets(() => syncSecretEntries({ api, log, secretsFile: cfg.secretsFile }));
+          } else if (Date.now() - secretNamesReportedAt > HOUR_MS) {
+            secretNamesReportedAt = Date.now();
+            onSecrets(() => reportSecretNames({ api, log, secretsFile: cfg.secretsFile }));
           }
           // keyScanApps 가 있으면 그 앱 폴더만(출시 카드 [키 조회])
           // 통제실 '업로드 시험'(한 번): 운영과 같은 함수로 시험 파일을 올리고 결과를 보낸다. 던지지 않는다

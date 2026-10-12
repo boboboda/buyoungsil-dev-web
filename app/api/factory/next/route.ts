@@ -18,6 +18,8 @@
 //   사람이 [배포]를 눌렀으면 maintenanceDeploy: { threadId, commit } 이 붙는다. 정비가 대기·진행 중이면 새 앱 일감은 내주지 않는다(maintenanceHold: true).
 //   배포 계정의 키 파일 경로가 등록돼 있으면 pcPaths: [{ key, path }] 가 붙는다. 감독 프로그램은 "있는지"만 확인해 /api/factory/pc-status 로 알린다.
 //   통제실에서 키 비밀번호를 등록했고 아직 안 가져갔으면 keyPasswordsPending: true(값은 /api/factory/key-passwords 에서 따로).
+//   통제실에서 외부 서비스 키를 등록·삭제했고 PC 가 아직 반영하지 않았으면 secretsPending: true(할 일은 /api/factory/secrets 에서 따로).
+//   새 감독 프로그램은 1시간에 한 번 claudeTool·codexTool("버전 · 로그인 상태" 또는 "없음")과 aiToolsAt 을 보낸다(통제실 AI 도구 상태).
 //   통제실 [키 점검]을 누르면 다음 응답 한 번에 keyScan: true 가 붙는다(결과는 /api/factory/key-report).
 //   출시 카드 [키 조회](앱 하나)면 keyScan: true 와 keyScanApps: [appSlug] 가 함께 붙는다(감독 프로그램은 그 앱만 점검. 예전 감독 프로그램은 전체 점검).
 //   통제실 '업로드 시험'을 누르면 uploadTest: { id, kind: video|image|big } 가 한 번 붙는다(결과는 /api/factory/upload-test-report).
@@ -31,6 +33,7 @@ import { claimJobs, MAX_SLOTS, releaseExpiredLeases, WORKER_RE } from "@/lib/fac
 import { fail, guardWorker } from "@/lib/factory/http";
 import { consumeKeyScan, notifyTestingDue, pcPathsToCheck, releaseJobExtras } from "@/lib/factory/release";
 import { keyPasswordsPending } from "@/lib/factory/keyPasswords";
+import { secretEntriesPending } from "@/lib/factory/secretEntries";
 import { keyTasksForNext } from "@/lib/factory/keyVault";
 import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
@@ -64,6 +67,11 @@ export async function GET(req: NextRequest) {
   const startedRaw = param("started", 40);
   const started = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(startedRaw) ? startedRaw : "";
   const hold = req.nextUrl.searchParams.get("hold") === "1";
+  // AI 도구 상태(읽기 전용). PC 가 확인한 때만 온다
+  const aiToolsAtRaw = param("aiToolsAt", 40);
+  const aiTools = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(aiToolsAtRaw)
+    ? { claudeTool: param("claudeTool", 120) || "확인 안 함", codexTool: param("codexTool", 120) || "확인 안 함", aiToolsAt: aiToolsAtRaw }
+    : {};
 
   try {
     if (commit) await saveSupervisorInfo(commit, noteRaw, subject).catch(() => undefined);
@@ -78,6 +86,7 @@ export async function GET(req: NextRequest) {
           boot: param("boot", 20) === "restart" ? "restart" : "start",
           ffmpeg: param("ffmpeg", 300) || undefined,
           ffprobe: param("ffprobe", 300) || undefined,
+          ...aiTools,
           restartWait: hold || undefined,
           restartFail: param("restartFail", 300) || undefined,
         },
@@ -96,6 +105,7 @@ export async function GET(req: NextRequest) {
     const pcPaths = await pcPathsToCheck().catch(() => []);
     const maint = await maintenanceForNext(engines).catch(() => ({}));
     const keyPw = await keyPasswordsPending().catch(() => false);
+    const secretsPending = await secretEntriesPending().catch(() => false);
     const keyScan = await consumeKeyScan().catch(() => false);
     const keyTasks = await keyTasksForNext();
     const uploadTest = await consumeUploadTest(); // 통제실 '업로드 시험'(한 번)
@@ -106,6 +116,7 @@ export async function GET(req: NextRequest) {
       ...(updateNow ? { updateNow: true } : {}),
       ...(pcPaths.length ? { pcPaths } : {}),
       ...(keyPw ? { keyPasswordsPending: true } : {}),
+      ...(secretsPending ? { secretsPending: true } : {}),
       ...(keyScan ? { keyScan: true } : {}),
       ...(Array.isArray(keyScan) ? { keyScanApps: keyScan } : {}),
       ...(keyTasks.length ? { keyTasks } : {}),

@@ -32,7 +32,8 @@ function cipherKey(): Uint8Array | null {
   return u8(createHash("sha256").update(`factory-key-password:${base}`).digest());
 }
 
-function seal(plain: string): string | null {
+// 외부 서비스 키(secretEntries.ts)도 같은 암호화를 쓴다. 저장 형식(v1:iv:tag:ct)은 바꾸지 않는다.
+export function seal(plain: string): string | null {
   const key = cipherKey();
 
   if (!key) return null;
@@ -43,7 +44,7 @@ function seal(plain: string): string | null {
   return ["v1", iv.toString("base64"), c.getAuthTag().toString("base64"), ct.toString("base64")].join(":");
 }
 
-function unseal(sealed: string): string | null {
+export function unseal(sealed: string): string | null {
   const key = cipherKey();
   const [v, iv, tag, ct] = sealed.split(":");
 
