@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import { requireAdmin } from "@/lib/factory/admin";
 import { JOB_STATUSES, adminAction } from "@/lib/factory/jobs";
 import { enqueue } from "@/lib/factory/mcp";
+import { isAiEngine } from "@/lib/factory/ai";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,6 +34,7 @@ export async function GET(req: NextRequest) {
       kind: true,
       parentJobId: true,
       stack: true,
+      aiEngine: true,
       requiredSecrets: true,
       priority: true,
       status: true,
@@ -71,6 +73,7 @@ export async function POST(req: NextRequest) {
   }
 
   const appSlug = typeof body.appSlug === "string" ? body.appSlug.trim() : "";
+  if (body.aiEngine !== undefined && !isAiEngine(body.aiEngine)) return NextResponse.json({ message: "작업 AI가 올바르지 않아요." }, { status: 400 });
   const instruction = typeof body.instruction === "string" ? body.instruction.trim() : "";
 
   if (!appSlug) return NextResponse.json({ message: "앱을 골라 주세요." }, { status: 400 });
@@ -95,6 +98,7 @@ export async function POST(req: NextRequest) {
     kind: "revision",
     planMarkdown: plan,
     source: "통제실",
+    aiEngine: body.aiEngine,
   });
   const message = result.content[0]?.text ?? "";
 

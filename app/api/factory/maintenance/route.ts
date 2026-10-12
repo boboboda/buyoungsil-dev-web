@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   try {
     let r;
 
-    if (body.action === "start" && typeof body.turnId === "string" && ID.test(body.turnId)) r = await startTurn(body.turnId);
+    if (body.action === "start" && typeof body.turnId === "string" && ID.test(body.turnId)) r = await startTurn(body.turnId, body.aiEngine === undefined ? "claude" : body.aiEngine);
     else if (body.action === "report") r = await reportTurn(body);
     else if (body.action === "deploy_start" && typeof body.threadId === "string" && ID.test(body.threadId) && typeof body.commit === "string") {
       r = await deployStarted(body.threadId, body.commit);

@@ -10,6 +10,7 @@ import prisma from "@/lib/prisma";
 import { ensureProjectForJob } from "@/lib/factory/project";
 import { deleteReviewVideo } from "@/lib/factory/reviewVideo";
 import { maskSecrets } from "@/lib/factory/mask";
+import { AI_LABELS, isAiEngine, type AiEngine } from "@/lib/factory/ai";
 
 export const LEASE_MS = 10 * 60 * 1000;
 export const MAX_LOGS_PER_JOB = 500;
@@ -83,6 +84,7 @@ export interface ClaimedJob {
   kind: string;
   parentJobId: string | null;
   stack: string;
+  aiEngine: AiEngine;
   priority: number;
   requiredSecrets: string[];
   planMarkdown: string;
@@ -91,7 +93,8 @@ export interface ClaimedJob {
 
 // approved 중 우선순위 높은 순(같으면 먼저 등록한 순)으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 // 한 문장으로 바꾸고 SKIP LOCKED 를 써서, 동시에 불러도 같은 지시를 두 번 가져가지 않는다.
-export async function claimJobs(worker: string, slots: number): Promise<ClaimedJob[]> {
+export async function claimJobs(worker: string, slots: number, engines: readonly AiEngine[] = ["claude"]): Promise<ClaimedJob[]> {
+  if (!engines.length) return [];
   const now = new Date();
   const lease = new Date(now.getTime() + LEASE_MS);
 
@@ -102,13 +105,13 @@ export async function claimJobs(worker: string, slots: number): Promise<ClaimedJ
         "phase" = NULL, "failReason" = NULL, "failStage" = NULL, "updatedAt" = ${ts(now)}
     WHERE "id" IN (
       SELECT "id" FROM "factory_jobs"
-      WHERE "status" = 'approved'
+      WHERE "status" = 'approved' AND "aiEngine" IN (${Prisma.join(engines)})
       ORDER BY "priority" DESC, "createdAt" ASC
       LIMIT ${slots}
       FOR UPDATE SKIP LOCKED
     )
     RETURNING "id", "appSlug", "title", "kind", "parentJobId", "stack", "priority",
-              "requiredSecrets", "planMarkdown", "attempts"`);
+              "requiredSecrets", "planMarkdown", "attempts", "aiEngine"`);
 
   rows.sort((a, b) => b.priority - a.priority);
 
@@ -331,12 +334,14 @@ async function linkProjectOnApprove(id: string): Promise<void> {
 
 export async function adminAction(id: string, body: Record<string, unknown>): Promise<ActionResult> {
   const now = new Date();
+  if (body.aiEngine !== undefined && !isAiEngine(body.aiEngine)) return refuse(400, "작업 AI는 Claude Code 또는 Codex를 골라 주세요.");
+  const engineData = isAiEngine(body.aiEngine) ? { aiEngine: body.aiEngine } : {};
 
   switch (body.action) {
     case "approve": {
       const res = await prisma.factoryJob.updateMany({
         where: { id, status: "pending" },
-        data: { status: "approved", approvedAt: now },
+        data: { status: "approved", approvedAt: now, ...engineData },
       });
       if (res.count > 0) await linkProjectOnApprove(id);
       return res.count > 0 ? done("승인했어요.") : explainNoChange(id, "승인");
@@ -365,6 +370,7 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
       const res = await prisma.factoryJob.updateMany({
         where: { id, status: "failed" },
         data: {
+          ...engineData,
           status: "approved",
           attempts: 0,
           approvedAt: now,
@@ -380,6 +386,15 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
         },
       });
       return res.count > 0 ? done("재시도하도록 승인했어요.") : explainNoChange(id, "재시도");
+    }
+
+    case "set-ai": {
+      if (!isAiEngine(body.aiEngine)) return refuse(400, "작업 AI를 골라 주세요.");
+      const res = await prisma.factoryJob.updateMany({
+        where: { id, status: { in: ["pending", "approved", "failed"] } },
+        data: engineData,
+      });
+      return res.count ? done(`작업 AI를 ${AI_LABELS[body.aiEngine]}로 바꿨어요.`) : explainNoChange(id, "작업 AI 변경");
     }
 
     case "set-priority": {

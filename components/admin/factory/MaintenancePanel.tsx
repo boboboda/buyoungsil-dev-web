@@ -6,8 +6,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Chip } from "@heroui/react";
+import AiEngineSelect from "./AiEngineSelect";
+import { AI_LABELS, type AiEngine } from "@/lib/factory/ai";
 
 interface Msg {
+  aiEngine?: AiEngine;
   id: string;
   role: "user" | "assistant" | "log" | "system";
   text: string;
@@ -30,6 +33,7 @@ interface Thread {
 }
 
 interface QueueItem {
+  aiEngine?: AiEngine;
   position: number;
   turnId: string;
   threadId: string;
@@ -92,6 +96,7 @@ export default function MaintenancePanel() {
   const [data, setData] = useState<Data | null>(null);
   const [sel, setSel] = useState<string>("new");
   const [text, setText] = useState("");
+  const [aiEngine, setAiEngine] = useState<AiEngine>("claude");
   const [showLogs, setShowLogs] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -221,6 +226,7 @@ export default function MaintenancePanel() {
                 <span className="ml-1 break-words">{i.firstLine}</span>
                 <span className="ml-1 text-xs text-default-400">
                   · {i.threadTitle}
+                  {` · ${AI_LABELS[i.aiEngine ?? "claude"]}`}
                   {i.wait && i.status !== "running" ? ` · ${i.wait}` : ""}
                 </span>
               </button>
@@ -367,6 +373,7 @@ export default function MaintenancePanel() {
                 <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-default-500">
                   <span>{m.role === "user" ? `👤 지시${m.source ? ` · ${m.source}` : ""}` : m.role === "assistant" ? "🤖 결과" : "ℹ️ 알림"}</span>
                   <span>{new Date(m.createdAt).toLocaleString("ko-KR")}</span>
+                  {(m.role === "user" || m.role === "assistant") && <span>{AI_LABELS[m.aiEngine ?? "claude"]}</span>}
                   {m.status && (
                     <Chip color={m.status === "failed" ? "danger" : m.status === "done" ? "success" : "warning"} size="sm" variant="flat">
                       {TURN_LABEL[m.status] ?? m.status}
@@ -383,6 +390,9 @@ export default function MaintenancePanel() {
                       거절
                     </Button>
                   </div>
+                )}
+                {m.role === "user" && ["awaiting_approval", "queued", "failed"].includes(m.status ?? "") && (
+                  <div className="mt-2"><AiEngineSelect value={m.aiEngine ?? "claude"} disabled={busy} onChange={(engine) => post({ action: "set-ai", turnId: m.id, aiEngine: engine })} /></div>
                 )}
                 {m.role === "user" && m.status === "queued" && (
                   <Button className="mt-2" isDisabled={busy} size="sm" variant="flat" onPress={() => post({ action: "cancel", turnId: m.id }, "이 지시를 취소할까요?")}>
@@ -416,10 +426,12 @@ export default function MaintenancePanel() {
 
       {canSend ? (
         <div className="space-y-2">
+          <AiEngineSelect value={aiEngine} onChange={setAiEngine} disabled={busy} />
+          <p className="text-xs text-default-500">선택한 AI로 차례대로 처리해요. AI를 바꾸면 이전 결과와 현재 작업 파일을 전달해요.</p>
           <textarea
             className="min-h-[80px] w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm"
             maxLength={8000}
-            placeholder={sel === "new" ? "고칠 내용을 적어 주세요. 예: 통제실 일감 목록에 앱 종류(stack) 필터를 추가해 줘" : "이어서 지시할 내용(같은 Claude 세션에 이어서 처리해요)"}
+            placeholder={sel === "new" ? "고칠 내용을 적어 주세요. 예: 통제실 일감 목록에 앱 종류(stack) 필터를 추가해 줘" : "이어서 지시할 내용"}
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
@@ -428,7 +440,7 @@ export default function MaintenancePanel() {
             color="primary"
             isDisabled={busy || text.trim().length < 5}
             size="sm"
-            onPress={() => post({ action: "send", text, ...(sel !== "new" ? { threadId: sel } : {}) })}
+            onPress={() => post({ action: "send", text, aiEngine, ...(sel !== "new" ? { threadId: sel } : {}) })}
           >
             {busy ? "보내는 중…" : sel === "new" ? "새 정비 시작" : thread?.activeTurn ? "대기열에 이어서 지시" : "이어서 지시"}
           </Button>

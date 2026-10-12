@@ -36,6 +36,7 @@ import { refreshPathFromRegistry, toolLabel } from "./pcenv.mjs";
 import { maybeRestart, onRestartSignal, readRestartMark, restartPending, restartQuery } from "./restart.mjs";
 import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
+import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -56,6 +57,9 @@ const DEFAULTS = {
   heartbeatSec: 20,
   jobTimeoutMin: 120,
   claudeCmd: "claude",
+  codexCmd: IS_WIN ? "codex.cmd" : "codex",
+  codexModel: "",
+  codexEnabled: true,
   permissionMode: "acceptEdits",
   allowedTools: "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
   model: "",
@@ -449,7 +453,7 @@ const brief = (v, n = 140) => String(v ?? "").replace(/\s+/g, " ").trim().slice(
 
 // 키 비밀번호(keyValues)는 짧을 수 있어 4자 이상이면 가린다. 마지막에 비밀번호 모양(storePassword=… 등)도 가린다.
 function redactor(secretValues, keyValues = []) {
-  const vals = [...secretValues.filter((v) => v && v.length >= 8), ...keyValues.filter((v) => v && v.length >= 4)];
+  const vals = [...secretValues.filter((v) => v && v.length >= 4), ...keyValues.filter((v) => v && v.length >= 4)];
   return (s) => maskText(vals.reduce((acc, v) => acc.split(v).join("***"), s));
 }
 
@@ -623,6 +627,8 @@ async function flush(st, extra = {}) {
 }
 
 async function finish(st, status, fields) {
+  st.job.aiOutcome = { ...st.job.aiOutcome, status, summary: fields?.summary, failReason: fields?.failReason, sessionId: st.sessionId };
+  if (st.dir !== cfg.workDir) recordLifecycle(st.dir, st.job.aiEngine, status, st.job.id);
   // 키 파일 때문에 앱 폴더 커밋을 멈췄으면 통제실에 보이게(파일 이름만)
   if (st.job.keyBlocked?.length && !st.keyBlockedShown) {
     st.keyBlockedShown = true;
@@ -659,6 +665,27 @@ async function failEarly(job, reason) {
 }
 
 async function runJob(job) {
+  let lock;
+  let dir;
+  try {
+    job.aiEngine = engineOf(job.aiEngine);
+    if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(job.appSlug)) throw new Error("앱 폴더 이름이 올바르지 않습니다.");
+    dir = path.join(cfg.workDir, job.appSlug);
+    lock = acquireWorkspace(dir, { engine: job.aiEngine, taskId: job.id });
+    await runJobUnlocked(job, lock);
+  } catch (e) {
+    await failEarly(job, e.message);
+  } finally {
+    running.delete(job.id);
+    if (lock) {
+      try { if (fs.existsSync(dir)) saveHandoff(dir, { engine: job.aiEngine, taskId: job.id, status: "interrupted", ...job.aiOutcome }, (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s))); }
+      catch (e) { log(`[${job.appSlug}] 상태 인계 기록 실패: ${maskText(e.message)}`); }
+      lock.release();
+    }
+  }
+}
+
+async function runJobUnlocked(job, lock) {
   log(`[${job.appSlug}] 시작 (${job.kind === "new" ? "새 앱" : "수정"}, 시도 ${job.attempts}): ${job.title}`);
 
   const secrets = readSecrets();
@@ -679,7 +706,7 @@ async function runJob(job) {
   const st = {
     job, dir, child: null, logs: [], phase: "scaffold", phaseDirty: true, shots: new Set(), shotHashes: new Set(), shotTries: new Map(),
     reportable: true, stopped: null, result: null, stderrTail: "", lastText: "", started: Date.now(),
-    redact: redactor(Object.values(allowed)),
+    redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets)])(s)),
   };
   running.set(job.id, st);
   readPhase(st);
@@ -722,35 +749,33 @@ async function runJob(job) {
       }
     }
     Object.assign(allowed, key.env);
-    st.redact = redactor(Object.values(allowed).filter((v) => !key.secrets.includes(v)), key.secrets);
+    st.redact = (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets).filter((v) => !key.secrets.includes(v))], key.secrets)(s));
     if (key.note) addLog(st, "info", key.note);
   }
 
-  const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", cfg.permissionMode, "--allowedTools", cfg.allowedTools];
   const appSettings = appPermissionSettings();
-  if (appSettings) args.push("--settings", appSettings);
-  if (cfg.model) args.push("--model", cfg.model);
-
-  const child = spawn(cfg.claudeCmd, args, {
+  recordLifecycle(dir, job.aiEngine, "session-start", job.id);
+  const child = startAi(job.aiEngine, cfg, {
+    settings: job.aiEngine === "claude" ? appSettings : undefined,
     cwd: dir,
     env: { ...process.env, ...allowed, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id },
-    shell: IS_WIN,
-    detached: !IS_WIN,
-    windowsHide: true,
-    stdio: ["pipe", "pipe", "pipe"],
   });
+  lock.setChild(child.pid || null);
+  const decode = eventDecoder(job.aiEngine);
   st.child = child;
   child.stdin.on("error", () => {});
-  child.stdin.end(promptFor(job));
+  child.stdin.end(handoffPrompt(dir, promptFor(job)));
 
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
     let ev;
     try {
-      ev = JSON.parse(line);
+      ev = decode(JSON.parse(line));
     } catch {
       return addLog(st, "info", line);
     }
-    if (ev.type === "system" && ev.subtype === "init") addLog(st, "info", `Claude 세션 시작${ev.model ? ` (${ev.model})` : ""}`);
+    if (!ev) return;
+    if (ev.session_id) st.sessionId = ev.session_id;
+    if (ev.type === "system" && ev.subtype === "init") addLog(st, "info", `${ENGINE_LABELS[job.aiEngine]} 세션 시작${ev.model ? ` (${ev.model})` : ""}`);
     else if (ev.type === "assistant") {
       for (const b of ev.message?.content ?? []) {
         if (b.type === "text" && b.text?.trim()) {
@@ -804,6 +829,23 @@ async function runJob(job) {
       const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result.num_turns ? `, ${st.result.num_turns}턴` : ""})`;
       await finishRelease(st, { summary: (text || "완료(요약 없음)").slice(0, 3700) + footer, checkFail: true });
     } else if (st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
+      const checkBeat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
+      recordLifecycle(dir, job.aiEngine, "verification-start", job.id);
+      let verification;
+      try {
+        verification = await verifyWorkspace(dir, job.stack, (m) => addLog(st, "info", m), 15 * 60_000, (child) => { st.child = child; lock.setChild(child.pid || null); });
+      } finally { clearInterval(checkBeat); }
+      if (!verification.ok) return finish(st, "failed", { failReason: st.redact(`필수 검증 실패: ${verification.reason}`).slice(-1800) });
+      if (st.stopped) return;
+      addLog(st, "info", "필수 검증 통과");
+      if (verification.scope === "source-only") addLog(st, "warn", "Swift 소스·구성 확인만 완료했습니다. 컴파일과 앱 실행은 Mac에서 별도 검증해야 합니다.");
+      recordLifecycle(dir, job.aiEngine, "verification-passed", job.id);
+      job.aiOutcome = { status: "verified", verification };
+      const blocked = keyFilesToCommit(dir);
+      if (blocked.length) {
+        job.keyBlocked = blocked;
+        return finish(st, "failed", { failReason: `키 파일 커밋 차단: ${blocked.join(", ")}` });
+      }
       // outbox(출시 자료 등)는 일감이 아직 실행 중일 때 보내야 서버가 받는다
       await sendOutbox({ dir, job, api, addLog: (level, m) => addLog(st, level, m) });
       const committed = commitResult(dir, job);
@@ -1145,7 +1187,7 @@ async function loop() {
       if (free > 0) {
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
-        const extra = new URLSearchParams({ ...restartQuery(), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe") });
+        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe") });
         // 정비 지시나 정비 배포가 도는 동안에는 새 앱 일감을 받지 않는다(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌)
         const take = maintenanceBusy() ? 0 : free;
         const r = await api(
@@ -1178,7 +1220,7 @@ async function loop() {
           if (r.data?.uploadTest) runUploadTest({ test: r.data.uploadTest, api, log }).catch(() => {});
           if (r.data?.keyScan === true) runKeyScan({ api, log, workDir: cfg.workDir, only: Array.isArray(r.data?.keyScanApps) ? r.data.keyScanApps : null }).catch(() => {});
           // 공장 정비 지시·[배포] 요청(앱 일감과 따로. 정비는 돌던 앱 일감이 없을 때만 시작)
-          onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow });
+          onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) });
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
           if (nowPaused !== paused) {

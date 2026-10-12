@@ -111,6 +111,7 @@ export async function POST(req: NextRequest) {
     }
     // 커넥터 도구(enqueue_release_job)와 같은 함수: 지시문은 배포 계정 정보로 서버가 만든다
     const r = await enqueueReleaseJob({
+      aiEngine: body?.aiEngine,
       appSlug,
       kind,
       source: "통제실 출시 패키지",

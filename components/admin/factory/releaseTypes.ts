@@ -102,6 +102,7 @@ export interface UpdateItem {
 }
 
 export interface ReleaseJobInfo {
+  aiEngine?: "claude" | "codex";
   id: string;
   status: string;
   finishedAt: string | null;

@@ -9,6 +9,7 @@
 import prisma from "@/lib/prisma";
 import { ID_RE, KIND_LABELS, adminAction } from "@/lib/factory/jobs";
 import { approveTurn, deployBundle, queueAction, requestDeploy } from "@/lib/factory/maintenance";
+import type { AiEngine } from "@/lib/factory/ai";
 
 export const APPROVAL_ACTIONS = [
   "job_approve",
@@ -41,13 +42,14 @@ export async function runApproval(
   action: ApprovalAction,
   id: string,
   via: ApprovalVia,
+  aiEngine?: AiEngine,
 ): Promise<ApprovalResult> {
   if (!ID_RE.test(id))
     return { ok: false, status: 400, message: "id 가 올바르지 않아요." };
 
   switch (action) {
     case "job_approve": {
-      const r = await adminAction(id, { action: "approve" });
+      const r = await adminAction(id, { action: "approve", ...(aiEngine ? { aiEngine } : {}) });
 
       if (r.ok || r.status !== 409)
         return { ok: r.ok, status: r.status, message: r.message };

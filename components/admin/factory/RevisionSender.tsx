@@ -4,6 +4,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, CardHeader } from "@heroui/react";
+import AiEngineSelect from "./AiEngineSelect";
+import type { AiEngine } from "@/lib/factory/ai";
 
 interface DoneJob {
   appSlug: string;
@@ -15,6 +17,7 @@ export default function RevisionSender() {
   const [appSlug, setAppSlug] = useState("");
   const [instruction, setInstruction] = useState("");
   const [runNow, setRunNow] = useState(true);
+  const [aiEngine, setAiEngine] = useState<AiEngine>("claude");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -50,7 +53,7 @@ export default function RevisionSender() {
       const res = await fetch("/api/admin/factory/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appSlug, instruction, runNow }),
+        body: JSON.stringify({ appSlug, instruction, runNow, aiEngine }),
       });
       const data = (await res.json().catch(() => ({}))) as { message?: string };
 
@@ -87,6 +90,7 @@ export default function RevisionSender() {
                 </option>
               ))}
             </select>
+            <AiEngineSelect value={aiEngine} onChange={setAiEngine} disabled={busy} />
             <textarea
               className="min-h-[96px] w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm"
               maxLength={5000}

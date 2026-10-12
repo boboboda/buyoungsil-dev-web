@@ -74,6 +74,7 @@ export const MAINTENANCE_TOOLS = [
       type: "object",
       properties: {
         text: { type: "string", description: "지시 내용(5~8000자). 무엇을 왜 고칠지 구체적으로" },
+        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 Claude Code" },
         threadId: { type: "string", description: "이어서 할 정비 id (선택)" },
       },
       required: ["text"],
@@ -125,7 +126,7 @@ export async function callMaintenanceTool(name: string, args: Record<string, unk
     return text(JSON.stringify({ ...queueView(o), ...t, messages: t.messages.map((m) => ({ ...m, text: m.text.slice(0, 6000) })) }, null, 1));
   }
   if (name === "maintenance_send") {
-    const r = await sendMaintenance({ threadId: args.threadId, text: args.text, source: "채팅" });
+    const r = await sendMaintenance({ threadId: args.threadId, text: args.text, aiEngine: args.aiEngine, source: "채팅" });
 
     return text(r.message, !r.ok);
   }

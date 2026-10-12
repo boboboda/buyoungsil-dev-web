@@ -554,6 +554,7 @@ model FactoryJob {
   planMarkdown    String // 확정된 기획서 본문(수정 지시는 고칠 내용만)
   planHash        String // 기획서 sha256. 같은 기획서 중복 등록 감지
   stack           String    @default("flutter") // 앱 템플릿 종류
+  aiEngine        String    @default("claude") // claude | codex. 기존 일감은 Claude 유지
   requiredSecrets String[]  @default([]) // 키 이름만. 값은 저장하지 않는다.
   priority        Int       @default(0)
   status          String    @default("pending") // pending | approved | running | review(출시 검토 대기) | done | failed | cancelled
@@ -756,6 +757,7 @@ model FactoryMaintenance {
   title             String
   status            String                      @default("open") // open | closed
   sessionId         String? // Claude 세션 id(이어서 하기)
+  codexSessionId    String? // Codex 세션 id. Claude sessionId 와 섞지 않는다
   pushedCommit      String? // 마지막으로 GitHub 에 올린 커밋
   needsDeploy       Boolean                     @default(false) // 서버 코드가 바뀌어 배포가 필요한지
   deployCommit      String? // 배포하라고 한 커밋
@@ -776,6 +778,7 @@ model FactoryMaintenanceMessage {
   id            String             @id @default(cuid())
   maintenanceId String
   role          String // user(지시) | assistant(결과) | log | system
+  aiEngine      String             @default("claude") // 지시마다 선택한 실행 AI
   text          String             @db.Text
   status        String? // user 지시: awaiting_approval | queued | running | done | failed | cancelled
   source        String? // 통제실 | 채팅

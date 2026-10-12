@@ -12,6 +12,8 @@
 //   설정 '대기열 끝나면 자동 배포'(기본 꺼짐)가 켜져 있으면 그때 한 번 자동으로 요청한다(지난 배포 뒤 실패한 지시가 있으면 안 함).
 // - 통제실에서 보낸 지시는 바로 대기열에, 채팅(커넥터)에서 보낸 지시는 승인을 기다린다. 채팅에서는 배포할 수 없다.
 import prisma from "@/lib/prisma";
+import { isAiEngine, type AiEngine } from "@/lib/factory/ai";
+import { maskSecrets } from "@/lib/factory/mask";
 import { notifyDeployReady, notifyMaintenance, notifyText } from "@/lib/factory/telegram";
 import { getSettingValue, isAutoDeployEnabled, setSettingValue } from "@/lib/factory/settings";
 
@@ -100,6 +102,7 @@ export async function maintenanceQueue() {
       threadId: t.maintenanceId,
       threadTitle: t.maintenance.title,
       status: t.status,
+      aiEngine: t.aiEngine,
       source: t.source,
       firstLine: firstLine(t.text),
       wait,
@@ -172,7 +175,9 @@ export async function queueAction(action: "skip" | "retry" | "clear", via: strin
 // ───────── 지시 보내기 ─────────
 
 /** 새 정비(threadId 없음) 또는 기존 정비에 이어서 지시. source=통제실 이면 바로 대기열, 채팅이면 승인 대기. 처리 중이어도 대기열에 쌓는다. */
-export async function sendMaintenance(input: { threadId?: unknown; text?: unknown; source: "통제실" | "채팅" }): Promise<Result> {
+export async function sendMaintenance(input: { threadId?: unknown; text?: unknown; aiEngine?: unknown; source: "통제실" | "채팅" }): Promise<Result> {
+  if (input.aiEngine !== undefined && !isAiEngine(input.aiEngine)) return fail(400, "작업 AI가 올바르지 않아요.");
+  const aiEngine = isAiEngine(input.aiEngine) ? input.aiEngine : "claude";
   const text = clean(input.text, MAX_TEXT);
 
   if (text.length < 5) return fail(400, "지시를 5자 이상 적어 주세요.");
@@ -190,7 +195,7 @@ export async function sendMaintenance(input: { threadId?: unknown; text?: unknow
     ? await prisma.factoryMaintenance.update({ where: { id: threadId }, data: { updatedAt: new Date() } })
     : await prisma.factoryMaintenance.create({ data: { title: text.split("\n")[0].slice(0, 60) } });
   const msg = await prisma.factoryMaintenanceMessage.create({
-    data: { maintenanceId: thread.id, role: "user", text, status, source: input.source },
+    data: { maintenanceId: thread.id, role: "user", text, status, source: input.source, aiEngine },
   });
   const ahead = await aheadOf(msg);
   const halt = await getHalt();
@@ -475,7 +480,7 @@ async function releaseStale(): Promise<void> {
 }
 
 /** /next 응답에 붙일 것: 다음 정비 지시(진행 중인 게 없고 대기열이 멈추지 않았고 맨 앞이 승인됐을 때), 배포 요청. */
-export async function maintenanceForNext(): Promise<{ maintenance?: object; maintenanceDeploy?: object }> {
+export async function maintenanceForNext(engines: readonly AiEngine[] = ["claude"]): Promise<{ maintenance?: object; maintenanceDeploy?: object }> {
   await releaseStale();
   const out: { maintenance?: object; maintenanceDeploy?: object } = {};
   const running = await prisma.factoryMaintenanceMessage.findFirst({ where: { role: "user", status: "running" } });
@@ -488,7 +493,7 @@ export async function maintenanceForNext(): Promise<{ maintenance?: object; main
       include: { maintenance: true },
     });
 
-    if (head?.status === "queued") {
+    if (head?.status === "queued" && engines.includes(head.aiEngine as AiEngine)) {
       const left = await prisma.factoryMaintenanceMessage.count({ where: { role: "user", status: { in: ["awaiting_approval", "queued"] }, id: { not: head.id } } });
 
       out.maintenance = {
@@ -496,7 +501,11 @@ export async function maintenanceForNext(): Promise<{ maintenance?: object; main
         threadId: head.maintenanceId,
         title: head.maintenance.title,
         text: head.text,
-        sessionId: head.maintenance.sessionId,
+        aiEngine: head.aiEngine,
+        sessionId: head.aiEngine === "codex" ? head.maintenance.codexSessionId : head.maintenance.sessionId,
+        previousResult: (await prisma.factoryMaintenanceMessage.findFirst({
+          where: { maintenanceId: head.maintenanceId, role: "assistant" }, orderBy: { createdAt: "desc" }, select: { text: true },
+        }))?.text.slice(0, 6000) ?? null,
         // 새 필드(예전 감독 프로그램은 무시): 배포를 대기열 끝에 묶어서 안내하는지, 이 지시 뒤에 남은 지시 수
         deployBundling: true,
         queueLeft: left,
@@ -510,9 +519,18 @@ export async function maintenanceForNext(): Promise<{ maintenance?: object; main
   return out;
 }
 
-export async function startTurn(turnId: string): Promise<Result> {
+export async function setTurnEngine(turnId: string, aiEngine: unknown): Promise<Result> {
+  if (!isAiEngine(aiEngine)) return fail(400, "작업 AI가 올바르지 않아요.");
+  const r = await prisma.factoryMaintenanceMessage.updateMany({
+    where: { id: turnId, role: "user", status: { in: ["awaiting_approval", "queued", "failed"] } }, data: { aiEngine },
+  });
+  return r.count ? { ok: true, status: 200, message: "작업 AI를 바꿨어요. 다음 실행에 적용돼요." } : fail(409, "진행 중이거나 끝난 지시의 AI는 바꿀 수 없어요.");
+}
+
+export async function startTurn(turnId: string, selectedEngine: unknown = "claude"): Promise<Result> {
+  if (!isAiEngine(selectedEngine)) return fail(400, "작업 AI가 올바르지 않아요.");
   const now = new Date();
-  const r = await prisma.factoryMaintenanceMessage.updateMany({ where: { id: turnId, role: "user", status: "queued" }, data: { status: "running", startedAt: now, heartbeatAt: now } });
+  const r = await prisma.factoryMaintenanceMessage.updateMany({ where: { id: turnId, role: "user", status: "queued", aiEngine: selectedEngine }, data: { status: "running", startedAt: now, heartbeatAt: now } });
 
   return r.count ? { ok: true, status: 200, message: "시작" } : fail(409, "시작할 수 있는 지시가 아니에요(취소됐거나 이미 시작됨).");
 }
@@ -561,12 +579,12 @@ export async function reportTurn(body: TurnReport): Promise<Result> {
     data: { status: ok ? "done" : "failed", finishedAt: new Date(), heartbeatAt: new Date(), ...(pushed ? { pushedCommit: pushed, needsDeploy } : {}) },
   });
   await prisma.factoryMaintenanceMessage.create({
-    data: { maintenanceId: turn.maintenanceId, role: "assistant", text: clean(d.text, 20_000) || (ok ? "완료(요약 없음)" : "실패(사유 없음)") },
+    data: { maintenanceId: turn.maintenanceId, role: "assistant", aiEngine: turn.aiEngine, text: maskSecrets(clean(d.text, 20_000)) || (ok ? "완료(요약 없음)" : "실패(사유 없음)") },
   });
   await prisma.factoryMaintenance.update({
     where: { id: turn.maintenanceId },
     data: {
-      ...(sessionId ? { sessionId } : {}),
+      ...(sessionId ? (turn.aiEngine === "codex" ? { codexSessionId: sessionId } : { sessionId }) : {}),
       ...(pushed ? { pushedCommit: pushed } : {}),
       ...(pushed && !deploying ? { deployRequestedAt: null, deployStartedAt: null, deployedAt: null, deployResult: null } : {}),
       ...(needsDeploy ? { needsDeploy: true } : {}),
@@ -686,7 +704,7 @@ export async function maintenanceOverview(opts: { threadId?: string; limit?: num
         updatedAt: t.updatedAt,
         messages: [...t.messages.filter((m) => m.role !== "log"), ...logs.slice(-60)]
           .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-          .map((m) => ({ id: m.id, role: m.role, text: m.text, status: m.status, source: m.source, createdAt: m.createdAt, pushedCommit: m.pushedCommit, deployedAt: m.deployedAt })),
+          .map((m) => ({ id: m.id, role: m.role, text: m.text, status: m.status, aiEngine: m.aiEngine, source: m.source, createdAt: m.createdAt, pushedCommit: m.pushedCommit, deployedAt: m.deployedAt })),
       };
     }),
   };

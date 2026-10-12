@@ -37,6 +37,7 @@ import { maintenanceForNext, maintenanceHold } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
 import { consumeRestart, consumeUpdateNow, isAutoUpdateEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
+import { workerEngines } from "@/lib/factory/ai";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -49,6 +50,7 @@ export async function GET(req: NextRequest) {
   if (!WORKER_RE.test(worker)) return fail(400, "worker 이름이 올바르지 않습니다.");
 
   const slotsRaw = Number(req.nextUrl.searchParams.get("slots") ?? "1");
+  const engines = workerEngines(req.nextUrl.searchParams.get("aiEngines"));
   const slots = Number.isFinite(slotsRaw) ? Math.min(MAX_SLOTS, Math.max(0, Math.floor(slotsRaw))) : 1; // 0 = 일감은 받지 않고 신호만(감독 프로그램이 정비 중)
 
   // 감독 프로그램이 알려 주는 현재 커밋·최근 업데이트 소식(선택). 형식이 이상하면 무시한다.
@@ -91,7 +93,7 @@ export async function GET(req: NextRequest) {
     // 1회성 신호: 받아 가는 순간 지운다. 정지 중이어도 업데이트는 할 수 있게 같이 보낸다.
     const updateNow = await consumeUpdateNow().catch(() => false);
     const pcPaths = await pcPathsToCheck().catch(() => []);
-    const maint = await maintenanceForNext().catch(() => ({}));
+    const maint = await maintenanceForNext(engines).catch(() => ({}));
     const keyPw = await keyPasswordsPending().catch(() => false);
     const keyScan = await consumeKeyScan().catch(() => false);
     const keyTasks = await keyTasksForNext();
@@ -119,7 +121,7 @@ export async function GET(req: NextRequest) {
     if (await maintenanceHold().catch(() => false)) {
       return NextResponse.json({ jobs: [], maintenanceHold: true, autoUpdate, ...extra });
     }
-    const claimed = slots > 0 ? await claimJobs(worker, slots) : [];
+    const claimed = slots > 0 ? await claimJobs(worker, slots, engines) : [];
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
     const overrides = claimed.length ? await getRuleOverrides().catch(() => ({})) : {};
     const releases = await releaseJobExtras(claimed).catch(() => new Map<string, Record<string, unknown>>());

@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Chip, Input } from "@heroui/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import AiEngineSelect from "./AiEngineSelect";
+import { AI_LABELS, type AiEngine } from "@/lib/factory/ai";
 
 type Status =
   | "pending"
@@ -24,6 +26,7 @@ interface JobRow {
   kind: string;
   parentJobId: string | null;
   stack: string;
+  aiEngine: AiEngine;
   requiredSecrets: string[];
   priority: number;
   status: Status;
@@ -309,6 +312,7 @@ export default function FactoryControl() {
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-default-500">
                 <span className="font-mono">{j.appSlug}</span>
+                <span>{AI_LABELS[j.aiEngine ?? "claude"]}</span>
                 <span>{j.kind === "new" ? "새 앱" : "수정"}</span>
                 {j.phase && j.status === "running" && (
                   <span>단계: {j.phase}</span>
@@ -369,6 +373,7 @@ function JobDetailView({
   const { job, claude } = detail;
   const [showPlan, setShowPlan] = useState(false);
   const [priority, setPriority] = useState(String(job.priority));
+  const [aiEngine, setAiEngine] = useState<AiEngine>(job.aiEngine ?? "claude");
   const editable = job.status === "pending" || job.status === "approved";
   const active =
     job.status === "pending" ||
@@ -380,6 +385,7 @@ function JobDetailView({
   useEffect(() => {
     setPriority(String(job.priority));
   }, [job.id, job.priority]);
+  useEffect(() => { setAiEngine(job.aiEngine ?? "claude"); }, [job.id, job.aiEngine]);
 
   return (
     <Card>
@@ -389,7 +395,7 @@ function JobDetailView({
             <h2 className="truncate text-xl font-bold">{job.title}</h2>
             <p className="font-mono text-xs text-default-500">
               {job.appSlug} · {job.kind === "new" ? "새 앱" : "수정 지시"} ·{" "}
-              {job.stack}
+              {job.stack} · {AI_LABELS[job.aiEngine ?? "claude"]}
             </p>
           </div>
           <Chip color={STATUS[job.status].color} variant="flat">
@@ -397,6 +403,12 @@ function JobDetailView({
           </Chip>
         </div>
 
+        {(editable || job.status === "failed") && (
+          <div className="flex flex-wrap items-center gap-2">
+            <AiEngineSelect value={aiEngine} onChange={setAiEngine} disabled={busy} />
+            <Button size="sm" variant="flat" isDisabled={busy || aiEngine === (job.aiEngine ?? "claude")} onPress={() => onAct(job.id, { action: "set-ai", aiEngine })}>AI 적용</Button>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           {job.status === "pending" && (
             <Button
@@ -404,7 +416,7 @@ function JobDetailView({
               color="primary"
               isDisabled={busy}
               size="sm"
-              onPress={() => onAct(job.id, { action: "approve" })}
+              onPress={() => onAct(job.id, { action: "approve", aiEngine })}
             >
               승인
             </Button>
@@ -415,7 +427,7 @@ function JobDetailView({
               color="primary"
               isDisabled={busy}
               size="sm"
-              onPress={() => onAct(job.id, { action: "retry" })}
+              onPress={() => onAct(job.id, { action: "retry", aiEngine })}
             >
               다시 시도
             </Button>
@@ -539,6 +551,7 @@ function JobDetailView({
         {/* 토큰 */}
         <section>
           <h3 className="mb-2 font-semibold">🤖 Claude 사용량</h3>
+          {job.aiEngine === "codex" && <p className="mb-2 text-sm text-default-500">아래는 이 앱의 Claude 사용 이력이에요. 현재 Codex 작업의 진행·검증 결과는 진행 로그에서 확인하세요.</p>}
           {claude.sessions.length === 0 ? (
             <p className="text-sm text-default-500">
               아직 이 앱 이름({job.appSlug})으로 들어온 Claude 세션이 없어요.

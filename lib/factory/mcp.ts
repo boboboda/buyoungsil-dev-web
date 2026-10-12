@@ -3,6 +3,7 @@
 import { createHash } from "crypto";
 
 import prisma from "@/lib/prisma";
+import { isAiEngine } from "@/lib/factory/ai";
 import { notifyJobEvent } from "@/lib/factory/telegram";
 import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
 import {
@@ -167,6 +168,7 @@ export const FACTORY_TOOLS = [
           type: "string",
           description: `기획서(새 앱) 또는 고칠 내용(수정). ${MIN_PLAN}~${MAX_PLAN}자, 마크다운`,
         },
+        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 Claude Code" },
         stack: {
           type: "string",
           enum: [...STACKS],
@@ -236,6 +238,7 @@ export const FACTORY_TOOLS = [
       type: "object",
       properties: {
         appSlug: { type: "string", description: "완성된 앱 이름 (list_factory_jobs 의 appSlug)" },
+        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 Claude Code" },
         kind: {
           type: "string",
           enum: ["first", "store", "update", "project"],
@@ -423,6 +426,7 @@ async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResu
 
 // 출시 준비 일감 등록. 지시문은 서버가 배포 계정 정보로 만든다(채팅이 쓰지 않음). 승인은 관리자가 통제실/텔레그램에서.
 export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<ToolResult> {
+  if (args.aiEngine !== undefined && !isAiEngine(args.aiEngine)) return text("작업 AI는 claude 또는 codex만 쓸 수 있어요.", true);
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
 
   if (!APP_SLUG_RE.test(appSlug)) return text("appSlug 가 올바르지 않아요.", true);
@@ -485,6 +489,7 @@ export async function enqueueReleaseJob(args: Record<string, unknown>): Promise<
     releaseNotes,
     planMarkdown: plan.plan,
     requiredSecrets: plan.requiredSecrets,
+    aiEngine: args.aiEngine,
     source: clean(args.source, 100) || "채팅",
   });
 }
@@ -544,6 +549,7 @@ async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
       title: true,
       kind: true,
       stack: true,
+      aiEngine: true,
       parentJobId: true,
       status: true,
       phase: true,
@@ -562,6 +568,7 @@ async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
       title: j.title,
       kind: j.kind,
       stack: j.stack,
+      aiEngine: j.aiEngine,
       parentJobId: j.parentJobId,
       status: j.status,
       phase: j.phase,
@@ -596,6 +603,7 @@ async function getJob(args: Record<string, unknown>): Promise<ToolResult> {
   return json({
     id: job.id,
     appSlug: job.appSlug,
+    aiEngine: job.aiEngine,
     title: job.title,
     kind: job.kind,
     parentJobId: job.parentJobId,
@@ -636,6 +644,8 @@ type EnqueueFail = { ok: false; message: string };
 type EnqueueOk = { ok: true; id: string; message: string };
 
 export async function enqueue(args: Record<string, unknown>): Promise<ToolResult> {
+  if (args.aiEngine !== undefined && !isAiEngine(args.aiEngine)) return text("작업 AI는 claude 또는 codex만 쓸 수 있어요.", true);
+  const aiEngine = isAiEngine(args.aiEngine) ? args.aiEngine : "claude";
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
   const title = clean(args.title, 80);
   const kind = args.kind === undefined ? "new" : args.kind;
@@ -835,6 +845,7 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
           parentJobId,
           planMarkdown: plan,
           planHash,
+          aiEngine,
           stack,
           requiredSecrets: secrets,
           priority,

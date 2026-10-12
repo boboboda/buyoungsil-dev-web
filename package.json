@@ -7,6 +7,7 @@
     "dev": "next dev --turbo",
     "build": "prisma generate && next build",
     "start": "next start",
+    "test:ai-harness": "node tools/factory-supervisor/tests/ai-harness.test.mjs",
     "lint": "eslint --fix --color"
   },
   "dependencies": {

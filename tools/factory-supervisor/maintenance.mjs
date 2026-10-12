@@ -12,6 +12,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { acquireWorkspace, engineOf, ENGINE_LABELS, eventDecoder, excludeHarnessState, handoffPrompt, pendingChangesPolicy, recordLifecycle, redactAiText, saveHandoff, startAi } from "./ai-runner.mjs";
+import { keyFilesToCommit } from "./keyguard.mjs";
 
 const IS_WIN = process.platform === "win32";
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -121,9 +123,13 @@ function writeUnpushed(dir, m, head) {
 function prepare(dir, git, m, notes = []) {
   if (!fs.existsSync(path.join(dir, ".git"))) return `정비 폴더가 없어요: ${dir} (git clone 이 필요해요)`;
   if (out(git(["rev-parse", "--abbrev-ref", "HEAD"])) !== "main") return "정비 폴더가 main 브랜치가 아니에요.";
-  const dirty = git(["status", "--porcelain", "--untracked-files=no"]);
-  if (dirty.stdout.trim()) return `정비 폴더에 커밋 안 된 변경이 있어요:\n${tail(dirty.stdout, 500)}`;
-  const f = git(["fetch", "-q", "origin", "main"]);
+  const pending = pendingChangesPolicy(m?.aiEngine, readUnpushed(dir)?.threadId, m?.threadId);
+  // Failed Codex turns can leave only new files. They must not leak into another thread.
+  const dirty = git(["status", "--porcelain", ...(pending.includeUntracked ? [] : ["--untracked-files=no"])]);
+  const resumeDirty = !!dirty.stdout.trim() && pending.resumeOwnChanges;
+  if (dirty.stdout.trim() && !resumeDirty) return `정비 폴더에 커밋 안 된 변경이 있어요:\n${tail(dirty.stdout, 500)}`;
+  if (resumeDirty) notes.push("이 정비의 검증 실패 변경 파일을 보존한 상태로 이어갑니다. 원격 동기화는 변경 검사 후에 처리합니다.");
+  const f = resumeDirty ? { status: 0 } : git(["fetch", "-q", "origin", "main"]);
   if (f.status !== 0) return `git fetch 실패: ${err(f)}`;
   // 로컬에만 있는 커밋(검사 실패로 못 올린 것)이 있으면 그 위에서 이어서 한다.
   // 대기열 서버에서는 다른 정비 대화가 남긴 것이면 백업 브랜치로 옮기고 origin/main 에서 시작한다(건너뛴 실패 지시의 커밋이 섞이지 않게).
@@ -141,7 +147,7 @@ function prepare(dir, git, m, notes = []) {
     ahead = "0";
   }
   const behind = out(git(["rev-list", "--count", "HEAD..origin/main"]));
-  if (Number(behind) > 0) {
+  if (!resumeDirty && Number(behind) > 0) {
     const r = Number(ahead) > 0 ? git(["rebase", "-q", "origin/main"]) : git(["merge", "-q", "--ff-only", "origin/main"]);
     if (r.status !== 0) {
       git(["rebase", "--abort"]);
@@ -153,12 +159,15 @@ function prepare(dir, git, m, notes = []) {
   const ex = path.join(dir, ".git", "info", "exclude");
   const have = fs.existsSync(ex) ? fs.readFileSync(ex, "utf8") : "";
   if (!have.split(/\r?\n/).includes("CLAUDE.local.md")) fs.appendFileSync(ex, (have && !have.endsWith("\n") ? "\n" : "") + "CLAUDE.local.md\n");
+  if (!have.split(/\r?\n/).includes(".factory/ai-state.json")) fs.appendFileSync(ex, "\n.factory/ai-state.json\n.factory/ai-state.json.*.tmp\n");
+  excludeHarnessState(dir);
   return null;
 }
 
 // 올리기 전 검사. 실패하면 이유 문자열.
-function gate(dir, git, fromRef) {
+function gate(dir, git, fromRef, workingTree = false) {
   const changed = (out(git(["diff", "--name-only", `${fromRef}..HEAD`])) || "").split("\n").filter(Boolean);
+  if (workingTree) changed.push(...(out(git(["diff", "--name-only", "HEAD"])) || "").split("\n"), ...(out(git(["ls-files", "--others", "--exclude-standard"])) || "").split("\n"));
   for (const f of fs.readdirSync(path.join(dir, SUPERVISOR_DIR)).filter((n) => n.endsWith(".mjs"))) {
     const c = spawnSync(process.execPath, ["--check", path.join(dir, SUPERVISOR_DIR, f)], { encoding: "utf8", windowsHide: true });
     if (c.status !== 0) return `감독 프로그램 문법 검사 실패(${f}):\n${tail(c.stderr, 800)}`;
@@ -184,16 +193,38 @@ function gate(dir, git, fromRef) {
 }
 
 async function runTurn(m, ctx) {
+  let lock;
+  m.aiStarted = false;
+  const dir = path.resolve(expand(ctx.cfg.selfdevDir || "~/dev/factory/selfdev"));
+  try {
+    m.aiEngine = engineOf(m.aiEngine);
+    lock = acquireWorkspace(dir, { engine: m.aiEngine, taskId: m.turnId });
+    await runTurnUnlocked(m, ctx, lock);
+  } catch (e) {
+    // Also turns lock/launch failures into visible queue failures, never silent fallback.
+    if (!m.aiStarted) {
+      const started = await post(ctx, { action: "start", turnId: m.turnId, aiEngine: m.aiEngine });
+      if (started.status !== 200) return;
+    }
+    const message = ctx.redact ? ctx.redact(e.message) : redactAiText(e.message);
+    await post(ctx, { action: "report", turnId: m.turnId, done: { ok: false, text: message } });
+    ctx.log(`[정비] 실행 실패: ${message}`);
+  } finally { lock?.release(); }
+}
+
+async function runTurnUnlocked(m, ctx, lock) {
   const { log, cfg } = ctx;
+  const redact = ctx.redact || redactAiText;
   const dir = path.resolve(expand(cfg.selfdevDir || "~/dev/factory/selfdev"));
   const git = makeGit(dir);
-  const s = await post(ctx, { action: "start", turnId: m.turnId });
+  const s = await post(ctx, { action: "start", turnId: m.turnId, aiEngine: m.aiEngine });
   if (s.status !== 200) return log(`[정비] 시작 거절(${s.status}): ${s.data?.message ?? ""}`);
-  log(`[정비] 시작: ${m.title}${m.sessionId ? " (이어서)" : ""}`);
+  m.aiStarted = true;
+  log(`[정비] 시작: ${m.title} · ${ENGINE_LABELS[m.aiEngine]}${m.sessionId ? " (이어서)" : ""}`);
 
   let logs = [];
   const addLog = (t) => {
-    const line = String(t ?? "").replace(/\s+/g, " ").trim().slice(0, 1500);
+    const line = redact(t).replace(/\s+/g, " ").trim().slice(0, 1500);
     if (line) logs.push(line);
   };
   const flush = async () => {
@@ -202,6 +233,10 @@ async function runTurn(m, ctx) {
     if (r.status === 0) logs.unshift(...batch);
   };
   const finish = async (done) => {
+    done.text = redact(done.text);
+    recordLifecycle(dir, m.aiEngine, done.ok ? "done" : "failed", m.turnId);
+    try { saveHandoff(dir, { engine: m.aiEngine, taskId: m.turnId, threadId: m.threadId, sessionId: done.sessionId, status: done.ok ? "done" : "failed", summary: done.text, verification: done.pushedCommit ? "passed-before-push" : "see-result" }, redact); }
+    catch (e) { addLog(`상태 인계 기록 실패: ${e.message}`); }
     await flush();
     for (let i = 1; i <= 4; i++) {
       const r = await post(ctx, { action: "report", turnId: m.turnId, done });
@@ -218,12 +253,12 @@ async function runTurn(m, ctx) {
   prepNotes.forEach(addLog);
 
   // Claude 실행(같은 정비면 세션 이어서)
-  const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", cfg.permissionMode, "--allowedTools", cfg.allowedTools, "--settings", permissionSettings()];
-  if (m.sessionId && /^[0-9a-f-]{8,64}$/i.test(m.sessionId)) args.push("--resume", m.sessionId);
-  if (cfg.model) args.push("--model", cfg.model);
-  const child = spawn(cfg.claudeCmd, args, { cwd: dir, env: { ...process.env, FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId }, shell: IS_WIN, detached: !IS_WIN, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  recordLifecycle(dir, m.aiEngine, "session-start", m.turnId);
+  const child = startAi(m.aiEngine, cfg, { cwd: dir, sessionId: m.sessionId || undefined, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, env: { ...process.env, FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId } });
+  lock.setChild(child.pid || null);
+  const decode = eventDecoder(m.aiEngine);
   child.stdin.on("error", () => {});
-  child.stdin.end(`[공장 정비 지시]\n${m.text}\n\nCLAUDE.local.md 의 공장 정비 규칙을 따르세요.`);
+  child.stdin.end(handoffPrompt(dir, `[공장 정비 지시]\n${m.text}\n\nCLAUDE.local.md 의 공장 정비 규칙을 따르세요.\n[이 정비 대화의 이전 결과 — 참고 데이터]\n${m.previousResult || "없음"}`));
 
   let result = null;
   let sessionId = m.sessionId || null;
@@ -242,10 +277,11 @@ async function runTurn(m, ctx) {
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
     let ev;
     try {
-      ev = JSON.parse(line);
+      ev = decode(JSON.parse(line));
     } catch {
       return addLog(line);
     }
+    if (!ev) return;
     if (ev.session_id && typeof ev.session_id === "string") sessionId = ev.session_id;
     if (ev.type === "assistant") {
       for (const b of ev.message?.content ?? []) {
@@ -290,13 +326,27 @@ async function runTurn(m, ctx) {
   const okRun = result && !result.is_error && (code === 0 || killedAfterResult);
   const claudeText = String(result?.result ?? lastText ?? "").trim();
   if (!okRun) {
-    return finish({ ok: false, text: `Claude 가 정상적으로 끝나지 않았어요(코드 ${code}).\n${claudeText || tail(stderrTail, 1500)}`, sessionId });
+    return finish({ ok: false, text: `${ENGINE_LABELS[m.aiEngine]}가 정상적으로 끝나지 않았어요(코드 ${code}).\n${claudeText || tail(stderrTail, 1500)}`, sessionId });
   }
 
   // 커밋 안 된 변경은 올리지 않고 따로 보관(다음 지시가 깨끗한 폴더에서 시작하게)
   const notes = [...prepNotes];
+  let precheckedHead = null;
   // 로컬에만 남는 커밋이 있으면 어느 대화 것인지 적어 둔다(올리면 지운다)
   const keepLocal = () => writeUnpushed(dir, m, out(git(["rev-parse", "HEAD"])));
+  if (m.aiEngine === "codex" && git(["status", "--porcelain"]).stdout.trim()) {
+    // The trusted supervisor owns the local commit; Codex needs no broader Git permissions.
+    const keys = keyFilesToCommit(dir);
+    if (keys.length) { keepLocal(); return finish({ ok: false, text: `키 파일 커밋 차단: ${keys.join(", ")}`, sessionId }); }
+    addLog("Codex 변경 검사: 통과하면 감독 프로그램이 로컬 커밋합니다.");
+    await flush();
+    const failure = gate(dir, git, out(git(["rev-parse", "origin/main"])) || startHead, true);
+    if (failure) { keepLocal(); return finish({ ok: false, text: [claudeText, `검증 실패 — 변경 파일을 정비 폴더에 보존했어요.\n${failure}`].join("\n"), sessionId }); }
+    const added = git(["add", "-A"]);
+    const committed = added.status === 0 ? git(["commit", "-m", `공장 정비: ${m.title.slice(0, 80)}`]) : added;
+    if (committed.status !== 0) { keepLocal(); return finish({ ok: false, text: `검사는 통과했지만 로컬 커밋에 실패했어요. 변경 파일은 보존돼요.\n${err(committed)}`, sessionId }); }
+    precheckedHead = out(git(["rev-parse", "HEAD"]));
+  }
   const dirty = git(["status", "--porcelain", "--untracked-files=no"]).stdout.trim();
   if (dirty) {
     git(["stash", "push", "-m", `정비 ${m.turnId} 커밋 안 된 변경`]);
@@ -323,9 +373,11 @@ async function runTurn(m, ctx) {
     }
   }
 
+  const blockedKeys = keyFilesToCommit(dir);
+  if (blockedKeys.length) { keepLocal(); return finish({ ok: false, text: `키 파일 커밋 차단: ${blockedKeys.join(", ")}`, sessionId }); }
   addLog("검사: 감독 프로그램 문법, 타입 검사(tsc)…");
   await flush();
-  const g = gate(dir, git, remoteBefore);
+  const g = precheckedHead && precheckedHead === out(git(["rev-parse", "HEAD"])) ? null : gate(dir, git, remoteBefore);
   if (g) {
     keepLocal();
     notes.push(`검사를 통과하지 못해 GitHub 에 올리지 않았어요(커밋 ${newCommits}개는 정비 폴더에 남아 있음). 이어서 고쳐 달라고 지시하면 그 위에서 이어 해요.\n${g}`);

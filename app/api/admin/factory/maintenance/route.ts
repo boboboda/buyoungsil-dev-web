@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
 import { runApproval } from "@/lib/factory/approvals";
-import { cancelTurn, closeThread, maintenanceOverview, queueAction, sendMaintenance } from "@/lib/factory/maintenance";
+import { cancelTurn, closeThread, maintenanceOverview, queueAction, sendMaintenance, setTurnEngine } from "@/lib/factory/maintenance";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,7 +35,10 @@ export async function POST(req: NextRequest) {
 
   switch (body?.action) {
     case "send":
-      r = await sendMaintenance({ threadId: threadId || undefined, text: body.text, source: "통제실" });
+      r = await sendMaintenance({ threadId: threadId || undefined, text: body.text, aiEngine: body.aiEngine, source: "통제실" });
+      break;
+    case "set-ai":
+      r = turnId ? await setTurnEngine(turnId, body.aiEngine) : null;
       break;
     case "approve":
       r = turnId ? await runApproval("maintenance_approve", turnId, "통제실") : null;

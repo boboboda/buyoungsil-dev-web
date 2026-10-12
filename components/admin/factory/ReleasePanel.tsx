@@ -17,6 +17,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Chip } from "@heroui/react";
 
 import Field from "./Field";
+import AiEngineSelect from "./AiEngineSelect";
+import { AI_LABELS, type AiEngine } from "@/lib/factory/ai";
 import AppKeyLookup from "./AppKeyLookup";
 import { KeyCheckView, KeyError, UntrackView } from "./KeyVault";
 import StoreAssetsView from "./StoreAssetsView";
@@ -140,6 +142,7 @@ function JobStatus({
       <div className="flex flex-wrap items-center gap-2">
         <span>
           최근 출시 일감({kind}
+          {` · ${AI_LABELS[job.aiEngine ?? "claude"]}`}
           {job.updateItemsText ? ` · 갱신: ${job.updateItemsText}` : ""}
           {job.versionName ? ` · 버전 ${job.versionName}` : ""}
           {job.overwriteProject ? (job.releaseKind === "update" ? " · 홈페이지 반영" : " · 홈페이지 덮어쓰기") : ""})
@@ -299,6 +302,7 @@ function AppRow({
   const [keyId, setKeyId] = useState(app.keyId ?? "");
   // 이미 첫 업로드를 마친 앱은 보통 스토어 수정이라 그걸 먼저 보여 준다
   const [kind, setKind] = useState(app.alreadyReleased ? "store" : "first");
+  const [aiEngine, setAiEngine] = useState<AiEngine>("claude");
   // 앱 업데이트(기능 추가) 입력
   const [updateText, setUpdateText] = useState("");
   const [versionName, setVersionName] = useState("");
@@ -365,6 +369,7 @@ function AppRow({
     if (window.confirm(`${app.displayName}: '${kindDef?.label ?? kind}' 일감을 만들고 바로 승인할까요?\n\n${KIND_HELP[kind] ?? ""}${itemText}${updText}${owText}`)) {
       call({
         action: "enqueueRelease",
+        aiEngine,
         appSlug: app.appSlug,
         kind,
         runNow: true,
@@ -597,6 +602,7 @@ function AppRow({
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <AiEngineSelect value={aiEngine} onChange={setAiEngine} disabled={busy || app.active} />
             <Button className="min-h-11 sm:min-h-0" color="primary" isDisabled={busy || !app.done || app.active || lacking.length > 0} size="sm" onPress={approve}>
               ✅ 승인
             </Button>
