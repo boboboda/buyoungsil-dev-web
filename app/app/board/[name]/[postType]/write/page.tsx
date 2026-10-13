@@ -1,4 +1,4 @@
-import PostWrite from "@/components/release/postComponent/PostWrite";
+import BoardWritePage from "@/components/board/BoardWritePage";
 
 export default async function AppWritePage({
   params,
@@ -7,5 +7,5 @@ export default async function AppWritePage({
 }) {
   const { name, postType } = await params;
 
-  return <PostWrite appName={name} postType={postType} />;
+  return <BoardWritePage name={name} postType={postType} variant="app" />;
 }

@@ -7,7 +7,7 @@ import React from "react";
 import { useBoardBase, useViewer } from "@/components/app/AppViewerContext";
 import { PostSummary } from "@/types";
 
-import { SearchIcon, PlusIcon } from "../../icons";
+import { SearchIcon, PlusIcon } from "@/components/icons";
 
 const PAGE_SIZE = 10;
 

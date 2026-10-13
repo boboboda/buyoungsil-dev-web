@@ -23,7 +23,7 @@ import "react-toastify/dist/ReactToastify.css";
 
 import { useBoardBase, useViewer } from "@/components/app/AppViewerContext";
 
-import { SearchIcon, ChevronDownIcon, PlusIcon } from "../../icons";
+import { SearchIcon, ChevronDownIcon, PlusIcon } from "@/components/icons";
 
 import { columns } from "@/types";
 import { capitalize } from "@/lib/utils";

@@ -1,7 +1,5 @@
 // app/project/[name]/board/[postType]/page.tsx
-import { title } from "@/components/primitives";
-import PostTable from "@/components/release/postComponent/PostTable";
-import { fetchPosts } from "@/serverActions/posts";
+import BoardListPage from "@/components/board/BoardListPage";
 
 export default async function BoardPage({
   params,
@@ -10,15 +8,5 @@ export default async function BoardPage({
 }) {
   const { name, postType } = await params;
 
-  const response = await fetchPosts(name, postType);
-  const fetchedPosts = response?.posts ?? [];
-
-  const postTitle = postType === "notice" ? "공지사항" : "문의 게시판";
-
-  return (
-    <div className="container flex w-full pl-5 py-5 flex-col items-center justify-center gap-y-3 pr-4">
-      <h1 className={title()}>{postTitle}</h1>
-      <PostTable appName={name} postType={postType} posts={fetchedPosts} />
-    </div>
-  );
+  return <BoardListPage name={name} postType={postType} variant="site" />;
 }

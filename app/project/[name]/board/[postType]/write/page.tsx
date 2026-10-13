@@ -1,19 +1,12 @@
 // app/project/[name]/board/[postType]/write/page.tsx
-import PostWrite from "@/components/release/postComponent/PostWrite";
+import BoardWritePage from "@/components/board/BoardWritePage";
 
 export default async function WritePage({
   params,
 }: {
-  params: Promise<{ postType: string; name: string }>;  // ✅ appName → name
+  params: Promise<{ postType: string; name: string }>;
 }) {
-  const { postType, name } = await params;  // ✅ appName → name
+  const { postType, name } = await params;
 
-  console.log("Post Type:", postType);
-  console.log("Project Name:", name);
-
-  return (
-    <div className="flex flex-col w-full space-y-8 pr-4">
-      <PostWrite appName={name} postType={postType} />  {/* ✅ appName → name */}
-    </div>
-  );
+  return <BoardWritePage name={name} postType={postType} variant="site" />;
 }
