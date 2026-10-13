@@ -4,8 +4,8 @@
 
 export const FACTORY_TABS = [
   { key: "status", label: "현황" },
-  { key: "novels", label: "작품" },
   { key: "jobs", label: "일감" },
+  { key: "novels", label: "작품" },
   { key: "release", label: "출시" },
   { key: "settings", label: "설정" },
   { key: "usage", label: "사용량" },
