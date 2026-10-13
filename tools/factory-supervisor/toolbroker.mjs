@@ -343,7 +343,7 @@ export function createBroker(opts) {
   const log = opts.log ?? (() => {});
   const onResult = opts.onResult ?? (() => {});
   const seen = new Set();
-  const records = []; // 통제실에 보일 목록: { id, tool, status, at, ms, message }
+  const records = []; // 통제실에 보일 목록: { id, tool, command?, status, at, ms, message }
   let timer = null;
   let ticking = null;
   let stopped = false;
@@ -360,7 +360,7 @@ export function createBroker(opts) {
     }
   };
 
-  const respond = (id, tool, body, startedAt) => {
+  const respond = (id, tool, body, startedAt, command = null) => {
     const dir = factoryDir(appDir, "responses");
     const file = path.join(dir, `${id}.json`);
     if (isLink(file)) throw new Error("응답 파일 자리에 심볼릭 링크가 있어요.");
@@ -369,7 +369,7 @@ export function createBroker(opts) {
     const tmp = path.join(dir, `.${id}.${process.pid}.tmp`);
     fs.writeFileSync(tmp, JSON.stringify(out, null, 2) + "\n", { mode: 0o600 });
     fs.renameSync(tmp, file);
-    const rec = { id, tool: tool ?? "?", status: out.status, at: startedAt.toISOString(), ms: finishedAt - startedAt, message: String(out.message ?? "").slice(0, 200) };
+    const rec = { id, tool: tool ?? "?", ...(command ? { command } : {}), status: out.status, at: startedAt.toISOString(), ms: finishedAt - startedAt, message: String(out.message ?? "").slice(0, 200) };
     records.push(rec);
     if (records.length > 100) records.shift();
     event(rec);
@@ -408,11 +408,13 @@ export function createBroker(opts) {
         child = c;
       },
     };
+    // 기록에는 하위 명령 이름만 남긴다(인자 값은 남기지 않음)
+    const command = req.tool === "toolkit.run" && typeof req.args?.command === "string" && SUBCOMMAND_RE.test(req.args.command) ? req.args.command : null;
     const v = adapter.validate(req.args, ctx);
-    if (!v.ok) return respond(id, req.tool, { status: v.status ?? "denied", message: v.reason, files: [] }, startedAt);
-    if (settings.mode === "report") return respond(id, req.tool, { status: "denied", message: "보고만 모드: 요청은 기록했지만 실행하지 않았어요.", files: [] }, startedAt);
+    if (!v.ok) return respond(id, req.tool, { status: v.status ?? "denied", message: v.reason, files: [] }, startedAt, command);
+    if (settings.mode === "report") return respond(id, req.tool, { status: "denied", message: "보고만 모드: 요청은 기록했지만 실행하지 않았어요.", files: [] }, startedAt, command);
     const r = await adapter.run(v.value, ctx);
-    return respond(id, req.tool, { status: r.status, message: r.message, files: r.files ?? [], ...(r.output ? { output: r.output } : {}), ...(r.result !== undefined ? { result: r.result } : {}), cost: adapter.cost(req.args) }, startedAt);
+    return respond(id, req.tool, { status: r.status, message: r.message, files: r.files ?? [], ...(r.output ? { output: r.output } : {}), ...(r.result !== undefined ? { result: r.result } : {}), cost: adapter.cost(req.args) }, startedAt, command);
   }
 
   /** 한 번 확인: 응답이 없는 새 요청을 처리한다(꺼짐 모드면 아무것도 하지 않는다) */

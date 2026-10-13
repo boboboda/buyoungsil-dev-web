@@ -59,6 +59,7 @@ export function toolBrokerLimitLabel(n: number, unit: string): string {
 export interface ToolRequestRecord {
   id: string;
   tool: string;
+  command?: string | null; // toolkit.run 이 실행한 하위 명령 이름만(인자·프롬프트·키 값은 저장하지 않음). 예전 기록은 없음
   status: "ok" | "denied" | "failed" | "timeout";
   at: string;
   ms: number | null;
@@ -84,7 +85,9 @@ export function cleanToolRequests(v: unknown): ToolRequestRecord[] | null {
     const ms = typeof r.ms === "number" && Number.isFinite(r.ms) && r.ms >= 0 ? Math.round(r.ms) : null;
     const message = typeof r.message === "string" ? maskSecrets(r.message.replace(/[\u0000-\u001f]/g, " ").slice(0, 200)) : null;
 
-    out.push({ id, tool, status, at, ms, message });
+    const command = typeof r.command === "string" && /^[a-z][a-z0-9_-]{0,39}$/.test(r.command) ? r.command : null;
+
+    out.push({ id, tool, ...(command ? { command } : {}), status, at, ms, message });
   }
 
   return out;

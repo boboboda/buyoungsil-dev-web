@@ -128,7 +128,7 @@ export function buildToolbox(src: ToolboxSource): Toolbox {
       where: brokerLink,
       usage: usageOf(src, "toolkit.run"),
       group: "allowed",
-      note: "실행할 수 있는 명령은 작업 PC 의 game-toolkit/tools.json 에 적힌 것뿐이에요(목록은 바로 아래 '툴킷 도구 상세'에서 볼 수 있어요). 인터넷·키가 필요한 명령은 '허용' 모드이면서 그 일감의 필요한 키에 이름이 있을 때만 돌아요.",
+      note: "실행할 수 있는 명령은 작업 PC 의 game-toolkit/tools.json 에 적힌 것뿐이에요(목록은 바로 위 '도구 목록'에서 볼 수 있어요). 인터넷·키가 필요한 명령은 '허용' 모드이면서 그 일감의 필요한 키에 이름이 있을 때만 돌아요.",
     },
     {
       key: "blocked",
@@ -236,6 +236,25 @@ export function countToolUsage(lists: unknown[], sinceMs: number): Record<string
   return out;
 }
 
+/** 중계 기록 → toolkit.run 하위 명령별 최근 횟수. 명령 이름이 없는 기록(예전 기록)은 "?"(미상)로 묶는다 */
+export function countCommandUsage(lists: unknown[], sinceMs: number): Record<string, ToolUsage> {
+  const out: Record<string, ToolUsage> = {};
+
+  for (const list of lists) {
+    for (const r of cleanToolRequests(list) ?? []) {
+      if (r.tool !== "toolkit.run" || Date.parse(r.at) < sinceMs) continue;
+      const u = (out[r.command || "?"] ??= { ...EMPTY_USAGE });
+
+      u.total++;
+      if (r.status === "ok") u.ok++;
+      else if (r.status === "denied") u.denied++;
+      else u.failed++;
+    }
+  }
+
+  return out;
+}
+
 export interface ToolboxDb {
   factorySetting: { findUnique(args: { where: { key: string } }): PromiseLike<{ value: string } | null> };
   factoryJob: { findMany(args: object): PromiseLike<{ toolRequests: unknown }[]> };
@@ -296,4 +315,18 @@ export async function readToolboxSource(db: ToolboxDb, env: Record<string, strin
   }
 
   return { broker, runtime, usage, connectorToken };
+}
+
+/** 도구 목록 줄마다 보일 toolkit.run 하위 명령별 최근 횟수. 못 읽으면 null */
+export async function readCommandUsage(db: Pick<ToolboxDb, "factoryJob">, now = Date.now()): Promise<Record<string, ToolUsage> | null> {
+  const since = now - TOOLBOX_USAGE_DAYS * 24 * 3600_000;
+
+  return part("도구별 사용 기록", async () => {
+    const rows = await db.factoryJob.findMany({ where: { updatedAt: { gte: new Date(since) } }, select: { toolRequests: true }, orderBy: { updatedAt: "desc" }, take: 500 });
+
+    return countCommandUsage(
+      rows.map((r) => r.toolRequests),
+      since,
+    );
+  });
 }

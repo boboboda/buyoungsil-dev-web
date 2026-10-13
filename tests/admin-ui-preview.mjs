@@ -4,7 +4,7 @@
 // 상태: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패) · history(이력 전체 보기)
 //       · users(가입자 명단, 가짜 30명) · users-empty(가입자 0명)
 //       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
-//       · toolkit(통제실 [설정] 도구함 아래 '툴킷 도구 상세': 도구 5개, 용도 추정·저장 표시, 앞 두 개 펼침)
+//       · toolkit(통제실 [설정] 도구함 맨 위 '도구 목록'(사용 횟수 포함): 도구 5개, 용도 추정·저장 표시, 앞 두 개 펼침)
 //       · history-merged(이력 [작업 진행] 탭: 상태별 묶음 보드) · history-jobs(이력 [앱 일감] 탭: 일감 20개 + 긴 결과 접힘)
 //       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
 //       · fable-usage(AI USAGE 의 Fable 주간 한도 카드 + 오늘 모델별 비율 + 상태바 Fable) · fable-missing(Fable 값 못 받음)
@@ -81,6 +81,7 @@ const toolkitLib = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask
 const { ToolkitToolsView } = loadTs("components/admin/factory/ToolkitToolsPanel.tsx", {
   "@/lib/prisma": { __esModule: true, default: null },
   "@/lib/factory/toolkit": toolkitLib,
+  "@/lib/factory/toolbox": toolboxLib,
   "./ToolkitPurposeSelect": loadTs("components/admin/factory/ToolkitPurposeSelect.tsx", { "@/lib/factory/toolkit": toolkitLib }),
 });
 const { ToolboxView } = loadTs("components/admin/factory/ToolboxPanel.tsx", { "@/lib/prisma": { __esModule: true, default: null }, "@/lib/factory/toolbox": toolboxLib });
@@ -522,6 +523,12 @@ const toolkitReport = toolkitLib.validateToolkitReport(
   new Date(now),
 ).info;
 const toolkitView = toolkitLib.buildToolkitView(toolkitReport, { "pixel-generate": "game" });
+const toolkitUsage = {
+  "pixel-codex": { total: 41, ok: 36, denied: 1, failed: 4 },
+  "pixel-slice": { total: 22, ok: 20, denied: 0, failed: 2 },
+  "pixel-anim": { total: 9, ok: 9, denied: 0, failed: 0 },
+  "?": { total: 13, ok: 9, denied: 2, failed: 2 },
+};
 
 function page(state) {
   const st = STATES[state];
@@ -573,8 +580,8 @@ function page(state) {
           { className: "fx-split-main" },
           h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
           h(FactoryTabs, { active: "settings" }),
-          h(ToolboxView, { toolbox: toolboxData.live }),
-          h("div", { className: "mt-6" }, h(ToolkitToolsView, { view: toolkitView })),
+          h(ToolkitToolsView, { view: toolkitView, usage: toolkitUsage }),
+          h("div", { className: "mt-6" }, h(ToolboxView, { toolbox: toolboxData.live })),
         ),
       ),
     );

@@ -121,8 +121,8 @@ export default async function FactoryConsole({
 
           {tab === "settings" && (
             <div className="space-y-6">
-              <ToolboxPanel />
               <ToolkitToolsPanel />
+              <ToolboxPanel />
               <DefaultAiSettings />
               <AppSlotsSettings />
               <ToolBrokerSettings />

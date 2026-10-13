@@ -194,6 +194,20 @@ test("toolkit.run without a toolkit fails softly", async (t) => {
   assert.match(response(f.app, "k1").message, /툴킷이 없어요/);
 });
 
+test("toolkit.run records keep only the command name (no args), echo and bad requests have none", async (t) => {
+  const f = fixture(t);
+  request(f.app, "r1", "toolkit.run", { command: "sprite", args: { prompt: "SECRET-PROMPT-TEXT" } });
+  request(f.app, "r2", "echo", { command: "sprite" });
+  request(f.app, "r3", "toolkit.run", { command: "Bad Name!" });
+  const { b } = broker(f, { mode: "allow" });
+  await b.tick();
+  const list = b.list();
+  assert.equal(list.find((r) => r.id === "r1").command, "sprite");
+  assert.equal(list.find((r) => r.id === "r2").command, undefined);
+  assert.equal(list.find((r) => r.id === "r3").command, undefined);
+  assert.doesNotMatch(JSON.stringify(list), /SECRET-PROMPT-TEXT/);
+});
+
 test("tools.json validation rejects bad manifests", (t) => {
   const f = fixture(t);
   fs.mkdirSync(f.toolkit);

@@ -52,9 +52,9 @@ export function ToolboxView({ toolbox }: { toolbox: Toolbox | null }) {
   const days = toolbox?.usageDays ?? 30;
 
   return (
-    <section aria-label="도구함 한눈에 보기" className="fx-hud scroll-mt-24" id="toolbox">
+    <section aria-label="도구함 접근 설정" className="fx-hud scroll-mt-24" id="toolbox">
       <header className="fx-hud-head">
-        <h2 className="fx-hud-title">toolbox · 도구함 한눈에 보기</h2>
+        <h2 className="fx-hud-title">toolbox · 접근 설정</h2>
         <span className="text-sm fx-muted">읽기 전용</span>
       </header>
 

@@ -1,12 +1,24 @@
 // components/admin/factory/ToolkitToolsPanel.tsx
-// 통제실 [설정] 도구함 바로 아래 '툴킷 도구 상세'. 작업 PC 의 game-toolkit/tools.json 을 감독 프로그램이 읽어 보낸 값(도구는 실행하지 않음).
+// 통제실 [설정] 도구함 맨 위 '도구 목록'(도구별 한 줄 + 최근 30일 사용 횟수). 작업 PC 의 game-toolkit/tools.json 을 감독 프로그램이 읽어 보낸 값(도구는 실행하지 않음).
 // 도구마다 한 줄 요약 + 펼치면 실행 명령·설명·입출력·스크립트 위치·파이썬 맨 위 설명·옵션·수정일, 용도 칸(추정 표시, 관리자가 바꿔 저장).
 // 서버에서 그린다(펼침은 <details>, 용도 고르기만 클라이언트 조각). 못 읽어도 통제실은 뜬다.
 import prisma from "@/lib/prisma";
 import { readToolkitView, PURPOSE_LABELS, guessPurpose, type ToolkitRow, type ToolkitView } from "@/lib/factory/toolkit";
+import { readCommandUsage, TOOLBOX_USAGE_DAYS, type ToolUsage } from "@/lib/factory/toolbox";
 import ToolkitPurposeSelect from "./ToolkitPurposeSelect";
 
-function Row({ row }: { row: ToolkitRow }) {
+// 최근 N일 사용 칸. usage: undefined = 보고 없음(칸 숨김), null = 기록을 못 읽음
+function usageLine(usage: Record<string, ToolUsage> | null | undefined, id: string): string | null {
+  if (usage === undefined) return null;
+  if (usage === null) return `최근 ${TOOLBOX_USAGE_DAYS}일: 확인 못 함`;
+  const u = usage[id];
+
+  return u && u.total > 0 ? `최근 ${TOOLBOX_USAGE_DAYS}일 ${u.total}회 (성공 ${u.ok} · 거절 ${u.denied} · 실패 ${u.failed})` : "기록 없음";
+}
+
+function Row({ row, usage }: { row: ToolkitRow; usage?: Record<string, ToolUsage> | null }) {
+  const used = usageLine(usage, row.id);
+
   return (
     <li className="fx-panel min-w-0 p-3" data-toolkit-tool={row.id}>
       <details>
@@ -17,6 +29,15 @@ function Row({ row }: { row: ToolkitRow }) {
             <span className="fx-muted">{row.purposeSource === "guess" ? " (추정)" : ""}</span>
             {row.enabled ? null : <span className="fx-bad"> · 꺼짐</span>}
           </span>
+          <span className="w-full min-w-0 break-words text-sm">{row.desc || "설명 없음"}</span>
+          <span className="w-full min-w-0 break-words text-sm fx-muted">
+            입력 → 출력: {row.input} → {row.output}
+          </span>
+          {used ? (
+            <span className="w-full font-mono text-sm fx-muted" data-tool-usage={row.id}>
+              {used}
+            </span>
+          ) : null}
         </summary>
         <dl className="mt-2 grid gap-1 break-words text-sm">
           <div>
@@ -53,14 +74,14 @@ function Row({ row }: { row: ToolkitRow }) {
   );
 }
 
-export function ToolkitToolsView({ view }: { view: ToolkitView }) {
+export function ToolkitToolsView({ view, usage }: { view: ToolkitView; usage?: Record<string, ToolUsage> | null }) {
   const info = view.info;
   const counts = view.rows.reduce<Record<string, number>>((n, r) => ({ ...n, [r.purpose]: (n[r.purpose] ?? 0) + 1 }), {});
 
   return (
-    <section aria-label="툴킷 도구 상세" className="fx-hud scroll-mt-24" id="toolkit-tools">
+    <section aria-label="도구 목록" className="fx-hud scroll-mt-24" id="toolkit-tools">
       <header className="fx-hud-head">
-        <h2 className="fx-hud-title">toolkit · 툴킷 도구 상세</h2>
+        <h2 className="fx-hud-title">toolkit · 도구 목록</h2>
         <span className="text-sm fx-muted">목록은 읽기 전용 · 용도만 바꿔 저장</span>
       </header>
 
@@ -88,9 +109,14 @@ export function ToolkitToolsView({ view }: { view: ToolkitView }) {
           </p>
           <ul className="grid gap-2">
             {view.rows.map((r) => (
-              <Row key={r.id} row={r} />
+              <Row key={r.id} row={r} usage={usage} />
             ))}
           </ul>
+          {usage && usage["?"] ? (
+            <p className="mt-2 break-words text-sm fx-muted" data-tool-usage="?">
+              미상(명령 이름이 기록되기 전의 toolkit.run): 최근 {TOOLBOX_USAGE_DAYS}일 {usage["?"].total}회 (성공 {usage["?"].ok} · 거절 {usage["?"].denied} · 실패 {usage["?"].failed})
+            </p>
+          ) : null}
         </>
       )}
     </section>
@@ -98,5 +124,7 @@ export function ToolkitToolsView({ view }: { view: ToolkitView }) {
 }
 
 export default async function ToolkitToolsPanel() {
-  return <ToolkitToolsView view={await readToolkitView(prisma)} />;
+  const [view, usage] = await Promise.all([readToolkitView(prisma), readCommandUsage(prisma)]);
+
+  return <ToolkitToolsView usage={usage} view={view} />;
 }

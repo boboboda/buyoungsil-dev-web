@@ -24,7 +24,9 @@ function loadTs(relative, dependencies = {}) {
 const mask = loadTs("lib/factory/mask.ts");
 const lib = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
 const select = loadTs("components/admin/factory/ToolkitPurposeSelect.tsx", { "@/lib/factory/toolkit": lib });
-const { ToolkitToolsView } = loadTs("components/admin/factory/ToolkitToolsPanel.tsx", { "@/lib/prisma": { __esModule: true, default: null }, "@/lib/factory/toolkit": lib, "./ToolkitPurposeSelect": select });
+const toolBroker = loadTs("lib/factory/toolBroker.ts", { "@/lib/factory/mask": mask });
+const toolbox = loadTs("lib/factory/toolbox.ts", { "@/lib/factory/toolBroker": toolBroker });
+const { ToolkitToolsView } = loadTs("components/admin/factory/ToolkitToolsPanel.tsx", { "@/lib/prisma": { __esModule: true, default: null }, "@/lib/factory/toolkit": lib, "@/lib/factory/toolbox": toolbox, "./ToolkitPurposeSelect": select });
 
 const tool = (id, over = {}) => ({ id, desc: `${id} 설명`, entry: "cli.py", script: "toolkit/x.py", dir: "toolkit", doc: "맨 위", opts: ["a"], a: ["input:path*", "out:string"], out: ["out"], tags: [], net: false, sec: [], to: 60, en: true, mod: "2026-10-12", ...over });
 const report = (tools, over = {}) => ({ state: "ok", count: tools.length, manifestMod: "2026-10-13", tools, ...over });
@@ -128,4 +130,35 @@ test("서버 경로: device-stats 는 toolkit 을 작업 PC 토큰으로만 받�
   assert.match(ds, /"toolkit" in body[\s\S]*isValidFactoryWorkerToken/);
   const ctl = read("app/api/admin/factory/control/route.ts");
   assert.ok(ctl.indexOf("requireAdmin()") < ctl.indexOf("toolPurpose"));
+});
+
+test("도구별 사용 기록: 명령 이름별 30일 횟수·미상·기록 없음·읽기 실패", () => {
+  const at = (d) => new Date(Date.UTC(2026, 9, 13) - d * 86400_000).toISOString().replace(/\.\d+Z$/, ".000Z");
+  const rec = (id, tool, status, d, command) => ({ id, tool, status, at: at(d), ms: 5, message: null, ...(command ? { command } : {}) });
+  const since = Date.UTC(2026, 9, 13) - 30 * 86400_000;
+  const usage = toolbox.countCommandUsage(
+    [
+      [rec("a1", "toolkit.run", "ok", 1, "pixel-slice"), rec("a2", "toolkit.run", "failed", 2, "pixel-slice"), rec("a3", "toolkit.run", "denied", 2, "pixel-codex"), rec("a4", "toolkit.run", "ok", 3), rec("a5", "echo", "ok", 1), rec("a6", "toolkit.run", "ok", 40, "pixel-slice")],
+      "깨진 값",
+    ],
+    since,
+  );
+  assert.deepEqual(usage["pixel-slice"], { total: 2, ok: 1, denied: 0, failed: 1 }, "30일 밖은 뺀다");
+  assert.deepEqual(usage["pixel-codex"], { total: 1, ok: 0, denied: 1, failed: 0 });
+  assert.deepEqual(usage["?"], { total: 1, ok: 1, denied: 0, failed: 0 }, "명령 이름 없는 예전 기록은 미상");
+  assert.equal(usage.echo, undefined, "toolkit.run 만 센다");
+  // 저장 단계: 명령 이름 형식만 통과, 인자 모양은 버림
+  const cleaned = toolBroker.cleanToolRequests([rec("b1", "toolkit.run", "ok", 1, "pixel-slice"), { ...rec("b2", "toolkit.run", "ok", 1), command: "bad value --x=1" }]);
+  assert.equal(cleaned[0].command, "pixel-slice");
+  assert.equal(cleaned[1].command, undefined);
+
+  const info = lib.validateToolkitReport(report([tool("pixel-slice"), tool("env-doctor")]), new Date(0)).info;
+  const view = lib.buildToolkitView(info, {});
+  const html = renderToStaticMarkup(h(ToolkitToolsView, { view, usage }));
+  assert.match(html, /data-tool-usage="pixel-slice"[^>]*>최근 30일 2회 \(성공 1 · 거절 0 · 실패 1\)/);
+  assert.match(html, /data-tool-usage="env-doctor"[^>]*>기록 없음/);
+  assert.match(html, /미상\(명령 이름이 기록되기 전의 toolkit\.run\): 최근 30일 1회/);
+  assert.match(html, /입력 → 출력: /);
+  assert.match(renderToStaticMarkup(h(ToolkitToolsView, { view, usage: null })), /최근 30일: 확인 못 함/);
+  assert.doesNotMatch(renderToStaticMarkup(h(ToolkitToolsView, { view })), /data-tool-usage/, "usage 를 안 주면 칸이 없다");
 });
