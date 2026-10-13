@@ -98,6 +98,67 @@ location @studio_auth_error {
 - 적용 순서: 통제실에서 키 발급 → nginx 조각 적용 → `nginx -t` → reload → 시크릿 창에서 `/studio/` 열어 키 입력 창이 뜨는지, 틀린 키는 다시 묻는지, 맞는 키는 열리는지 확인.
 - 여러 게임: 게임마다 `location ^~ /studio-<게임>` 과 `location = /_studio_auth_<게임>` 을 따로 두고 `X-Studio-App` 만 바꾼다.
 
+## Studio 요청 입구 (POST /api/studio-requests)
+
+Studio 에서 소품을 눌러 "이상해요, 다시 요청"을 하거나 소품·책상 배치를 고쳐 "게임에 적용"을 누르면, 홈페이지가 **승인 대기** 앱 일감(kind=revision)을 만든다.
+승인은 지금처럼 통제실에서 한다(**자동 승인 없음**). 새 비밀값은 필요 없고, 위의 Studio 접근 키(앱 이름 `studio`)로 인증한다.
+
+- 호출하는 쪽: 브라우저가 아니라 **app-kit 서버**. 사용자의 `Authorization` 헤더를 그대로 전달한다. CORS 는 열지 않는다(OPTIONS 없음).
+- 인증: `Authorization: Basic base64(아무이름:키)`. `/api/studio-auth/verify` 와 같은 검증(해시 비교, 한 주소 10분에 10번 틀리면 15분 429). 실패는 이유 구별 없이 401(`WWW-Authenticate` 없음). 성공하면 `lastUsedAt` 갱신.
+- 모든 응답은 `Cache-Control: no-store`. 에러 본문은 한국어 한 줄이고 키·해시·스택이 없다.
+
+요청 본문(JSON, 전체 64KB 이하):
+
+```json
+{
+  "kind": "regen",
+  "appSlug": "saessak-hub",
+  "engine": "codex",
+  "propName": "shelf_2",
+  "note": "선반이 비스듬하게 나옴"
+}
+```
+
+```json
+{
+  "kind": "layout",
+  "appSlug": "saessak-hub",
+  "layout": { "floor": { "w": 10, "h": 8 }, "props": [{ "name": "shelf_2", "x": 3, "y": 2 }] }
+}
+```
+
+| 값 | 규칙 |
+| --- | --- |
+| `kind` | `regen`(소품 다시 요청) 또는 `layout`(배치 적용) |
+| `appSlug` | 영문 소문자·숫자·하이픈 3~40자. 이미 완성(done)된 앱이어야 함 |
+| `engine` | regen 일 때 필수: `codex` 또는 `pixellab` |
+| `propName` | regen 일 때 필수: 영문·숫자·`_`·`-` 80자 이하 |
+| `note` | 선택, 500자 이하 |
+| `layout` | layout 일 때 필수: 객체, JSON 40KB 이하, 중첩 12단계 이하 |
+
+응답:
+
+| 상태 | 뜻 | 본문 |
+| --- | --- | --- |
+| 201 | 승인 대기 일감을 만들었다 | `{"ok":true,"jobId":"…","status":"승인 대기"}` |
+| 400 | 값 검사 실패(허용 목록 밖, 완성되지 않은 앱, layout 40KB 초과 등) | `{"ok":false,"error":"…"}` |
+| 401 | 키 없음·틀림·폐기됨 | `{"ok":false,"error":"…"}` |
+| 409 | 그 앱에 이미 진행 중 일감이 있음(채팅의 enqueue_app_job 과 같은 검사), 승인 대기 Studio 일감이 5개 이상, 승인 대기 일감이 너무 많음 | 같은 형식 |
+| 413 | 본문이 64KB 초과 | 같은 형식 |
+| 429 | 한 주소가 막힘(`Retry-After`), 또는 키당 분당 10건 초과 | 같은 형식 |
+
+일감 내용(기획서는 서버가 템플릿으로 만든다. 보낸 값은 코드블록 안의 데이터로만 들어간다):
+
+- `source`: "Studio 요청". 통제실 일감 목록의 '등록 경로'로 보인다. 제목: `<앱 이름> (Studio: 소품 다시 요청 <propName>)` 또는 `<앱 이름> (Studio: 배치 적용)`. 직전 완료 일감이 `parentJobId`.
+- regen / codex: 해당 소품 그림을 Codex 로 다시 만들어 후보 풀(`assets/raw/...`)에 올리고 **기존 이미지는 교체하지 않는다**(사람이 고름). `aiEngine`=codex.
+- regen / pixellab: PixelLab 은 공장 PC 에서 호출 가능한지 확인되지 않아, `tools/pixellab/manifest.json` 에 새 항목(`<propName>2` 식)만 추가하고 Mac 에서 실행할 명령 `python3 tools/pixellab/pixellab_gen.py run <이름> --push` 를 결과에 적게 한다(크레딧 상한 언급). `aiEngine`=claude.
+- layout: 보낸 JSON 을 `assets/layout/hub_layout.json` 으로 저장하고 게임이 읽어 반영하게 한다. 파일이 없으면 코드 배치로 되돌아가는 폴백 유지, 겹침·바닥 밖 좌표 검사.
+
+남용 방지·감사:
+
+- 키당 분당 10건, 같은 앱에 승인 대기 Studio 일감 5개 이상이면 409.
+- 모든 인증된 요청은 `studio_request_logs` 표에 키 id·종류·앱·결과(created/invalid/conflict/rate_limited/error)·일감 id 만 남긴다. 키 원문·해시·본문은 저장하지 않는다.
+
 ## 실패할 때의 동작
 
 - 홈페이지가 멈추거나 DB 를 못 읽으면 검증 주소가 답하지 못하므로 nginx 는 `/studio/` 를 열지 않는다(안전한 쪽으로 실패).
@@ -107,8 +168,10 @@ location @studio_auth_error {
 ## 관련 코드
 
 - `lib/studio/access.ts` — 키 생성·해시·검증·실패 제한
-- `app/api/studio-auth/verify/route.ts` — nginx 가 부르는 검증 주소(로그인 없이 열린 유일한 Studio 경로, `/api` 는 미들웨어 대상이 아님)
+- `app/api/studio-requests/route.ts`, `lib/studio/requests.ts` — Studio 요청 입구(검사·기획서 템플릿·일감 만들기·감사 기록)
+- `app/api/studio-auth/verify/route.ts` — nginx 가 부르는 검증 주소(로그인 없이 열린 Studio 경로(키 확인만), `/api` 는 미들웨어 대상이 아님)
 - `app/api/admin/factory/studio-keys/route.ts` — 통제실 발급·폐기·목록(관리자, 같은 사이트 요청만)
 - `components/admin/factory/StudioAccessKeys.tsx` — 통제실 [설정] 탭 카드
 - `prisma/migrations/20261024090000_add_studio_access_keys` — 표 추가
-- 시험: `npm run test:studio-access`
+- `prisma/migrations/20261031090000_add_studio_request_logs` — 요청 감사 표 추가
+- 시험: `npm run test:studio-access`, `npm run test:studio-requests`

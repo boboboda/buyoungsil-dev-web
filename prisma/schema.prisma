@@ -970,3 +970,17 @@ model DeviceStatSample {
   @@index([device, at])
   @@map("device_stat_samples")
 }
+
+// Studio 요청 입구(POST /api/studio-requests) 감사 기록. 키 원문·해시는 저장하지 않고 키 id 만 둔다(인증 실패는 키 id 없음).
+model StudioRequestLog {
+  id        String   @id @default(cuid())
+  keyId     String? // StudioAccessKey.id
+  kind      String // regen | layout | ?
+  appSlug   String
+  result    String // created | invalid | conflict | rate_limited | error
+  jobId     String?
+  createdAt DateTime @default(now())
+
+  @@index([keyId, createdAt])
+  @@map("studio_request_logs")
+}

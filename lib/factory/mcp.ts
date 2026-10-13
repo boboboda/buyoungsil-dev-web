@@ -654,6 +654,13 @@ type EnqueueFail = { ok: false; message: string };
 type EnqueueOk = { ok: true; id: string; message: string };
 
 export async function enqueue(args: Record<string, unknown>): Promise<ToolResult> {
+  const r = await enqueueWithId(args);
+
+  return r.isError ? { content: r.content, isError: true } : { content: r.content };
+}
+
+/** enqueue 와 같은 검사·저장. 등록되면 일감 id 도 함께 돌려준다(Studio 요청 입구 등 코드에서 부르는 곳용). */
+export async function enqueueWithId(args: Record<string, unknown>): Promise<ToolResult & { jobId?: string }> {
   if (args.aiEngine !== undefined && !isAiEngine(args.aiEngine)) return text("작업 AI는 claude 또는 codex만 쓸 수 있어요.", true);
   const aiEngine = isAiEngine(args.aiEngine) ? args.aiEngine : await getDefaultAiEngine();
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
@@ -886,5 +893,5 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
   // 승인 대기 알림. 통제실에서 직접 보낸 지시는 보낸 사람이 이미 아니까 알리지 않는다.
   if (result.ok && source !== "통제실") void notifyJobEvent(result.id, "pending");
 
-  return result.ok ? text(result.message) : text(result.message, true);
+  return result.ok ? { ...text(result.message), jobId: result.id } : text(result.message, true);
 }

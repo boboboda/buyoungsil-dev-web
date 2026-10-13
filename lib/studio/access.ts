@@ -277,10 +277,15 @@ export async function listStudioKeys(): Promise<{ pepperReady: boolean; items: S
 
 /** 그 앱의 유효한 키와 맞으면 true. 형식이 틀리거나 비밀값이 없으면 false. 성공 시 lastUsedAt 을 1분에 한 번 이하로 쓴다. */
 export async function verifyStudioKey(app: string, key: string): Promise<boolean> {
-  if (!STUDIO_APP_RE.test(app) || !STUDIO_KEY_RE.test(key)) return false;
+  return (await verifyStudioKeyId(app, key)) !== null;
+}
+
+/** verifyStudioKey 와 같은 확인. 맞으면 키 id(감사 기록용, 키 원문·해시 아님), 아니면 null. */
+export async function verifyStudioKeyId(app: string, key: string): Promise<string | null> {
+  if (!STUDIO_APP_RE.test(app) || !STUDIO_KEY_RE.test(key)) return null;
   const pepper = await getPepper();
 
-  if (!pepper) return false;
+  if (!pepper) return null;
   const row = await prisma.studioAccessKey.findFirst({
     where: { app, revokedAt: null },
     orderBy: { createdAt: "desc" },
@@ -297,5 +302,5 @@ export async function verifyStudioKey(app: string, key: string): Promise<boolean
     });
   }
 
-  return ok;
+  return ok && row ? row.id : null;
 }
