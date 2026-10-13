@@ -64,10 +64,10 @@ export function Button({ children, isDisabled, onPress, color, size, variant, ..
   const fx = await load("fx.mjs");
   const { default: ProjectLinkSelect } = await load("ProjectLinkSelect.mjs");
 
-  // (1) 탭 주소: 5개, 모르는 값·빈 값은 [현황], 배열이면 첫 값
+  // (1) 탭 주소: 6개, 모르는 값·빈 값은 [현황], 배열이면 첫 값
   assert.deepEqual(
     FACTORY_TABS.map((t) => `${t.key}:${t.label}`),
-    ["status:현황", "jobs:일감", "release:출시", "settings:설정", "usage:사용량"],
+    ["status:현황", "jobs:일감", "novels:작품", "release:출시", "settings:설정", "usage:사용량"],
   );
   assert.equal(parseFactoryTab(undefined), "status");
   assert.equal(parseFactoryTab(""), "status");
