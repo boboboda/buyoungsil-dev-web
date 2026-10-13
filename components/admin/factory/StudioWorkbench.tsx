@@ -21,6 +21,149 @@ const STUDIOS: { kind: StudioKind; label: string }[] = [
   { kind: "app", label: "앱 스튜디오" },
 ];
 
+export interface StudioSentJob {
+  id: string;
+  title: string;
+  status: string;
+  createdAt: string;
+}
+
+const SEND_KINDS = [
+  { kind: "regen", label: "이미지 다시 만들기" },
+  { kind: "layout", label: "배치 적용" },
+  { kind: "free", label: "자유 지시" },
+] as const;
+type SendKind = (typeof SEND_KINDS)[number]["kind"];
+
+const MAX_NOTE = 500; // lib/studio/requests.ts 와 같은 값(서버가 다시 검사)
+const MAX_LAYOUT_BYTES = 40 * 1024;
+const jobHref = (id: string) => `/admin/factory?tab=jobs&job=${encodeURIComponent(id)}`;
+const FIELD = "mt-1 w-full min-w-0 rounded border border-default-300 bg-transparent px-2 py-1 text-sm";
+
+/** [일감 보내기] 카드: 연결된 도구 + 요청 종류 + 메모 → 서버가 Studio 요청과 같은 경로로 '승인 대기' 일감을 만든다. 아래에 이 프로젝트에서 보낸 최근 일감 */
+function SendJobCard({ appSlug, connected, initialRecent }: { appSlug: string; connected: string[]; initialRecent: StudioSentJob[] }) {
+  const [tool, setTool] = useState(connected[0] ?? "");
+  const [kind, setKind] = useState<SendKind>("regen");
+  const [propName, setPropName] = useState("");
+  const [placement, setPlacement] = useState("");
+  const [instruction, setInstruction] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [recent, setRecent] = useState(initialRecent);
+  const toolId = connected.includes(tool) ? tool : (connected[0] ?? "");
+  const tooBig = new Blob([placement]).size > MAX_LAYOUT_BYTES;
+  const ready = !!toolId && (kind === "regen" ? propName.trim() !== "" : kind === "layout" ? placement.trim() !== "" && !tooBig : instruction.trim() !== "");
+
+  const send = async () => {
+    setBusy(true);
+    setNotice("");
+    try {
+      const body = { appSlug, kind, tool: toolId, note, ...(kind === "regen" ? { propName: propName.trim() } : kind === "layout" ? { placement } : { instruction }) };
+      const res = await fetch("/api/admin/factory/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ studioJob: body }) });
+      const data = (await res.json().catch(() => ({}))) as { message?: string; recent?: StudioSentJob[] };
+
+      setNotice(data.message || (res.ok ? "일감을 만들었어요." : "일감을 만들지 못했어요."));
+      if (res.ok && data.recent) setRecent(data.recent);
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-label="일감 보내기" className="min-w-0 space-y-3 border-t border-default-300 pt-3" data-studio-send>
+      <h4 className="fx-label">일감 보내기</h4>
+      {!connected.length ? (
+        <p className="text-sm fx-muted">연결된 도구가 없어요. 위에서 도구를 체크하고 [저장]하면 일감을 보낼 수 있어요.</p>
+      ) : (
+        <>
+          <div>
+            <label className="fx-label" htmlFor={`send-tool-${appSlug}`}>
+              도구
+            </label>
+            <select className={FIELD} data-send-tool id={`send-tool-${appSlug}`} value={toolId} onChange={(e) => setTool(e.target.value)}>
+              {connected.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="요청 종류">
+            {SEND_KINDS.map((k) => (
+              <button key={k.kind} aria-pressed={kind === k.kind} className={`rounded border border-default-300 px-2 py-1 text-sm ${kind === k.kind ? "font-bold" : ""}`} data-send-kind={k.kind} type="button" onClick={() => setKind(k.kind)}>
+                [{k.label}]
+              </button>
+            ))}
+          </div>
+          {kind === "regen" ? (
+            <div>
+              <label className="fx-label" htmlFor={`send-prop-${appSlug}`}>
+                대상 이름 (영문·숫자·_·- 80자 이하)
+              </label>
+              <input className={`${FIELD} font-mono`} id={`send-prop-${appSlug}`} maxLength={80} value={propName} onChange={(e) => setPropName(e.target.value)} />
+            </div>
+          ) : null}
+          {kind === "layout" ? (
+            <div>
+              <label className="fx-label" htmlFor={`send-layout-${appSlug}`}>
+                placement.json 붙여넣기 (40KB 이내)
+              </label>
+              <textarea className={`${FIELD} font-mono`} id={`send-layout-${appSlug}`} rows={6} value={placement} onChange={(e) => setPlacement(e.target.value)} />
+              {tooBig ? <p className="mt-1 text-sm fx-bad">40KB 를 넘어서 보낼 수 없어요.</p> : null}
+            </div>
+          ) : null}
+          {kind === "free" ? (
+            <div>
+              <label className="fx-label" htmlFor={`send-free-${appSlug}`}>
+                고칠 내용 ({instruction.length}/{MAX_NOTE}자)
+              </label>
+              <textarea className={FIELD} id={`send-free-${appSlug}`} maxLength={MAX_NOTE} rows={4} value={instruction} onChange={(e) => setInstruction(e.target.value)} />
+            </div>
+          ) : null}
+          <div>
+            <label className="fx-label" htmlFor={`send-note-${appSlug}`}>
+              메모 (선택, {note.length}/{MAX_NOTE}자)
+            </label>
+            <textarea className={FIELD} id={`send-note-${appSlug}`} maxLength={MAX_NOTE} rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+          </div>
+          <button className="rounded border border-default-300 px-3 py-1 font-semibold" data-send-submit disabled={busy || !ready} type="button" onClick={() => void send()}>
+            [일감 만들기]
+          </button>
+          <p className="text-sm fx-muted">승인 대기 일감으로 만들어져요. 승인은 통제실 [일감]이나 텔레그램에서 해요.</p>
+        </>
+      )}
+      {notice ? (
+        <p className="text-sm" role="status">
+          {notice}
+        </p>
+      ) : null}
+      <div data-studio-recent>
+        <h4 className="fx-label">이 프로젝트에서 보낸 최근 일감</h4>
+        {recent.length ? (
+          <ul className="mt-1 grid gap-1 text-sm">
+            {recent.map((j) => (
+              <li key={j.id} className="min-w-0 break-words">
+                <a className="underline" href={jobHref(j.id)}>
+                  {j.title}
+                </a>
+                <span className="fx-muted">
+                  {" "}
+                  · {STATUS_LABELS[j.status] ?? j.status} · {j.createdAt.slice(0, 16).replace("T", " ")}(UTC)
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm fx-muted">아직 없어요.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
 
 export default function StudioWorkbench({
@@ -28,6 +171,7 @@ export default function StudioWorkbench({
   initial,
   tools,
   toolsReported,
+  recent = {},
   initialStudio = "game",
   initialPicked = null,
 }: {
@@ -35,6 +179,7 @@ export default function StudioWorkbench({
   initial: StudioProjects;
   tools: StudioToolRow[];
   toolsReported: boolean;
+  recent?: Record<string, StudioSentJob[]>; // 프로젝트별 Studio 요청 최근 일감(최신순 5개)
   initialStudio?: StudioKind; // 시험·미리보기용 처음 상태
   initialPicked?: string | null;
 }) {
@@ -125,7 +270,7 @@ export default function StudioWorkbench({
       <header className="fx-hud-head">
         <h2 className="fx-hud-title">studio · 프로젝트와 도구 연결</h2>
       </header>
-      <p className="mb-3 text-sm fx-muted">종류는 관리자가 지정해요 · 일감 보내기는 다음 단계예요.</p>
+      <p className="mb-3 text-sm fx-muted">종류는 관리자가 지정해요 · 연결한 도구로 [일감 보내기]를 할 수 있어요.</p>
 
       <nav aria-label="스튜디오 종류" className="fx-tabs mb-4">
         {STUDIOS.map((s) => (
@@ -268,6 +413,7 @@ export default function StudioWorkbench({
                     </button>
                     {dirty ? <span className="text-sm fx-muted">저장하지 않은 변경이 있어요.</span> : null}
                   </div>
+                  <SendJobCard key={app.appSlug} appSlug={app.appSlug} connected={cfg.tools.filter((id) => !isManualTool(id) && tools.some((t) => t.id === id))} initialRecent={recent[app.appSlug] ?? []} />
                 </>
               )}
               {notice ? (

@@ -6,11 +6,13 @@ import prisma from "@/lib/prisma";
 import { readToolkitView } from "@/lib/factory/toolkit";
 import { buildStudioApps, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
 
-import StudioWorkbench, { type StudioToolRow } from "./StudioWorkbench";
+import { STUDIO_REQUEST_SOURCE } from "@/lib/studio/requests";
+
+import StudioWorkbench, { type StudioSentJob, type StudioToolRow } from "./StudioWorkbench";
 
 export default async function StudioPanel() {
   try {
-    const [jobs, setting, view] = await Promise.all([
+    const [jobs, setting, view, sent] = await Promise.all([
       prisma.factoryJob.findMany({
         orderBy: { createdAt: "desc" },
         take: 500,
@@ -18,10 +20,18 @@ export default async function StudioPanel() {
       }),
       prisma.factorySetting.findUnique({ where: { key: STUDIO_PROJECTS_KEY } }),
       readToolkitView(prisma),
+      prisma.factoryJob.findMany({ where: { source: STUDIO_REQUEST_SOURCE }, orderBy: { createdAt: "desc" }, take: 100, select: { id: true, appSlug: true, title: true, status: true, createdAt: true } }),
     ]);
+    const recent: Record<string, StudioSentJob[]> = {};
+
+    for (const j of sent) {
+      const list = (recent[j.appSlug] ??= []);
+
+      if (list.length < 5) list.push({ id: j.id, title: j.title, status: j.status, createdAt: j.createdAt.toISOString() });
+    }
     const tools: StudioToolRow[] = view.rows.map((r) => ({ id: r.id, desc: r.desc, purpose: r.purpose, purposeSource: r.purposeSource, enabled: r.enabled }));
 
-    return <StudioWorkbench apps={buildStudioApps(jobs)} initial={readStudioProjects(setting?.value)} tools={tools} toolsReported={!!view.info && view.info.state === "ok"} />;
+    return <StudioWorkbench apps={buildStudioApps(jobs)} initial={readStudioProjects(setting?.value)} tools={tools} recent={recent} toolsReported={!!view.info && view.info.state === "ok"} />;
   } catch (error) {
     console.error("[studio] 스튜디오 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
 

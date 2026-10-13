@@ -129,3 +129,26 @@ test("화면: 프로젝트를 고른 상태 — 게임은 game/common 먼저, se
   assert.match(none, /종류를 정하면 도구를 연결할 수 있어요/);
   assert.doesNotMatch(none, /data-studio-tool=/);
 });
+
+test("일감 보내기 카드: 저장된 연결 도구만 고르고, 종류 3가지·메모·버튼·최근 일감 링크가 보인다", () => {
+  const apps = [{ appSlug: "saessak-hub", title: "새싹 허브", stack: "flutter", status: "done", finishedAt: null, done: true }];
+  const tools = [
+    { id: "pixel-generate", desc: "", purpose: "game", purposeSource: "saved", enabled: true },
+    { id: "pixel-anim", desc: "", purpose: "cut", purposeSource: "saved", enabled: true },
+    { id: "setup-runtime", desc: "", purpose: "common", purposeSource: "guess", enabled: true },
+  ];
+  const initial = { "saessak-hub": { kind: "game", tools: ["pixel-generate", "setup-runtime"] } };
+  const recent = { "saessak-hub": [{ id: "j9", title: "새싹 허브 (Studio: 배치 적용)", status: "pending", createdAt: "2026-10-13T14:20:00.000Z" }] };
+  const out = renderToStaticMarkup(h(Workbench, { apps, tools, toolsReported: true, initial, recent, initialPicked: "saessak-hub" }));
+  assert.match(out, /data-studio-send/);
+  assert.match(out, /<option value="pixel-generate"/);
+  assert.doesNotMatch(out, /<option value="pixel-anim"/, "연결 안 한 도구는 고를 수 없다");
+  assert.doesNotMatch(out, /<option value="setup-runtime"/, "manual 도구는 고를 수 없다");
+  for (const k of ["regen", "layout", "free"]) assert.ok(out.includes('data-send-kind="' + k + '"'), k);
+  assert.match(out, /data-send-submit/);
+  assert.match(out, /data-send-submit="true" disabled=""/);
+  assert.ok(out.includes("/admin/factory?tab=jobs&amp;job=j9"));
+  const none = renderToStaticMarkup(h(Workbench, { apps, tools, toolsReported: true, initial: { "saessak-hub": { kind: "game", tools: [] } }, initialPicked: "saessak-hub" }));
+  assert.match(none, /연결된 도구가 없어요/);
+  assert.doesNotMatch(none, /data-send-submit/);
+});

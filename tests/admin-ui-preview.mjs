@@ -595,6 +595,7 @@ function page(state) {
             apps: studioApps,
             tools: studioTools,
             toolsReported: true,
+            recent: { "saessak-hub": [{ id: "j9", title: "새싹 허브 (Studio: 소품 다시 요청 shelf_2)", status: "pending", createdAt: "2026-10-13T14:20:00.000Z" }, { id: "j8", title: "새싹 허브 (Studio: 배치 적용)", status: "done", createdAt: "2026-10-12T09:05:00.000Z" }] },
             initialPicked: "saessak-hub",
             initial: { "saessak-hub": { kind: "game", tools: ["pixel-generate", "pixel-slice"], studioUrl: "https://hub.example.com/studio/" }, "timer-app": { kind: "app", tools: [] } },
           }),

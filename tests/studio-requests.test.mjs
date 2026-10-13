@@ -120,10 +120,11 @@ function setup() {
   const requests = loadTs("lib/studio/requests.ts", {
     "@/lib/prisma": { __esModule: true, default: db.prisma },
     "@/lib/factory/mcp": mcp,
-    "@/lib/factory/jobs": { APP_SLUG_RE: /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/ },
+    "@/lib/factory/jobs": { APP_SLUG_RE: /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/, ACTIVE_STATUSES: ["pending", "approved", "running"] },
+    "@/lib/factory/studioProjects": loadTs("lib/factory/studioProjects.ts"),
   });
   const route = loadTs("app/api/studio-requests/route.ts", { "@/lib/studio/access": access, "@/lib/studio/requests": requests });
-  return { ...db, access, route, notified };
+  return { ...db, access, route, notified, requests };
 }
 
 let ipSeq = 0;
@@ -452,4 +453,72 @@ test("확장 필드: 잘못된 경로·도구 이름·placement 는 400", async 
     assert.equal(res.status, 400, name);
   }
   assert.equal(ctx.jobs.filter((j) => j.source === "Studio 요청").length, 0);
+});
+
+test("통제실 [일감 만들기]: 공개 요청과 같은 지시문 형식, 연결 도구만, 진행 중이면 막음, 공개 입구는 free 를 받지 않음", async () => {
+  const { ctx, key } = await ready();
+  const reported = new Set(["pixel-slice", "setup-runtime", "not-linked"]);
+  const project = { tools: ["pixel-slice", "setup-runtime"], templateId: "room_v1" };
+  const make = (input) => ctx.requests.createAdminStudioJob({ appSlug: "saessak-hub", tool: "pixel-slice", ...input }, project, reported);
+
+  // 같은 입력으로 공개 요청을 보낸 지시문과 같은 틀(머리말·할 일 제목·도구/템플릿 줄)이다
+  const pub = await jobOf(ctx, await ctx.route.POST(post(regen({ tool: { name: "pixel-slice" }, templateId: "room_v1", note: "메모" }), { key })));
+  ctx.jobs.splice(ctx.jobs.indexOf(pub), 1);
+  const a = await make({ kind: "regen", propName: "shelf_2", note: "메모" });
+  assert.equal(a.ok, true);
+  const adminJob = ctx.jobs.find((j) => j.id === a.jobId);
+  assert.equal(adminJob.status, "pending");
+  assert.equal(adminJob.kind, "revision");
+  assert.equal(adminJob.source, "Studio 요청");
+  assert.equal(adminJob.planMarkdown, pub.planMarkdown);
+  assert.equal(adminJob.title, pub.title);
+
+  // 같은 앱에 진행 중(승인 대기 포함) 일감이 있으면 새로 만들지 않고 제목을 보여 준다
+  const busy = await make({ kind: "free", instruction: "문 색을 바꿔 줘" });
+  assert.equal(busy.ok, false);
+  assert.equal(busy.status, 409);
+  assert.ok(busy.message.startsWith("이미 진행 중인 일감이 있어요(") && busy.message.endsWith(")"));
+  assert.equal(ctx.jobs.filter((j) => j.source === "Studio 요청").length, 1);
+  adminJob.status = "done";
+
+  // 배치 적용: placement JSON 글, 40KB 제한, 깨진 JSON
+  const good = JSON.stringify({ schema: 1, templateId: "room_v1", items: [{ id: "a", imageId: "b", x: 1, y: 2 }] });
+  const l = await make({ kind: "layout", placement: good });
+  assert.equal(l.ok, true);
+  assert.match(ctx.jobs.find((j) => j.id === l.jobId).planMarkdown, /placement.json/);
+  ctx.jobs.find((j) => j.id === l.jobId).status = "done";
+  assert.equal((await make({ kind: "layout", placement: "{깨짐" })).ok, false);
+  assert.equal((await make({ kind: "layout", placement: " ".repeat(41 * 1024) })).ok, false);
+  assert.equal((await make({ kind: "layout", placement: "" })).ok, false);
+
+  // 자유 지시: 코드블록 안의 데이터, 500자 제한, 빈 글 거절
+  const f = await make({ kind: "free", instruction: "문을 ```크게``` 고쳐", note: "n" });
+  assert.equal(f.ok, true);
+  const fp = ctx.jobs.find((j) => j.id === f.jobId);
+  assert.match(fp.planMarkdown, /## 할 일: 자유 지시/);
+  assert.ok(fp.planMarkdown.includes("````\n문을 ```크게``` 고쳐\n````"));
+  fp.status = "done";
+  assert.equal((await make({ kind: "free", instruction: "가".repeat(501) })).ok, false);
+  assert.equal((await make({ kind: "free", instruction: "  " })).ok, false);
+  assert.equal((await make({ kind: "regen", propName: "bad name!" })).ok, false);
+  assert.equal((await make({ kind: "regen", propName: "x", note: "가".repeat(501) })).ok, false);
+
+  // 연결 안 된 도구·수동 도구·보고 안 된 도구·종류 없음·알 수 없는 종류는 거절
+  for (const tool of ["not-linked", "setup-runtime", "nope", ""]) assert.equal((await make({ kind: "regen", propName: "x", tool })).ok, false, tool);
+  assert.equal((await ctx.requests.createAdminStudioJob({ appSlug: "saessak-hub", tool: "pixel-slice", kind: "regen", propName: "x" }, undefined, reported)).ok, false);
+  assert.equal((await make({ kind: "delete" })).ok, false);
+
+  // 공개 입구(키 인증)는 free 를 받지 않는다
+  const res = await ctx.route.POST(post({ kind: "free", appSlug: "saessak-hub", instruction: "x" }, { key }));
+  assert.equal(res.status, 400);
+  assert.equal(ctx.requests.parseStudioRequest({ kind: "free", appSlug: "saessak-hub", instruction: "x" }).ok, false);
+});
+
+test("통제실 [일감 만들기]: admin 전용 control 라우트에만 있고 새 공개 API 는 없다", () => {
+  const route = fs.readFileSync(path.join(repo, "app/api/admin/factory/control/route.ts"), "utf8");
+  assert.ok(route.includes("requireAdmin()"));
+  assert.ok(route.includes("Object.hasOwn(body, \"studioJob\")"));
+  assert.match(route, /createAdminStudioJob/);
+  const pub = fs.readFileSync(path.join(repo, "app/api/studio-requests/route.ts"), "utf8");
+  assert.doesNotMatch(pub, /allowFree|createAdminStudioJob/);
 });

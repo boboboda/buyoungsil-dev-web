@@ -9,6 +9,7 @@ import { cleanAppSlots, MAX_APP_SLOTS, MIN_APP_SLOTS, setAppSlots, setCompactAft
 import { isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
 import { applyStudioPatch, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
 import prisma from "@/lib/prisma";
+import { createAdminStudioJob, STUDIO_REQUEST_SOURCE } from "@/lib/studio/requests";
 import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS, toolBrokerLimitLabel } from "@/lib/factory/toolBroker";
 import { supervisorLog } from "@/lib/factory/supervisorLog";
 import { runSupervisorAction, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest) {
     toolBroker?: unknown;
     toolPurpose?: unknown;
     studioProject?: unknown;
+    studioJob?: unknown;
     enabled?: unknown;
     autoUpdate?: unknown;
     autoDeploy?: unknown;
@@ -127,6 +129,21 @@ export async function POST(req: NextRequest) {
     await prisma.factorySetting.upsert({ where: { key: STUDIO_PROJECTS_KEY }, create: { key: STUDIO_PROJECTS_KEY, value }, update: { value } });
 
     return NextResponse.json({ message: res.message, studioProjects: res.projects });
+  }
+
+  // 스튜디오 [일감 만들기]: { studioJob: { appSlug, kind: regen|layout|free, tool, propName?, placement?, instruction?, note? } }. 관리자 세션 전용 — Studio 요청과 같은 검증·지시문 경로로 '승인 대기' 일감을 만든다
+  if (body && Object.hasOwn(body, "studioJob")) {
+    const input = body.studioJob as Record<string, unknown> | null;
+
+    if (!input || typeof input !== "object" || Array.isArray(input)) return NextResponse.json({ message: "일감 내용이 올바르지 않아요." }, { status: 400 });
+    const slug = typeof input.appSlug === "string" ? input.appSlug.trim() : "";
+    const [row, view] = await Promise.all([prisma.factorySetting.findUnique({ where: { key: STUDIO_PROJECTS_KEY } }), readToolkitView(prisma)]);
+    const r = await createAdminStudioJob(input, readStudioProjects(row?.value)[slug], new Set(view.rows.map((t) => t.id)));
+
+    if (r.ok === false) return NextResponse.json({ message: r.message }, { status: r.status });
+    const recent = await prisma.factoryJob.findMany({ where: { appSlug: slug, source: STUDIO_REQUEST_SOURCE }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, title: true, status: true, createdAt: true } });
+
+    return NextResponse.json({ message: r.message, jobId: r.jobId, recent: recent.map((j) => ({ ...j, createdAt: j.createdAt.toISOString() })) }, { status: 201 });
   }
 
   // 도구 요청 중계: { toolBroker: { mode: off|report|allow, maxRequests?, toolTimeoutSec? } }

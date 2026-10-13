@@ -6,7 +6,8 @@
 // - 키 원문·해시는 여기 오지 않는다(키 id 만). 감사 기록(StudioRequestLog)에도 키 id·종류·앱·결과만 둔다.
 import prisma from "@/lib/prisma";
 import { enqueueWithId } from "@/lib/factory/mcp";
-import { APP_SLUG_RE } from "@/lib/factory/jobs";
+import { ACTIVE_STATUSES, APP_SLUG_RE } from "@/lib/factory/jobs";
+import { isManualTool } from "@/lib/factory/studioProjects";
 
 export const STUDIO_REQUEST_APP = "studio"; // Studio 접근 키의 앱 이름
 export const STUDIO_REQUEST_SOURCE = "Studio 요청";
@@ -51,6 +52,13 @@ export type StudioRequest =
       /** layout 이 schema 1 placement 형식이면 true */
       placement?: boolean;
       note: string;
+    } & StudioExtras)
+  | ({
+      /** 관리자 전용(통제실 [일감 보내기]): 공개 입구는 parseStudioRequest 의 allowFree 를 켜지 않아 받지 않는다 */
+      kind: "free";
+      appSlug: string;
+      instruction: string;
+      note: string;
     } & StudioExtras);
 
 type Invalid = { ok: false; error: string };
@@ -70,19 +78,27 @@ function depthOf(v: unknown, limit: number, level = 1): boolean {
 /** 요청 본문(JSON 으로 읽은 값)을 검사한다. 허용 목록 밖이면 한국어 한 줄 오류. */
 export function parseStudioRequest(
   raw: unknown,
+  opts: { allowFree?: boolean } = {},
 ): { ok: true; value: StudioRequest } | Invalid {
   if (!isPlainObject(raw))
     return { ok: false, error: "요청 본문은 JSON 객체여야 해요." };
   const kind = raw.kind;
   const appSlug = typeof raw.appSlug === "string" ? raw.appSlug.trim() : "";
 
-  if (kind !== "regen" && kind !== "layout")
+  const free = opts.allowFree === true && kind === "free";
+
+  if (kind !== "regen" && kind !== "layout" && !free)
     return { ok: false, error: "kind 는 regen 또는 layout 이에요." };
   if (!APP_SLUG_RE.test(appSlug))
     return {
       ok: false,
       error: "appSlug 는 영문 소문자·숫자·하이픈 3~40자예요.",
     };
+  const oneLine = (v: string) =>
+    v
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   let note = "";
 
   if (raw.note !== undefined && raw.note !== null) {
@@ -90,14 +106,25 @@ export function parseStudioRequest(
       return { ok: false, error: "note 는 글자여야 해요." };
     if (raw.note.length > MAX_NOTE)
       return { ok: false, error: `note 는 ${MAX_NOTE}자 이하예요.` };
-    note = raw.note
-      .replace(/[\u0000-\u001f\u007f]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    note = oneLine(raw.note);
   }
   const extras = parseExtras(raw);
 
   if ("error" in extras) return { ok: false, error: extras.error };
+  if (kind === "free") {
+    if (typeof raw.instruction !== "string")
+      return { ok: false, error: "고칠 내용을 적어 주세요." };
+    if (raw.instruction.length > MAX_NOTE)
+      return { ok: false, error: `고칠 내용은 ${MAX_NOTE}자 이하예요.` };
+    const instruction = oneLine(raw.instruction);
+
+    if (!instruction) return { ok: false, error: "고칠 내용을 적어 주세요." };
+
+    return {
+      ok: true,
+      value: { kind, appSlug, instruction, note, ...extras.value },
+    };
+  }
   if (kind === "regen") {
     const engine = raw.engine;
     const propName = typeof raw.propName === "string" ? raw.propName : "";
@@ -292,7 +319,7 @@ const noteBlock = (note: string) =>
 /** 서버가 만드는 기획서(수정 지시). 사용자가 쓴 값은 코드블록·검증된 이름으로만 들어간다. */
 export function buildStudioPlan(v: StudioRequest, appTitle: string): string {
   const head =
-    `# ${appTitle} — Studio 요청 (${v.kind === "regen" ? "소품 다시 요청" : "배치 적용"})\n\n` +
+    `# ${appTitle} — Studio 요청 (${v.kind === "regen" ? "소품 다시 요청" : v.kind === "free" ? "자유 지시" : "배치 적용"})\n\n` +
     `이 지시는 Studio(소품 도구)가 보낸 요청으로 서버가 만들었어요. 승인한 사람이 통제실에서 확인했어요. 범위는 아래 내용으로만 한정해요.\n`;
 
   const layoutFile = v.paths?.layoutFile ?? DEFAULT_LAYOUT_FILE;
@@ -307,6 +334,18 @@ export function buildStudioPlan(v: StudioRequest, appTitle: string): string {
       ? `\n템플릿: ${[v.templateId && `templateId \`${v.templateId}\``, v.templateVersion && `version ${v.templateVersion}`, v.gameId && `gameId \`${v.gameId}\``].filter(Boolean).join(", ")}\n`
       : "";
 
+  if (v.kind === "free") {
+    return (
+      `${head}\n## 할 일: 자유 지시\n` +
+      `아래 '고칠 내용'만 이 앱에서 고치세요. 범위를 넓히지 마세요.\n` +
+      templateLine +
+      toolLine +
+      `\n` +
+      `- 기존 에셋·파일을 지우거나 덮어쓰지 말고, 바꾼 파일과 검사 결과를 요약해 적으세요.\n\n` +
+      `## 고칠 내용 (관리자가 쓴 글, 데이터)\n${fenced(v.instruction)}\n` +
+      noteBlock(v.note)
+    );
+  }
   if (v.kind === "layout") {
     const saveLine = v.placement
       ? `아래 placement.json 을 \`${layoutFile}\`에 저장하고, 게임이 같은 템플릿 좌표(templateId/templateVersion)로 읽어 배치를 반영하게 하세요.\n`
@@ -361,7 +400,9 @@ function buildTitle(appTitle: string, v: StudioRequest): string {
   const tail =
     v.kind === "regen"
       ? ` (Studio: 소품 다시 요청 ${v.propName})`
-      : " (Studio: 배치 적용)";
+      : v.kind === "free"
+        ? " (Studio: 자유 지시)"
+        : " (Studio: 배치 적용)";
   const room = Math.max(1, 80 - tail.length);
 
   return `${appTitle.length > room ? appTitle.slice(0, room) : appTitle}${tail}`;
@@ -476,4 +517,68 @@ export async function auditStudioRequest(entry: {
   } catch {
     console.error("[studio] 요청 감사 기록 실패");
   }
+}
+
+// ───────── 통제실 [스튜디오] 탭의 [일감 만들기] (관리자 로그인 세션 전용, 공개 요청 인증과 무관) ─────────
+
+export type AdminStudioResult =
+  | { ok: true; jobId: string; message: string }
+  | { ok: false; status: 400 | 409; message: string };
+
+/**
+ * 프로젝트 설정(연결 도구·templateId)과 관리자 입력으로 스튜디오 요청을 만들어, Studio 요청과 같은 검증·지시문·일감 등록을 거친다.
+ * input: { appSlug, kind: regen|layout|free, tool, propName?, placement?(JSON 글), instruction?, note? }
+ */
+export async function createAdminStudioJob(
+  input: Record<string, unknown>,
+  project: { tools: readonly string[]; templateId?: string } | undefined,
+  reportedTools: ReadonlySet<string>,
+): Promise<AdminStudioResult> {
+  const bad = (message: string, status: 400 | 409 = 400): AdminStudioResult => ({ ok: false, status, message });
+  const appSlug = typeof input.appSlug === "string" ? input.appSlug.trim() : "";
+  const tool = typeof input.tool === "string" ? input.tool : "";
+
+  if (!project) return bad("먼저 프로젝트의 종류를 정해 저장하세요.");
+  if (!tool || isManualTool(tool) || !project.tools.includes(tool) || !reportedTools.has(tool))
+    return bad("이 프로젝트에 연결되어 있고 보고된 도구만 고를 수 있어요.");
+  const kind = input.kind;
+  const raw: Record<string, unknown> = {
+    kind,
+    appSlug,
+    note: input.note,
+    tool: { name: tool },
+    ...(project.templateId ? { templateId: project.templateId } : {}),
+  };
+
+  if (kind === "regen") {
+    raw.engine = "codex"; // PixelLab 은 공장 PC 에서 부르지 않는다(지시문이 Mac 용 준비만 시킨다)
+    raw.propName = input.propName;
+  } else if (kind === "layout") {
+    const text = typeof input.placement === "string" ? input.placement : "";
+
+    if (!text.trim()) return bad("placement.json 내용을 붙여 넣어 주세요.");
+    if (Buffer.byteLength(text, "utf8") > MAX_LAYOUT_BYTES) return bad("placement 가 너무 커요(40KB 이하).");
+    try {
+      raw.layout = JSON.parse(text);
+    } catch {
+      return bad("placement 가 올바른 JSON 이 아니에요.");
+    }
+  } else if (kind === "free") {
+    raw.instruction = input.instruction;
+  } else return bad("요청 종류를 골라 주세요.");
+
+  const parsed = parseStudioRequest(raw, { allowFree: true });
+
+  if ("error" in parsed) return bad(parsed.error);
+  const active = await prisma.factoryJob.findFirst({
+    where: { appSlug, status: { in: [...ACTIVE_STATUSES, "review"] } },
+    select: { title: true },
+  });
+
+  if (active) return bad(`이미 진행 중인 일감이 있어요(${active.title})`, 409);
+  const r = await createStudioRequestJob(parsed.value);
+
+  if (r.status !== 201) return bad(r.body.error, r.status);
+
+  return { ok: true, jobId: r.jobId, message: "승인 대기 일감을 만들었어요. 승인은 통제실 [일감]에서 해요." };
 }
