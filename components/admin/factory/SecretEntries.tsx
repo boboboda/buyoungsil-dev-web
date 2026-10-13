@@ -21,8 +21,19 @@ interface Item {
   updatedAt: string | null;
 }
 
+type ProvState = "pending" | "running" | "ok" | "unchanged" | "failed";
+
+interface Prov {
+  state: ProvState;
+  exitCode: number | null;
+  lines: string[];
+  requestedAt: string;
+  at: string;
+}
+
 interface Data {
   items: Item[];
+  provision?: { names: string[] | null; at: string | null; records: Record<string, Prov> };
   pcReportedAt: string | null;
   aiTools: { claude: string | null; codex: string | null; at: string | null };
   memory?: string;
@@ -34,6 +45,23 @@ const STATE_TEXT: Record<State, string> = {
   delete_pending: "🗑️ 삭제 대기(PC가 곧 지워요)",
   missing: "⬜ PC 에 없음(이름만 알려진 것)",
   server: "🔒 서버 보관(홈페이지 서버만 써요, PC 로 안 보냄)",
+};
+
+const EXIT_TEXT: Record<number, string> = {
+  2: "사용법·키 이름이 key-map.json 과 안 맞아요",
+  3: "작업 PC 에 그 키의 값이 없어요",
+  4: "서버 반영에 실패해서 이전 값으로 되돌렸어요",
+  5: "서버 반영과 되돌림이 모두 실패했어요 — 사람이 확인해야 해요",
+};
+
+const provText = (p: Prov | undefined) => {
+  if (!p) return "⬜ 아직 서버에 반영하지 않았어요";
+  if (p.state === "pending") return "⏳ 서버 반영 대기 중(PC가 곧 실행해요)";
+  if (p.state === "running") return "⏳ 서버 반영 중";
+  if (p.state === "ok") return "✅ 서버 반영됨";
+  if (p.state === "unchanged") return "✅ 변화 없음(서버 값이 이미 같아요)";
+
+  return `❌ 서버 반영 실패 — 종료 코드 ${p.exitCode ?? "없음"}${p.exitCode !== null && EXIT_TEXT[p.exitCode] ? `: ${EXIT_TEXT[p.exitCode]}` : ""}`;
 };
 
 const SERVER_PREFIX = "REVIEW_STATUS_TOKEN_";
@@ -100,6 +128,18 @@ export default function SecretEntries() {
     }
   };
 
+  const reprovision = async (n: string) => {
+    const res = await fetch("/api/admin/factory/secrets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "provision", name: n }),
+    }).catch(() => null);
+    const d = res ? await res.json().catch(() => ({})) : {};
+
+    setMessage(d.message ?? (res?.ok ? "서버 반영을 요청했어요." : "서버 반영을 요청하지 못했어요."));
+    load();
+  };
+
   const remove = async (n: string) => {
     const confirmText = isServerName(n)
       ? `${n} 을(를) 홈페이지 서버에서 지울까요?\n되돌릴 수 없어요.`
@@ -140,8 +180,33 @@ export default function SecretEntries() {
                 <div className="text-xs text-default-500">
                   {STATE_TEXT[i.state]} · 마지막 변경 {when(i.updatedAt)}
                 </div>
+                {data?.provision?.names?.includes(i.name) ? (
+                  <details className="text-xs text-default-500" data-testid="provision-status">
+                    <summary className="cursor-pointer">
+                      서버 반영: {provText(data.provision.records[i.name])}
+                      {data.provision.records[i.name] ? ` · ${when(data.provision.records[i.name].at)}` : ""}
+                    </summary>
+                    {data.provision.records[i.name] && (
+                      <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-default-100 p-2 font-mono text-[11px]">
+                        {["종료 코드: " + (data.provision.records[i.name].exitCode ?? "없음"), ...(data.provision.records[i.name].lines.length ? data.provision.records[i.name].lines : ["(출력 없음)"])].join("\n")}
+                      </pre>
+                    )}
+                  </details>
+                ) : (
+                  data?.provision?.names && <div className="text-xs text-default-400">서버 반영 대상 아님</div>
+                )}
               </div>
               <div className="flex shrink-0 gap-2">
+                {data?.provision?.names?.includes(i.name) && i.state !== "missing" && i.state !== "delete_pending" && (
+                  <Button
+                    isDisabled={["pending", "running"].includes(data.provision.records[i.name]?.state ?? "")}
+                    size="sm"
+                    variant="light"
+                    onPress={() => reprovision(i.name)}
+                  >
+                    {data.provision.records[i.name] ? "다시 반영" : "서버에 반영"}
+                  </Button>
+                )}
                 <Button size="sm" variant="light" onPress={() => setName(i.name)}>
                   {i.state === "missing" ? "값 넣기" : "교체"}
                 </Button>

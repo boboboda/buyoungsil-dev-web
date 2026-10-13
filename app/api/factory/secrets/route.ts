@@ -4,10 +4,13 @@
 //
 // GET  → { items: [ { name, version, value } | { name, version, delete: true } ] }  (값은 이 응답에만. 로그에 남기지 않는다)
 // POST { ack: [ { name, version, action: "store" | "delete" } ] } → secrets.env 에 반영했다는 확인. 서버 암호문을 지운다(저장 기록은 값 없이 남음).
+// GET ?provision=1 → { provision: [ { name, seq, value? } ] } 서버2 .env 반영 할 일(lib/factory/keyProvision.ts). value 는 서버 보관 키만.
+// POST { provisionNames: [...] } 반영 대상 이름(app-kit key-map.json, 값 없음) · { provisionReport: { name, seq, state, exitCode, lines } } 반영 결과(값 없음)
 // POST { names: [ "PIXELLAB_TOKEN", ... ] } → PC secrets.env 에 있는 이름만(값 없음) 알린다. 통제실 상태·list_secret_names 에 쓴다.
 import { NextRequest, NextResponse } from "next/server";
 
 import { fail, guardWorker, readJson } from "@/lib/factory/http";
+import { pendingProvisions, reportProvision, saveProvisionNames } from "@/lib/factory/keyProvision";
 import { ackSecretEntries, pendingSecretEntries, savePcSecretNames } from "@/lib/factory/secretEntries";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +21,9 @@ export async function GET(req: NextRequest) {
   if (blocked) return blocked;
 
   try {
+    // ?provision=1: 서버(.env) 반영 할 일. 서버 보관 키는 값이 실린다
+    if (req.nextUrl.searchParams.get("provision") === "1") return NextResponse.json({ provision: await pendingProvisions() }, { headers: { "Cache-Control": "no-store" } });
+
     return NextResponse.json({ items: await pendingSecretEntries() }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     console.error("[factory] 외부 서비스 키 내주기 실패"); // 값·오류 객체는 남기지 않는다
@@ -31,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   const parsed = await readJson(req);
   if ("res" in parsed) return parsed.res;
-  const body = (parsed as { body: unknown }).body as { ack?: unknown; names?: unknown } | null;
+  const body = (parsed as { body: unknown }).body as { ack?: unknown; names?: unknown; provisionNames?: unknown; provisionReport?: unknown } | null;
   if (!body || typeof body !== "object") return fail(400, "JSON 형식이 아닙니다.");
 
   try {
@@ -39,6 +45,8 @@ export async function POST(req: NextRequest) {
 
     if (body.ack !== undefined) out.done = await ackSecretEntries(body.ack);
     if (body.names !== undefined) out.names = await savePcSecretNames(body.names);
+    if (body.provisionNames !== undefined) out.provisionNames = await saveProvisionNames(body.provisionNames);
+    if (body.provisionReport !== undefined) out.provision = await reportProvision(body.provisionReport);
 
     return NextResponse.json(out);
   } catch {

@@ -34,6 +34,7 @@ import { claimJobs, MAX_SLOTS, releaseExpiredLeases, WORKER_RE } from "@/lib/fac
 import { fail, guardWorker } from "@/lib/factory/http";
 import { consumeKeyScan, notifyTestingDue, pcPathsToCheck, releaseJobExtras } from "@/lib/factory/release";
 import { keyPasswordsPending } from "@/lib/factory/keyPasswords";
+import { provisionPending } from "@/lib/factory/keyProvision";
 import { secretEntriesPending } from "@/lib/factory/secretEntries";
 import { keyTasksForNext } from "@/lib/factory/keyVault";
 import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
@@ -115,7 +116,7 @@ export async function GET(req: NextRequest) {
     const pcPaths = await pcPathsToCheck().catch(() => []);
     const maint = await maintenanceForNext(engines).catch(() => ({}));
     const keyPw = await keyPasswordsPending().catch(() => false);
-    const secretsPending = await secretEntriesPending().catch(() => false);
+    const secretsPending = (await secretEntriesPending().catch(() => false)) || (await provisionPending().catch(() => false)); // 키 값 전달 또는 서버 반영 대기
     const keyScan = await consumeKeyScan().catch(() => false);
     const keyTasks = await keyTasksForNext();
     const uploadTest = await consumeUploadTest(); // 통제실 '업로드 시험'(한 번)

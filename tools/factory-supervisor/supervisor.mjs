@@ -41,6 +41,7 @@ import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStore
 import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, makeHandoffEntry, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 import { checksFromVerification, headOf } from "./handoff.mjs";
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames } from "./toolbroker.mjs";
+import { findBash, reportProvisionNames, syncProvisions } from "./keyprovision.mjs";
 import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
 import { createAssetUploader } from "./assetupload.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
@@ -79,6 +80,8 @@ const DEFAULTS = {
   deployRemote: "serverpc:git-server/repo/developWeb.git", // 정비 [배포] 때 push 할 서버 배포 저장소(고정)
   toolkitDir: "", // 게임 툴킷(파이썬 도구) 폴더. 비우면 <workDir>/game-toolkit (도구 요청 중계의 toolkit.run)
   pythonCmd: IS_WIN ? "python" : "python3",
+  appKitDir: "~/dev/factory/app-kit", // 통제실 키를 서버2 .env 에 반영하는 scripts/provision-key.sh 가 있는 폴더(호출만 한다)
+  bashCmd: "", // provision-key.sh 를 돌릴 bash. 비우면 Windows 는 Git Bash 를 찾고, 그 밖에는 PATH 의 bash
 };
 
 const stamp = () => new Date().toLocaleTimeString("ko-KR", { hour12: false });
@@ -101,6 +104,7 @@ function loadConfig() {
   c.serverUrl = String(c.serverUrl).replace(/\/+$/, "");
   c.workDir = path.resolve(expand(c.workDir));
   c.secretsFile = path.resolve(expand(c.secretsFile));
+  c.appKitDir = path.resolve(expand(c.appKitDir));
   c.toolkitDir = c.toolkitDir ? path.resolve(expand(c.toolkitDir)) : path.join(c.workDir, "game-toolkit");
   c.pcSlots = pcSlots(raw); // { value, custom }: 서버 값이 없을 때 쓰는 PC 값, 사람이 따로 정했는지
   c.slots = c.pcSlots.value;
@@ -1397,10 +1401,18 @@ async function loop() {
           // 통제실에서 입력·삭제한 외부 서비스 키: secrets.env 의 그 줄만 바꾸고 확인한 뒤 이름 목록을 알린다(값은 로그에 남기지 않음)
           if (r.data?.secretsPending === true) {
             secretNamesReportedAt = Date.now();
-            onSecrets(() => syncSecretEntries({ api, log, secretsFile: cfg.secretsFile }));
+            onSecrets(async () => {
+              await syncSecretEntries({ api, log, secretsFile: cfg.secretsFile });
+              // 방금 받은 키 값이 secrets.env 에 들어간 뒤, app-kit 매핑에 있는 키는 서버2 .env 에 반영한다(값은 로그·보고에 남기지 않음)
+              await reportProvisionNames({ api, log, appKitDir: cfg.appKitDir });
+              await syncProvisions({ api, log, appKitDir: cfg.appKitDir, bashCmd: findBash(cfg.bashCmd), readSecrets });
+            });
           } else if (Date.now() - secretNamesReportedAt > HOUR_MS) {
             secretNamesReportedAt = Date.now();
-            onSecrets(() => reportSecretNames({ api, log, secretsFile: cfg.secretsFile }));
+            onSecrets(async () => {
+              await reportSecretNames({ api, log, secretsFile: cfg.secretsFile });
+              await reportProvisionNames({ api, log, appKitDir: cfg.appKitDir });
+            });
           }
           // keyScanApps 가 있으면 그 앱 폴더만(출시 카드 [키 조회])
           // 통제실 '업로드 시험'(한 번): 운영과 같은 함수로 시험 파일을 올리고 결과를 보낸다. 던지지 않는다
