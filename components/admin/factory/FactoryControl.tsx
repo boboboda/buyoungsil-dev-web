@@ -1,5 +1,5 @@
 // components/admin/factory/FactoryControl.tsx
-// 앱 공장 통제실 화면: 지시 목록(5초마다 갱신) + 선택한 지시의 상세. (토큰 발급·키 이름은 /admin/factory/settings)
+// 앱 공장 통제실 화면: 지시 목록(5초마다 갱신) + 선택한 지시의 상세. (통제실 [일감] 탭. 토큰 발급·키 이름은 [설정] 탭)
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";

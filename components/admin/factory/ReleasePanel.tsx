@@ -977,7 +977,7 @@ export default function ReleasePanel() {
       {data.accounts.length === 0 && (
         <Card>
           <CardBody className="text-sm">
-            먼저 <a className="underline" href="/admin/factory/settings">설정</a>에서 배포 계정 A/B 를 만들어 주세요.
+            먼저 <a className="underline" href="/admin/factory?tab=settings">[설정] 탭</a>에서 배포 계정 A/B 를 만들어 주세요.
           </CardBody>
         </Card>
       )}

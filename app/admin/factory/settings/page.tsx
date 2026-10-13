@@ -1,16 +1,9 @@
 // app/admin/factory/settings/page.tsx
-// 앱 공장 설정: 작업 PC 접속 토큰, 사용할 수 있는 키 이름. 승인 화면(/admin/factory)과 분리해 둔다.
+// 옛 "앱 공장 설정" 주소. 그대로 열리고 통제실 [설정] 탭을 보여 준다.
+// 출시 카드의 키 파일 후보 링크(?registerPath=…#key-vault)도 이 주소로 와서 키 보관함 등록 칸을 채운다.
 import { Metadata } from "next";
-import Link from "next/link";
 
-import ReleaseAccounts from "@/components/admin/factory/ReleaseAccounts";
-import SecretEntries from "@/components/admin/factory/SecretEntries";
-import SecretNames from "@/components/admin/factory/SecretNames";
-import TelegramSetup from "@/components/admin/factory/TelegramSetup";
-import WorkerTokens from "@/components/admin/factory/WorkerTokens";
-import WorkRules from "@/components/admin/factory/WorkRules";
-import DefaultAiSettings from "@/components/admin/factory/DefaultAiSettings";
-import ToolBrokerSettings from "@/components/admin/factory/ToolBrokerSettings";
+import FactoryConsole from "@/components/admin/factory/FactoryConsole";
 
 export const dynamic = "force-dynamic";
 
@@ -19,31 +12,5 @@ export const metadata: Metadata = {
 };
 
 export default function AdminFactorySettingsPage() {
-  return (
-    <div className="container mx-auto max-w-4xl px-4 py-8">
-      <div className="mb-6">
-        <Link
-          className="text-sm text-default-500 hover:underline"
-          href="/admin/factory"
-        >
-          ← 통제실로 돌아가기
-        </Link>
-        <h1 className="mb-2 mt-2 text-3xl font-bold">⚙️ 앱 공장 설정</h1>
-        <p className="text-gray-600 dark:text-gray-400">
-          작업 PC 연결 토큰, 사용할 수 있는 키 이름, 키 보관함(서명 키), 배포 계정을 관리해요
-        </p>
-      </div>
-
-      <div className="space-y-6">
-        <DefaultAiSettings />
-        <ToolBrokerSettings />
-        <TelegramSetup />
-        <WorkerTokens />
-        <SecretEntries />
-        <SecretNames />
-        <ReleaseAccounts />
-        <WorkRules />
-      </div>
-    </div>
-  );
+  return <FactoryConsole tab="settings" />;
 }

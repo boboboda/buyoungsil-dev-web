@@ -13,7 +13,7 @@ const STALE_MS = 3 * 60 * 1000;
 const fmt = (v: string | null | undefined) => (v ? new Date(v).toLocaleString("ko-KR") : "-");
 
 const registerHref = (appSlug: string, path: string, alias: string | undefined) =>
-  `/admin/factory/settings?${new URLSearchParams({ registerPath: path, registerAlias: alias ?? "upload", registerName: `${appSlug} 키` })}#key-vault`;
+  `/admin/factory?${new URLSearchParams({ tab: "settings", registerPath: path, registerAlias: alias ?? "upload", registerName: `${appSlug} 키` })}#key-vault`;
 
 export default function AppKeyLookup({
   appSlug,

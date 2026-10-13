@@ -586,8 +586,11 @@ export default function FactoryOverview({
                 </div>
               ))}
               <p className="text-xs text-default-500">
-                대화 내용·이어서 지시는 위 감독 프로그램 카드의 「공장
-                정비」에서 해요.
+                대화 내용·이어서 지시는{" "}
+                <a className="underline" href="/admin/factory?tab=jobs">
+                  [일감] 탭
+                </a>
+                의 「공장 정비」에서 해요.
               </p>
             </div>
           )}

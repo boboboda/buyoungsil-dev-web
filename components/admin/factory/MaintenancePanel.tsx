@@ -311,7 +311,7 @@ export default function MaintenancePanel() {
           {bundle.lastResult && bundle.lastResult.ok === false && !bundle.inProgress && (
             <div className="text-xs text-danger">지난 배포 실패: {bundle.lastResult.result?.slice(0, 160)}</div>
           )}
-          <div className="text-xs text-default-400">대기열이 끝나면 자동 배포: {data?.autoDeploy ? "켜짐" : "꺼짐"}(감독 프로그램 카드에서 바꿔요)</div>
+          <div className="text-xs text-default-400">대기열이 끝나면 자동 배포: {data?.autoDeploy ? "켜짐" : "꺼짐"}([현황] 탭 감독 프로그램 카드에서 바꿔요)</div>
         </div>
       )}
 
