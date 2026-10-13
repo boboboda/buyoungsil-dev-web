@@ -23,6 +23,8 @@ import {
   validateDevicePayload,
 } from "@/lib/factory/devices";
 import { getClientIP, hit } from "@/lib/factory/http";
+import { saveToolkitInfo, validateToolkitReport } from "@/lib/factory/toolkit";
+import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -65,6 +67,22 @@ export async function POST(req: NextRequest) {
     body = JSON.parse(text);
   } catch {
     return fail(400, "JSON 형식이 아닙니다.");
+  }
+
+  // 툴킷 도구 목록(감독 프로그램만): { device:"main-pc", toolkit:{…} }. 장비 숫자와 섞지 않고 따로 저장한다
+  if (typeof body === "object" && body !== null && !Array.isArray(body) && "toolkit" in body) {
+    if (!(await isValidFactoryWorkerToken(authorization))) return fail(401, "권한이 없습니다.");
+
+    const parsed = validateToolkitReport((body as { toolkit: unknown }).toolkit);
+
+    if (parsed.ok === false) return fail(400, parsed.reason);
+    try {
+      return NextResponse.json({ ok: true, saved: await saveToolkitInfo(prisma, parsed.info) }, { headers: { "Cache-Control": "no-store" } });
+    } catch (error) {
+      console.error("[device-stats] 툴킷 도구 목록 저장 실패:", error);
+
+      return fail(500, "저장에 실패했습니다.");
+    }
   }
 
   const result = validateDevicePayload(body);

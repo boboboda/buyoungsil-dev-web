@@ -25,6 +25,7 @@ import TelegramSetup from "./TelegramSetup";
 import UsageDash from "./UsageDash";
 import ToolBrokerSettings from "./ToolBrokerSettings";
 import ToolboxPanel from "./ToolboxPanel";
+import ToolkitToolsPanel from "./ToolkitToolsPanel";
 import WorkerTokens from "./WorkerTokens";
 import WorkRules from "./WorkRules";
 
@@ -105,6 +106,7 @@ export default async function FactoryConsole({
           {tab === "settings" && (
             <div className="space-y-6">
               <ToolboxPanel />
+              <ToolkitToolsPanel />
               <DefaultAiSettings />
               <AppSlotsSettings />
               <ToolBrokerSettings />

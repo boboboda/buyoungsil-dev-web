@@ -45,6 +45,7 @@ import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mj
 import { createAssetUploader } from "./assetupload.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { startDeviceStats } from "./devicestats.mjs";
+import { startToolkitReport } from "./toolkitinfo.mjs";
 import { DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake } from "./slots.mjs";
 import { DEFAULT_MEMORY_REMOTE, memoryReport, setMemoryConfig } from "./memory.mjs";
 
@@ -1475,6 +1476,12 @@ if (command === "init") {
       startDeviceStats({ api, log });
     } catch (e) {
       log(`장비 상태 보내기를 시작하지 못했어요: ${e.message}`);
+    }
+    // 통제실 도구함의 '툴킷 도구 상세'(tools.json 읽기 전용, 도구는 실행 안 함): 바뀔 때만·가끔 같은 장비 상태 경로로
+    try {
+      startToolkitReport({ api, log, toolkitDir: () => cfg.toolkitDir });
+    } catch (e) {
+      log(`툴킷 도구 목록 보내기를 시작하지 못했어요: ${e.message}`);
     }
     await loop();
   }

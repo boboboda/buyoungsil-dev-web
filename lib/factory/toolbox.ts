@@ -128,7 +128,7 @@ export function buildToolbox(src: ToolboxSource): Toolbox {
       where: brokerLink,
       usage: usageOf(src, "toolkit.run"),
       group: "allowed",
-      note: "실행할 수 있는 명령은 작업 PC 의 game-toolkit/tools.json 에 적힌 것뿐이에요(통제실에서는 목록을 볼 수 없어요). 인터넷·키가 필요한 명령은 '허용' 모드이면서 그 일감의 필요한 키에 이름이 있을 때만 돌아요.",
+      note: "실행할 수 있는 명령은 작업 PC 의 game-toolkit/tools.json 에 적힌 것뿐이에요(목록은 바로 아래 '툴킷 도구 상세'에서 볼 수 있어요). 인터넷·키가 필요한 명령은 '허용' 모드이면서 그 일감의 필요한 키에 이름이 있을 때만 돌아요.",
     },
     {
       key: "blocked",

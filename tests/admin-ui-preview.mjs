@@ -4,6 +4,7 @@
 // 상태: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패) · history(이력 전체 보기)
 //       · users(가입자 명단, 가짜 30명) · users-empty(가입자 0명)
 //       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
+//       · toolkit(통제실 [설정] 도구함 아래 '툴킷 도구 상세': 도구 5개, 용도 추정·저장 표시, 앞 두 개 펼침)
 //       · history-merged(이력 [작업 진행] 탭: 상태별 묶음 보드) · history-jobs(이력 [앱 일감] 탭: 일감 20개 + 긴 결과 접힘)
 //       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
 //       · fable-usage(AI USAGE 의 Fable 주간 한도 카드 + 오늘 모델별 비율 + 상태바 Fable) · fable-missing(Fable 값 못 받음)
@@ -76,6 +77,12 @@ const toolBroker = loadTs("lib/factory/toolBroker.ts", { "@/lib/factory/mask": m
 const toolboxLib = loadTs("lib/factory/toolbox.ts", { "@/lib/factory/toolBroker": toolBroker });
 const devicesLib = loadTs("lib/factory/devices.ts", { "@/lib/prisma": { __esModule: true, default: null } });
 const { DevicePanelView } = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters });
+const toolkitLib = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
+const { ToolkitToolsView } = loadTs("components/admin/factory/ToolkitToolsPanel.tsx", {
+  "@/lib/prisma": { __esModule: true, default: null },
+  "@/lib/factory/toolkit": toolkitLib,
+  "./ToolkitPurposeSelect": loadTs("components/admin/factory/ToolkitPurposeSelect.tsx", { "@/lib/factory/toolkit": toolkitLib }),
+});
 const { ToolboxView } = loadTs("components/admin/factory/ToolboxPanel.tsx", { "@/lib/prisma": { __esModule: true, default: null }, "@/lib/factory/toolbox": toolboxLib });
 
 // ── 가짜 데이터 ──
@@ -121,6 +128,7 @@ STATES.users = { ...STATES.live, title: "가입자 명단 · 30명", users: "man
 STATES["users-empty"] = { ...STATES.live, title: "가입자 명단 · 0명", users: "empty" };
 // 도구함 한눈에 보기(통제실 [설정] 맨 위): 중계 '허용' + 최근 기록 / 읽기 실패
 STATES.toolbox = { ...STATES.live, title: "도구함 · 중계 허용", toolbox: "live" };
+STATES.toolkit = { ...STATES.live, title: "도구함 · 툴킷 도구 상세", toolkit: true };
 STATES["toolbox-failed"] = { ...STATES.live, title: "도구함 · 읽기 실패", toolbox: "failed" };
 // 장비 상태(통제실 [사용량] 맨 위): 서버1 CPU 위험·RAM 주의 + 컨테이너 5개, 서버2 40분 끊김(GPU 없음), 메인PC 12분 오래된 값(GPU 있음)
 const devRow = (device, ago, data) => ({ device, data, measuredAt: new Date(now - ago), receivedAt: new Date(now - ago) });
@@ -497,6 +505,24 @@ const toolboxData = {
   failed: toolboxLib.buildToolbox({ broker: null, runtime: null, usage: null, connectorToken: false }),
 };
 
+// 툴킷 도구 상세: 감독 프로그램이 보내는 모양(toolkitinfo.mjs)의 가짜 보고서를 실제 검사·정리 함수에 통과시킨다
+const toolkitReport = toolkitLib.validateToolkitReport(
+  {
+    state: "ok",
+    count: 5,
+    manifestMod: "2026-10-13",
+    tools: [
+      { id: "pixel-codex", desc: "codex exec 로 도트 PNG 를 만들고 정리·검사한다. layout=sheet 면 소품 시트, frames>1 이면 같은 세션에서 프레임을 순서대로.", entry: "cli.py", script: "toolkit/codexgen.py", dir: "toolkit", doc: "pixel-codex: codex exec 를 하위 프로세스로 띄워 도트 PNG 를 만든다.", opts: ["description", "size", "layout", "rows", "cols", "frames"], a: ["description:string", "size:int", "layout:string", "frames:int", "name:string"], out: [], tags: ["sheet", "sprite", "webp", "cut"], net: true, sec: [], to: 900, en: true, mod: "2026-10-12" },
+      { id: "pixel-anim", desc: "프레임 PNG 들을 같은 크기·팔레트로 맞추고 GIF·WebP 움짤을 만든다.", entry: "cli.py", script: "toolkit/anim.py", dir: "toolkit", doc: "pixel-anim: 프레임 PNG 여러 장을 움짤로 묶는다.", opts: ["frames", "name", "fps", "format"], a: ["frames:string", "name:string", "out:string", "fps:int", "format:string"], out: ["out"], tags: ["gif", "webp"], net: false, sec: [], to: 300, en: true, mod: "2026-10-12" },
+      { id: "pixel-slice", desc: "단색 키 배경 스프라이트 시트를 소품별 투명 PNG 로 자른다.", entry: "cli.py", script: "toolkit/slice.py", dir: "toolkit", doc: "", opts: ["input", "rows", "cols"], a: ["input:path*", "output_dir:path*", "rows:int", "cols:int"], out: ["output_dir"], tags: ["sheet", "sprite"], net: false, sec: [], to: 120, en: true, mod: "2026-10-12" },
+      { id: "pixel-generate", desc: "PixelLab 으로 도트 오브젝트 후보를 만든다.", entry: "cli.py", script: "toolkit/pixellab.py", dir: "toolkit", doc: "", opts: [], a: ["description:string*", "size:int*", "output_dir:path*"], out: ["output_dir"], tags: [], net: true, sec: ["PIXELLAB_TOKEN"], to: 900, en: true, mod: "2026-10-12" },
+      { id: "env-doctor", desc: "환경 점검: 파이썬/Pillow, node, ffmpeg 가 있는지.", entry: "cli.py", script: "toolkit/envcheck.py", dir: "toolkit", doc: "", opts: [], a: [], out: [], tags: [], net: false, sec: [], to: 60, en: true, mod: "2026-10-12" },
+    ],
+  },
+  new Date(now),
+).info;
+const toolkitView = toolkitLib.buildToolkitView(toolkitReport, { "pixel-generate": "game" });
+
 function page(state) {
   const st = STATES[state];
   // 실제 레이아웃에 실제 상단바·상태줄 '보기' 부품을 가짜 값으로 끼운다(훅 없이)
@@ -532,6 +558,23 @@ function page(state) {
             h("div", { className: "space-y-6" }, h(DevicePanelView, { data: devicesData, now })),
           ),
           h("aside", { "aria-label": "AI 사용량 계기판", className: "fx-split-side" }, h(UsageDashView, { stats: st.stats, now, error: null })),
+        ),
+      ),
+    );
+  if (st.toolkit)
+    return h(
+      AdminLayout,
+      null,
+      h(
+        "div",
+        { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+        h(
+          "div",
+          { className: "fx-split-main" },
+          h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+          h(FactoryTabs, { active: "settings" }),
+          h(ToolboxView, { toolbox: toolboxData.live }),
+          h("div", { className: "mt-6" }, h(ToolkitToolsView, { view: toolkitView })),
         ),
       ),
     );
@@ -633,6 +676,8 @@ function modelApprove() {
 // ── CSS: 저장소 Tailwind 설정 + 관리자 CSS ──
 fs.mkdirSync(out, { recursive: true });
 const bodies = Object.fromEntries(Object.keys(STATES).map((k) => [k, renderToStaticMarkup(page(k))]));
+// 펼침 칸은 닫힌 채로 그려지니, 도구 상세 견본은 앞 두 개를 연다
+bodies.toolkit = bodies.toolkit.replace(/<details>/g, (m, i, all) => (all.slice(0, i).split("<details>").length <= 2 ? "<details open>" : m));
 // 인계 기록 견본은 앞의 두 칸만 펼쳐서 찍는다(세 번째는 접힌 기본 모습)
 bodies.handoff = bodies.handoff.replace(/<details /g, (m, i, all) => (all.slice(0, i).split("<details ").length <= 2 ? "<details open=\"\" " : m));
 bodies.maintLog = bodies.maintLog.replace(/<details /g, "<details open=\"\" ");

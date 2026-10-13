@@ -6,6 +6,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/factory/admin";
 import { isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
 import { cleanAppSlots, MAX_APP_SLOTS, MIN_APP_SLOTS, setAppSlots, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
+import { isPurpose, isToolId, PURPOSE_LABELS, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
+import prisma from "@/lib/prisma";
 import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS, toolBrokerLimitLabel } from "@/lib/factory/toolBroker";
 import { runSupervisorAction, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
 
@@ -30,6 +32,7 @@ export async function POST(req: NextRequest) {
     defaultAiEngine?: unknown;
     defaultClaudeModel?: unknown;
     toolBroker?: unknown;
+    toolPurpose?: unknown;
     enabled?: unknown;
     autoUpdate?: unknown;
     autoDeploy?: unknown;
@@ -86,6 +89,20 @@ export async function POST(req: NextRequest) {
       ...(await supervisorSnapshot()),
       message: `동시에 만들 앱 수를 ${n}개로 저장했어요. 감독 프로그램이 다음 확인 때 받아 가요. 줄여도 이미 도는 일감은 끊지 않고, 끝나면서 줄어들어요.`,
     });
+  }
+
+  // 툴킷 도구 용도: { toolPurpose: { id, purpose: game|cut|common|unclassified|null } }. null = 저장값을 지우고 자동 추정으로
+  if (body && Object.hasOwn(body, "toolPurpose")) {
+    const tp = body.toolPurpose as Record<string, unknown> | null;
+
+    if (!tp || typeof tp !== "object" || Array.isArray(tp) || !isToolId(tp.id) || !(tp.purpose === null || isPurpose(tp.purpose))) {
+      return NextResponse.json({ message: "도구 이름과 용도(게임용·움짤·컷용·공용·미분류)를 확인해 주세요." }, { status: 400 });
+    }
+    const purpose = tp.purpose as Purpose | null;
+
+    await setToolPurpose(prisma, tp.id, purpose);
+
+    return NextResponse.json({ message: purpose ? `${tp.id} 의 용도를 '${PURPOSE_LABELS[purpose]}'로 저장했어요.` : `${tp.id} 의 용도를 자동 추정으로 되돌렸어요.`, id: tp.id, purpose });
   }
 
   // 도구 요청 중계: { toolBroker: { mode: off|report|allow, maxRequests?, toolTimeoutSec? } }
