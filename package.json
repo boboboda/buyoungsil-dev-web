@@ -11,6 +11,7 @@
     "test:access-control": "node tests/access-control.test.mjs",
     "test:redirects": "node tests/redirects.test.mjs",
     "test:admin-cleanup": "node tests/admin-cleanup.test.mjs",
+    "test:factory-ui": "node tests/factory-ui.test.mjs",
     "lint": "eslint --fix --color"
   },
   "dependencies": {
