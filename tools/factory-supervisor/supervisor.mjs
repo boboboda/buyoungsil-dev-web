@@ -42,6 +42,7 @@ import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDeco
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames } from "./toolbroker.mjs";
 import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
 import { createAssetUploader } from "./assetupload.mjs";
+import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -824,6 +825,7 @@ async function runJobUnlocked(job, lock) {
       return addLog(st, "info", line);
     }
     if (!ev) return;
+    noteRateLimitEvent(ev); // 일감 출력의 한도 값(보조). 자동 수집이 실패할 때 대신 보낸다
     if (ev.session_id) st.sessionId = ev.session_id;
     if (ev.type === "system" && ev.subtype === "init") addLog(st, "info", `${ENGINE_LABELS[job.aiEngine]} 세션 시작${ev.model ? ` (${ev.model})` : ""}`);
     else if (ev.type === "assistant") {
@@ -913,6 +915,8 @@ async function runJobUnlocked(job, lock) {
     }
   } finally {
     running.delete(job.id);
+    // 일감이 끝나면(성공·실패 모두) AI 한도를 한 번 새로 읽는다. 던지지 않고 15초 넘으면 기다리지 않음, 로그 한 줄
+    void refreshAfterTask({ log });
   }
 }
 

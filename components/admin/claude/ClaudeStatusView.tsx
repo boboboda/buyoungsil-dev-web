@@ -3,6 +3,7 @@
 "use client";
 
 import type {
+  LimitSource,
   LimitWindowView,
   UsageLimitsView,
 } from "@/lib/claude-status/limits";
@@ -238,6 +239,12 @@ function LimitGauge({
   );
 }
 
+const SOURCE_LABELS: Record<LimitSource, string> = {
+  statusline: "상태줄",
+  auto: "자동수집",
+  stream: "일감 출력",
+};
+
 function LimitCard({
   title,
   v,
@@ -259,7 +266,7 @@ function LimitCard({
           {note ? <p className="text-xs text-default-400">{note}</p> : null}
         </div>
         {v?.failedAt ? (
-          <Chip color="danger" size="sm" variant="flat">
+          <Chip color="warning" size="sm" variant="flat">
             수집 실패
           </Chip>
         ) : v?.stale ? (
@@ -277,10 +284,10 @@ function LimitCard({
             <LimitGauge label="7일" now={now} w={v.sevenDay} />
             <p className="text-xs text-default-400">
               {v.asOf !== null
-                ? `${rel(v.asOf, now)} 받은 값 (${whenKst(v.asOf)}) · ${v.device}`
+                ? `${rel(v.asOf, now)} 받은 값 (${whenKst(v.asOf)}${v.source ? ` · ${SOURCE_LABELS[v.source]}` : ""}) · ${v.device}`
                 : `아직 받은 값이 없어요 · ${v.device}`}
               {v.failedAt !== null
-                ? ` · 마지막 수집 실패 ${rel(v.failedAt, now)}`
+                ? ` · 마지막 수집 실패${v.failReason ? `(${v.failReason})` : ""} ${rel(v.failedAt, now)}`
                 : ""}
             </p>
           </>

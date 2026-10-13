@@ -174,7 +174,7 @@ test("AI USAGE 패널: 한도마다 한 행(사용 %·막대·남은 %·초기�
   // Codex: 수집 실패 LED + 지난 값 표시 중, 주간 창 값 없음
   assert.match(out, /aria-label="Codex 5시간 사용률"/);
   assert.match(out, /<span class="fx-led fx-warn"><span aria-hidden="true" class="fx-led-sym">▲<\/span><span>수집 실패<\/span>/);
-  assert.match(out, /▲ 마지막 수집 실패 1분 전 · 지난 값 표시 중/);
+  assert.match(out, /▲ 수집 실패 1분 전 · 지난 값 표시 중/);
   assert.match(out, /aria-label="Codex 주간 사용률"[^>]*aria-valuetext="값 없음"/);
   // 패널 아래 마지막 갱신
   assert.match(out, /패널 갱신 12:08:00 · 10초 전/);
@@ -183,6 +183,42 @@ test("AI USAGE 패널: 한도마다 한 행(사용 %·막대·남은 %·초기�
   assert.match(out, /aria-expanded="false"/);
   assert.match(out, /class="hidden fx-dash-body lg:flex"/);
   assert.match(html(h(dash.UsageDashView, { stats: stats(), now, open: true })), /aria-expanded="true"[\s\S]*class="flex fx-dash-body lg:flex"/);
+});
+
+test("AI USAGE 패널: 행마다 출처(상태줄/자동수집/일감 출력), 자동수집 실패 사유 + 지난 값, 모델별 주간 한도는 키 그대로", () => {
+  const now = AS_OF + 30_000;
+  const claude = limits({
+    source: "auto",
+    extra: [
+      { key: "weekly_scoped · Fable", usedPct: 12, resetsAt: AS_OF + 30 * HOUR, reset: false },
+      { key: "seven_day_opus", usedPct: 3, resetsAt: null, reset: false },
+    ],
+    extraAsOf: AS_OF,
+  });
+  const out = html(h(dash.UsageDashView, { stats: stats({ limits: claude }), now }));
+  assert.equal(count(out, /class="fx-limit"/g), 4, "Claude 5시간·7일 + 추가 2행");
+  assert.ok(count(out, /12:05 갱신 · 30초 전 · 자동수집/g) >= 4);
+  assert.match(out, /<span class="fx-limit-label">weekly_scoped · Fable<\/span>/);
+  assert.match(out, /aria-label="Claude weekly_scoped · Fable 사용률"[^>]*aria-valuenow="12"/);
+  assert.match(out, /남은 88% · 초기화까지 1일 6시간/);
+  assert.match(out, /<span class="fx-limit-label">seven_day_opus<\/span>/);
+  assert.match(out, /<span>남은 97%<\/span>/, "초기화 시각이 없으면 남은 %만");
+
+  const sl = html(h(dash.UsageDashView, { stats: stats({ limits: limits({ source: "statusline" }) }), now }));
+  assert.ok(count(sl, /· 상태줄/g) >= 2);
+  assert.match(html(h(dash.UsageDashView, { stats: stats({ limits: limits({ source: "stream" }) }), now })), /· 일감 출력/);
+
+  // 자동수집 실패: 주황 LED + 사유 + 지난 값 유지
+  const failed = limits({ source: "statusline", failedAt: AS_OF + 10_000, failReason: "HTTP 429 요청 제한 · 15분 뒤 다시" });
+  const f = html(h(dash.UsageDashView, { stats: stats({ limits: failed }), now }));
+  assert.match(f, /<span class="fx-led fx-warn"><span aria-hidden="true" class="fx-led-sym">▲<\/span><span>수집 실패<\/span>/);
+  assert.match(f, /<p class="fx-dash-note fx-warn">▲ 수집 실패\(HTTP 429 요청 제한 · 15분 뒤 다시\) 20초 전 · 지난 값 표시 중<\/p>/);
+  assert.match(f, /aria-label="Claude 5시간 사용률"[^>]*aria-valuenow="23"/, "지난 값은 그대로");
+  // 값을 받은 적 없이 로그인 필요
+  const login = limits({ fiveHour: null, sevenDay: null, asOf: null, failedAt: AS_OF, failReason: "로그인 필요(Claude Code 를 한 번 쓰면 갱신돼요)" });
+  const l = html(h(dash.UsageDashView, { stats: stats({ limits: login }), now }));
+  assert.match(l, /▲ 수집 실패\(로그인 필요\(Claude Code 를 한 번 쓰면 갱신돼요\)\) 30초 전<\/p>/);
+  assert.doesNotMatch(l, /지난 값 표시 중/);
 });
 
 test("AI USAGE 패널: 값이 없으면 '수신 대기'는 한 번만(오른쪽 LED), 15분 넘으면 오래된 값, 초기화된 창", () => {

@@ -228,4 +228,33 @@ PIXELLAB_TOKEN=여기에값
 
 - Claude: `~/.claude/settings.json` 에 `"statusLine": { "type": "command", "command": "node \"C:/Users/kju90/dev/factory/supervisor-src/tools/factory-supervisor/ai-limits.mjs\" statusline" }`. 상태줄에 `5h 23% · 7d 41%` 를 보여주고, 값이 바뀌었거나 5분이 지났을 때만 보낸다. Pro/Max 구독, 세션 첫 응답 이후에만 값이 있다.
 - Codex(비공식): `node ai-limits.mjs codex` 가 5분마다 `~/.codex/auth.json` 토큰으로 chatgpt.com 사용량 주소를 읽어 사용률·초기화 시각만 보낸다. `--once` 는 한 번만. 실패·형식 변경 때는 "수집 실패"만 보낸다. 토큰은 서버로 보내거나 출력하지 않는다.
-- `node ai-limits.mjs check` 는 필요한 환경변수·auth.json 이 있는지만 알려준다(값은 안 보임).
+- `node ai-limits.mjs check` 는 필요한 환경변수·auth.json·.credentials.json 이 있는지와 쉬는 중인지만 알려준다(값은 안 보임).
+
+### 화면 없이 5분마다 + 일감·정비가 끝날 때마다 (`ai-limits all --once`)
+
+- `node ai-limits.mjs all --once` 는 Claude 와 Codex 를 한 번에 읽어 보낸다(`codex --once` 는 그대로 쓸 수 있음).
+  - Claude 는 비공식 `https://api.anthropic.com/api/oauth/usage` 를 `~/.claude/.credentials.json`(Claude Code 로그인)의 액세스 토큰으로 읽는다. 헤더는 `anthropic-beta: oauth-2025-04-20`.
+  - 5시간·7일 사용률, 초기화 시각, 모델별 주간 한도(`seven_day_opus` 같은 키나 `limits[]` 의 `weekly_scoped · Fable`)를 보낸다. 출처는 "자동수집" 이다.
+  - 토큰이 만료됐으면 갱신하지 않고 부르지도 않는다. "로그인 필요(Claude Code 를 한 번 쓰면 갱신돼요)" 로 보고한다.
+  - 429·401 이면 5분 → 15분 → 30분 쉬고, 성공하면 처음으로 돌아간다. 쉬는 동안은 마지막 값과 상태줄 값을 그대로 쓴다.
+  - 서버는 읽은 시각(`measuredAt`)이 더 최근인 값만 남긴다. 그래서 상태줄과 자동수집 중 최신 값이 보인다.
+  - 응답 형식이 다르면 "응답 형식이 다름" 만 보내고, 응답 원문은 어디에도 남기지 않는다.
+- 동시에 두 번 돌아도 안전하다. 잠금 파일(`%TEMP%\ai-limits.lock`, 2분 넘으면 치움)과 최소 간격 60초(`%TEMP%\ai-limits-state.json`)가 있다.
+- 감독 프로그램은 일감·정비가 끝날 때마다(성공·실패 모두) 같은 일을 한 번 한다. 15초를 넘으면 기다리지 않고, 실패해도 일감 결과는 그대로다. 로그에는 `AI 한도 갱신: Claude 성공 · Codex 실패(HTTP 401)` 같은 한 줄만 남는다.
+- 일감 출력(`claude -p --output-format stream-json`)에는 `rate_limit_event` 가 있다. 확인한 형식(2.1.x)은 `rate_limit_info.unifiedWindows.five_hour/seven_day.utilization`(0~1)과 `resetsAt`(초)이다.
+  - 감독 프로그램이 이 값을 기억해 둔다. 자동수집이 실패하거나 쉬는 중일 때 10분 안의 값이면 출처 "일감 출력" 으로 대신 보낸다.
+
+작업 스케줄러 등록(작업 PC 의 Git Bash, 어느 폴더에서나). 창이 뜨지 않게 `ai-limits-hidden.vbs`(wscript)로 부른다. Git Bash 는 `/SC` 같은 인자를 경로로 바꾸므로 `MSYS_NO_PATHCONV=1` 을 붙인다.
+
+```bash
+S="C:/Users/kju90/dev/factory/supervisor-src/tools/factory-supervisor"
+node "$S/ai-limits.mjs" check            # 환경변수·로그인 파일이 '있음' 인지
+node "$S/ai-limits.mjs" all --once       # 한 번 직접: "AI 한도 갱신: Claude 성공" 이 나오면 됨
+# 등록(5분마다, 창 없음)
+MSYS_NO_PATHCONV=1 schtasks /Create /F /SC MINUTE /MO 5 /TN "FactoryAiLimits" /TR "wscript.exe //B //Nologo \"C:\Users\kju90\dev\factory\supervisor-src\tools\factory-supervisor\ai-limits-hidden.vbs\""
+# 확인: 다음 실행 시각·마지막 결과(0 이면 정상)
+MSYS_NO_PATHCONV=1 schtasks /Query /TN "FactoryAiLimits" /V /FO LIST | grep -E "다음 실행|마지막 결과|Next Run|Last Result"
+MSYS_NO_PATHCONV=1 schtasks /Run /TN "FactoryAiLimits"   # 지금 한 번 돌려 보기
+# 삭제
+MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
+```

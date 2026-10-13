@@ -57,8 +57,8 @@ const win = (usedPct, resetIn) => ({ usedPct, resetsAt: now + resetIn, reset: fa
 const day = (offset, tokens) => ({ date: `d-${offset}`, input: tokens * 0.7, output: tokens * 0.2, cacheCreate: tokens * 0.1, cacheRead: 0 });
 const daily = Array.from({ length: 14 }, (_, i) => day(i, [0.8, 1.1, 0.4, 2.3, 1.9, 0, 0.6, 1.4, 2.8, 1.2, 0.9, 1.7, 1.05, 1.42][i] * 1e6));
 const base = { asOf: now - 4_000, sessions: [], windowHours: 5, windowTokens: { input: 0, output: 0, cacheCreate: 0, cacheRead: 0 }, daily, recent: [] };
-const claudeLive = { fiveHour: win(23.4, 2 * HOUR + 14 * MIN), sevenDay: win(41, 3 * 24 * HOUR + 4 * HOUR), asOf: now - MIN, stale: false, failedAt: null, device: "work-pc" };
-const codexLive = { fiveHour: win(0, 5 * HOUR), sevenDay: win(17, 5 * 24 * HOUR), asOf: now - 2 * MIN, stale: false, failedAt: null, device: "work-pc" };
+const claudeLive = { fiveHour: win(23.4, 2 * HOUR + 14 * MIN), sevenDay: win(41, 3 * 24 * HOUR + 4 * HOUR), asOf: now - MIN, stale: false, failedAt: null, failReason: null, source: "auto", extra: [{ key: "weekly_scoped · Fable", usedPct: 12, resetsAt: now + 30 * HOUR, reset: false }], extraAsOf: now - MIN, device: "work-pc" };
+const codexLive = { fiveHour: win(0, 5 * HOUR), sevenDay: win(17, 5 * 24 * HOUR), asOf: now - 2 * MIN, stale: false, failedAt: null, failReason: null, source: "auto", extra: [], extraAsOf: null, device: "work-pc" };
 
 const STATES = {
   live: {
@@ -75,8 +75,8 @@ const STATES = {
     title: "수집 실패 + 오래된 값",
     stats: {
       ...base,
-      limits: { fiveHour: { usedPct: 60, resetsAt: now - 5 * MIN, reset: true }, sevenDay: win(78, 4 * 24 * HOUR), asOf: now - 22 * MIN, stale: false, failedAt: null, device: "work-pc" },
-      codexLimits: { fiveHour: win(41, 3 * HOUR), sevenDay: win(94, 5 * 24 * HOUR), asOf: now - 40 * MIN, stale: true, failedAt: now - 2 * MIN, device: "work-pc" },
+      limits: { fiveHour: { usedPct: 60, resetsAt: now - 5 * MIN, reset: true }, sevenDay: win(78, 4 * 24 * HOUR), asOf: now - 22 * MIN, stale: false, failedAt: now - 3 * MIN, failReason: "HTTP 429 요청 제한 · 15분 뒤 다시", source: "statusline", extra: [], extraAsOf: null, device: "work-pc" },
+      codexLimits: { fiveHour: win(41, 3 * HOUR), sevenDay: win(94, 5 * 24 * HOUR), asOf: now - 40 * MIN, stale: true, failedAt: now - 2 * MIN, failReason: "HTTP 401", source: "auto", extra: [], extraAsOf: null, device: "work-pc" },
     },
     error: "갱신 실패, 다시 시도 중",
     bar: { asOf: now, supervisor: { online: false, lastSeenAt: now - 47 * MIN, running: 0, waiting: 3, commit: null }, build: null, claude: null, codex: null },

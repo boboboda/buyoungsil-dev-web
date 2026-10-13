@@ -15,6 +15,7 @@ import readline from "node:readline";
 import { acquireWorkspace, engineOf, ENGINE_LABELS, eventDecoder, excludeHarnessState, handoffPrompt, pendingChangesPolicy, recordLifecycle, redactAiText, saveHandoff, startAi } from "./ai-runner.mjs";
 import { keyFilesToCommit } from "./keyguard.mjs";
 import { compactSession } from "./compact.mjs";
+import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 
 const IS_WIN = process.platform === "win32";
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -210,7 +211,11 @@ async function runTurn(m, ctx) {
     const message = ctx.redact ? ctx.redact(e.message) : redactAiText(e.message);
     await post(ctx, { action: "report", turnId: m.turnId, done: { ok: false, text: message } });
     ctx.log(`[정비] 실행 실패: ${message}`);
-  } finally { lock?.release(); }
+  } finally {
+    lock?.release();
+    // 정비가 끝나면(성공·실패 모두) AI 한도를 한 번 새로 읽는다. 던지지 않고 15초 넘으면 기다리지 않음
+    void refreshAfterTask({ log: (line) => ctx.log(`[정비] ${line}`) });
+  }
 }
 
 async function runTurnUnlocked(m, ctx, lock) {
@@ -289,6 +294,7 @@ async function runTurnUnlocked(m, ctx, lock) {
       return addLog(line);
     }
     if (!ev) return;
+    noteRateLimitEvent(ev);
     if (ev.session_id && typeof ev.session_id === "string") sessionId = ev.session_id;
     if (ev.type === "assistant") {
       for (const b of ev.message?.content ?? []) {

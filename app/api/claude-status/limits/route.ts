@@ -5,9 +5,12 @@
 //   {
 //     "provider": "claude | codex",
 //     "device": "기기 이름",
-//     "status": "ok | failed",   // 선택, 기본 ok. failed 면 창 값 없이 실패 시각만 남긴다
+//     "status": "ok | failed",   // 선택, 기본 ok. failed 면 창 값 없이 실패 시각과 짧은 사유(reason)만 남긴다
+//     "source": "statusline | auto | stream",  // 선택. 없으면 claude=statusline, codex=auto
+//     "measuredAt": 유닉스 초,   // 선택, 작업 PC 가 읽은 시각. 저장된 값보다 오래됐으면 버린다(응답 saved:false)
 //     "fiveHour": { "usedPct": 23.5, "resetsAt": 유닉스 초 },  // 선택
-//     "sevenDay": { "usedPct": 41.2, "resetsAt": 유닉스 초 }   // 선택 (ok 이면 둘 중 하나는 있어야 함)
+//     "sevenDay": { "usedPct": 41.2, "resetsAt": 유닉스 초 },  // 선택 (ok 이면 둘 중 하나는 있어야 함)
+//     "extra": [{ "key": "seven_day_opus", "usedPct": 3, "resetsAt": 유닉스 초 | null }]  // 선택, 모델별 주간 한도 등
 //   }
 // 사용률과 초기화 시각만 받는다. 정해진 필드 외의 값은 무시한다.
 import { NextRequest, NextResponse } from "next/server";
@@ -55,9 +58,9 @@ export async function POST(req: NextRequest) {
   if (result.ok === false) return fail(400, result.reason);
 
   try {
-    await saveLimits(result.payload);
+    const { saved } = await saveLimits(result.payload);
 
-    return NextResponse.json({ ok: true }, { status: 200 });
+    return NextResponse.json({ ok: true, saved }, { status: 200 });
   } catch (error) {
     console.error("[claude-status] 한도 저장 실패:", error);
 

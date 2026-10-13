@@ -6,6 +6,7 @@
 "use client";
 
 import type {
+  LimitSource,
   LimitWindowView,
   UsageLimitsView,
 } from "@/lib/claude-status/limits";
@@ -69,8 +70,12 @@ export function dailyCompare(daily: ClaudeDailyView[]) {
   };
 }
 
+type WindowLike = Omit<LimitWindowView, "resetsAt"> & {
+  resetsAt: number | null;
+};
+
 /** 한도 창 하나의 표시 값: 사용 %(없으면 null)·상태 글자·아래 한 줄 */
-export function windowReading(w: LimitWindowView | null, now: number) {
+export function windowReading(w: WindowLike | null, now: number) {
   if (!w)
     return {
       pct: null,
@@ -93,26 +98,50 @@ export function windowReading(w: LimitWindowView | null, now: number) {
     pct,
     tone,
     state: text,
-    line: `남은 ${Math.max(0, 100 - pct)}% · 초기화까지 ${untilText(w.resetsAt, now)}`,
+    line:
+      w.resetsAt === null
+        ? `남은 ${Math.max(0, 100 - pct)}%`
+        : `남은 ${Math.max(0, 100 - pct)}% · 초기화까지 ${untilText(w.resetsAt, now)}`,
   };
 }
 
-/** 한도 한 행: [라벨 · 상태] [큰 사용 %] / [세그먼트 막대] / [남은 % · 초기화까지] [갱신 시각] */
+const SOURCE_LABELS: Record<LimitSource, string> = {
+  statusline: "상태줄",
+  auto: "자동수집",
+  stream: "일감 출력",
+};
+
+/** "12:45 갱신 · 방금 · 자동수집" (출처를 모르면 시각만) */
+export function updatedWithSource(
+  asOf: number | null,
+  source: LimitSource | null,
+  now: number,
+) {
+  const at = updatedText(asOf, now);
+
+  return asOf !== null && source ? `${at} · ${SOURCE_LABELS[source]}` : at;
+}
+
+/** 한도 한 행: [라벨 · 상태] [큰 사용 %] / [세그먼트 막대] / [남은 % · 초기화까지] [갱신 시각 · 출처] */
 function LimitRow({
   name,
   label,
   w,
   v,
   now,
+  asOf = v.asOf,
+  source = v.source,
 }: {
   name: string;
   label: string;
-  w: LimitWindowView | null;
+  w: WindowLike | null;
   v: UsageLimitsView;
   now: number;
+  asOf?: number | null;
+  source?: LimitSource | null;
 }) {
   const r = windowReading(w, now);
-  const stale = isStale(v.asOf, now);
+  const stale = isStale(asOf, now);
 
   return (
     <div className="fx-limit">
@@ -137,7 +166,7 @@ function LimitRow({
           title={v.device ? `보낸 기기: ${v.device}` : undefined}
         >
           {stale ? "▲ " : ""}
-          {updatedText(v.asOf, now)}
+          {updatedWithSource(asOf, source, now)}
         </span>
       </div>
     </div>
@@ -152,7 +181,8 @@ function limitLed(v: UsageLimitsView | null, now: number, empty: string) {
   return <Led tone="ok">수신 중</Led>;
 }
 
-/** Claude·Codex 한도 묶음. 값이 없으면 행 대신 안내 한 줄('수신 대기'는 오른쪽 LED 에만) */
+/** Claude·Codex 한도 묶음. 값이 없으면 행 대신 안내 한 줄('수신 대기'는 오른쪽 LED 에만).
+ *  모델별 주간 한도(extra)는 응답 키 이름 그대로 행을 더 붙이고, 자동수집 실패는 사유와 함께 한 줄로 */
 function LimitSection({
   name,
   labels,
@@ -192,10 +222,29 @@ function LimitSection({
             v={v}
             w={v.sevenDay}
           />
+          {(v.extra ?? []).map((x) => (
+            <LimitRow
+              key={x.key}
+              asOf={v.extraAsOf}
+              label={x.key}
+              name={name}
+              now={now}
+              source="auto"
+              v={v}
+              w={x}
+            />
+          ))}
         </>
       ) : (
         <p className="fx-dash-wait">— {waiting}</p>
       )}
+      {v?.failedAt ? (
+        <p className="fx-dash-note fx-warn">
+          ▲ 수집 실패{v.failReason ? `(${v.failReason})` : ""}{" "}
+          {agoText(v.failedAt, now)}
+          {v.asOf !== null ? " · 지난 값 표시 중" : ""}
+        </p>
+      ) : null}
       {children}
     </div>
   );
@@ -317,12 +366,6 @@ export function UsageDashView({
           v={codex}
           waiting="작업 PC 에서 Codex 수집 스크립트를 켜면 나타나요"
         >
-          {codex?.failedAt ? (
-            <p className="fx-dash-note fx-warn">
-              ▲ 마지막 수집 실패 {agoText(codex.failedAt, now)} · 지난 값 표시
-              중
-            </p>
-          ) : null}
           <p className="fx-dash-note">비공식 수집이라 바뀌면 멈출 수 있어요</p>
         </LimitSection>
 

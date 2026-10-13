@@ -548,8 +548,11 @@ model AiUsageLimit {
   fiveHourResetsAt DateTime?
   sevenDayPct      Float? // 7일 창 사용률 0~100
   sevenDayResetsAt DateTime?
-  asOf             DateTime? // 마지막으로 값을 받은 시각
-  failedAt         DateTime? // 마지막 수집 실패 시각 (값을 받으면 비움)
+  asOf             DateTime? // 값을 읽은 시각(작업 PC 기준). 이보다 오래된 값은 덮어쓰지 않음
+  failedAt         DateTime? // 마지막 자동 수집 실패 시각 (자동 수집이 성공하면 비움)
+  failReason       String? // 그 실패의 짧은 사유(예: "HTTP 429 요청 제한 · 15분 뒤 다시")
+  source           String? // 지금 값의 출처: statusline | auto | stream
+  extraWindows     Json? // 모델별 주간 한도 등: { asOf, windows: [{ key, usedPct, resetsAt }] }
   updatedAt        DateTime  @updatedAt
 
   @@map("ai_usage_limits")
