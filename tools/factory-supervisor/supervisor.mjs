@@ -1051,7 +1051,7 @@ async function finishApk(st, { summary }) {
   const { job, dir } = st;
   const fail = (stage, reason) => finish(st, "failed", { failReason: st.redact(reason).slice(0, 1800), failStage: stage });
   setPhase(st, "sign");
-  const info = readApkInfo(dir, { maxBytes: Number(job.release?.apk?.maxBytes) || undefined });
+  const info = readApkInfo(dir, { maxBytes: Number(job.release?.apk?.maxBytes) || undefined, abi: job.release?.apk?.abi || null });
   if (!info.ok) return fail("build", info.reason);
   let keyEnv = st.keyEnv;
   if (!keyEnv) {
@@ -1078,12 +1078,13 @@ async function finishApk(st, { summary }) {
     gitCommit: gitCommitOf(dir),
     signerSha256: judged.signerSha256,
     keyLabel: job.release?.apk?.keyLabel ?? expected.label ?? null,
+    abi: info.abi,
   };
   setPhase(st, "upload");
   const up = await uploadTestApk({ file: info.file, meta, api, log: (m) => addLog(st, "info", m) });
   if (!up.ok) return fail("upload", up.message);
   const lines = [
-    `시험용 APK: ${path.relative(dir, info.file).replace(/\\/g, "/")} · ${mb(info.size)} · 버전 ${info.versionName ?? "?"}(${info.versionCode ?? "?"})`,
+    `시험용 APK: ${path.relative(dir, info.file).replace(/\\/g, "/")} · ${mb(info.size)} · ${info.abi === "arm64-v8a" ? "휴대폰용(arm64)" : (info.abi ?? "ABI ?")} · 버전 ${info.versionName ?? "?"}(${info.versionCode ?? "?"})`,
     `SHA-256 ${meta.sha256.slice(0, 12)}… · 커밋 ${meta.gitCommit ?? "-"} · 서명 ${judged.signerSha256.slice(0, 12)}…${judged.note ? `(${judged.note})` : ""}`,
     "통제실 출시 패키지 카드의 '시험용 APK' 에서 내려받을 수 있어요(관리자만, 앱당 최근 5개).",
   ];

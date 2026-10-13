@@ -9,7 +9,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-import { APK_CHUNK, judgeSignature, parseApksigner, readApkInfo, uploadTestApk, isDebugCert, why } from "../apk.mjs";
+import { APK_CHUNK, apkAbis, judgeSignature, parseApksigner, readApkInfo, uploadTestApk, isDebugCert, why } from "../apk.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -124,6 +124,11 @@ test("올리기 시작: 시험용 APK 일감·실행 중·크기·SHA-256 형식
   assert.match(row.fileName, /^[0-9A-Za-z._-]+\.apk$/);
   assert.ok(!row.fileName.includes("/") && !row.fileName.includes(".."), row.fileName);
   assert.equal(row.chunkCount, 1);
+  assert.equal(row.abi, null); // 예전 감독 프로그램(abi 없음)
+  await t.startTestApk({ ...good, jobId: "jobapk", abi: "arm64-v8a" });
+  assert.equal(db.s.apks.at(-1).abi, "arm64-v8a");
+  await t.startTestApk({ ...good, jobId: "jobapk", abi: "<script>" });
+  assert.equal(db.s.apks.at(-1).abi, null); // 모르는 값은 버림
 });
 
 test("조각 받기: 크기·번호 확인, 다 받으면 SHA-256 을 다시 재서 맞을 때만 완료(틀리면 지움)", async () => {
@@ -285,6 +290,78 @@ test("APK 경로 검사: 앱 폴더 밖·.apk 아님·없음·너무 큼은 거�
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// 시험용 최소 zip(저장 방식, 내용 없음): 이름만 중앙 디렉터리에 넣는다. 앞에 APK 서명 블록 흉내로 쓰레기 바이트를 둔다
+function fakeApk(names) {
+  const locals = [];
+  const cds = [];
+  let off = 0;
+  for (const n of names) {
+    const nb = Buffer.from(n);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0);
+    lh.writeUInt16LE(nb.length, 26);
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(0x02014b50, 0);
+    cd.writeUInt16LE(nb.length, 28);
+    cd.writeUInt32LE(off, 42);
+    locals.push(lh, nb);
+    cds.push(cd, nb);
+    off += 30 + nb.length;
+  }
+  const junk = Buffer.alloc(64, 0xab);
+  const cdBuf = Buffer.concat(cds);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(names.length, 8);
+  eocd.writeUInt16LE(names.length, 10);
+  eocd.writeUInt32LE(cdBuf.length, 12);
+  eocd.writeUInt32LE(off + junk.length, 16);
+  return Buffer.concat([...locals, junk, cdBuf, eocd]);
+}
+
+test("ABI: arm64 전용 APK 만 받고(새 일감), 모든 ABI·다른 ABI 는 거절, 예전 일감(abi 없음)은 그대로", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "apkabi-"));
+  try {
+    const out = path.join(dir, "build", "app", "outputs", "flutter-apk");
+    fs.mkdirSync(path.join(dir, ".factory"), { recursive: true });
+    fs.mkdirSync(out, { recursive: true });
+    const so = (abi) => [`lib/${abi}/libflutter.so`, `lib/${abi}/libapp.so`];
+    fs.writeFileSync(path.join(out, "app-arm64-v8a-release.apk"), fakeApk(["AndroidManifest.xml", "classes.dex", ...so("arm64-v8a")]));
+    fs.writeFileSync(path.join(out, "app-x86_64-release.apk"), fakeApk(["AndroidManifest.xml", ...so("x86_64")]));
+    fs.writeFileSync(path.join(out, "app-release.apk"), fakeApk(["AndroidManifest.xml", ...so("arm64-v8a"), ...so("armeabi-v7a"), ...so("x86_64")]));
+    fs.writeFileSync(path.join(out, "broken.apk"), Buffer.alloc(100, 1));
+    const w = (name) => fs.writeFileSync(path.join(dir, ".factory", "apk.json"), JSON.stringify({ path: `build/app/outputs/flutter-apk/${name}`, versionName: "1.0.0", versionCode: 1 }));
+
+    assert.deepEqual(apkAbis(path.join(out, "app-release.apk")), ["arm64-v8a", "armeabi-v7a", "x86_64"]);
+    assert.equal(apkAbis(path.join(out, "broken.apk")), null);
+
+    w("app-arm64-v8a-release.apk");
+    const ok = readApkInfo(dir, { abi: "arm64-v8a" });
+    assert.equal(ok.ok, true, ok.reason);
+    assert.equal(ok.abi, "arm64-v8a");
+    w("app-release.apk");
+    const uni = readApkInfo(dir, { abi: "arm64-v8a" });
+    assert.equal(uni.ok, false);
+    assert.match(uni.reason, /arm64-v8a 전용 APK 가 아니에요\(app-release\.apk: arm64-v8a·armeabi-v7a·x86_64\).*--split-per-abi.*app-arm64-v8a-release\.apk/);
+    assert.equal(readApkInfo(dir).abi, "universal"); // 예전 일감: 거절하지 않고 기록만
+    w("app-x86_64-release.apk");
+    assert.match(readApkInfo(dir, { abi: "arm64-v8a" }).reason, /x86_64/);
+    w("broken.apk");
+    assert.match(readApkInfo(dir, { abi: "arm64-v8a" }).reason, /zip 으로 읽지 못함/);
+    assert.equal(readApkInfo(dir).ok, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("지시문: 시험용 APK 는 --split-per-abi 로 만들고 app-arm64-v8a-release.apk 만 쓴다, 새 지시문 일감만 abi 를 준다", () => {
+  const src = fs.readFileSync(path.join(repo, "lib/factory/release.ts"), "utf8");
+  assert.match(src, /flutter build apk --release --split-per-abi/);
+  assert.match(src, /flutter-apk\/app-arm64-v8a-release\.apk/);
+  assert.ok(!/"path": "build\/app\/outputs\/flutter-apk\/app-release\.apk"/.test(src));
+  assert.match(src, /planMarkdown\.includes\("--split-per-abi"\) \? TEST_APK_ABI : null/);
 });
 
 const SIGNED = `Verifies

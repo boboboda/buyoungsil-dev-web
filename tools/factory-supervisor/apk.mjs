@@ -1,6 +1,6 @@
 // 앱 공장 감독 프로그램: 출시 패키지 '시험용 APK'(출시 일감 종류 apk)
 // - AI 가 앱 폴더에서 만든 서명 release APK(.factory/apk.json 에 경로·버전)를 감독 프로그램이 검사한다:
-//   경로는 앱 폴더 안의 .apk 만, apksigner verify 로 서명 확인, 디버그 키 거절, 등록된 키(또는 앱 자체 key.properties 의 키)와 서명 인증서 SHA-256 비교.
+//   경로는 앱 폴더 안의 .apk 만, (새 일감은) APK 안 lib/ 가 arm64-v8a 하나뿐인지, apksigner verify 로 서명 확인, 디버그 키 거절, 등록된 키(또는 앱 자체 key.properties 의 키)와 서명 인증서 SHA-256 비교.
 // - 통과하면 크기·SHA-256·버전·빌드 시각·git 커밋을 붙여 /api/factory/test-apk 로 조각씩 올린다(크기는 홈페이지가 정함, 기본 512KB)(관리자만 내려받기, 앱당 최근 5개).
 // - 키 파일·비밀번호는 홈페이지로 보내지 않는다. 비밀번호는 keytool 에 환경변수로만 넘기고(인자·로그에 없음), 서명 인증서 지문(공개 정보)만 보낸다.
 import { spawnSync } from "node:child_process";
@@ -18,13 +18,60 @@ const APK_CHUNK_MAX = 8 * 1024 * 1024;
 export const APK_MAX_DEFAULT = 200 * 1024 * 1024;
 const hex = (s) => String(s ?? "").toLowerCase().replace(/[^0-9a-f]/g, "");
 
+// ───────── APK 안의 CPU 종류(ABI) ─────────
+
+/**
+ * APK(zip) 중앙 디렉터리에서 lib/<ABI>/ 이름을 모은다. 읽지 못하면 null.
+ * --split-per-abi 의 app-arm64-v8a-release.apk 는 ["arm64-v8a"], 예전 app-release.apk 는 여러 개.
+ */
+export function apkAbis(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, "r");
+    const size = fs.fstatSync(fd).size;
+    const tailLen = Math.min(size, 22 + 65535);
+    const tail = Buffer.alloc(tailLen);
+    fs.readSync(fd, tail, 0, tailLen, size - tailLen);
+    let e = -1;
+    for (let i = tailLen - 22; i >= 0; i--) {
+      if (tail.readUInt32LE(i) === 0x06054b50) {
+        e = i;
+        break;
+      }
+    }
+    if (e < 0) return null;
+    const cdSize = tail.readUInt32LE(e + 12);
+    const cdOff = tail.readUInt32LE(e + 16);
+    if (cdOff + cdSize > size) return null;
+    const cd = Buffer.alloc(cdSize);
+    fs.readSync(fd, cd, 0, cdSize, cdOff);
+    const abis = new Set();
+    for (let p = 0; p + 46 <= cd.length && cd.readUInt32LE(p) === 0x02014b50; ) {
+      const n = cd.readUInt16LE(p + 28);
+      const name = cd.toString("utf8", p + 46, p + 46 + n);
+      const m = /^lib\/([^/]+)\/[^/]+\.so$/.exec(name);
+      if (m) abis.add(m[1]);
+      p += 46 + n + cd.readUInt16LE(p + 30) + cd.readUInt16LE(p + 32);
+    }
+    return [...abis].sort();
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/** 기록용 ABI 값: 하나면 그 이름, 여러 개면 universal, 모르면 null */
+export const abiLabel = (abis) => (!abis || abis.length === 0 ? null : abis.length === 1 ? abis[0] : "universal");
+
 // ───────── .factory/apk.json ─────────
 
 /**
  * AI 가 남긴 .factory/apk.json 을 읽어 실제 파일로 확인한다. 경로는 앱 폴더 안의 .apk 만(밖이면 거절).
- * 돌려주는 값: { ok: true, file, size, versionName, versionCode, builtAt } | { ok: false, reason }
+ * abi 를 주면(새 서버의 시험용 APK 일감: arm64-v8a) APK 안에 그 ABI 하나만 있어야 한다(다른 ABI·모든 ABI APK 거절).
+ * 돌려주는 값: { ok: true, file, size, versionName, versionCode, builtAt, abi } | { ok: false, reason }
  */
-export function readApkInfo(dir, { maxBytes = APK_MAX_DEFAULT } = {}) {
+export function readApkInfo(dir, { maxBytes = APK_MAX_DEFAULT, abi = null } = {}) {
   let v;
   try {
     v = JSON.parse(fs.readFileSync(path.join(dir, ".factory", "apk.json"), "utf8"));
@@ -45,6 +92,14 @@ export function readApkInfo(dir, { maxBytes = APK_MAX_DEFAULT } = {}) {
   }
   if (!st.isFile() || st.size === 0) return { ok: false, reason: `APK 파일이 비었거나 파일이 아니에요: ${v.path}` };
   if (st.size > maxBytes) return { ok: false, reason: `APK 가 ${Math.round(st.size / 1024 / 1024)}MB 예요. ${Math.round(maxBytes / 1024 / 1024)}MB 이하만 올릴 수 있어요.` };
+  const abis = apkAbis(file);
+  if (abi && !(abis && abis.length === 1 && abis[0] === abi)) {
+    const has = abis === null ? "APK 를 zip 으로 읽지 못함" : abis.length ? abis.join("·") : "네이티브 라이브러리 없음";
+    return {
+      ok: false,
+      reason: `${abi} 전용 APK 가 아니에요(${path.basename(file)}: ${has}). \`flutter build apk --release --split-per-abi\` 로 만든 app-${abi}-release.apk 를 apk.json 에 적어야 해요.`,
+    };
+  }
   return {
     ok: true,
     file,
@@ -52,6 +107,7 @@ export function readApkInfo(dir, { maxBytes = APK_MAX_DEFAULT } = {}) {
     versionName: typeof v.versionName === "string" ? v.versionName.slice(0, 40) : null,
     versionCode: Number.isInteger(v.versionCode) && v.versionCode >= 0 ? v.versionCode : null,
     builtAt: st.mtime.toISOString(),
+    abi: abiLabel(abis),
   };
 }
 

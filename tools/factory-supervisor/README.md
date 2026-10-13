@@ -136,10 +136,10 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 
 ## 시험용 APK (`apk.mjs`, 출시 일감 종류 `apk`)
 - 통제실 출시 패키지 카드의 '시험용 APK' 에서 요청해요. 키 준비는 첫 출시와 같아요(앱 자체 key.properties 우선, 없으면 보관함 키를 `FACTORY_KEYSTORE_*` 환경변수로). 키는 만들지 않아요.
-- AI 가 `flutter build apk --release` 로 만들고 `.factory/apk.json`({path, versionName, versionCode})을 남기면, 감독 프로그램이:
-  경로 확인(앱 폴더 안의 .apk, 200MB 이하) → `apksigner verify --print-certs`(build-tools 의 apksigner.jar 를 Java 로) → 디버그 키 거절 →
+- AI 가 `flutter build apk --release --split-per-abi` 로 만들고 휴대폰용 `app-arm64-v8a-release.apk` 를 `.factory/apk.json`({path, versionName, versionCode})에 남기면, 감독 프로그램이:
+  경로 확인(앱 폴더 안의 .apk, 200MB 이하) → ABI 확인(APK 안 `lib/` 가 arm64-v8a 하나뿐이어야 함. 홈페이지가 `release.apk.abi` 를 준 새 일감만, 예전 지시문 일감은 따지지 않음) → `apksigner verify --print-certs`(build-tools 의 apksigner.jar 를 Java 로) → 디버그 키 거절 →
   등록된 키(JKS 는 비밀번호 없이, PKCS12 는 keytool 에 비밀번호를 환경변수로)와 서명 인증서 SHA-256 비교 → 앱 폴더 커밋 →
-  `/api/factory/test-apk` 로 정보(크기·SHA-256·버전·빌드 시각·커밋·서명 지문)를 보내고 홈페이지가 정한 크기(`TEST_APK_CHUNK`, 기본 512KB — nginx `location /` 기본 본문 한도 1MB 아래)의 조각으로 올려요(홈페이지가 크기·SHA-256 다시 확인). 거절되면 상태 코드·조각 크기·응답 본문(nginx 413 HTML 포함)을 실패 사유에 남겨요.
+  `/api/factory/test-apk` 로 정보(크기·SHA-256·버전·빌드 시각·커밋·서명 지문·ABI)를 보내고 홈페이지가 정한 크기(`TEST_APK_CHUNK`, 기본 512KB — nginx `location /` 기본 본문 한도 1MB 아래)의 조각으로 올려요(홈페이지가 크기·SHA-256 다시 확인). 거절되면 상태 코드·조각 크기·응답 본문(nginx 413 HTML 포함)을 실패 사유에 남겨요.
 - 단계: key → build → sign(apksigner 확인) → upload. 재시도가 `upload` 면 AI 없이 확인·업로드만 다시 해요. Play 는 건드리지 않아요.
 - 홈페이지는 APK 를 DB 에 두고 관리자만 내려받게 해요(앱당 최근 5개). 키 파일·비밀번호는 보내지 않아요.
 
