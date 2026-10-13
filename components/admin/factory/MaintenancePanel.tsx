@@ -220,7 +220,7 @@ export default function MaintenancePanel() {
             <div key={i.turnId} className="flex flex-col gap-1 rounded-md bg-default-50 p-1.5 text-sm sm:flex-row sm:items-center sm:justify-between">
               <button className="min-w-0 text-left" type="button" onClick={() => setSel(i.threadId)}>
                 <span className="mr-1 font-mono text-xs text-default-500">{i.position}.</span>
-                <Chip color={i.status === "running" ? "primary" : i.status === "awaiting_approval" ? "secondary" : "warning"} size="sm" variant="flat">
+                <Chip color={i.status === "running" ? "primary" : "warning"} size="sm" variant="flat">
                   {TURN_LABEL[i.status] ?? i.status}
                 </Chip>
                 <span className="ml-1 break-words">{i.firstLine}</span>

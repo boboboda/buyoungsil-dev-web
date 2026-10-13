@@ -88,13 +88,13 @@ const STATUS: Record<
   }
 > = {
   pending: { label: "승인 대기", color: "warning" },
-  approved: { label: "승인됨·대기열", color: "primary" },
-  running: { label: "제작 중", color: "secondary" },
+  approved: { label: "승인됨·대기열", color: "warning" },
+  running: { label: "제작 중", color: "primary" },
   review: { label: "검토 대기", color: "warning" },
   linkwait: { label: "영상 링크 대기", color: "warning" },
   done: { label: "완료", color: "success" },
   failed: { label: "실패", color: "danger" },
-  cancelled: { label: "취소", color: "default" },
+  cancelled: { label: "취소", color: "danger" },
 };
 
 const FILTERS: { value: "" | Status; label: string }[] = [

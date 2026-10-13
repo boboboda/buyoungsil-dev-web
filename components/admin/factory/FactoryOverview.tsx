@@ -115,7 +115,7 @@ function updateResult(u: Overview["updates"][number]): {
   if (n.startsWith("자동 업데이트 완료"))
     return { label: "받음(재시작)", color: "primary" };
   if (n.startsWith("자동 업데이트 시작"))
-    return { label: "받는 중", color: "warning" };
+    return { label: "받는 중", color: "primary" };
   if (n.includes("건너뜀")) return { label: "건너뜀", color: "default" };
   if (n.includes("이미 최신")) return { label: "이미 최신", color: "default" };
   if (u.fromCommit) return { label: "버전 바뀜", color: "primary" };
@@ -129,9 +129,9 @@ function deployStatus(d: Overview["deploys"][number]): {
 } {
   if (d.ok === true) return { label: "완료", color: "success" };
   if (d.ok === false) return { label: "실패", color: "danger" };
-  if (d.startedAt) return { label: "진행 중(빌드)", color: "warning" };
+  if (d.startedAt) return { label: "진행 중(빌드)", color: "primary" };
 
-  return { label: "진행 중(PC 대기)", color: "warning" };
+  return { label: "진행 중(PC 대기)", color: "primary" };
 }
 
 // children(감독 프로그램 카드)은 "할 일"과 "이력" 사이에 놓는다.
@@ -313,7 +313,7 @@ export default function FactoryOverview({
             >
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Chip color="secondary" size="sm" variant="flat">
+                  <Chip color="warning" size="sm" variant="flat">
                     🛠 정비 지시
                   </Chip>
                   <span className="font-medium">{t.threadTitle}</span>
