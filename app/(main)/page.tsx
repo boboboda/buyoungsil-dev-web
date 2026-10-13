@@ -81,7 +81,7 @@ function daysSinceStart(startedAt: string, today: string): number {
   return Math.floor(ms / (1000 * 60 * 60 * 24)) + 1;
 }
 
-// 숫자 조회(출시한 앱·방문자 수)가 실패하면 null (그 카드만 숨기고 홈은 그린다).
+// 숫자 조회(가입자·방문자 수)가 실패하면 null (그 카드만 숨기고 홈은 그린다).
 // 오늘 방문자의 '오늘'은 recordVisit 과 같은 서버 시간대 날짜(컨테이너 TZ=Asia/Seoul)다.
 async function safeCount(read: () => Promise<number>, what: string): Promise<number | null> {
   try {
@@ -93,12 +93,13 @@ async function safeCount(read: () => Promise<number>, what: string): Promise<num
 }
 
 export default async function Home() {
-  // 프로젝트(실패 시 빈 목록)·노트·출시한 앱 수·방문자 수를 한꺼번에 읽는다
-  const [rawProjects, { notes: recentNotes, total: totalNotes }, releasedApps, todayVisitors, totalVisitors] =
+  // 프로젝트(실패 시 빈 목록)·노트·가입자 수·방문자 수를 한꺼번에 읽는다
+  const [rawProjects, { notes: recentNotes, total: totalNotes }, totalUsers, todayVisitors, totalVisitors] =
     await Promise.all([
       fetchAllProjects(),
       fetchHomeNotes(),
-      safeCount(() => prisma.project.count({ where: { status: "released" } }), "출시한 앱"),
+      // 가입자 = 회원(User) 전체 행 수. 5단계 전과 같은 기준(관리자 포함, 따로 빼는 계정 없음). 숫자만 보낸다
+      safeCount(() => prisma.user.count(), "가입자"),
       safeCount(getTodayVisitorCount, "오늘 방문자"),
       safeCount(getTotalVisitorCount, "총 방문자"),
     ]);
@@ -122,7 +123,7 @@ export default async function Home() {
     <div className="flex flex-col w-full overflow-x-hidden">
       <Hero
         totalProjects={projects.length}
-        releasedApps={releasedApps}
+        totalUsers={totalUsers}
         totalNotes={totalNotes}
         daysRunning={daysRunning}
         todayVisitors={todayVisitors}

@@ -18,6 +18,7 @@
     "test:admin-contrast": "node tests/admin-contrast.test.mjs",
     "test:admin-backdrop": "node tests/admin-backdrop.test.mjs",
     "test:factory-history": "node tests/factory-history.test.mjs",
+    "test:home-stats": "node tests/home-stats.test.mjs",
     "preview:admin-ui":"node tests/admin-ui-preview.mjs",
     "lint": "eslint --fix --color"
   },

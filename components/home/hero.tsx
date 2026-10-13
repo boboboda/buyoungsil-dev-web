@@ -3,7 +3,7 @@ import Animation from "./animation"; // 🔥 기존 애니메이션 import
 
 interface HeroProps {
   totalProjects: number;
-  releasedApps: number | null; // null = 조회 실패
+  totalUsers: number | null; // 가입자 수, null = 조회 실패
   totalNotes: number;
   daysRunning: number;
   todayVisitors: number | null; // null = 조회 실패
@@ -21,7 +21,7 @@ const SM_COLS: Record<number, string> = {
 // 통계는 실제 값만 쓴다. 0 이거나 조회에 실패하면 그 숫자는 숨긴다.
 export default function Hero({
   totalProjects,
-  releasedApps,
+  totalUsers,
   totalNotes,
   daysRunning,
   todayVisitors,
@@ -36,10 +36,10 @@ export default function Hero({
       color: "from-blue-600 to-purple-600"
     },
     {
-      icon: "🚀",
-      value: releasedApps,
-      label: "출시한 앱",
-      suffix: "개",
+      icon: "👥",
+      value: totalUsers,
+      label: "가입자",
+      suffix: "명",
       color: "from-purple-500 to-pink-500"
     },
     {
