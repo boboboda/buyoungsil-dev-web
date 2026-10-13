@@ -24,4 +24,20 @@ export function parseFactoryTab(
     : DEFAULT_FACTORY_TAB;
 }
 
+// 주소의 ?history=(현황 이력 탭)·?job=(일감 상세). 모르는 값이면 무시한다
+const HISTORY_TAB_KEYS = ["all", "deploys", "updates", "threads", "jobs"] as const;
+export type HistoryTabKey = (typeof HISTORY_TAB_KEYS)[number];
+
+export function parseHistoryTab(raw: string | string[] | undefined | null): HistoryTabKey | undefined {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+
+  return HISTORY_TAB_KEYS.find((k) => k === v);
+}
+
+export function parseJobId(raw: string | string[] | undefined | null): string | null {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+
+  return v && /^[A-Za-z0-9_-]{1,40}$/.test(v) ? v : null;
+}
+
 export const factoryTabHref = (tab: FactoryTab) => `/admin/factory?tab=${tab}`;

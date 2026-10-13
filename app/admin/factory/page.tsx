@@ -3,7 +3,7 @@
 import { Metadata } from "next";
 
 import FactoryConsole from "@/components/admin/factory/FactoryConsole";
-import { parseFactoryTab } from "@/components/admin/factory/consoleTabs";
+import { parseFactoryTab, parseHistoryTab, parseJobId } from "@/components/admin/factory/consoleTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +14,9 @@ export const metadata: Metadata = {
 export default async function AdminFactoryPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string | string[] }>;
+  searchParams: Promise<{ tab?: string | string[]; job?: string | string[]; history?: string | string[] }>;
 }) {
-  const { tab } = await searchParams;
+  const { tab, job, history } = await searchParams;
 
-  return <FactoryConsole tab={parseFactoryTab(tab)} />;
+  return <FactoryConsole historyTab={parseHistoryTab(history)} jobId={parseJobId(job)} tab={parseFactoryTab(tab)} />;
 }

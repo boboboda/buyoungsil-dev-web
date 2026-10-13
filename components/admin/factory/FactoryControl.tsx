@@ -156,11 +156,15 @@ async function call<T>(
   }
 }
 
-export default function FactoryControl() {
+// 목록은 /api/admin/factory/jobs 기본값(최근 50개)만 읽는다. 더 오래된 것은 [현황]의 이력 → [앱 일감]에서 본다
+export const JOB_LIST_LIMIT = 50;
+
+// initialJobId: 주소의 ?job=<id> 로 바로 연 일감(이력의 [앱 일감] 줄에서 넘어올 때)
+export default function FactoryControl({ initialJobId = null }: { initialJobId?: string | null }) {
   const [filter, setFilter] = useState<"" | Status>("");
   const [jobs, setJobs] = useState<JobRow[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialJobId);
   const [detail, setDetail] = useState<{
     job: JobDetail;
     claude: Usage;
@@ -288,6 +292,15 @@ export default function FactoryControl() {
             <div className="rounded-xl border border-dashed border-default-300 p-10 text-center text-default-500">
               지시가 없어요. Claude 채팅에서 기획서를 등록하면 여기에 나타나요.
             </div>
+          )}
+          {jobs && !filter && jobs.length >= JOB_LIST_LIMIT && (
+            <p className="px-1 text-xs text-default-500" data-job-limit>
+              최근 {JOB_LIST_LIMIT}개만 보이는 중이에요. 더 오래된 일감은{" "}
+              <a className="underline" href="/admin/factory?tab=status&history=jobs">
+                [현황] 이력 → [앱 일감]
+              </a>
+              에서 20개씩 끝까지 볼 수 있어요.
+            </p>
           )}
           {jobs?.map((j) => (
             <button

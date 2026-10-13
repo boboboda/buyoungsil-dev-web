@@ -4,7 +4,7 @@
 // 상태: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패) · history(이력 전체 보기)
 //       · users(가입자 명단, 가짜 30명) · users-empty(가입자 0명)
 //       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
-//       · history-merged(이력 [전체 히스토리] 탭: 배포·감독·정비를 합친 최신순 20개 + 긴 빌드 로그 접힘)
+//       · history-merged(이력 [전체 히스토리] 탭: 배포·감독·정비·일감을 합친 최신순 20개 + 긴 빌드 로그 접힘) · history-jobs(이력 [앱 일감] 탭: 일감 20개 + 긴 결과 접힘)
 //       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
 //       · fable-usage(AI USAGE 의 Fable 주간 한도 카드 + 오늘 모델별 비율 + 상태바 Fable) · fable-missing(Fable 값 못 받음)
 //       · model-approve(승인할 때 Claude Code 모델 고르기: [현황] 승인 줄의 모델 선택(Codex 일감은 숨김) + 이력 '모델: ○○' + [설정] 기본 모델)
@@ -107,6 +107,7 @@ const STATES = {
 };
 // 이력 전체 보기: 서버 배포 탭에서 [전체 보기]를 누른 모양(95개 중 첫 20개 + [더 보기]). 다른 상태는 최근 목록(5개만)
 STATES.history = { ...STATES.live, title: "이력 전체 보기", history: "all" };
+STATES["history-jobs"] = { ...STATES.live, title: "이력 · 앱 일감 탭", history: "jobs" };
 STATES["history-merged"] = { ...STATES.live, title: "이력 · 전체 히스토리 탭", history: "merged" };
 // 가입자 명단(/admin/users): 가짜 30명(이름·이메일은 만든 값) 첫 쪽 25명 / 0명
 STATES.users = { ...STATES.live, title: "가입자 명단 · 30명", users: "many" };
@@ -154,7 +155,35 @@ const historyData = {
   deploys: Array.from({ length: 40 }, (_, i) => deployRow(i)),
   updates: [],
   threads: [],
-  totals: { deploys: 95, updates: 130, threads: 45 },
+  totals: { deploys: 95, updates: 130, threads: 45, jobs: 138 },
+};
+// 앱 일감 한 줄(/api/admin/factory/history?kind=jobs 항목 모양)
+const JOB_ROWS = [
+  ["done", "new", "새 앱", "claude", "opus", "앱 완성: 화면 5개, 빌드·시험 통과, 스크린샷 4장 올림"],
+  ["failed", "revision", "수정", "claude", "sonnet", "빌드 실패: flutter build apk 종료 코드 1 — Gradle 의존성을 내려받지 못했어요. ".repeat(4)],
+  ["running", "revision", "수정", "claude", null, null],
+  ["cancelled", "new", "새 앱", "codex", null, null],
+  ["pending", "release", "출시 준비", "claude", "default", null],
+  ["approved", "revision", "수정", "claude", "fable", null],
+  ["review", "release", "출시 준비", "claude", null, "스토어 자료를 만들었어요. 검토 대기"],
+];
+const jobRow = (i) => {
+  const [status, kind, kindLabel, aiEngine, aiModel, result] = JOB_ROWS[i % JOB_ROWS.length];
+
+  return {
+    id: `cjob${String(1000 - i).padStart(6, "0")}`,
+    appSlug: ["memo-pad", "walk-count", "water-log"][i % 3],
+    title: ["메모장", "걸음 수 기록", "물 마시기 알림"][i % 3] + (kind === "revision" ? " 수정" : ""),
+    kind,
+    kindLabel,
+    status,
+    aiEngine,
+    aiModel: aiModel === "default" ? null : aiModel,
+    result,
+    createdAt: iso(now - (i * 3 + 1) * HOUR),
+    startedAt: status === "pending" || status === "approved" ? null : iso(now - (i * 3 + 0.9) * HOUR),
+    finishedAt: status === "done" || status === "failed" ? iso(now - (i * 3 + 0.4) * HOUR) : null,
+  };
 };
 // [전체 히스토리] 탭: 배포·감독 프로그램 업데이트·정비 대화를 시각순으로 합친 첫 20개(배포 하나는 긴 빌드 로그)
 const updateRow = (i) => ({
@@ -184,6 +213,7 @@ const mergedItems = [
   ...historyData.deploys.slice(0, 12).map((d, i) => ({ type: "deploys", at: d.requestedAt, item: i === 4 ? { ...d, ok: false, result: longLog } : d })),
   ...Array.from({ length: 8 }, (_, i) => updateRow(i)).map((u) => ({ type: "updates", at: u.at, item: u })),
   ...Array.from({ length: 4 }, (_, i) => threadRow(i)).map((t) => ({ type: "threads", at: t.updatedAt, item: t })),
+  ...Array.from({ length: 6 }, (_, i) => jobRow(i)).map((j) => ({ type: "jobs", at: j.createdAt, item: j })),
 ]
   .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
   .slice(0, 20);
@@ -192,9 +222,9 @@ const historyPanel = (state) =>
   h(HistoryPanelView, {
     data: STATES[state].history === "all" ? historyData : { ...historyData, deploys: historyData.deploys.slice(0, 5) },
     open: true,
-    tab: STATES[state].history === "merged" ? "all" : "deploys",
-    full: STATES[state].history === "all" ? { kind: "deploys", items: historyData.deploys.slice(0, 20), nextCursor: "cdep19", total: 95, loading: false, error: null } : null,
-    merged: STATES[state].history === "merged" ? { filter: "all", items: mergedItems, nextCursor: "d:cdep11.u:123.t:cthr3", total: 270, loading: false, error: null } : null,
+    tab: STATES[state].history === "merged" ? "all" : STATES[state].history === "jobs" ? "jobs" : "deploys",
+    full: STATES[state].history === "jobs" ? { kind: "jobs", items: Array.from({ length: 20 }, (_, i) => jobRow(i)), nextCursor: "cjob000981", total: 138, loading: false, error: null } : STATES[state].history === "all" ? { kind: "deploys", items: historyData.deploys.slice(0, 20), nextCursor: "cdep19", total: 95, loading: false, error: null } : null,
+    merged: STATES[state].history === "merged" ? { filter: "all", items: mergedItems, nextCursor: "d:cdep11.u:123.t:cthr3.j:cjob000995", total: 408, loading: false, error: null } : null,
     onToggle: noop2,
     onTab: noop2,
     onShowAll: noop2,

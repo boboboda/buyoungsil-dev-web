@@ -7,10 +7,10 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, Chip } from "@heroui/react";
 
-import ClaudeModelSelect from "./ClaudeModelSelect";
+import ClaudeModelSelect, { ModelTag } from "./ClaudeModelSelect";
 import { StatusDot } from "./fx";
 
-import { isAiEngine, isClaudeModel, type TaskModel } from "@/lib/factory/ai";
+import { AI_LABELS, isAiEngine, isClaudeModel, type AiEngine, type TaskModel } from "@/lib/factory/ai";
 
 type Action = "job_approve" | "maintenance_approve" | "deploy" | "deploy_now";
 
@@ -85,16 +85,32 @@ interface Overview {
     deployResult: string | null;
     updatedAt: string;
   }[];
-  // 종류별 전체 개수(예전 서버에는 없다)
-  totals?: Record<HistoryKind, number>;
+  // 종류별 전체 개수(예전 서버에는 없다. jobs 는 앱 일감을 넣은 서버부터)
+  totals?: Partial<Record<HistoryKind, number>>;
   // 기본 모델·주사용 AI(승인 줄의 '기본 설정 사용' 표시)
   supervisor?: { defaultClaudeModel?: string | null; defaultAiEngine?: string };
   message?: string;
 }
 
-export type HistoryKind = "deploys" | "updates" | "threads";
-export type HistoryData = Pick<Overview, HistoryKind | "totals">;
-type HistoryItem = HistoryData[HistoryKind][number];
+export type HistoryKind = "deploys" | "updates" | "threads" | "jobs";
+// 앱 일감 목록은 탭을 누를 때 /api/admin/factory/history 에서 읽는다(overview 에는 개수만)
+export type HistoryData = Pick<Overview, "deploys" | "updates" | "threads" | "totals">;
+// 앱 일감 한 줄(/api/admin/factory/history?kind=jobs 의 항목. 기획서 본문·로그·작업 PC 이름은 없다)
+export interface JobHistoryItem {
+  id: string;
+  appSlug: string;
+  title: string;
+  kind: string;
+  kindLabel: string;
+  status: string;
+  aiEngine: string;
+  aiModel: string | null;
+  result: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+type HistoryItem = HistoryData[Exclude<HistoryKind, "jobs">][number] | JobHistoryItem;
 
 // [전체 보기]: /api/admin/factory/history 에서 HISTORY_PAGE 개씩 읽어 붙인 목록
 export const HISTORY_PAGE = 20;
@@ -137,14 +153,34 @@ export function mergeMixed(prev: MixedItem[], next: MixedItem[]) {
   return [...prev, ...next.filter((m) => !seen.has(key(m)))];
 }
 
-// 전체 히스토리 탭 이름 옆 배지: 세 종류 전체 개수 합(예전 서버는 최근 목록 길이)
+// 종류별 개수(예전 서버는 최근 목록 길이, 앱 일감은 개수를 모르면 0)
+export const countOf = (data: HistoryData | null, k: HistoryKind) =>
+  data?.totals?.[k] ?? (k === "jobs" ? 0 : (data?.[k].length ?? 0));
+
+// 전체 히스토리 탭 이름 옆 배지: 네 종류 전체 개수 합
 export const totalOf = (data: HistoryData | null) =>
   data
-    ? (["deploys", "updates", "threads"] as const).reduce(
-        (n, k) => n + (data.totals?.[k] ?? data[k].length),
+    ? (["deploys", "updates", "threads", "jobs"] as const).reduce(
+        (n, k) => n + countOf(data, k),
         0,
       )
     : undefined;
+
+// 앱 일감 상태 → 한국어 이름·색
+const JOB_STATUS: Record<string, { label: string; color: ChipColor }> = {
+  pending: { label: "승인 대기", color: "warning" },
+  approved: { label: "대기열", color: "warning" },
+  running: { label: "진행 중", color: "primary" },
+  review: { label: "검토 대기", color: "warning" },
+  linkwait: { label: "영상 링크 대기", color: "warning" },
+  done: { label: "완료", color: "success" },
+  failed: { label: "실패", color: "danger" },
+  cancelled: { label: "취소", color: "default" },
+};
+
+// 줄을 누르면 [일감] 탭의 그 일감 상세가 열린다
+export const jobHref = (id: string) =>
+  `/admin/factory?tab=jobs&job=${encodeURIComponent(id)}`;
 
 const when = (v: string | null | undefined) =>
   v ? new Date(v).toLocaleString("ko-KR") : "-";
@@ -202,13 +238,16 @@ function deployStatus(d: Overview["deploys"][number]): {
 // children(감독 프로그램 카드)은 "할 일"과 "이력" 사이에 놓는다.
 export default function FactoryOverview({
   children,
+  initialTab,
 }: {
   children?: ReactNode;
+  // 주소의 ?history=jobs 처럼 이력 탭을 바로 열 때(예: [일감] 탭의 '최근 50개만 보임' 안내 링크)
+  initialTab?: HistoryTab;
 }) {
   const [data, setData] = useState<Overview | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<HistoryTab>("deploys");
+  const [tab, setTab] = useState<HistoryTab>(initialTab ?? "deploys");
   // 업데이트·배포 이력은 길어서 기본으로 접어 둔다. 펼침 여부는 이 브라우저에 기억
   const [historyOpen, setHistoryOpen] = useState(false);
   // [전체 보기]로 연 탭의 전체 목록(20개씩 [더 보기]). null 이면 overview 의 최근 목록
@@ -339,6 +378,13 @@ export default function FactoryOverview({
     try {
       setHistoryOpen(localStorage.getItem("factory.historyOpen") === "1");
     } catch {}
+    // 주소로 이력 탭을 지정했으면 펼쳐서 그 탭의 목록을 읽는다
+    if (initialTab) {
+      setHistoryOpen(true);
+      if (initialTab === "all") loadMerged("all");
+      else loadAll(initialTab);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const setOpen = (v: boolean) => {
     try {
@@ -627,6 +673,8 @@ export default function FactoryOverview({
           setFull(null);
           // 전체 히스토리는 누를 때마다 첫 쪽부터 새로 읽는다(필터는 유지)
           if (k === "all") loadMerged(merged?.filter ?? "all");
+          // 앱 일감은 개수가 많아서 처음부터 20개씩 [더 보기]로 보여 준다
+          if (k === "jobs") loadAll("jobs");
         }}
         onToggle={toggleHistory}
       />
@@ -644,6 +692,7 @@ const EMPTY: Record<HistoryKind, string> = {
   deploys: "배포 기록이 없어요.",
   updates: "업데이트 기록이 없어요(감독 프로그램이 다음에 알려 주면 쌓여요).",
   threads: "정비 대화가 없어요.",
+  jobs: "앱 일감 기록이 없어요.",
 };
 
 // 전체 히스토리에서 줄마다 붙는 종류 표시와 필터 이름
@@ -651,12 +700,14 @@ const KIND_BADGE: Record<HistoryKind, { label: string; color: ChipColor }> = {
   deploys: { label: "🚀 배포", color: "danger" },
   updates: { label: "🔄 감독", color: "secondary" },
   threads: { label: "🛠 정비", color: "warning" },
+  jobs: { label: "📦 일감", color: "success" },
 };
 const FILTERS = [
   ["all", "전체"],
   ["deploys", "배포"],
   ["updates", "감독"],
   ["threads", "정비"],
+  ["jobs", "일감"],
 ] as const;
 
 // 업데이트·배포 이력 패널(보기 전용: 상태·읽기는 FactoryOverview 가 한다. 미리보기·시험도 이걸 그린다)
@@ -691,9 +742,14 @@ export function HistoryPanelView({
 }) {
   const kindTab = tab === "all" ? null : tab;
   const all = full && full.kind === tab ? full : null;
-  const list: HistoryItem[] = all ? all.items : kindTab ? (data?.[kindTab] ?? []) : [];
+  // 앱 일감은 최근 목록이 없고(overview 에는 개수만) 탭을 누르면 바로 전체 목록을 읽는다
+  const list: HistoryItem[] = all
+    ? all.items
+    : kindTab && kindTab !== "jobs"
+      ? (data?.[kindTab] ?? [])
+      : [];
   const total = all ? all.total : kindTab ? data?.totals?.[kindTab] : undefined;
-  const count = (k: HistoryKind) => data?.totals?.[k] ?? data?.[k].length ?? 0;
+  const count = (k: HistoryKind) => countOf(data, k);
   const grand = totalOf(data);
 
   return (
@@ -711,7 +767,7 @@ export function HistoryPanelView({
             {!open && data && (
               <span className="text-xs font-normal text-default-500">
                 (배포 {count("deploys")} · 업데이트 {count("updates")} · 정비{" "}
-                {count("threads")}, 눌러서 펼치기)
+                {count("threads")} · 일감 {count("jobs")}, 눌러서 펼치기)
               </span>
             )}
           </button>
@@ -751,6 +807,26 @@ export function HistoryPanelView({
                 {label}
               </Button>
             ))}
+            {/* 앱 일감(앱 만들기·고치기·출시)은 탭 줄에 늘 보이고 개수 배지가 붙는다 */}
+            <Button
+              aria-selected={open && tab === "jobs"}
+              color={open && tab === "jobs" ? "primary" : "default"}
+              data-tab="jobs"
+              role="tab"
+              size="sm"
+              variant={open && tab === "jobs" ? "solid" : "flat"}
+              onPress={() => onTab("jobs")}
+            >
+              📦 앱 일감
+              {data && (
+                <span
+                  className="rounded-full bg-default-200 px-1.5 font-mono text-[11px] text-default-700"
+                  data-jobs-total
+                >
+                  총 {count("jobs")}개
+                </span>
+              )}
+            </Button>
           </div>
         </div>
 
@@ -775,9 +851,14 @@ export function HistoryPanelView({
                 </Button>
               </div>
             )}
-            {list.length === 0 && !all?.loading && (
+            {list.length === 0 && !all?.loading && !(kindTab === "jobs" && !all) && (
               <p className="text-sm text-default-500">{EMPTY[kindTab]}</p>
             )}
+            {kindTab === "jobs" && !all && (
+              <p className="text-sm text-default-500">읽는 중…</p>
+            )}
+            {tab === "jobs" &&
+              (list as JobHistoryItem[]).map((j) => <JobRow key={j.id} j={j} />)}
             {tab === "deploys" &&
               (list as HistoryData["deploys"]).map((d) => (
                 <DeployRow key={d.id} d={d} />
@@ -914,6 +995,8 @@ function MergedList({
           <DeployRow key={`d-${m.item.id}`} badge={badge} d={m.item as HistoryData["deploys"][number]} />
         ) : m.type === "updates" ? (
           <UpdateRow key={`u-${m.item.id}`} badge={badge} u={m.item as HistoryData["updates"][number]} />
+        ) : m.type === "jobs" ? (
+          <JobRow key={`j-${m.item.id}`} badge={badge} j={m.item as JobHistoryItem} />
         ) : (
           <ThreadRow key={`t-${m.item.id}`} badge={badge} t={m.item as HistoryData["threads"][number]} />
         );
@@ -1018,6 +1101,38 @@ function UpdateRow({
         </div>
       )}
       {u.note && <ResultText text={u.note} />}
+    </div>
+  );
+}
+
+// 앱 일감 한 줄: 제목(누르면 [일감] 탭의 그 일감 상세)·앱·종류·상태·시각·모델·결과 요약(길면 접기)
+function JobRow({ j, badge }: { j: JobHistoryItem; badge?: ReactNode }) {
+  const st = JOB_STATUS[j.status] ?? { label: j.status, color: "default" as ChipColor };
+  const engine = (j.aiEngine === "codex" ? "codex" : "claude") as AiEngine;
+
+  return (
+    <div className="rounded-lg border border-default-200 p-2 text-sm" data-job={j.id}>
+      <div className="flex flex-wrap items-center gap-2">
+        {badge}
+        <Chip color={st.color} size="sm" variant="flat">
+          {st.label}
+        </Chip>
+        <Chip color={j.kind === "new" ? "primary" : "default"} size="sm" variant="bordered">
+          {j.kindLabel}
+        </Chip>
+        <a className="min-w-0 break-words font-medium underline decoration-default-300 underline-offset-2" href={jobHref(j.id)}>
+          {j.title}
+        </a>
+        <span className="font-mono text-xs text-default-500">{j.appSlug}</span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-default-500">
+        <span>요청 {when(j.createdAt)}</span>
+        <span>시작 {when(j.startedAt)}</span>
+        <span>완료 {when(j.finishedAt)}</span>
+        <span className="font-sans">{AI_LABELS[engine]}</span>
+        <ModelTag engine={engine} model={j.aiModel} />
+      </div>
+      {j.result && <ResultText text={j.result} />}
     </div>
   );
 }

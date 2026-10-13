@@ -612,6 +612,7 @@ model FactoryJob {
 
   @@index([status, priority, createdAt])
   @@index([appSlug])
+  @@index([createdAt, id]) // 통제실 이력 [앱 일감]: 전체 최신순 쪽 나누기
   @@map("factory_jobs")
 }
 

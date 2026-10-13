@@ -217,6 +217,56 @@ export async function deployHistory(limit = 40, cursor?: string) {
   }));
 }
 
+/**
+ * 앱 일감 이력(앱 만들기·고치기·출시 일감, 요청 시각 최신순). 필요한 열만 읽는다 —
+ * 기획서 본문·로그·작업 PC 이름·도구 요청·빌드 결과는 싣지 않는다.
+ */
+export async function jobHistory(limit = 40, cursor?: string) {
+  const rows = await prisma.factoryJob.findMany({
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit,
+    // 쪽 나누기: cursor 는 앞 쪽 마지막 항목 id(그 항목은 빼고 다음부터)
+    cursor: cursor === undefined ? undefined : { id: cursor },
+    skip: cursor === undefined ? 0 : 1,
+    select: {
+      id: true,
+      appSlug: true,
+      title: true,
+      kind: true,
+      releaseKind: true,
+      status: true,
+      aiEngine: true,
+      aiModel: true,
+      summary: true,
+      failReason: true,
+      createdAt: true,
+      startedAt: true,
+      finishedAt: true,
+    },
+  });
+
+  return rows.map((j) => {
+    // 출시 일감은 kind 가 revision 이어도 releaseKind 가 채워져 있다
+    const kind = j.releaseKind ? "release" : j.kind === "new" ? "new" : "revision";
+
+    return {
+      id: j.id,
+      appSlug: j.appSlug,
+      title: j.title,
+      kind,
+      kindLabel: KIND_LABELS[kind] ?? kind,
+      status: j.status,
+      aiEngine: j.aiEngine,
+      aiModel: j.aiModel,
+      // 실패면 실패 이유, 아니면 완료 요약. 길면 화면에서 접는다
+      result: excerpt(j.status === "failed" ? (j.failReason ?? j.summary) : (j.summary ?? j.failReason), 600) || null,
+      createdAt: j.createdAt,
+      startedAt: j.startedAt,
+      finishedAt: j.finishedAt,
+    };
+  });
+}
+
 /** 정비 대화 요약(제목·상태·올린 커밋·배포 필요 여부). 대화 본문은 공장 정비 패널에서 본다. */
 export async function maintenanceSummary(limit = 30, cursor?: string) {
   const threads = await prisma.factoryMaintenance.findMany({
@@ -252,20 +302,21 @@ export async function maintenanceSummary(limit = 30, cursor?: string) {
 }
 
 // ── 이력 전체 보기(통제실 이력 패널의 [전체 보기]·[더 보기]) ──
-export const HISTORY_KINDS = ["deploys", "updates", "threads"] as const;
+export const HISTORY_KINDS = ["deploys", "updates", "threads", "jobs"] as const;
 export type HistoryKind = (typeof HISTORY_KINDS)[number];
 export const HISTORY_PAGE = 20;
 export const HISTORY_PAGE_MAX = 100;
 
 /** 이력 종류별 전체 개수(통제실 요약 줄·[전체 보기 · 총 N개]) */
 export async function historyTotals(): Promise<Record<HistoryKind, number>> {
-  const [deploys, updates, threads] = await Promise.all([
+  const [deploys, updates, threads, jobs] = await Promise.all([
     prisma.factoryDeploy.count(),
     prisma.factorySupervisorEvent.count(),
     prisma.factoryMaintenance.count(),
+    prisma.factoryJob.count(),
   ]);
 
-  return { deploys, updates, threads };
+  return { deploys, updates, threads, jobs };
 }
 
 /**
@@ -289,7 +340,9 @@ export async function historyPage(
       ? deployHistory(limit + 1, cursor)
       : kind === "updates"
         ? supervisorUpdateHistory(limit + 1, cursor ? Number(cursor) : undefined)
-        : maintenanceSummary(limit + 1, cursor),
+        : kind === "threads"
+          ? maintenanceSummary(limit + 1, cursor)
+          : jobHistory(limit + 1, cursor),
     historyTotals(),
   ]);
   const items = rows.slice(0, limit);
@@ -304,9 +357,9 @@ export async function historyPage(
 }
 
 // ── 전체 히스토리(세 종류를 시간순으로 합친 목록) ──
-// 항목 시각: 서버 배포는 요청 시각, 업데이트는 소식 시각, 정비 대화는 마지막 활동 시각.
-// cursor 는 종류마다 앞 쪽에서 마지막으로 보여 준 id 를 묶은 것: "d:<id>.u:<번호>.t:<id>"(아직 안 나온 종류는 빠짐)
-const ALL_TAG = { deploys: "d", updates: "u", threads: "t" } as const;
+// 항목 시각: 서버 배포는 요청 시각, 업데이트는 소식 시각, 정비 대화는 마지막 활동 시각, 앱 일감은 요청 시각.
+// cursor 는 종류마다 앞 쪽에서 마지막으로 보여 준 id 를 묶은 것: "d:<id>.u:<번호>.t:<id>.j:<id>"(아직 안 나온 종류는 빠짐)
+const ALL_TAG = { deploys: "d", updates: "u", threads: "t", jobs: "j" } as const;
 
 export function parseAllCursor(raw: string | null | undefined) {
   const out: Partial<Record<HistoryKind, string>> = {};
@@ -324,8 +377,8 @@ export function parseAllCursor(raw: string | null | undefined) {
   return out;
 }
 
-const atOf = (kind: HistoryKind, row: { requestedAt?: unknown; at?: unknown; updatedAt?: unknown }) =>
-  new Date((kind === "deploys" ? row.requestedAt : kind === "updates" ? row.at : row.updatedAt) as string | Date).getTime();
+const atOf = (kind: HistoryKind, row: { requestedAt?: unknown; at?: unknown; updatedAt?: unknown; createdAt?: unknown }) =>
+  new Date((kind === "deploys" ? row.requestedAt : kind === "updates" ? row.at : kind === "jobs" ? row.createdAt : row.updatedAt) as string | Date).getTime();
 
 /**
  * 전체 히스토리 한 쪽(최신 먼저). 종류마다 limit+1 개를 읽어 이미 정렬된 세 목록을 앞에서부터 합친다(종류 안의 순서는 그대로라 쪽 사이에 빠짐·겹침이 없다).
@@ -339,20 +392,21 @@ export async function historyAllPage(opts: { limit?: number; cursor?: string | n
   const cur = parseAllCursor(opts.cursor);
 
   if (!cur) return null;
-  const [d, u, t, totals] = await Promise.all([
+  const [d, u, t, j, totals] = await Promise.all([
     deployHistory(limit + 1, cur.deploys),
     supervisorUpdateHistory(limit + 1, cur.updates ? Number(cur.updates) : undefined),
     maintenanceSummary(limit + 1, cur.threads),
+    jobHistory(limit + 1, cur.jobs),
     historyTotals(),
   ]);
-  const lists = { deploys: d, updates: u, threads: t } as const;
-  const used: Record<HistoryKind, number> = { deploys: 0, updates: 0, threads: 0 };
+  const lists = { deploys: d, updates: u, threads: t, jobs: j } as const;
+  const used: Record<HistoryKind, number> = { deploys: 0, updates: 0, threads: 0, jobs: 0 };
   const items: { type: HistoryKind; at: string; item: (typeof lists)[HistoryKind][number] }[] = [];
 
   while (items.length < limit) {
     let pick: HistoryKind | null = null;
 
-    // 같은 시각이면 배포 → 업데이트 → 정비 순
+    // 같은 시각이면 배포 → 업데이트 → 정비 → 일감 순
     for (const k of HISTORY_KINDS) {
       const row = lists[k][used[k]];
 
@@ -374,6 +428,6 @@ export async function historyAllPage(opts: { limit?: number; cursor?: string | n
     kind: "all" as const,
     items,
     nextCursor: more ? next : null,
-    total: totals.deploys + totals.updates + totals.threads,
+    total: totals.deploys + totals.updates + totals.threads + totals.jobs,
   };
 }

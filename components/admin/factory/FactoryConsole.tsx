@@ -9,7 +9,7 @@ import AppProjectLinks from "./AppProjectLinks";
 import DefaultAiSettings from "./DefaultAiSettings";
 import DevicePanel from "./DevicePanel";
 import FactoryControl from "./FactoryControl";
-import FactoryOverview from "./FactoryOverview";
+import FactoryOverview, { type HistoryTab } from "./FactoryOverview";
 import FactoryTabs from "./FactoryTabs";
 import { FACTORY_TABS, type FactoryTab } from "./consoleTabs";
 import MaintenancePanel from "./MaintenancePanel";
@@ -52,7 +52,15 @@ async function readStats() {
   }
 }
 
-export default async function FactoryConsole({ tab }: { tab: FactoryTab }) {
+export default async function FactoryConsole({
+  tab,
+  jobId = null,
+  historyTab,
+}: {
+  tab: FactoryTab;
+  jobId?: string | null; // ?job=<id> → [일감] 탭에서 그 일감 상세를 바로 연다
+  historyTab?: HistoryTab; // ?history=jobs → [현황] 이력의 그 탭을 바로 연다
+}) {
   const label = FACTORY_TABS.find((t) => t.key === tab)?.label;
   const stats = await readStats();
 
@@ -71,14 +79,14 @@ export default async function FactoryConsole({ tab }: { tab: FactoryTab }) {
           <FactoryTabs active={tab} />
 
           {tab === "status" && (
-            <FactoryOverview>
+            <FactoryOverview initialTab={historyTab}>
               <SupervisorControl />
             </FactoryOverview>
           )}
 
           {tab === "jobs" && (
             <div className="space-y-6">
-              <FactoryControl />
+              <FactoryControl initialJobId={jobId} />
               <RevisionSender />
               <Card>
                 <CardBody>

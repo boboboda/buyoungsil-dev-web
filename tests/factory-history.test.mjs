@@ -50,7 +50,9 @@ function table(rows, calls) {
         list = list.slice(at);
       }
       list = list.slice(args.skip ?? 0);
-      return args.take === undefined ? list : list.slice(0, args.take);
+      list = args.take === undefined ? list : list.slice(0, args.take);
+      // select 는 고른 열만 돌려준다(진짜 DB 처럼)
+      return args.select ? list.map((r) => Object.fromEntries(Object.keys(args.select).map((k) => [k, r[k]]))) : list;
     },
   };
 }
@@ -93,8 +95,32 @@ const threads = Array.from({ length: 45 }, (_, i) => ({
   _count: { messages: 1 + (i % 3) },
 }));
 
+// 앱 일감 120개(앱 만들기·고치기·출시·실패·취소 섞임). 비밀이 될 만한 열도 일부러 채워 두고 응답에 안 새는지 본다
+const JOB_STATUS = ["done", "failed", "cancelled", "pending", "approved", "running", "review", "done"];
+const jobs = Array.from({ length: 120 }, (_, i) => ({
+  id: cuid("job", i),
+  appSlug: `app-${i % 9}`,
+  title: `앱 일감 ${i}`,
+  kind: i % 3 === 0 ? "new" : "revision",
+  releaseKind: i % 10 === 4 ? "first" : null,
+  status: JOB_STATUS[i % 8],
+  aiEngine: i % 6 === 5 ? "codex" : "claude",
+  aiModel: i % 4 === 1 ? "opus" : null,
+  summary: i % 8 === 0 ? ["완료 요약", "줄2", "줄3", "줄4"].join(String.fromCharCode(10)) : i % 8 === 7 ? "짧은 완료 요약" : null,
+  failReason: i % 8 === 1 ? "빌드 실패: 종료 코드 1" : null,
+  createdAt: new Date(T0 + Math.floor(i / 2) * MIN), // 2개씩 같은 시각
+  startedAt: i % 8 === 3 ? null : new Date(T0 + Math.floor(i / 2) * MIN + 5000),
+  finishedAt: i % 8 === 0 ? new Date(T0 + Math.floor(i / 2) * MIN + 90_000) : null,
+  planMarkdown: "# 비밀 기획서 SECRET-PLAN",
+  workerId: "작업PC-SECRET-WORKER",
+  resumeNote: "C:/Users/kju90/SECRET-PATH",
+  toolRequests: [{ id: "x", tool: "echo" }],
+  buildResult: { versionName: "9.9.9" },
+}));
+
 const calls = [];
 const prisma = {
+  factoryJob: table(jobs, calls),
   factoryDeploy: table(deploys, calls),
   factorySupervisorEvent: table(events, calls),
   factoryMaintenance: table(threads, calls),
@@ -103,7 +129,7 @@ const prisma = {
 const ID_RE = new RegExp(fs.readFileSync(path.join(repo, "lib/factory/jobs.ts"), "utf8").match(/export const ID_RE = \/(.+)\/;/)[1]);
 const approvals = loadTs("lib/factory/approvals.ts", {
   "@/lib/prisma": { __esModule: true, default: prisma },
-  "@/lib/factory/jobs": { ID_RE, KIND_LABELS: {}, adminAction: async () => ({}) },
+  "@/lib/factory/jobs": { ID_RE, KIND_LABELS: { new: "새 앱", revision: "수정", release: "출시 준비" }, adminAction: async () => ({}) },
   "@/lib/factory/maintenance": {},
 });
 
@@ -123,7 +149,7 @@ test("최근 목록(통제실 첫 화면)은 그대로 최근 것만: 배포 40 
   assert.equal((await approvals.deployHistory()).length, 40);
   assert.equal((await approvals.supervisorUpdateHistory()).length, 40);
   assert.equal((await approvals.maintenanceSummary()).length, 30);
-  assert.deepEqual(await approvals.historyTotals(), { deploys: 95, updates: 130, threads: 45 });
+  assert.deepEqual(await approvals.historyTotals(), { deploys: 95, updates: 130, threads: 45, jobs: 120 });
 });
 
 test("서버 배포 전체: 20개씩 5쪽, 겹침·빠짐 없이 시간 역순, 마지막 쪽 nextCursor 없음", async () => {
@@ -189,7 +215,7 @@ test("API: 관리자만, 응답은 no-store, 잘못된 kind·cursor 는 400", as
   admin = false;
   assert.equal((await get("kind=deploys")).status, 401);
   admin = true;
-  const bad = await get("kind=jobs");
+  const bad = await get("kind=bogus");
   assert.equal(bad.status, 400);
   assert.equal(bad.headers.get("cache-control"), "no-store");
   assert.equal((await get("kind=updates&cursor=1;drop")).status, 400);
@@ -286,25 +312,25 @@ async function readMerged(limit) {
   return pages;
 }
 
-test("전체 히스토리: 20개씩 끝까지 읽으면 세 종류 270개가 겹침·빠짐 없이 최신순, 종류 안 순서도 그대로", async () => {
+test("전체 히스토리: 20개씩 끝까지 읽으면 네 종류 390개가 겹침·빠짐 없이 최신순, 종류 안 순서도 그대로", async () => {
   const pages = await readMerged();
-  assert.equal(pages.length, 14); // 270 = 20 × 13 + 10
-  assert.deepEqual(pages.map((p) => p.items.length), [...Array(13).fill(20), 10]);
-  assert.ok(pages.every((p) => p.kind === "all" && p.total === 270));
+  assert.equal(pages.length, 20); // 390 = 20 × 19 + 10
+  assert.deepEqual(pages.map((p) => p.items.length), [...Array(19).fill(20), 10]);
+  assert.ok(pages.every((p) => p.kind === "all" && p.total === 390));
   assert.equal(pages.at(-1).nextCursor, null);
   const all = pages.flatMap((p) => p.items);
-  assert.equal(new Set(all.map((m) => `${m.type}:${m.item.id}`)).size, 270);
+  assert.equal(new Set(all.map((m) => `${m.type}:${m.item.id}`)).size, 390);
   const times = all.map((m) => Date.parse(m.at));
   assert.ok(times.every((t, i) => i === 0 || times[i - 1] >= t), "시간 역순");
   // 종류마다 따로 읽은 전체 목록과 순서가 같다
-  for (const kind of ["deploys", "updates", "threads"]) {
+  for (const kind of ["deploys", "updates", "threads", "jobs"]) {
     const alone = (await readAll(kind)).flatMap((p) => p.items.map((i) => String(i.id)));
     assert.deepEqual(all.filter((m) => m.type === kind).map((m) => String(m.item.id)), alone);
   }
   // 제일 최근은 업데이트 130번(T0+129분)
   assert.deepEqual([all[0].type, all[0].item.id], ["updates", 130]);
   // 같은 시각이면 배포 → 업데이트 → 정비 순
-  const order = { deploys: 0, updates: 1, threads: 2 };
+  const order = { deploys: 0, updates: 1, threads: 2, jobs: 3 };
   for (let i = 1; i < all.length; i++)
     if (times[i - 1] === times[i]) assert.ok(order[all[i - 1].type] <= order[all[i].type]);
 });
@@ -312,7 +338,7 @@ test("전체 히스토리: 20개씩 끝까지 읽으면 세 종류 270개가 겹
 test("전체 히스토리: limit 은 1~100, 잘못된 cursor 는 null(→ 400)", async () => {
   assert.equal((await approvals.historyAllPage({ limit: 1000 })).items.length, 100);
   assert.equal((await approvals.historyAllPage({ limit: 0 })).items.length, 1);
-  assert.deepEqual((await readMerged(100)).map((p) => [p.items.length, !!p.nextCursor]), [[100, true], [100, true], [70, false]]);
+  assert.deepEqual((await readMerged(100)).map((p) => [p.items.length, !!p.nextCursor]), [[100, true], [100, true], [100, true], [90, false]]);
   for (const bad of ["../etc", "d:../x", "u:abc", "x:1", "u:1.u:2", "d:", "u:1:2"])
     assert.equal(await approvals.historyAllPage({ cursor: bad }), null, bad);
   assert.deepEqual(approvals.parseAllCursor("u:5.t:cthr000001"), { updates: "5", threads: "cthr000001" });
@@ -328,8 +354,8 @@ test("API kind=all: 관리자만, no-store, 쪽 이어 읽기, 잘못된 cursor 
   assert.equal(ok.status, 200);
   assert.equal(ok.headers.get("cache-control"), "no-store");
   const body = await ok.json();
-  assert.deepEqual([body.kind, body.items.length, body.total], ["all", 20, 270]);
-  assert.ok(body.items.every((m) => ["deploys", "updates", "threads"].includes(m.type) && m.item && m.at));
+  assert.deepEqual([body.kind, body.items.length, body.total], ["all", 20, 390]);
+  assert.ok(body.items.every((m) => ["deploys", "updates", "threads", "jobs"].includes(m.type) && m.item && m.at));
   const next = await (await get(`kind=all&limit=20&cursor=${encodeURIComponent(body.nextCursor)}`)).json();
   assert.equal(next.items.length, 20);
   assert.ok(Date.parse(body.items[19].at) >= Date.parse(next.items[0].at));
@@ -348,7 +374,7 @@ test("탭 줄 맨 앞 [전체 히스토리 · 총 N개]는 접힘·펼침·탭 �
     assert.match(tabs, /^data-history-tabs[^>]*>\s*<button[^>]*data-tab="all"/, "탭 줄 맨 앞");
     assert.match(tabs, /전체 히스토리/);
     assert.match(tabs, /서버 배포[^]*감독 프로그램 업데이트[^]*정비 대화/);
-    if (props.data !== null) assert.match(tabs, /총 270개/);
+    if (props.data !== null) assert.match(tabs, /총 390개/);
   }
   // 예전 서버(totals 없음)는 최근 목록 길이 합
   assert.match(render({ data: { ...recent, totals: undefined } }), /총 110개/);
@@ -359,20 +385,20 @@ test("탭 줄 맨 앞 [전체 히스토리 · 총 N개]는 접힘·펼침·탭 �
 test("전체 히스토리 탭: 줄마다 종류 표시, 더 보기 → 끝까지, 종류 필터, 읽는 중·실패", async () => {
   const pages = await readMerged();
   const first = mixed(pages.slice(0, 1));
-  const one = render({ tab: "all", merged: { filter: "all", items: first, nextCursor: pages[0].nextCursor, total: 270, loading: false, error: null } });
+  const one = render({ tab: "all", merged: { filter: "all", items: first, nextCursor: pages[0].nextCursor, total: 390, loading: false, error: null } });
   assert.match(one, /data-history="merged"/);
   assert.match(one, /전체 히스토리 · 최신순/);
-  assert.match(one, /20 \/ 270/);
+  assert.match(one, /20 \/ 390/);
   assert.match(one, /더 보기 \(20개\)/);
   assert.equal(rows(one), 20);
   assert.equal((one.match(/data-kind="/g) ?? []).length, 20);
   assert.match(one, /🔄 감독/);
-  for (const f of ["all", "deploys", "updates", "threads"]) assert.match(one, new RegExp(`data-filter="${f}"`));
+  for (const f of ["all", "deploys", "updates", "threads", "jobs"]) assert.match(one, new RegExp(`data-filter="${f}"`));
   assert.match(one, /data-filter="all" aria-pressed="true"/);
 
-  const done = render({ tab: "all", merged: { filter: "all", items: view.mergeMixed(mixed(pages), first), nextCursor: null, total: 270, loading: false, error: null } });
-  assert.equal(rows(done), 270);
-  for (const label of ["🚀 배포", "🔄 감독", "🛠 정비"]) assert.match(done, new RegExp(label));
+  const done = render({ tab: "all", merged: { filter: "all", items: view.mergeMixed(mixed(pages), first), nextCursor: null, total: 390, loading: false, error: null } });
+  assert.equal(rows(done), 390);
+  for (const label of ["🚀 배포", "🔄 감독", "🛠 정비", "📦 일감"]) assert.match(done, new RegExp(label));
   assert.doesNotMatch(done, /더 보기/);
   assert.match(done, /끝까지 다 봤어요/);
 
@@ -384,7 +410,7 @@ test("전체 히스토리 탭: 줄마다 종류 표시, 더 보기 → 끝까지
   assert.match(only, /data-filter="deploys" aria-pressed="true"/);
 
   assert.match(render({ tab: "all", merged: null }), /읽는 중…/);
-  const failed = render({ tab: "all", merged: { filter: "all", items: [], nextCursor: null, total: 270, loading: false, error: "서버에 연결하지 못했어요." } });
+  const failed = render({ tab: "all", merged: { filter: "all", items: [], nextCursor: null, total: 390, loading: false, error: "서버에 연결하지 못했어요." } });
   assert.match(failed, /서버에 연결하지 못했어요/);
   assert.doesNotMatch(failed, /기록이 없어요/);
 });
@@ -399,4 +425,161 @@ test("긴 로그(빌드 로그 끝부분)는 3줄까지만 보이고 [펼치기]
   assert.match(html, /data-result="short"/);
   assert.ok(view.isLongResult("x".repeat(181)));
   assert.ok(!view.isLongResult("한 줄\n두 줄\n세 줄"));
+});
+
+// ── 앱 일감 이력(kind=jobs) ──
+const consoleTabs = loadTs("components/admin/factory/consoleTabs.ts");
+const readJobs = async (limit) => {
+  const pages = [];
+  let cursor = null;
+  for (let n = 0; n < 50; n++) {
+    const p = await approvals.historyPage("jobs", { limit, cursor });
+    pages.push(p);
+    if (!p.nextCursor) break;
+    cursor = p.nextCursor;
+  }
+  return pages;
+};
+
+test("앱 일감: 20개씩 6쪽, 요청 시각 최신순, 겹침·빠짐 없음, 마지막 쪽 nextCursor 없음", async () => {
+  const pages = await readJobs();
+  assert.deepEqual(pages.map((p) => p.items.length), [20, 20, 20, 20, 20, 20]);
+  assert.ok(pages.every((p) => p.kind === "jobs" && p.total === 120));
+  assert.equal(pages.at(-1).nextCursor, null);
+  const ids = pages.flatMap((p) => p.items.map((j) => j.id));
+  assert.equal(new Set(ids).size, 120);
+  assert.deepEqual(ids, sortRows(jobs, [{ createdAt: "desc" }, { id: "desc" }]).map((j) => j.id));
+  // 수백 개여도 한 번에 limit+1 개만 읽는다
+  calls.length = 0;
+  await approvals.historyPage("jobs", { limit: 20 });
+  assert.equal(calls.find((c) => c.select?.appSlug).take, 21);
+  assert.equal((await approvals.historyPage("jobs", { limit: 1000 })).items.length, 100);
+  assert.equal(await approvals.historyPage("jobs", { cursor: "../etc" }), null);
+});
+
+test("앱 일감: 종류·상태·모델·결과 요약이 맞고, 기획서·작업 PC 이름·경로·도구 요청은 응답에 없다", async () => {
+  const all = (await readJobs(100)).flatMap((p) => p.items);
+  const by = (i) => all.find((j) => j.id === cuid("job", i));
+  assert.deepEqual([by(0).kind, by(0).kindLabel], ["new", "새 앱"]);
+  assert.deepEqual([by(1).kind, by(1).kindLabel], ["revision", "수정"]);
+  assert.deepEqual([by(4).kind, by(4).kindLabel], ["release", "출시 준비"]); // releaseKind 가 있으면 출시
+  assert.equal(by(1).status, "failed");
+  assert.equal(by(1).result, "빌드 실패: 종료 코드 1"); // 실패면 실패 이유
+  assert.equal(by(7).result, "짧은 완료 요약");
+  assert.ok(by(0).result.includes("줄4")); // 줄 바꿈은 한 줄로 합쳐 짧게
+  assert.equal(by(2).result, null);
+  assert.equal(by(1).aiModel, "opus");
+  assert.deepEqual(Object.keys(by(0)).sort(), ["aiEngine", "aiModel", "appSlug", "createdAt", "finishedAt", "id", "kind", "kindLabel", "result", "startedAt", "status", "title"]);
+  const text = JSON.stringify(all);
+  for (const secret of ["SECRET-PLAN", "SECRET-WORKER", "SECRET-PATH", "toolRequests", "buildResult", "planMarkdown", "workerId", "resumeNote"])
+    assert.ok(!text.includes(secret), `응답에 ${secret} 가 있으면 안 돼요`);
+});
+
+test("API kind=jobs: 관리자만, no-store, 쪽 이어 읽기, 잘못된 cursor 400, kind=all 에도 포함", async () => {
+  admin = false;
+  const denied = await get("kind=jobs");
+  assert.equal(denied.status, 401);
+  assert.doesNotMatch(JSON.stringify(await denied.json()), /items|앱 일감/);
+  assert.equal((await get("kind=all")).status, 401);
+  admin = true;
+  const ok = await get("kind=jobs&limit=20");
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get("cache-control"), "no-store");
+  const body = await ok.json();
+  assert.deepEqual([body.kind, body.items.length, body.total], ["jobs", 20, 120]);
+  assert.ok(!JSON.stringify(body).includes("SECRET"));
+  const next = await (await get(`kind=jobs&limit=20&cursor=${body.nextCursor}`)).json();
+  assert.equal(next.items[0].id, sortRows(jobs, [{ createdAt: "desc" }, { id: "desc" }])[20].id);
+  assert.equal((await get("kind=jobs&cursor=1;drop")).status, 400);
+  const mixedBody = await (await get("kind=all&limit=100")).json();
+  assert.ok(mixedBody.items.some((m) => m.type === "jobs" && m.item.title && m.at));
+  assert.ok(!JSON.stringify(mixedBody).includes("SECRET"));
+});
+
+test("전체 히스토리 cursor 에 일감 자리(j:)가 있고, 일감만 읽어도 시간순이 유지된다", async () => {
+  assert.deepEqual(approvals.parseAllCursor("j:cjob000005.d:cdep000001"), { jobs: "cjob000005", deploys: "cdep000001" });
+  assert.equal(approvals.parseAllCursor("j:../x"), null);
+  const first = await approvals.historyAllPage({ limit: 100 });
+  assert.ok(first.nextCursor.split(".").some((p) => p.startsWith("j:")));
+});
+
+test("탭 줄에 [앱 일감 · 총 N개]가 접힘·펼침·탭 상관없이 늘 보인다(예전 서버는 0개)", () => {
+  for (const props of [{ open: false }, { open: true }, { tab: "all" }, { tab: "threads" }, { tab: "jobs" }]) {
+    const html = render(props);
+    const tabs = html.match(/data-history-tabs[^]*?<\/div>/)[0];
+    assert.match(tabs, /data-tab="jobs"[^]*앱 일감[^]*총 120개/);
+  }
+  assert.match(render({ open: false }), /배포 95 · 업데이트 130 · 정비 45 · 일감 120/);
+  assert.match(render({ data: { ...recent, totals: undefined } }).match(/data-history-tabs[^]*?<\/div>/)[0], /총 0개/);
+  // 기존 탭 이름·동작은 그대로
+  assert.match(render({}), /전체 보기 · 총 95개/);
+});
+
+test("앱 일감 탭: 줄마다 이름(앱)·종류·상태·요청/시작/완료·모델·결과 요약, 누르면 [일감] 탭 상세로", async () => {
+  const items = json((await readJobs(100)).flatMap((p) => p.items));
+  const html = render({ tab: "jobs", full: { kind: "jobs", items: items.slice(0, 20), nextCursor: "next", total: 120, loading: false, error: null } });
+  assert.match(html, /data-history="all"/);
+  assert.equal(rows(html), 20);
+  assert.match(html, /20 \/ 120/);
+  assert.match(html, /더 보기 \(20개\)/);
+  assert.match(html, /href="\/admin\/factory\?tab=jobs&amp;job=cjob000119"/);
+  assert.match(html, /앱 일감 119/);
+  assert.match(html, /app-2/);
+  for (const label of ["완료", "실패", "취소", "승인 대기", "대기열", "진행 중", "검토 대기", "새 앱", "수정", "출시 준비"]) assert.match(html, new RegExp(label));
+  assert.match(html, /요청 [^<]*<\/span><span>시작 [^<]*<\/span><span>완료/);
+  assert.match(html, /모델: /); // 모델을 고른 일감
+  const longJob = render({ tab: "jobs", full: { kind: "jobs", items: [{ ...items[0], result: "긴 결과 ".repeat(80) }], nextCursor: null, total: 1, loading: false, error: null } });
+  assert.match(longJob, /data-result="folded"/); // 긴 요약은 접고 [펼치기]
+  assert.match(longJob, /펼치기/);
+  assert.match(html, /data-result="short"/);
+  assert.doesNotMatch(html, /SECRET/);
+  // 끝까지 읽으면 [더 보기] 없음
+  const done = render({ tab: "jobs", full: { kind: "jobs", items, nextCursor: null, total: 120, loading: false, error: null } });
+  assert.equal(rows(done), 120);
+  assert.doesNotMatch(done, /더 보기/);
+  assert.match(done, /끝까지 다 봤어요/);
+  // 읽는 중·비었음·실패
+  assert.match(render({ tab: "jobs", full: null }), /읽는 중…/);
+  assert.match(render({ tab: "jobs", full: { kind: "jobs", items: [], nextCursor: null, total: 0, loading: false, error: null } }), /앱 일감 기록이 없어요/);
+  assert.match(render({ tab: "jobs", full: { kind: "jobs", items, nextCursor: "n", total: 120, loading: false, error: "서버에 연결하지 못했어요." } }), /서버에 연결하지 못했어요/);
+});
+
+test("전체 히스토리 탭에 📦 일감이 섞이고, 종류 필터에 '일감'이 있다", async () => {
+  const pages = await readMerged(100);
+  const first = mixed(pages.slice(0, 1));
+  const html = render({ tab: "all", merged: { filter: "all", items: first, nextCursor: pages[0].nextCursor, total: 390, loading: false, error: null } });
+  assert.match(html, /data-filter="jobs"[^>]*>일감</);
+  assert.ok((html.match(/data-kind="jobs"/g) ?? []).length > 0);
+  assert.match(html, /📦 일감/);
+  const jobsOnly = (await readJobs(100)).flatMap((p) => p.items.map((item) => ({ type: "jobs", item })));
+  const only = render({ tab: "all", merged: { filter: "jobs", items: json(jobsOnly), nextCursor: null, total: 120, loading: false, error: null } });
+  assert.equal(rows(only), 120);
+  assert.deepEqual([...new Set(only.match(/data-kind="[a-z]+"/g))], ['data-kind="jobs"']);
+  assert.match(only, /data-filter="jobs" aria-pressed="true"/);
+});
+
+test("[일감] 탭 목록 제한 안내·주소 연결·인덱스", () => {
+  const control = fs.readFileSync(path.join(repo, "components/admin/factory/FactoryControl.tsx"), "utf8");
+  const jobsRoute = fs.readFileSync(path.join(repo, "app/api/admin/factory/jobs/route.ts"), "utf8");
+  assert.match(jobsRoute, /get\("limit"\) \?\? "50"/);
+  assert.match(control, /JOB_LIST_LIMIT = 50/);
+  assert.match(control, /jobs\.length >= JOB_LIST_LIMIT/);
+  assert.match(control, /data-job-limit/);
+  assert.match(control, /tab=status&history=jobs/);
+  assert.match(control, /useState<string \| null>\(initialJobId\)/);
+  // 주소 해석: 모르는 값은 무시
+  assert.equal(consoleTabs.parseHistoryTab("jobs"), "jobs");
+  assert.equal(consoleTabs.parseHistoryTab("zzz"), undefined);
+  assert.equal(consoleTabs.parseHistoryTab(["all", "x"]), "all");
+  assert.equal(consoleTabs.parseJobId("cjob000001"), "cjob000001");
+  assert.equal(consoleTabs.parseJobId("../etc"), null);
+  assert.equal(consoleTabs.parseJobId("a".repeat(41)), null);
+  assert.equal(consoleTabs.parseJobId(undefined), null);
+  assert.equal(consoleTabs.parseFactoryTab("jobs"), "jobs");
+  // 인덱스만 추가하는 마이그레이션(데이터는 그대로)
+  const dir = fs.readdirSync(path.join(repo, "prisma/migrations")).find((d) => d.endsWith("factory_jobs_created_index"));
+  const sql = fs.readFileSync(path.join(repo, "prisma/migrations", dir, "migration.sql"), "utf8").replace(/--.*$/gm, "").trim();
+  assert.match(sql, /^CREATE INDEX IF NOT EXISTS "factory_jobs_createdAt_id_idx" ON "factory_jobs"\("createdAt", "id"\);$/);
+  assert.doesNotMatch(sql, /DROP|DELETE|TRUNCATE|ALTER/i);
+  assert.match(fs.readFileSync(path.join(repo, "prisma/schema.prisma"), "utf8"), /@@index\(\[createdAt, id\]\)[^\n]*\n\s*@@map\("factory_jobs"\)/);
 });
