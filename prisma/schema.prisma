@@ -539,6 +539,22 @@ model ClaudeDailyUsage {
   @@map("claude_daily_usage")
 }
 
+// AI 구독 한도 사용률의 최신 스냅샷. AI 하나에 1행(claude | codex), 받을 때마다 덮어쓴다.
+// claude: 작업 PC 상태줄 스크립트가 rate_limits 를 보냄. codex: 작업 PC 수집 스크립트가 비공식 사용량 주소에서 읽어 보냄.
+model AiUsageLimit {
+  provider         String    @id // claude | codex
+  device           String // 보낸 기기 이름
+  fiveHourPct      Float? // 5시간 창 사용률 0~100. 없으면 null
+  fiveHourResetsAt DateTime?
+  sevenDayPct      Float? // 7일 창 사용률 0~100
+  sevenDayResetsAt DateTime?
+  asOf             DateTime? // 마지막으로 값을 받은 시각
+  failedAt         DateTime? // 마지막 수집 실패 시각 (값을 받으면 비움)
+  updatedAt        DateTime  @updatedAt
+
+  @@map("ai_usage_limits")
+}
+
 // ─────────────────────────────────────────────
 // 앱 공장 (factory): 기획서를 지시로 쌓고, 내 PC 의 감독 프로그램이 가져가 앱을 만든다.
 // 기존 모델과는 연결하지 않는다. (ClaudeSession 과는 appSlug = project 이름으로만 맞춘다)

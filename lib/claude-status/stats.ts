@@ -1,6 +1,7 @@
 // lib/claude-status/stats.ts
 // 관리자 화면에 보여줄 Claude Code 작업 현황 집계.
 import { kstDate } from "./ingest";
+import { toLimitsView, type UsageLimitsView } from "./limits";
 
 import prisma from "@/lib/prisma";
 
@@ -45,6 +46,27 @@ export interface ClaudeStats {
   windowTokens: TokenSum; // 최근 N시간 사용량 (한도 잔량이 아니라 "내가 쓴 양")
   daily: ClaudeDailyView[]; // 최근 14일, 오래된 순
   recent: ClaudeEventView[];
+  limits: UsageLimitsView | null; // Claude 구독 한도(5시간/7일) 최신 값. 아직 못 받았으면 null
+  codexLimits: UsageLimitsView | null; // Codex 구독 한도(비공식 수집). 아직 못 받았으면 null
+}
+
+// 한도 스냅샷을 읽는다. 표가 아직 없거나(마이그레이션 전) 읽기에 실패해도 나머지 현황은 보여준다.
+async function readLimits(now: number) {
+  try {
+    const rows = await prisma.aiUsageLimit.findMany({
+      where: { provider: { in: ["claude", "codex"] } },
+    });
+    const get = (p: string) => rows.find((r) => r.provider === p) ?? null;
+
+    return {
+      limits: toLimitsView(get("claude"), now),
+      codexLimits: toLimitsView(get("codex"), now),
+    };
+  } catch (error) {
+    console.error("[claude-status] 한도 조회 실패:", error);
+
+    return { limits: null, codexLimits: null };
+  }
 }
 
 export const WINDOW_HOURS = 5;
@@ -70,7 +92,7 @@ export async function getClaudeStats(): Promise<ClaudeStats> {
     new Date(now - (DAILY_DAYS - 1) * 24 * 60 * 60 * 1000),
   );
 
-  const [sessions, windowSum, dailyRows, recent] = await Promise.all([
+  const [sessions, windowSum, dailyRows, recent, limits] = await Promise.all([
     prisma.claudeSession.findMany({
       where: { lastEventAt: { gte: sessionFrom } },
       orderBy: { lastEventAt: "desc" },
@@ -100,6 +122,7 @@ export async function getClaudeStats(): Promise<ClaudeStats> {
       take: 20,
       include: { session: { select: { project: true, device: true } } },
     }),
+    readLimits(now),
   ]);
 
   const sessionViews: ClaudeSessionView[] = sessions
@@ -166,5 +189,6 @@ export async function getClaudeStats(): Promise<ClaudeStats> {
       project: e.session.project,
       device: e.session.device,
     })),
+    ...limits,
   };
 }

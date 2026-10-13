@@ -221,3 +221,11 @@ PIXELLAB_TOKEN=여기에값
 두 AI의 일반 대화 입력에서 `공장: codex 지시내용`, `공장: claude 지시내용`, `공장: 지시내용`을 보낸다. 훅은 정비 지시를 승인 대기로 등록하고 현재 프롬프트를 차단하여 중복 실행을 막는다. `공장: codex --thread 정비ID 지시내용`으로 이어서, `공장: status 정비ID`로 결과를 조회한다. 감독 하위 AI의 프롬프트는 다시 일감으로 등록하지 않는다.
 
 훅이 등록하는 것은 공장 정비다. 앱 제작·수정·출시는 홈페이지와 기존 앱 MCP를 사용한다. 등록·조회 API는 작업 PC 토큰을 사용하고 훅 자체는 승인·배포·AI 직접 실행을 하지 않는다. 세부 설치·복구 절차는 `docs/ai-harness.md`를 읽는다.
+
+## 남은 한도 수집 (`ai-limits.mjs`, 감독 프로그램과 별도)
+
+통제실 [사용량] 탭의 "남은 한도" 게이지에 값을 보낸다. 주소·토큰은 상태 훅과 같은 `CLAUDE_STATUS_URL`·`CLAUDE_STATUS_TOKEN`·`CLAUDE_DEVICE_NAME` 를 쓰고, `CLAUDE_STATUS_URL` 뒤에 `/limits` 를 붙여 보낸다(`AI_LIMITS_URL` 로 바꿀 수 있음).
+
+- Claude: `~/.claude/settings.json` 에 `"statusLine": { "type": "command", "command": "node \"C:/Users/kju90/dev/factory/supervisor-src/tools/factory-supervisor/ai-limits.mjs\" statusline" }`. 상태줄에 `5h 23% · 7d 41%` 를 보여주고, 값이 바뀌었거나 5분이 지났을 때만 보낸다. Pro/Max 구독, 세션 첫 응답 이후에만 값이 있다.
+- Codex(비공식): `node ai-limits.mjs codex` 가 5분마다 `~/.codex/auth.json` 토큰으로 chatgpt.com 사용량 주소를 읽어 사용률·초기화 시각만 보낸다. `--once` 는 한 번만. 실패·형식 변경 때는 "수집 실패"만 보낸다. 토큰은 서버로 보내거나 출력하지 않는다.
+- `node ai-limits.mjs check` 는 필요한 환경변수·auth.json 이 있는지만 알려준다(값은 안 보임).

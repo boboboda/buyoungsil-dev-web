@@ -1,6 +1,11 @@
 // components/admin/claude/ClaudeStatusView.tsx
-// Claude Code 작업 현황: 세션별 상태, 최근 5시간 사용량(추정), 14일 토큰 사용량, 최근 이벤트.
+// Claude Code 작업 현황: 남은 한도(Claude·Codex), 세션별 상태, 최근 5시간 사용량(추정), 14일 토큰 사용량, 최근 이벤트.
 "use client";
+
+import type {
+  LimitWindowView,
+  UsageLimitsView,
+} from "@/lib/claude-status/limits";
 
 import type {
   ClaudeDailyView,
@@ -68,6 +73,26 @@ const rel = (ms: number, now: number) => {
 
   return `${Math.floor(s / 86400)}일 전`;
 };
+
+// 초기화까지 남은 시간: "2시간 13분", "3일 4시간", "12분"
+const until = (ms: number, now: number) => {
+  const m = Math.max(0, Math.ceil((ms - now) / 60_000));
+
+  if (m < 60) return `${m}분`;
+  if (m < 1440) return `${Math.floor(m / 60)}시간 ${m % 60}분`;
+
+  return `${Math.floor(m / 1440)}일 ${Math.floor((m % 1440) / 60)}시간`;
+};
+
+const whenKst = (ms: number) =>
+  new Date(ms).toLocaleString("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 
 const compact = (n: number) => {
   if (n >= 1_000_000)
@@ -154,6 +179,112 @@ function SessionCard({ s, now }: { s: ClaudeSessionView; now: number }) {
           이 세션 누적 · 입력 {compact(s.tokens.input)} · 출력{" "}
           {compact(s.tokens.output)} · 캐시생성 {compact(s.tokens.cacheCreate)}
         </p>
+      </CardBody>
+    </Card>
+  );
+}
+
+function LimitGauge({
+  label,
+  w,
+  now,
+}: {
+  label: string;
+  w: LimitWindowView | null;
+  now: number;
+}) {
+  if (!w) {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="text-xs text-default-400">값 없음</span>
+      </div>
+    );
+  }
+
+  if (w.reset) {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="text-xs text-default-500">
+          초기화됨 ({whenKst(w.resetsAt)}) · 새 값을 기다려요
+        </span>
+      </div>
+    );
+  }
+
+  const pct = Math.round(w.usedPct);
+  const left = Math.max(0, 100 - pct);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="text-sm tabular-nums">
+          남은 <span className="font-semibold">{left}%</span>
+          <span className="ml-1 text-xs text-default-500">({pct}% 씀)</span>
+        </span>
+      </div>
+      <Progress
+        aria-label={`${label} 한도 사용률`}
+        color={pct < 70 ? "success" : pct < 90 ? "warning" : "danger"}
+        size="md"
+        value={pct}
+      />
+      <span className="text-xs text-default-500 tabular-nums">
+        초기화까지 {until(w.resetsAt, now)} ({whenKst(w.resetsAt)})
+      </span>
+    </div>
+  );
+}
+
+function LimitCard({
+  title,
+  v,
+  waiting,
+  note,
+  now,
+}: {
+  title: string;
+  v: UsageLimitsView | null;
+  waiting: string;
+  note?: string;
+  now: number;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex items-start justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <h3 className="text-sm font-semibold">{title}</h3>
+          {note ? <p className="text-xs text-default-400">{note}</p> : null}
+        </div>
+        {v?.failedAt ? (
+          <Chip color="danger" size="sm" variant="flat">
+            수집 실패
+          </Chip>
+        ) : v?.stale ? (
+          <Chip color="warning" size="sm" variant="flat">
+            오래된 값
+          </Chip>
+        ) : null}
+      </CardHeader>
+      <CardBody className="gap-4 pt-0">
+        {!v ? (
+          <p className="text-sm text-default-500">수신 대기({waiting})</p>
+        ) : (
+          <>
+            <LimitGauge label="5시간" now={now} w={v.fiveHour} />
+            <LimitGauge label="7일" now={now} w={v.sevenDay} />
+            <p className="text-xs text-default-400">
+              {v.asOf !== null
+                ? `${rel(v.asOf, now)} 받은 값 (${whenKst(v.asOf)}) · ${v.device}`
+                : `아직 받은 값이 없어요 · ${v.device}`}
+              {v.failedAt !== null
+                ? ` · 마지막 수집 실패 ${rel(v.failedAt, now)}`
+                : ""}
+            </p>
+          </>
+        )}
       </CardBody>
     </Card>
   );
@@ -490,6 +621,25 @@ export default function ClaudeStatusView({ initial }: Props) {
         </button>
         {error ? <span className="text-danger">{error}</span> : null}
       </div>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-base font-semibold">남은 한도</h2>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <LimitCard
+            now={now}
+            title="Claude"
+            v={stats.limits ?? null}
+            waiting="작업 PC 에서 Claude Code 를 한 번 쓰면 나타나요"
+          />
+          <LimitCard
+            note="비공식 수집이라 바뀌면 멈출 수 있어요"
+            now={now}
+            title="Codex"
+            v={stats.codexLimits ?? null}
+            waiting="작업 PC 에서 Codex 수집 스크립트를 켜면 나타나요"
+          />
+        </div>
+      </section>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Tile

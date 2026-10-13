@@ -13,6 +13,7 @@
     "test:admin-cleanup": "node tests/admin-cleanup.test.mjs",
     "test:factory-ui": "node tests/factory-ui.test.mjs",
     "test:studio-access": "node tests/studio-access.test.mjs",
+    "test:ai-limits": "node tests/ai-limits.test.mjs",
     "lint": "eslint --fix --color"
   },
   "dependencies": {
