@@ -7,6 +7,7 @@ import { Button, Card, CardBody, CardHeader, Chip, Input } from "@heroui/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import AiEngineSelect from "./AiEngineSelect";
+import { JobSteps, ProgressBar, StatusDot, jobTone } from "./fx";
 import { AI_LABELS, type AiEngine } from "@/lib/factory/ai";
 import type { ToolRequestRecord } from "@/lib/factory/toolBroker";
 
@@ -282,7 +283,7 @@ export default function FactoryControl() {
             </Card>
           )}
           {!listError && jobs?.length === 0 && (
-            <div className="rounded-xl border-2 border-dashed border-gray-300 p-10 text-center text-gray-500 dark:border-gray-700">
+            <div className="rounded-xl border border-dashed border-default-300 p-10 text-center text-default-500">
               지시가 없어요. Claude 채팅에서 기획서를 등록하면 여기에 나타나요.
             </div>
           )}
@@ -291,8 +292,8 @@ export default function FactoryControl() {
               key={j.id}
               className={`w-full rounded-xl border p-3 text-left transition-colors ${
                 selectedId === j.id
-                  ? "border-primary bg-primary-50 dark:bg-primary-50/10"
-                  : "border-default-200 hover:bg-default-50"
+                  ? "border-primary bg-primary-50/40"
+                  : "border-default-200 bg-content1 hover:bg-default-100"
               }`}
               onClick={() => {
                 setSelectedId(j.id);
@@ -300,8 +301,9 @@ export default function FactoryControl() {
               }}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate font-semibold">
-                  {j.title}
+                <span className="flex min-w-0 items-center gap-2">
+                  <StatusDot tone={jobTone(j.status)} />
+                  <span className="truncate font-semibold">{j.title}</span>
                 </span>
                 <Chip
                   className="shrink-0"
@@ -319,9 +321,16 @@ export default function FactoryControl() {
                 {j.phase && j.status === "running" && (
                   <span>단계: {j.phase}</span>
                 )}
-                <span>{when(j.createdAt)}</span>
-                {j._count.images > 0 && <span>📷 {j._count.images}</span>}
+                <span className="font-mono">{when(j.createdAt)}</span>
+                {j._count.images > 0 && (
+                  <span className="font-mono">이미지 {j._count.images}</span>
+                )}
               </div>
+              {j.status === "running" && (
+                <div className="mt-2">
+                  <ProgressBar label={`${j.title} 제작 중`} />
+                </div>
+              )}
             </button>
           ))}
         </div>
@@ -339,7 +348,7 @@ export default function FactoryControl() {
             </Button>
           )}
           {!selectedId && (
-            <div className="hidden rounded-xl border-2 border-dashed border-gray-300 p-10 text-center text-gray-500 dark:border-gray-700 lg:block">
+            <div className="hidden rounded-xl border border-dashed border-default-300 p-10 text-center text-default-500 lg:block">
               왼쪽에서 지시를 고르면 기획서와 진행 상황이 보여요.
             </div>
           )}
@@ -407,6 +416,16 @@ function JobDetailView({
             {STATUS[job.status].label}
           </Chip>
         </div>
+        <JobSteps
+          approvedAt={job.approvedAt}
+          startedAt={job.startedAt}
+          status={job.status}
+        />
+        {job.status === "running" && (
+          <div className="w-full">
+            <ProgressBar label={`${job.title} 제작 중`} />
+          </div>
+        )}
 
         {(editable || job.status === "failed") && (
           <div className="flex flex-wrap items-center gap-2">
@@ -492,16 +511,20 @@ function JobDetailView({
       <CardBody className="space-y-5">
         {/* 요약 정보 */}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-          <Info label="등록" value={when(job.createdAt)} />
-          <Info label="승인" value={when(job.approvedAt)} />
-          <Info label="시작" value={when(job.startedAt)} />
-          <Info label="끝" value={when(job.finishedAt)} />
-          <Info label="작업 PC" value={job.workerId ?? "-"} />
-          <Info label="시도" value={`${job.attempts} / ${job.maxAttempts}`} />
+          <Info mono label="등록" value={when(job.createdAt)} />
+          <Info mono label="승인" value={when(job.approvedAt)} />
+          <Info mono label="시작" value={when(job.startedAt)} />
+          <Info mono label="끝" value={when(job.finishedAt)} />
+          <Info mono label="작업 PC" value={job.workerId ?? "-"} />
+          <Info
+            mono
+            label="시도"
+            value={`${job.attempts} / ${job.maxAttempts}`}
+          />
           {job.phase && <Info label="현재 단계" value={job.phase} />}
           {job.source && <Info label="등록 경로" value={job.source} />}
           {job.parentJobId && (
-            <Info label="원본 지시" value={job.parentJobId} />
+            <Info mono label="원본 지시" value={job.parentJobId} />
           )}
         </dl>
 
@@ -509,7 +532,7 @@ function JobDetailView({
           <div className="flex flex-wrap items-center gap-1 text-sm">
             <span className="text-default-500">필요한 키:</span>
             {job.requiredSecrets.map((s) => (
-              <Chip key={s} size="sm" variant="flat">
+              <Chip key={s} className="font-mono" size="sm" variant="flat">
                 {s}
               </Chip>
             ))}
@@ -533,11 +556,11 @@ function JobDetailView({
         {/* 도구 요청 중계 */}
         {Array.isArray(job.toolRequests) && job.toolRequests.length > 0 && (
           <section>
-            <h3 className="mb-2 font-semibold">🧰 도구 요청 ({job.toolRequests.length})</h3>
+            <h3 className="mb-2 font-semibold">도구 요청 <span className="font-mono">({job.toolRequests.length})</span></h3>
             <ul className="space-y-1 text-sm">
               {job.toolRequests.map((t) => (
                 <li key={t.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 break-all">
-                  <span className="text-default-500">{when(t.at)}</span>
+                  <span className="font-mono text-default-500">{when(t.at)}</span>
                   <code>{t.tool}</code>
                   <Chip
                     color={t.status === "ok" ? "success" : t.status === "denied" ? "warning" : "danger"}
@@ -556,7 +579,7 @@ function JobDetailView({
         {/* 스크린샷 */}
         {shots.length > 0 && (
           <section>
-            <h3 className="mb-2 font-semibold">📷 스크린샷</h3>
+            <h3 className="mb-2 font-semibold">스크린샷</h3>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {shots.map((img) => (
                 <a key={img.id} href={img.url} rel="noreferrer" target="_blank">
@@ -579,7 +602,7 @@ function JobDetailView({
         {/* 도구 중계(toolbroker)가 만든 이미지: label 이 asset- 로 시작 */}
         {assets.length > 0 && (
           <section>
-            <h3 className="mb-2 font-semibold">🎨 도구가 만든 이미지</h3>
+            <h3 className="mb-2 font-semibold">도구가 만든 이미지</h3>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
               {assets.map((img) => (
                 <AssetImage key={img.id} label={img.label} url={img.url} />
@@ -590,7 +613,7 @@ function JobDetailView({
 
         {/* 토큰 */}
         <section>
-          <h3 className="mb-2 font-semibold">🤖 Claude 사용량</h3>
+          <h3 className="mb-2 font-semibold">Claude 사용량</h3>
           {job.aiEngine === "codex" && <p className="mb-2 text-sm text-default-500">아래는 이 앱의 Claude 사용 이력이에요. 현재 Codex 작업의 진행·검증 결과는 진행 로그에서 확인하세요.</p>}
           {claude.sessions.length === 0 ? (
             <p className="text-sm text-default-500">
@@ -598,13 +621,13 @@ function JobDetailView({
             </p>
           ) : (
             <>
-              <p className="text-sm">
+              <p className="font-mono text-sm">
                 입력 {num(claude.totals.input)} · 출력{" "}
                 {num(claude.totals.output)} · 캐시 생성{" "}
                 {num(claude.totals.cacheCreate)} · 캐시 읽기{" "}
                 {num(claude.totals.cacheRead)}
               </p>
-              <ul className="mt-2 space-y-1 text-xs text-default-500">
+              <ul className="mt-2 space-y-1 font-mono text-xs text-default-500">
                 {claude.sessions.map((s) => (
                   <li key={s.id}>
                     {s.device} · {s.status}
@@ -619,11 +642,11 @@ function JobDetailView({
 
         {/* 로그 */}
         <section>
-          <h3 className="mb-2 font-semibold">📜 진행 로그</h3>
+          <h3 className="mb-2 font-semibold">진행 로그</h3>
           {job.logs.length === 0 ? (
             <p className="text-sm text-default-500">아직 로그가 없어요.</p>
           ) : (
-            <div className="max-h-72 overflow-y-auto break-words rounded-lg bg-default-100 p-3 font-mono text-xs leading-relaxed">
+            <div className="max-h-72 overflow-y-auto break-words rounded-lg border border-default-200 bg-background p-3 font-mono text-xs leading-relaxed">
               {job.logs.map((l) => (
                 <div
                   key={l.id}
@@ -631,7 +654,7 @@ function JobDetailView({
                     l.level === "error"
                       ? "text-danger"
                       : l.level === "warn"
-                        ? "text-warning-600"
+                        ? "text-warning"
                         : undefined
                   }
                 >
@@ -646,10 +669,12 @@ function JobDetailView({
         {/* 기획서 */}
         <section>
           <button
+            aria-expanded={showPlan}
             className="font-semibold"
+            type="button"
             onClick={() => setShowPlan((v) => !v)}
           >
-            {showPlan ? "▾" : "▸"} 📄 기획서 보기
+            {showPlan ? "▾" : "▸"} 기획서 보기
           </button>
           {showPlan && (
             <div className="prose prose-sm mt-2 max-h-[32rem] max-w-none overflow-y-auto rounded-lg border border-default-200 p-4 dark:prose-invert">
@@ -695,11 +720,21 @@ function AssetImage({ label, url }: { label: string; url: string }) {
   );
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function Info({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
     <>
       <dt className="text-default-500">{label}</dt>
-      <dd className="break-all font-medium">{value}</dd>
+      <dd className={`break-all font-medium${mono ? " font-mono" : ""}`}>
+        {value}
+      </dd>
     </>
   );
 }

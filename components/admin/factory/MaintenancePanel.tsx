@@ -159,9 +159,9 @@ export default function MaintenancePanel() {
   const visible = thread?.messages.filter((m) => showLogs || m.role !== "log") ?? [];
 
   return (
-    <div className="space-y-2 border-t border-default-200 pt-2">
+    <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <span className="font-semibold">🛠 공장 정비</span>
+        <span className="font-semibold">공장 정비</span>
         <span className="text-xs text-default-500">
           홈페이지·감독 프로그램 코드를 고치는 대화예요. 정비가 대기·진행 중이면 새 앱 일감은 멈춰요.
           {data?.hold ? " (지금 앱 일감 멈춤)" : ""}
@@ -363,7 +363,7 @@ export default function MaintenancePanel() {
         <div className="max-h-[420px] space-y-2 overflow-y-auto rounded-lg border border-default-200 p-2">
           {visible.map((m) =>
             m.role === "log" ? (
-              <div key={m.id} className="break-all font-mono text-[11px] text-default-400">
+              <div key={m.id} className="break-all font-mono text-[11px] text-default-500">
                 {m.text}
               </div>
             ) : (
@@ -373,7 +373,7 @@ export default function MaintenancePanel() {
               >
                 <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-default-500">
                   <span>{m.role === "user" ? `👤 지시${m.source ? ` · ${m.source}` : ""}` : m.role === "assistant" ? "🤖 결과" : "ℹ️ 알림"}</span>
-                  <span>{new Date(m.createdAt).toLocaleString("ko-KR")}</span>
+                  <span className="font-mono">{new Date(m.createdAt).toLocaleString("ko-KR")}</span>
                   {(m.role === "user" || m.role === "assistant") && <span>{AI_LABELS[m.aiEngine ?? "claude"]}</span>}
                   {m.status && (
                     <Chip color={m.status === "failed" ? "danger" : m.status === "done" ? "success" : "warning"} size="sm" variant="flat">
@@ -409,7 +409,7 @@ export default function MaintenancePanel() {
 
       {thread && (thread.pushedCommit || deployState(thread)) && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          {thread.pushedCommit && <span className="text-xs text-default-500">GitHub 에 올린 커밋 {thread.pushedCommit.slice(0, 7)}</span>}
+          {thread.pushedCommit && <span className="text-xs text-default-500">GitHub 에 올린 커밋 <span className="font-mono">{thread.pushedCommit.slice(0, 7)}</span></span>}
           {deployState(thread) && <span className="text-xs">{deployState(thread)}</span>}
           {!bundle && thread.needsDeploy && thread.pushedCommit && !(thread.deploy.requestedAt && !thread.deploy.result && !thread.deploy.deployedAt) && (
             <Button

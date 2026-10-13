@@ -7,6 +7,8 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, Chip } from "@heroui/react";
 
+import { StatusDot } from "./fx";
+
 type Action = "job_approve" | "maintenance_approve" | "deploy" | "deploy_now";
 
 interface Overview {
@@ -213,8 +215,10 @@ export default function FactoryOverview({
       <Card className="mb-6">
         <CardBody className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="font-semibold">
-              ✅ 승인·배포 할 일{inbox ? ` (${todo})` : ""}
+            <div className="flex items-center gap-2 font-semibold">
+              <StatusDot tone={todo > 0 ? "warn" : "idle"} />
+              승인·배포 할 일
+              {inbox && <span className="font-mono">({todo})</span>}
             </div>
             <span className="text-xs text-default-500">
               텔레그램 버튼과 같은 동작이에요. 어느 쪽에서 먼저 눌러도 한 번만
@@ -242,7 +246,7 @@ export default function FactoryOverview({
                   </Chip>
                   <span className="font-medium">{d.title}</span>
                 </div>
-                <div className="mt-1 text-xs text-default-500">
+                <div className="mt-1 font-mono text-xs text-default-500">
                   커밋 {short(d.commit)}
                   {d.inProgress
                     ? ` · ${d.started ? "배포 중(빌드 3~4분)" : "요청됨 — PC가 받아 가는 중"} · 요청 ${when(d.requestedAt)}`
@@ -317,7 +321,7 @@ export default function FactoryOverview({
                     🛠 정비 지시
                   </Chip>
                   <span className="font-medium">{t.threadTitle}</span>
-                  <span className="text-xs text-default-500">
+                  <span className="font-mono text-xs text-default-500">
                     {t.source ?? ""} · {when(t.createdAt)}
                   </span>
                 </div>
@@ -359,7 +363,7 @@ export default function FactoryOverview({
                     {j.kindLabel}
                   </Chip>
                   <span className="font-medium">{j.title}</span>
-                  <span className="text-xs text-default-500">
+                  <span className="font-mono text-xs text-default-500">
                     {j.appSlug} · {j.stack} · {when(j.createdAt)}
                   </span>
                 </div>
@@ -398,7 +402,7 @@ export default function FactoryOverview({
               <span className="text-default-500">
                 {historyOpen ? "▾" : "▸"}
               </span>
-              📜 업데이트·배포 이력
+              업데이트·배포 이력
               {!historyOpen && data && (
                 <span className="text-xs font-normal text-default-500">
                   (배포 {data.deploys.length} · 업데이트 {data.updates.length} ·
@@ -471,7 +475,7 @@ export default function FactoryOverview({
                         ))}
                       </ul>
                     )}
-                    <div className="mt-1 text-xs text-default-500">
+                    <div className="mt-1 font-mono text-xs text-default-500">
                       요청 {when(d.requestedAt)} · 시작 {when(d.startedAt)} ·
                       완료 {when(d.finishedAt)}
                     </div>
@@ -507,7 +511,7 @@ export default function FactoryOverview({
                           ? `${short(u.fromCommit)} → ${short(u.commit)}`
                           : short(u.commit)}
                       </span>
-                      <span className="text-xs text-default-500">
+                      <span className="font-mono text-xs text-default-500">
                         {when(u.at)}
                       </span>
                     </div>
@@ -613,7 +617,7 @@ function ResultText({ text }: { text: string }) {
           <summary className="cursor-pointer text-default-500">
             자세히 ({rest.length}줄)
           </summary>
-          <div className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-default-100 p-2 font-mono text-[11px]">
+          <div className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap rounded border border-default-200 bg-background p-2 font-mono text-[11px]">
             {more}
           </div>
         </details>

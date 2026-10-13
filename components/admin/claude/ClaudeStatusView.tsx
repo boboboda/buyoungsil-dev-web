@@ -357,7 +357,7 @@ function DailyChart({ daily }: { daily: ClaudeDailyView[] }) {
       <details className="text-xs text-default-600">
         <summary className="cursor-pointer select-none">표로 보기</summary>
         <div className="mt-2 overflow-x-auto">
-          <table className="w-full min-w-[420px] text-right tabular-nums">
+          <table className="w-full min-w-[420px] text-right font-mono tabular-nums">
             <thead className="text-default-500">
               <tr>
                 <th className="py-1 text-left font-medium">날짜</th>

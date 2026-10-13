@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody } from "@heroui/react";
 
+import { StatusDot, type Tone } from "./fx";
+
 interface State {
   enabled: boolean;
   autoUpdate: boolean;
@@ -172,18 +174,22 @@ export default function SupervisorControl() {
   };
 
   let badge = "읽는 중…";
+  let tone: Tone = "idle";
   let hint = "";
 
   if (s) {
     if (!s.online) {
-      badge = "🔴 PC 꺼짐";
+      badge = "PC 꺼짐";
+      tone = "bad";
       hint =
         "감독 프로그램이 응답하지 않아요. PC가 켜져 있는지 확인하세요. (홈페이지에서 PC 프로그램을 켤 수는 없어요)";
     } else if (!s.enabled) {
-      badge = "⏸️ 일시 정지";
+      badge = "일시 정지";
+      tone = "warn";
       hint = "연결은 되어 있고, 새 일감은 가져가지 않아요.";
     } else {
-      badge = "🟢 작동 중";
+      badge = "작동 중";
+      tone = "ok";
       hint = "승인된 일감을 가져가서 만들어요.";
     }
   }
@@ -193,11 +199,15 @@ export default function SupervisorControl() {
       <CardBody className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="font-semibold">🤖 감독 프로그램: {badge}</div>
+            <div className="flex items-center gap-2 font-semibold">
+              <StatusDot tone={tone} />
+              감독 프로그램: <span className={`fx-${tone}`}>{badge}</span>
+            </div>
             {s && (
-              <div className="text-xs text-default-500">
-                진행 중 {s.running}개 · 승인된 대기 {s.approved}개 · 승인 기다림{" "}
-                {s.pending}개
+              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-default-500">
+                <Count label="진행 중" tone="run" value={s.running} />
+                <Count label="승인된 대기" tone="warn" value={s.approved} />
+                <Count label="승인 기다림" tone="warn" value={s.pending} />
               </div>
             )}
           </div>
@@ -208,18 +218,16 @@ export default function SupervisorControl() {
             size="sm"
             onPress={toggle}
           >
-            {s?.enabled ? "⏸️ 일시 정지" : "▶️ 다시 시작"}
+            {s?.enabled ? "일시 정지" : "다시 시작"}
           </Button>
         </div>
         {hint && <p className="text-sm text-default-600">{hint}</p>}
         {s && (
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-default-50 p-2 text-xs sm:grid-cols-4">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-default-200 bg-background p-2 text-xs sm:grid-cols-4">
+            <Item label="연결" value={s.online ? "연결됨" : "응답 없음"} />
+            <Item mono label="작업 PC" value={s.workerName ?? "-"} />
             <Item
-              label="연결"
-              value={s.online ? "🟢 연결됨" : "🔴 응답 없음"}
-            />
-            <Item label="작업 PC" value={s.workerName ?? "-"} />
-            <Item
+              mono
               label="마지막 응답"
               value={
                 s.lastSeenAt
@@ -229,20 +237,22 @@ export default function SupervisorControl() {
             />
             <Item
               label="일감 받기"
-              value={s.enabled ? "작동 중" : "⏸️ 일시 정지"}
+              value={s.enabled ? "작동 중" : "일시 정지"}
             />
-            <Item label="현재 버전" value={s.commit ?? "알 수 없음"} />
+            <Item mono label="현재 버전" value={s.commit ?? "알 수 없음"} />
             <Item
               label="자동 업데이트"
               value={s.autoUpdate ? "켜짐" : "꺼짐"}
             />
             <Item
+              mono
               label="진행 중 / 승인된 대기"
               value={`${s.running} / ${s.approved}`}
             />
-            <Item label="승인 기다림" value={`${s.pending}`} />
+            <Item mono label="승인 기다림" value={`${s.pending}`} />
             {s.startedAt !== undefined && (
               <Item
+                mono
                 label="시작 시각"
                 value={
                   s.startedAt
@@ -254,7 +264,7 @@ export default function SupervisorControl() {
             {s.ffmpeg !== undefined && (
               <div className="col-span-2 min-w-0 sm:col-span-3">
                 <dt className="text-default-500">ffmpeg</dt>
-                <dd className="break-all font-medium">
+                <dd className="break-all font-mono font-medium">
                   {s.ffmpeg ?? "알 수 없음(예전 감독 프로그램)"}
                 </dd>
               </div>
@@ -283,7 +293,7 @@ export default function SupervisorControl() {
         {s && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-default-200 pt-2 text-sm">
             <span>
-              🔄 자동 업데이트: {s.autoUpdate ? "켜짐" : "꺼짐"}
+              자동 업데이트: {s.autoUpdate ? "켜짐" : "꺼짐"}
               <span className="ml-1 text-xs text-default-500">
                 (PC 프로그램이 새 코드를 스스로 받아요)
               </span>
@@ -301,7 +311,7 @@ export default function SupervisorControl() {
                 variant="flat"
                 onPress={updateNow}
               >
-                ⬇️ 지금 업데이트
+                지금 업데이트
               </Button>
               <Button
                 className="min-h-11 flex-1 sm:min-h-0 sm:flex-none"
@@ -318,7 +328,7 @@ export default function SupervisorControl() {
         {s && s.restartState !== undefined && (
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span>
-              🔄 감독 재시작
+              감독 재시작
               <span className="ml-1 text-xs text-default-500">
                 (진행 중인 작업이 끝난 뒤 껐다 켜요. 윈도우 PATH 를 새로 읽어 새로 설치한 ffmpeg 등을 찾아요)
               </span>
@@ -342,14 +352,14 @@ export default function SupervisorControl() {
               variant="flat"
               onPress={restart}
             >
-              🔄 감독 재시작
+              감독 재시작
             </Button>
           </div>
         )}
         {s && s.autoDeploy !== undefined && (
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span>
-              🚀 정비 대기열이 모두 끝나면 자동 배포: {s.autoDeploy ? "켜짐" : "꺼짐"}
+              정비 대기열이 모두 끝나면 자동 배포: {s.autoDeploy ? "켜짐" : "꺼짐"}
               <span className="ml-1 text-xs text-default-500">
                 (기본 꺼짐. 켜면 대기열이 비고 마지막 지시의 검사가 통과했을 때 한 번 배포해요. 지난 배포 뒤 실패한 지시가 있으면 안 해요)
               </span>
@@ -371,7 +381,7 @@ export default function SupervisorControl() {
         {s && s.compactAfterJob !== undefined && (
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span>
-              🧹 작업 후 컨텍스트 정리: {s.compactAfterJob ? "켜짐" : "꺼짐"}
+              작업 후 컨텍스트 정리: {s.compactAfterJob ? "켜짐" : "꺼짐"}
               <span className="ml-1 text-xs text-default-500">
                 (기본 켜짐. 성공한 정비·이어받은 일감의 Claude 세션을 /compact 로 요약해 다음 작업의 토큰을 줄여요. Codex·실패한 작업은 건드리지 않아요)
               </span>
@@ -393,11 +403,42 @@ export default function SupervisorControl() {
   );
 }
 
-function Item({ label, value }: { label: string; value: string }) {
+function Item({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
     <div className="min-w-0">
       <dt className="text-default-500">{label}</dt>
-      <dd className="truncate font-medium">{value}</dd>
+      <dd className={`truncate font-medium${mono ? " font-mono" : ""}`}>
+        {value}
+      </dd>
     </div>
+  );
+}
+
+// 일감 수: 상태 점 + 큰 monospace 숫자
+function Count({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: Tone;
+}) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <StatusDot tone={value > 0 ? tone : "idle"} />
+      {label}
+      <span className="font-mono text-base font-semibold text-foreground">
+        {value}
+      </span>
+    </span>
   );
 }
