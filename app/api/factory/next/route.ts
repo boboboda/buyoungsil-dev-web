@@ -10,6 +10,7 @@
 //   새 감독 프로그램은 started(시작 시각 ISO)·boot(restart|start)·ffmpeg·ffprobe("버전 | 경로" 또는 "없음")·restartWait(1)·restartFail(이유)도 보낸다.
 //   [감독 재시작]을 누르면 다음 응답 한 번에 { jobs: [], restart: true } 가 간다(started 를 보내는 감독 프로그램에만. 받아 가면 지운다. 그 응답에는 일감·신호를 싣지 않는다).
 //   재시작을 기다리는 감독 프로그램은 hold=1 을 붙인다: 일감·정비·1회성 신호를 하나도 넘기지 않고(유실 방지) { jobs: [], restartHold: true } 만 돌려준다.
+//   appSlots(1~4)·appSlotsDefault: 통제실 [설정]의 '동시에 만들 앱 수'. 정한 적 없으면 3 과 appSlotsDefault: true (감독 프로그램: slots 로 요청하는 수는 이 값에서 돌고 있는 일감 수를 뺀 만큼).
 //   toolBroker: { mode: off|report|allow, maxRequests, toolTimeoutSec } 가 붙는다(도구 요청 중계, 기본 꺼짐. 수치 null = 제한 없음. lib/factory/toolBroker.ts).
 //   각 job 에 rules(CLAUDE.md 작업 규칙 본문)·prompt(첫 지시문)가 붙는다(lib/factory/rules.ts, 통제실에서 고칠 수 있음).
 //   감독 프로그램은 이 값이 없으면 자기 코드 안 기본값을 쓴다.
@@ -39,7 +40,7 @@ import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
 import { maintenanceForNext, maintenanceHold } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
-import { consumeRestart, consumeUpdateNow, getDefaultAiEngine, getToolBrokerSettings, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
+import { consumeRestart, consumeUpdateNow, getAppSlots, getDefaultAiEngine, getToolBrokerSettings, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
 import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
@@ -100,7 +101,7 @@ export async function GET(req: NextRequest) {
     }
 
     // 통제실에서 "일시 정지" 하면 일감을 내주지 않는다. (인증은 이미 통과했으니 "연결됨" 표시는 계속 갱신된다)
-    const [enabled, autoUpdate, defaultAiEngine, toolBroker, compactAfterJob] = await Promise.all([isSupervisorEnabled(), isAutoUpdateEnabled(), getDefaultAiEngine(), getToolBrokerSettings().catch(() => undefined), isCompactAfterJobEnabled().catch(() => true)]);
+    const [enabled, autoUpdate, defaultAiEngine, toolBroker, compactAfterJob, appSlotsSetting] = await Promise.all([isSupervisorEnabled(), isAutoUpdateEnabled(), getDefaultAiEngine(), getToolBrokerSettings().catch(() => undefined), isCompactAfterJobEnabled().catch(() => true), getAppSlots().catch(() => null)]);
     // 1회성 신호: 받아 가는 순간 지운다. 정지 중이어도 업데이트는 할 수 있게 같이 보낸다.
     const updateNow = await consumeUpdateNow().catch(() => false);
     const pcPaths = await pcPathsToCheck().catch(() => []);
@@ -114,6 +115,8 @@ export async function GET(req: NextRequest) {
     const extra = {
       defaultAiEngine,
       compactAfterJob, // 작업 후 컨텍스트 정리(/compact). false 면 감독 프로그램이 하지 않는다
+      // 동시에 만들 앱 수(1~4). appSlotsDefault: true 면 통제실에서 정한 적 없는 기본값(PC 에 따로 정한 값이 있으면 감독 프로그램이 그걸 쓴다)
+      ...(appSlotsSetting ? { appSlots: appSlotsSetting.value, appSlotsDefault: appSlotsSetting.isDefault } : {}),
       ...(toolBroker ? { toolBroker: toolBrokerForSupervisor(toolBroker) } : {}), // 도구 요청 중계 설정(없으면 감독 프로그램은 꺼짐으로 본다)
       ...(updateNow ? { updateNow: true } : {}),
       ...(pcPaths.length ? { pcPaths } : {}),

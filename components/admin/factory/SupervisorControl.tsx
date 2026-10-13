@@ -13,6 +13,7 @@ interface State {
   autoUpdate: boolean;
   autoDeploy?: boolean; // 예전 서버에는 없다
   compactAfterJob?: boolean; // 예전 서버에는 없다
+  appSlots?: number; // 동시에 만들 앱 수(통제실 [설정]). 예전 서버에는 없다
   commit: string | null;
   commitSubject: string | null;
   updateNote: string | null;
@@ -205,7 +206,7 @@ export default function SupervisorControl() {
             </div>
             {s && (
               <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-default-500">
-                <Count label="진행 중" tone="run" value={s.running} />
+                <Count label="진행 중" max={s.appSlots} tone="run" value={s.running} />
                 <Count label="승인된 대기" tone="warn" value={s.approved} />
                 <Count label="승인 기다림" tone="warn" value={s.pending} />
               </div>
@@ -427,10 +428,12 @@ function Count({
   label,
   value,
   tone,
+  max,
 }: {
   label: string;
   value: number;
   tone: Tone;
+  max?: number; // 있으면 '3 / 최대 3' 처럼 같이 보여 준다
 }) {
   return (
     <span className="flex items-center gap-1.5">
@@ -439,6 +442,7 @@ function Count({
       <span className="font-mono text-base font-semibold text-foreground">
         {value}
       </span>
+      {max !== undefined && <span data-count-max>/ 최대 {max}</span>}
     </span>
   );
 }

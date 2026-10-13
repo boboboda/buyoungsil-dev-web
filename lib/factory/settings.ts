@@ -194,6 +194,34 @@ export async function setCompactAfterJobEnabled(enabled: boolean): Promise<void>
   await prisma.factorySetting.upsert({ where: { key: COMPACT_KEY }, create: { key: COMPACT_KEY, value }, update: { value } });
 }
 
+const APP_SLOTS_KEY = "appSlots";
+export const MIN_APP_SLOTS = 1;
+export const MAX_APP_SLOTS = 4;
+export const DEFAULT_APP_SLOTS = 3;
+
+/** 동시에 만들 앱 수로 받아들이는 값: 1~4 정수(숫자 또는 정수 문자열)만. 그 밖은 null */
+export function cleanAppSlots(v: unknown): number | null {
+  if (typeof v === "string" && !/^\s*\d{1,3}\s*$/.test(v)) return null;
+  if (typeof v !== "number" && typeof v !== "string") return null;
+  const n = Number(v);
+
+  return Number.isInteger(n) && n >= MIN_APP_SLOTS && n <= MAX_APP_SLOTS ? n : null;
+}
+
+/** 통제실에서 정한 '동시에 만들 앱 수'. 정한 적 없거나 값이 이상하면 기본 3(isDefault: true). */
+export async function getAppSlots(): Promise<{ value: number; isDefault: boolean }> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: APP_SLOTS_KEY } });
+  const n = cleanAppSlots(row?.value);
+
+  return n === null ? { value: DEFAULT_APP_SLOTS, isDefault: true } : { value: n, isDefault: false };
+}
+
+export async function setAppSlots(n: number): Promise<void> {
+  const value = String(n);
+
+  await prisma.factorySetting.upsert({ where: { key: APP_SLOTS_KEY }, create: { key: APP_SLOTS_KEY, value }, update: { value } });
+}
+
 const AUTO_DEPLOY_KEY = "maintenanceAutoDeploy";
 
 /** 정비 대기열이 모두 끝나면 자동 배포할지. 값이 없으면 꺼짐. */

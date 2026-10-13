@@ -40,7 +40,7 @@ node supervisor.mjs check
 ```bash
 node supervisor.mjs      # 끄려면 Ctrl+C
 ```
-승인된 지시가 있으면 15초 안에 가져가서 `~/dev/factory/<앱이름>/` 에 앱을 만들어요. 동시에 2개까지 만들어요(설정 `slots`).
+승인된 지시가 있으면 15초 안에 가져가서 `~/dev/factory/<앱이름>/` 에 앱을 만들어요. 동시에 3개까지 만들어요. 몇 개까지 동시에 만들지는 통제실 [설정]의 '동시에 만들 앱 수'(1~4, 정한 적 없으면 3)에서 정하고, 감독 프로그램이 다음 확인 때(보통 15초 안, 재시작 필요 없음) 받아 가요. 줄여도 이미 도는 일감은 끊지 않고 끝나면서 줄어들며, 같은 앱의 일감은 자리가 남아도 하나씩만 돌아요.
 
 ## 자동 업데이트 (`update.mjs`)
 - 실행기 `~/dev/factory/run-supervisor.sh`(환경변수 `FACTORY_LAUNCHER=1`)로 돌 때만 켜져요. 실행기는 감독 프로그램이 끝나면 30초 뒤 다시 띄워요.
@@ -193,13 +193,15 @@ PIXELLAB_TOKEN=여기에값
 - **외부 저장소**(앱 폴더에 `.factory/external` 이 있거나 `prod` 원격이 있음: 원래 있던 저장소를 가져와 고치는 경우)는 감독 프로그램이 커밋하지 않아요.
   공장 파일(`PLAN.md`, `CHANGE_REQUEST.md`, `RELEASE_REQUEST.md`, `.factory/`, 작업 규칙)은 `.git/info/exclude` 로만 빼고 `.gitignore` 도 건드리지 않아요.
   작업 규칙은 저장소에 `CLAUDE.md` 가 있으면 `CLAUDE.local.md` 에 써요. 코드 커밋은 일감 Claude 가 직접 해서, 배포 브랜치에 공장 문서 커밋이 섞이지 않아요.
+- 자리가 꽉 차 있어도 감독 프로그램은 15초마다 확인해요(`slots=0`: 일감은 안 받고 신호·설정만). 그래서 '동시에 만들 앱 수'를 늘리면 바로 다음 확인에 더 가져가요.
+- 동시에 돌 때 부딪힐 수 있는 것: 앱 폴더는 폴더마다 잠금 파일(`.ai-locks`)로 막고, `secrets.env` 쓰기는 한 줄로 세워 차례로 하고, 도구 중계 한도는 일감마다, 한도(ai-limits) 수집은 60초 최소 간격으로 PC 전체가 공유해요. 그래도 Claude/Codex 한도와 PC 메모리·CPU 는 돌리는 개수만큼 빨리 써요.
 - 정비 지시나 정비 배포가 도는 동안에는 새 앱 일감을 받지 않아요(`/next?slots=0`: 신호만 받음). 정비는 돌던 앱 일감이 다 끝난 뒤 시작해요.
 - 앱 일감 Claude 는 `~/dev/factory/app-claude-settings.json` 으로 정비 폴더(`selfdev`, `supervisor-src`)와 공장 설정·비밀 파일을 고치거나 읽지 못하게 막아요(파일 도구 기준).
 
 ## 설정 값 (`supervisor.config.json`)
 | 이름 | 기본값 | 뜻 |
 |---|---|---|
-| slots | 2 | 동시에 만들 앱 수 (1~4) |
+| slots | 3 | 동시에 만들 앱 수 (1~4). 통제실 [설정]에서 정한 값이 있으면 그 값이 우선이고, 정한 적 없을 때만 이 값을 써요. 예전 기본값 2 를 그대로 둔 PC 는 3 으로 따라가고, 1·4 처럼 따로 정한 값은 통제실에서 저장하기 전까지 유지해요 |
 | pollSec | 15 | 대기열 확인 간격(초) |
 | jobTimeoutMin | 120 | 앱 하나에 쓸 수 있는 최대 시간(분). 넘기면 실패 처리 |
 | permissionMode | acceptEdits | Claude Code 권한 모드 |

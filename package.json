@@ -27,8 +27,9 @@
     "test:handoff": "node tests/handoff.test.mjs",
     "test:claude-model": "node tests/claude-model.test.mjs",
     "test:fable-usage": "node tests/fable-usage.test.mjs",
-    "preview:admin-ui":"node tests/admin-ui-preview.mjs",
-    "lint": "eslint --fix --color"
+    "preview:admin-ui": "node tests/admin-ui-preview.mjs",
+    "lint": "eslint --fix --color",
+    "test:app-slots": "node tests/app-slots.test.mjs"
   },
   "dependencies": {
     "@channel.io/channel-web-sdk-loader": "^2.0.0",

@@ -6,6 +6,7 @@
 import { Card, CardBody } from "@heroui/react";
 
 import AppProjectLinks from "./AppProjectLinks";
+import AppSlotsSettings from "./AppSlotsSettings";
 import DefaultAiSettings from "./DefaultAiSettings";
 import DevicePanel from "./DevicePanel";
 import FactoryControl from "./FactoryControl";
@@ -37,7 +38,7 @@ const INTRO: Record<FactoryTab, string> = {
   release:
     "앱마다 배포 계정을 고르고 종류(첫 출시·스토어 자료 수정·프로젝트 업데이트)를 골라 승인하면, 스토어 문구·데이터 보안·콘텐츠 등급·체크리스트·개인정보처리방침 초안과 AAB 정보가 여기 모여요. 최초 업로드와 프로덕션 출시는 사람이 Play Console 에서 해요.",
   settings:
-    "기본 AI, 도구 중계, 텔레그램, 작업 PC 연결 토큰, 외부 서비스 키, Studio 접근 키, 키 보관함(서명 키), 배포 계정, 홈페이지 프로젝트 연결, 작업 규칙",
+    "기본 AI, 동시에 만들 앱 수, 도구 중계, 텔레그램, 작업 PC 연결 토큰, 외부 서비스 키, Studio 접근 키, 키 보관함(서명 키), 배포 계정, 홈페이지 프로젝트 연결, 작업 규칙",
   usage:
     "서버1·서버2·메인PC 장비 상태와 배포된 프로젝트 수, 내 PC의 Claude Code가 지금 하는 일과 토큰 사용량 (앱별 사용량은 [일감] 상세에 있어요)",
   novels:
@@ -105,6 +106,7 @@ export default async function FactoryConsole({
             <div className="space-y-6">
               <ToolboxPanel />
               <DefaultAiSettings />
+              <AppSlotsSettings />
               <ToolBrokerSettings />
               <TelegramSetup />
               <WorkerTokens />

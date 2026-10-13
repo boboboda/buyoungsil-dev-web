@@ -4,6 +4,7 @@
 // 감독 프로그램이 /api/factory/next 를 확인할 때 가져간다.
 import prisma from "@/lib/prisma";
 import {
+  getAppSlots,
   getDefaultAiEngine,
   getDefaultClaudeModel,
   getPendingRestart,
@@ -34,7 +35,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -54,6 +55,7 @@ export async function supervisorSnapshot() {
     getToolBrokerSettings(),
     isCompactAfterJobEnabled(),
     getDefaultClaudeModel(),
+    getAppSlots(),
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
@@ -66,6 +68,8 @@ export async function supervisorSnapshot() {
     autoUpdate,
     autoDeploy, // 정비 대기열이 모두 끝나면 자동 배포(기본 꺼짐)
     compactAfterJob, // 작업 후 컨텍스트 정리(/compact, 기본 켜짐)
+    appSlots: appSlots.value, // 동시에 만들 앱 수(1~4, 기본 3)
+    appSlotsDefault: appSlots.isDefault, // true = 통제실에서 정한 적 없음
     commit: info?.commit ?? null,
     commitSubject: info?.subject ?? null, // 현재 커밋 메시지 첫 줄(무엇이 바뀌었는지)
     updateNote: info?.note ?? null,

@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
 import { isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
-import { setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
+import { cleanAppSlots, MAX_APP_SLOTS, MIN_APP_SLOTS, setAppSlots, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
 import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS, toolBrokerLimitLabel } from "@/lib/factory/toolBroker";
 import { runSupervisorAction, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
 
@@ -20,7 +20,7 @@ export async function GET() {
   return NextResponse.json(await supervisorSnapshot());
 }
 
-// 본문: { enabled: boolean } | { autoUpdate: boolean } | { autoDeploy: boolean } | { compactAfterJob: boolean } | { updateNow: true } | { restart: true }
+// 본문: { enabled: boolean } | { autoUpdate: boolean } | { autoDeploy: boolean } | { compactAfterJob: boolean } | { appSlots: 1~4 } | { updateNow: true } | { restart: true }
 export async function POST(req: NextRequest) {
   const denied = await requireAdmin();
 
@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
     autoUpdate?: unknown;
     autoDeploy?: unknown;
     compactAfterJob?: unknown;
+    appSlots?: unknown;
     updateNow?: unknown;
     restart?: unknown;
   } | null;
@@ -69,6 +70,21 @@ export async function POST(req: NextRequest) {
       message: body.compactAfterJob
         ? "작업 후 컨텍스트 정리를 켰어요. 감독 프로그램이 다음 확인 때 받아 가요."
         : "작업 후 컨텍스트 정리를 껐어요. 감독 프로그램이 다음 확인 때 받아 가요.",
+    });
+  }
+
+  // 동시에 만들 앱 수: { appSlots: 1~4 정수 }. 범위 밖·정수 아님은 400(저장 안 함). 감독 프로그램이 다음 확인 때 받아 간다
+  if (body && Object.hasOwn(body, "appSlots")) {
+    const n = cleanAppSlots(body.appSlots);
+
+    if (n === null || typeof body.appSlots === "string") {
+      return NextResponse.json({ message: `동시에 만들 앱 수는 ${MIN_APP_SLOTS}~${MAX_APP_SLOTS} 사이 정수여야 해요.` }, { status: 400 });
+    }
+    await setAppSlots(n);
+
+    return NextResponse.json({
+      ...(await supervisorSnapshot()),
+      message: `동시에 만들 앱 수를 ${n}개로 저장했어요. 감독 프로그램이 다음 확인 때 받아 가요. 줄여도 이미 도는 일감은 끊지 않고, 끝나면서 줄어들어요.`,
     });
   }
 

@@ -8,6 +8,7 @@
 //       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
 //       · fable-usage(AI USAGE 의 Fable 주간 한도 카드 + 오늘 모델별 비율 + 상태바 Fable) · fable-missing(Fable 값 못 받음)
 //       · status-mix(통제실 [현황] 상태 체계: '지금 진행 중' 띠 + 진행 중 1·승인 필요 1·대기 3·완료·실패 섞인 목록 + '진행 중만 보기' 켠 목록)
+//       · app-slots(통제실 [설정] '동시에 만들 앱 수' 카드: 기본 3 · 지금 진행 중 2 / 최대 3, 값을 줄여 넘칠 때, + [현황] 띠에 3개 동시에)
 //       · model-approve(승인할 때 Claude Code 모델 고르기: [현황] 승인 줄의 모델 선택(Codex 일감은 숨김) + 이력 '모델: ○○' + [설정] 기본 모델)
 // 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
@@ -59,6 +60,7 @@ const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/componen
 const aiLib = loadTs("lib/factory/ai.ts");
 const modelSelect = loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib });
 const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx").default;
+const slotsCard = loadTs("components/admin/factory/AppSlotsSettings.tsx");
 const { HistoryPanelView, ActiveStrip } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
 const { default: DefaultAiSettings } = loadTs("components/admin/factory/DefaultAiSettings.tsx", {
   "@/lib/factory/ai": aiLib,
@@ -133,6 +135,7 @@ const devicesBrief = devicesData.devices.map((d) => ({ device: d.device, short: 
 STATES.devices = { ...STATES.live, title: "장비 상태", devices: true, bar: { ...STATES.live.bar, devices: devicesBrief } };
 // 인계 기록 칸(일감 상세·정비 대화의 접이식, 읽기 전용): AI 블록이 있는 정비 항목 / 블록이 없고 실패한 앱 일감 항목 (하니스에서만 펼쳐서 찍는다)
 STATES["status-mix"] = { ...STATES.live, title: "[현황] 상태 체계", statusMix: true };
+STATES["app-slots"] = { ...STATES.live, title: "[설정] 동시에 만들 앱 수", appSlots: true };
 STATES.handoff = { ...STATES.live, title: "인계 기록 칸", handoff: true };
 const handoffSample = {
   v: 1, kind: "maintenance", taskId: "turn1", title: "통제실 [현황] 이력에 앱 일감 추가", engine: "claude", model: "opus", at: "2026-10-13T09:10:18.000Z", status: "done",
@@ -205,6 +208,27 @@ const statusMixPage = () => {
       h("h2", { className: "fx-label mt-6" }, "── 띠: 진행 중 없음 / 4개 이상 ──"),
       h(ActiveStrip, { now, active: { running: [], queued: 3, next: { type: "job", title: "걸음 수 기록 수정" } } }),
       h(ActiveStrip, { now, active: { running: [1, 2, 3, 4, 5].map((n) => ({ ...run, id: `cjob${n}`, title: `앱 일감 ${n}`, startedAt: iso(now - n * 61_000) })), queued: 0, next: null } }),
+    ),
+  );
+};
+
+// [설정] '동시에 만들 앱 수' 카드(정한 적 없음 3 / 2로 정했는데 3개 도는 중) + 동시에 3개가 돌 때의 [현황] 띠
+const appSlotsPage = () => {
+  const mk = (n) => ({ type: "job", id: `cjob${n}`, title: ["물 마시기 알림 수정", "걸음 수 기록 새 앱", "메모장 수정"][n - 1], sub: ["water-log", "step-log", "memo-app"][n - 1], kindLabel: n === 2 ? "새 앱" : "수정", startedAt: iso(now - n * 97_000), aiEngine: n === 3 ? "codex" : "claude", aiModel: n === 3 ? null : ["opus", "sonnet"][n - 1] });
+  return h(
+    "div",
+    { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+    h(
+      "div",
+      { className: "fx-split-main space-y-4" },
+      h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+      h(FactoryTabs, { active: "settings" }),
+      h("h2", { className: "fx-label" }, "── [설정] 동시에 만들 앱 수: 정한 적 없음(기본 3), 2개 도는 중 ──"),
+      h(slotsCard.AppSlotsView, { s: { appSlots: 3, appSlotsDefault: true, running: 2 }, pick: 3 }),
+      h("h2", { className: "fx-label" }, "── 2개로 줄였는데 3개가 돌고 있을 때(끊지 않음) ──"),
+      h(slotsCard.AppSlotsView, { s: { appSlots: 2, appSlotsDefault: false, running: 3 }, pick: 2, notice: "동시에 만들 앱 수를 2개로 저장했어요. 감독 프로그램이 다음 확인 때 받아 가요. 줄여도 이미 도는 일감은 끊지 않고, 끝나면서 줄어들어요." }),
+      h("h2", { className: "fx-label" }, "── [현황] 맨 위 띠: 동시에 3개 ──"),
+      h(ActiveStrip, { now, active: { running: [1, 2, 3].map(mk), queued: 2, next: { type: "job", title: "타이머 새 앱" } } }),
     ),
   );
 };
@@ -473,6 +497,7 @@ function page(state) {
   if (st.model) return h(AdminLayout, null, modelApprove());
   if (st.handoff) return h(AdminLayout, null, handoffPage());
   if (st.statusMix) return h(AdminLayout, null, statusMixPage());
+  if (st.appSlots) return h(AdminLayout, null, appSlotsPage());
   if (st.devices)
     return h(
       AdminLayout,

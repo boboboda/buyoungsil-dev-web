@@ -95,7 +95,9 @@ export interface ClaimedJob {
 }
 
 // approved 중 우선순위 높은 순(같으면 먼저 등록한 순)으로 최대 slots 개를 running 으로 바꿔 돌려준다.
-// 한 문장으로 바꾸고 SKIP LOCKED 를 써서, 동시에 불러도 같은 지시를 두 번 가져가지 않는다.
+// 한 문장으로 바꾸고 status = 'approved' 조건을 UPDATE 에서 다시 확인해서, 동시에 불러도 같은 지시를 두 번 가져가지 않는다.
+// 같은 앱(appSlug)은 한 번에 하나만: 이미 running 인 앱의 일감은 건너뛰고, 한 번에 가져가는 묶음에서도 앱마다 가장 앞선 하나만 고른다
+// (동시 실행이 늘면 같은 앱 폴더를 두 일감이 쓰게 되는 걸 서버에서도 막는다. 건너뛴 일감은 approved 로 남아 앞 일감이 끝난 뒤 가져간다).
 export async function claimJobs(worker: string, slots: number, engines: readonly AiEngine[] = ["claude"]): Promise<ClaimedJob[]> {
   if (!engines.length) return [];
   const now = new Date();
@@ -106,12 +108,17 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
     SET "status" = 'running', "workerId" = ${worker}, "leaseUntil" = ${ts(lease)},
         "attempts" = "attempts" + 1, "startedAt" = COALESCE("startedAt", ${ts(now)}),
         "phase" = NULL, "failReason" = NULL, "failStage" = NULL, "updatedAt" = ${ts(now)}
-    WHERE "id" IN (
-      SELECT "id" FROM "factory_jobs"
-      WHERE "status" = 'approved' AND "aiEngine" IN (${Prisma.join(engines)})
-      ORDER BY "priority" DESC, "createdAt" ASC
+    WHERE "status" = 'approved' AND "id" IN (
+      SELECT "id" FROM (
+        SELECT j."id", j."priority", j."createdAt",
+               ROW_NUMBER() OVER (PARTITION BY j."appSlug" ORDER BY j."priority" DESC, j."createdAt" ASC) AS "rn"
+        FROM "factory_jobs" j
+        WHERE j."status" = 'approved' AND j."aiEngine" IN (${Prisma.join(engines)})
+          AND NOT EXISTS (SELECT 1 FROM "factory_jobs" r WHERE r."appSlug" = j."appSlug" AND r."status" = 'running')
+      ) c
+      WHERE c."rn" = 1
+      ORDER BY c."priority" DESC, c."createdAt" ASC
       LIMIT ${slots}
-      FOR UPDATE SKIP LOCKED
     )
     RETURNING "id", "appSlug", "title", "kind", "parentJobId", "stack", "priority",
               "requiredSecrets", "planMarkdown", "attempts", "aiEngine", "aiModel"`);

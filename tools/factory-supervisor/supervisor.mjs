@@ -45,6 +45,7 @@ import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mj
 import { createAssetUploader } from "./assetupload.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { startDeviceStats } from "./devicestats.mjs";
+import { DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake } from "./slots.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -60,7 +61,7 @@ const DEFAULTS = {
   worker: "mainpc",
   workDir: "~/dev/factory",
   secretsFile: "~/dev/factory/secrets.env",
-  slots: 2,
+  slots: DEFAULT_APP_SLOTS, // PC 기본값. 통제실 [설정]의 '동시에 만들 앱 수'(/next 의 appSlots)가 있으면 그 값이 우선
   pollSec: 15,
   heartbeatSec: 20,
   jobTimeoutMin: 120,
@@ -98,7 +99,8 @@ function loadConfig() {
   c.workDir = path.resolve(expand(c.workDir));
   c.secretsFile = path.resolve(expand(c.secretsFile));
   c.toolkitDir = c.toolkitDir ? path.resolve(expand(c.toolkitDir)) : path.join(c.workDir, "game-toolkit");
-  c.slots = Math.min(4, Math.max(1, Math.floor(Number(c.slots) || 2)));
+  c.pcSlots = pcSlots(raw); // { value, custom }: 서버 값이 없을 때 쓰는 PC 값, 사람이 따로 정했는지
+  c.slots = c.pcSlots.value;
   c.pollSec = Math.max(5, Number(c.pollSec) || 15);
   c.heartbeatSec = Math.min(120, Math.max(5, Number(c.heartbeatSec) || 20));
   c.jobTimeoutMin = Math.max(5, Number(c.jobTimeoutMin) || 120);
@@ -190,7 +192,7 @@ async function check() {
   const probe = spawnSync(cfg.claudeCmd, ["--version"], { shell: IS_WIN, encoding: "utf8" });
   console.log(probe.status === 0 ? `Claude Code: ${probe.stdout.trim()}` : `Claude Code 를 실행하지 못했어요(${cfg.claudeCmd}). 설치와 로그인을 확인하세요.`);
   console.log(`앱 폴더 위치: ${cfg.workDir}`);
-  console.log(`동시에 만들 앱: ${cfg.slots}개`);
+  console.log(`동시에 만들 앱: ${cfg.slots}개 (PC 설정값. 통제실 [설정]에서 정한 값이 있으면 그 값이 우선)`);
 }
 
 // ───────────── 키 파일 ─────────────
@@ -1304,6 +1306,8 @@ let paused = false;
 let autoUpdate = true; // 통제실 스위치. /next 응답에 autoUpdate: false 가 오면 끈다(필드가 없으면 켜짐)
 let defaultAiEngine = null;
 let compactAfterJob = true; // 통제실 '작업 후 컨텍스트 정리'. /next 에 compactAfterJob: false 가 오면 끈다(필드가 없으면 켜짐)
+let slotLimit = null; // 통제실 '동시에 만들 앱 수'를 받은 값(null = 아직 못 받음 → PC 설정 slots)
+const appLimit = () => slotLimit ?? cfg.slots;
 let toolBroker = brokerSettings(null); // 통제실 '도구 요청 중계' 설정. 값이 없으면(예전 서버) 꺼짐
 // secrets.env 를 고치는 일(키 비밀번호·외부 서비스 키·이름 보고)은 한 줄로 세워 차례로 한다(동시에 쓰지 않게). 던지지 않는다
 let secretsChain = Promise.resolve();
@@ -1324,14 +1328,14 @@ async function loop() {
     // 통제실 [감독 재시작]: 일감·정비가 다 끝났으면 여기서 종료(실행기가 다시 띄움)
     if (maybeRestart({ busy: running.size > 0 || maintenanceBusy(), shutdown, log })) break;
     try {
-      const free = cfg.slots - running.size;
-      if (free > 0) {
+      const free = appLimit() - running.size;
+      { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
         const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), ...(aiTools ?? {}) });
         const sentTools = aiTools;
         // 정비 지시나 정비 배포가 도는 동안에는 새 앱 일감을 받지 않는다(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌)
-        const take = maintenanceBusy() ? 0 : free;
+        const take = planTake({ limit: appLimit(), running: running.size, maintenanceBusy: maintenanceBusy() });
         const r = await api(
           "GET",
           `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${take}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}&subject=${encodeURIComponent(info.subject ?? "")}&${extra}`,
@@ -1347,6 +1351,10 @@ async function loop() {
           }
           autoUpdate = r.data?.autoUpdate !== false;
           compactAfterJob = r.data?.compactAfterJob !== false;
+          // 동시에 만들 앱 수: 서버 값(1~4)이 우선, 없거나 범위 밖이면 PC 값. 줄이면 돌던 일감은 그대로 두고 끝나면서 줄어든다
+          const nextLimit = effectiveSlots({ server: r.data?.appSlots, serverIsDefault: r.data?.appSlotsDefault === true, pc: cfg.pcSlots });
+          if (nextLimit !== appLimit()) log(`동시에 만들 앱: ${appLimit()}개 → ${nextLimit}개${running.size > nextLimit ? ` (돌던 ${running.size}개는 그대로 두고 끝나면서 줄어요)` : ""}`);
+          slotLimit = nextLimit;
           if (["claude", "codex"].includes(r.data?.defaultAiEngine) && defaultAiEngine !== r.data.defaultAiEngine) {
             defaultAiEngine = r.data.defaultAiEngine;
             log(`주사용 AI: ${ENGINE_LABELS[defaultAiEngine]} (새 지시 기본값, 개별 AI 선택 유지)`);
@@ -1391,7 +1399,9 @@ async function loop() {
             paused = nowPaused;
             log(paused ? "일시 정지됨 (홈페이지)" : "다시 시작됨");
           }
-          for (const job of paused ? [] : r.data.jobs ?? []) {
+          const offered = paused ? [] : r.data.jobs ?? [];
+          if (offered.length > Math.max(0, free)) log(`서버가 자리(${Math.max(0, free)}개)보다 많은 일감 ${offered.length}개를 줬어요. 넘친 ${offered.length - Math.max(0, free)}개는 시작하지 않아요(10분 안에 서버가 대기열로 되돌려요).`);
+          for (const job of offered.slice(0, Math.max(0, free))) {
             if ([...running.values()].some((s) => s.job.appSlug === job.appSlug)) {
               failEarly(job, "이 PC에서 같은 앱 이름의 작업이 이미 돌고 있어요.");
               continue;
@@ -1443,7 +1453,7 @@ if (command === "init") {
     const added = refreshPathFromRegistry();
     if (added.length) log(`PATH 에 레지스트리 폴더 ${added.length}개를 붙였어요: ${added.join("; ")}`);
     log(`ffmpeg: ${toolLabel("ffmpeg")} · ffprobe: ${toolLabel("ffprobe")}`);
-    log(`감독 프로그램 시작: ${cfg.worker} → ${cfg.serverUrl} (동시 ${cfg.slots}개, ${cfg.pollSec}초마다 확인)`);
+    log(`감독 프로그램 시작: ${cfg.worker} → ${cfg.serverUrl} (동시 ${appLimit()}개, ${cfg.pollSec}초마다 확인)`);
     log(`앱 폴더: ${cfg.workDir}`);
     // 통제실 '장비 상태'(메인PC CPU·RAM·GPU·디스크, 숫자만): 폴링과 따로 1분마다. 실패해도 폴링·일감에 영향 없음
     try {
