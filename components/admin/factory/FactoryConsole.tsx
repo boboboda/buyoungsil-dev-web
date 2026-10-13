@@ -28,6 +28,7 @@ import WorkerTokens from "./WorkerTokens";
 import WorkRules from "./WorkRules";
 
 import ClaudeStatusView from "@/components/admin/claude/ClaudeStatusView";
+import NovelPanel from "@/components/admin/novel/NovelPanel";
 import { type ClaudeStats, getClaudeStats } from "@/lib/claude-status/stats";
 
 const INTRO: Record<FactoryTab, string> = {
@@ -39,6 +40,8 @@ const INTRO: Record<FactoryTab, string> = {
     "기본 AI, 도구 중계, 텔레그램, 작업 PC 연결 토큰, 외부 서비스 키, Studio 접근 키, 키 보관함(서명 키), 배포 계정, 홈페이지 프로젝트 연결, 작업 규칙",
   usage:
     "서버1·서버2·메인PC 장비 상태와 배포된 프로젝트 수, 내 PC의 Claude Code가 지금 하는 일과 토큰 사용량 (앱별 사용량은 [일감] 상세에 있어요)",
+  novels:
+    "소설 공장: PC의 글 제작 실행기가 보고한 작품과 화를 읽고 설정 승인·화 승인·수정 요청을 해요. 승인한 화는 예약 시각에 /novel 에 공개돼요.",
 };
 
 // 오른쪽 계기판 첫 값. DB 를 못 읽어도 통제실은 뜨고 계기판만 '수신 대기'
@@ -120,6 +123,8 @@ export default async function FactoryConsole({
               <UsageTab initial={stats} />
             </div>
           )}
+
+          {tab === "novels" && <NovelPanel />}
         </div>
 
         <aside aria-label="AI 사용량 계기판" className="fx-split-side">

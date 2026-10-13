@@ -8,6 +8,7 @@ export const FACTORY_TABS = [
   { key: "release", label: "출시" },
   { key: "settings", label: "설정" },
   { key: "usage", label: "사용량" },
+  { key: "novels", label: "작품" },
 ] as const;
 
 export type FactoryTab = (typeof FACTORY_TABS)[number]["key"];

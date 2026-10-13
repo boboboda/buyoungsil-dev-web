@@ -986,3 +986,67 @@ model StudioRequestLog {
   @@index([keyId, createdAt])
   @@map("studio_request_logs")
 }
+
+// ───────── 소설 공장 (글 제작 공장) ─────────
+// 화 하나를 PC 실행기가 기획 → 집필 → 검수 → 정리 순서로 만들고, 통제실에서 사람이 읽고 승인하면 예약 발행한다.
+// 소설 바이블(인물·세계관·떡밥 장부)의 원본은 PC 파일이라 DB 에 넣지 않는다. lib/novel/
+model NovelWork {
+  id              String    @id @default(cuid())
+  slug            String    @unique // APP_SLUG_RE 형식
+  title           String
+  genre           String?
+  logline         String?   @db.Text
+  setupSummary    String?   @db.Text // 컨셉·인물·세계관·아크 요약(마크다운). 설정 승인 화면에 보여 줌
+  status          String    @default("setup") // setup | active | finished | dropped
+  setupApprovedAt DateTime?
+  approvalMode    String    @default("every") // every | batch5 | auto
+  publishPerDay   Int       @default(1) // 하루 예약 발행 화수 (1~24)
+  paused          Boolean   @default(false) // 실행기가 sync 로 읽는 일시정지 스위치
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  episodes NovelEpisode[]
+  logs     NovelLog[]
+
+  @@map("novel_works")
+}
+
+// 공개 여부는 저장하지 않는다: status = approved 이고 publishAt <= 지금이면 공개(파생값)
+model NovelEpisode {
+  id           String    @id @default(cuid())
+  workId       String
+  number       Int
+  title        String?
+  body         String?   @db.Text // 최종 후보 본문
+  summary      String?   @db.Text // 정리자 요약 (앞 화 요약으로 쓰임)
+  status       String    @default("planned") // planned | drafting | checking | revising | pending_approval | approved | held
+  attempts     Int       @default(0)
+  checkResult  Json? // { pass: boolean, issues: [{ type, detail }] }
+  tokens       Json? // 역할별 { model, in, out }
+  revisionNote String?   @db.Text // 사람의 수정 요청 메모
+  approvedAt   DateTime?
+  publishAt    DateTime? // 예약 발행 시각. approved 이고 publishAt <= now 이면 공개
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  work NovelWork @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@unique([workId, number])
+  @@index([workId, status])
+  @@index([workId, publishAt])
+  @@map("novel_episodes")
+}
+
+model NovelLog {
+  id            Int      @id @default(autoincrement())
+  workId        String
+  episodeNumber Int?
+  level         String   @default("info") // info | warn | error
+  message       String // 2000자 이내
+  at            DateTime @default(now())
+
+  work NovelWork @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@index([workId, at])
+  @@map("novel_logs")
+}
