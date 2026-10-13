@@ -1,12 +1,13 @@
 // components/admin/factory/FactoryConsole.tsx
 // 앱 공장 통제실 본체: 머리말 + 상단 탭 + 탭 내용. 기능 컴포넌트는 그대로 두고 위치만 탭으로 나눈다.
 // [현황] 감독 프로그램·승인·배포 할 일·이력  [일감] 앱 일감·수정 지시·공장 정비
-// [출시] 출시 패키지  [설정] 도구함 한눈에 보기·AI·도구·텔레그램·PC 토큰·키·배포 계정·프로젝트 연결·작업 규칙  [사용량] Claude 세션·토큰
+// [출시] 출시 패키지  [설정] 도구함 한눈에 보기·AI·도구·텔레그램·PC 토큰·키·배포 계정·프로젝트 연결·작업 규칙  [사용량] 장비 상태(서버1·서버2·메인PC)·Claude 세션·토큰
 // 넓은 화면은 왼쪽 작업 영역(약 7) + 오른쪽 AI 사용량 계기판(약 3, 따라옴), 좁은 화면은 계기판이 위에 접혀 있다.
 import { Card, CardBody } from "@heroui/react";
 
 import AppProjectLinks from "./AppProjectLinks";
 import DefaultAiSettings from "./DefaultAiSettings";
+import DevicePanel from "./DevicePanel";
 import FactoryControl from "./FactoryControl";
 import FactoryOverview from "./FactoryOverview";
 import FactoryTabs from "./FactoryTabs";
@@ -37,7 +38,7 @@ const INTRO: Record<FactoryTab, string> = {
   settings:
     "기본 AI, 도구 중계, 텔레그램, 작업 PC 연결 토큰, 외부 서비스 키, Studio 접근 키, 키 보관함(서명 키), 배포 계정, 홈페이지 프로젝트 연결, 작업 규칙",
   usage:
-    "내 PC의 Claude Code가 지금 하는 일과 토큰 사용량 (앱별 사용량은 [일감] 상세에 있어요)",
+    "서버1·서버2·메인PC 장비 상태와 배포된 프로젝트 수, 내 PC의 Claude Code가 지금 하는 일과 토큰 사용량 (앱별 사용량은 [일감] 상세에 있어요)",
 };
 
 // 오른쪽 계기판 첫 값. DB 를 못 읽어도 통제실은 뜨고 계기판만 '수신 대기'
@@ -105,7 +106,12 @@ export default async function FactoryConsole({ tab }: { tab: FactoryTab }) {
             </div>
           )}
 
-          {tab === "usage" && <UsageTab initial={stats} />}
+          {tab === "usage" && (
+            <div className="space-y-6">
+              <DevicePanel />
+              <UsageTab initial={stats} />
+            </div>
+          )}
         </div>
 
         <aside aria-label="AI 사용량 계기판" className="fx-split-side">

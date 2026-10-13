@@ -43,6 +43,7 @@ import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSec
 import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
 import { createAssetUploader } from "./assetupload.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
+import { startDeviceStats } from "./devicestats.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -1419,6 +1420,12 @@ if (command === "init") {
     log(`ffmpeg: ${toolLabel("ffmpeg")} · ffprobe: ${toolLabel("ffprobe")}`);
     log(`감독 프로그램 시작: ${cfg.worker} → ${cfg.serverUrl} (동시 ${cfg.slots}개, ${cfg.pollSec}초마다 확인)`);
     log(`앱 폴더: ${cfg.workDir}`);
+    // 통제실 '장비 상태'(메인PC CPU·RAM·GPU·디스크, 숫자만): 폴링과 따로 1분마다. 실패해도 폴링·일감에 영향 없음
+    try {
+      startDeviceStats({ api, log });
+    } catch (e) {
+      log(`장비 상태 보내기를 시작하지 못했어요: ${e.message}`);
+    }
     await loop();
   }
 }

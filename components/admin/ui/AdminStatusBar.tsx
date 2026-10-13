@@ -1,10 +1,11 @@
 // components/admin/ui/AdminStatusBar.tsx
 // 관리자 콘솔 하단 상태줄(모든 /admin 화면, 아래에 붙어 따라옴, 터미널 상태줄 느낌):
-// 감독 프로그램 연결 · 진행/대기 일감 · 마지막 응답 · 서버 빌드 커밋 · AI 한도 요약. 값이 없으면 '-'.
+// 감독 프로그램 연결 · 진행/대기 일감 · 마지막 응답 · 서버 빌드 커밋 · AI 한도 요약 · 장비별 CPU/RAM. 값이 없으면 '-'.
 // /api/admin/status-bar 를 15초마다 읽는다(화면이 보일 때만). 좁은 화면은 한 줄 가로 스크롤.
 "use client";
 
 import type { UsageLimitsView } from "@/lib/claude-status/limits";
+import type { DeviceBrief } from "@/lib/factory/devices";
 import type { StatusBarData } from "@/lib/factory/statusBar";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -34,6 +35,39 @@ export function aiSummary(
   codex: UsageLimitsView | null | undefined,
 ) {
   return `Claude 5h ${pct(claude?.fiveHour)} · 7d ${pct(claude?.sevenDay)} | Codex 5h ${pct(codex?.fiveHour)} · 주 ${pct(codex?.sevenDay)}`;
+}
+
+const pctText = (v: number | null) => (v === null ? "-" : `${Math.round(v)}%`);
+
+/** 장비 한 줄: "서버1 CPU 12% RAM 40% · 서버2 끊김 · 메인PC CPU 17% RAM 76%". 값이 없으면 null(칸을 안 보임) */
+export function deviceSummary(devices: DeviceBrief[] | null | undefined) {
+  if (!devices || devices.length === 0) return null;
+  if (devices.every((d) => d.state === "never")) return null;
+
+  return devices
+    .map((d) =>
+      d.state === "offline" || d.state === "never"
+        ? `${d.short} 끊김`
+        : `${d.short} CPU ${pctText(d.cpuPct)} RAM ${pctText(d.ramPct)}${d.state === "stale" ? " (오래됨)" : ""}`,
+    )
+    .join(" · ");
+}
+
+/** 장비 칸 색: 끊김이 있으면 위험, 오래된 값·90%↑ 위험값이 있으면 주의/위험, 그 밖에는 색 없음 */
+function deviceTone(devices: DeviceBrief[]): MeterTone | null {
+  if (devices.some((d) => d.state === "offline")) return "bad";
+
+  const top = Math.max(
+    0,
+    ...devices
+      .filter((d) => d.state === "ok" || d.state === "stale")
+      .flatMap((d) => [d.cpuPct ?? 0, d.ramPct ?? 0]),
+  );
+
+  if (top >= 90) return "bad";
+  if (top >= 70 || devices.some((d) => d.state === "stale")) return "warn";
+
+  return null;
 }
 
 /** 상태줄 칸들(순수 함수, 시험용) */
@@ -76,6 +110,15 @@ export function statusBarParts(
       text: aiSummary(data?.claude, data?.codex),
     },
   ];
+  const devices = deviceSummary(data?.devices);
+
+  if (devices && data?.devices)
+    parts.push({
+      key: "devices",
+      label: "장비 CPU·RAM",
+      tone: deviceTone(data.devices),
+      text: devices,
+    });
 
   if (error)
     parts.push({ key: "error", label: "상태줄", tone: "bad", text: error });

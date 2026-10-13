@@ -5,6 +5,7 @@
 //       · users(가입자 명단, 가짜 30명) · users-empty(가입자 0명)
 //       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
 //       · history-merged(이력 [전체 히스토리] 탭: 배포·감독·정비를 합친 최신순 20개 + 긴 빌드 로그 접힘)
+//       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
 // 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
 // API·DB·키는 쓰지 않는다. 결과 폴더(tests/.out)는 커밋하지 않는다.
@@ -57,6 +58,8 @@ const { default: MembersView } = loadTs("components/admin/users/MembersView.tsx"
 const mask = loadTs("lib/factory/mask.ts");
 const toolBroker = loadTs("lib/factory/toolBroker.ts", { "@/lib/factory/mask": mask });
 const toolboxLib = loadTs("lib/factory/toolbox.ts", { "@/lib/factory/toolBroker": toolBroker });
+const devicesLib = loadTs("lib/factory/devices.ts", { "@/lib/prisma": { __esModule: true, default: null } });
+const { DevicePanelView } = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters });
 const { ToolboxView } = loadTs("components/admin/factory/ToolboxPanel.tsx", { "@/lib/prisma": { __esModule: true, default: null }, "@/lib/factory/toolbox": toolboxLib });
 
 // ── 가짜 데이터 ──
@@ -102,6 +105,20 @@ STATES["users-empty"] = { ...STATES.live, title: "가입자 명단 · 0명", use
 // 도구함 한눈에 보기(통제실 [설정] 맨 위): 중계 '허용' + 최근 기록 / 읽기 실패
 STATES.toolbox = { ...STATES.live, title: "도구함 · 중계 허용", toolbox: "live" };
 STATES["toolbox-failed"] = { ...STATES.live, title: "도구함 · 읽기 실패", toolbox: "failed" };
+// 장비 상태(통제실 [사용량] 맨 위): 서버1 CPU 위험·RAM 주의 + 컨테이너 5개, 서버2 40분 끊김(GPU 없음), 메인PC 12분 오래된 값(GPU 있음)
+const devRow = (device, ago, data) => ({ device, data, measuredAt: new Date(now - ago), receivedAt: new Date(now - ago) });
+const devSamples = (device, f) => Array.from({ length: 288 }, (_, i) => ({ device, at: new Date(now - i * 5 * MIN), cpuPct: f(i), ramPct: 50 }));
+const devicesData = {
+  asOf: now,
+  devices: [
+    devicesLib.toDeviceView("server1", devRow("server1", 40_000, { cpuPct: 93.4, ram: { usedGb: 24.6, totalGb: 31.2 }, gpu: { state: "none" }, disks: [{ mount: "/", usedGb: 402.1, totalGb: 468.4 }, { mount: "/data", usedGb: 610, totalGb: 1832.2 }], containers: { state: "ok", names: ["buyoungsil-web", "postgres", "redis", "studio-api", "uptime"] } }), devSamples("server1", (i) => 20 + ((i * 7) % 60)), now),
+    devicesLib.toDeviceView("server2", devRow("server2", 40 * MIN, { cpuPct: 3.1, ram: { usedGb: 2.1, totalGb: 15.5 }, gpu: { state: "none" }, disks: [{ mount: "/", usedGb: 88.2, totalGb: 233.7 }] }), devSamples("server2", () => 4), now),
+    devicesLib.toDeviceView("main-pc", devRow("main-pc", 12 * MIN, { cpuPct: 17.3, ram: { usedGb: 48.3, totalGb: 63.7 }, gpu: { state: "ok", list: [{ utilPct: 2, memUsedGb: 9.6, memTotalGb: 15.9, tempC: 41 }] }, disks: [{ mount: "C:", usedGb: 819.8, totalGb: 930.5 }, { mount: "E:", usedGb: 14.3, totalGb: 3726 }, { mount: "F:", usedGb: 144.4, totalGb: 1816.3 }, { mount: "D:", usedGb: 561.3, totalGb: 931.5 }] }), devSamples("main-pc", (i) => (i < 30 ? 60 : 15)), now),
+  ],
+  deploys: { containers: { state: "ok", count: 5, names: ["buyoungsil-web", "postgres", "redis", "studio-api", "uptime"], asOf: now - 40_000 }, homepage: { released: 4, total: 11 }, storeReleased: 2 },
+};
+const devicesBrief = devicesData.devices.map((d) => ({ device: d.device, short: d.short, state: d.state, cpuPct: d.cpuPct, ramPct: d.ram?.pct ?? null }));
+STATES.devices = { ...STATES.live, title: "장비 상태", devices: true, bar: { ...STATES.live.bar, devices: devicesBrief } };
 
 const iso = (t) => new Date(t).toISOString();
 const deployRow = (i) => ({
@@ -317,6 +334,27 @@ function page(state) {
   });
 
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
+  if (st.devices)
+    return h(
+      AdminLayout,
+      null,
+      h(
+        "div",
+        { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+        h(
+          "div",
+          { className: "fx-split" },
+          h(
+            "div",
+            { className: "fx-split-main" },
+            h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+            h(FactoryTabs, { active: "usage" }),
+            h("div", { className: "space-y-6" }, h(DevicePanelView, { data: devicesData, now })),
+          ),
+          h("aside", { "aria-label": "AI 사용량 계기판", className: "fx-split-side" }, h(UsageDashView, { stats: st.stats, now, error: null })),
+        ),
+      ),
+    );
   if (st.toolbox)
     return h(
       AdminLayout,
@@ -397,7 +435,7 @@ if (process.argv.includes("--shot")) {
         if (only && only !== k) continue;
         // 헤드리스 창은 최소 폭이 있어(약 500px) 360px 은 iframe 에 넣어 찍는다
         const mobile = path.join(out, `admin-ui-${k}-360.html`);
-        const [tall, tallMobile] = STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : STATES[k].toolbox ? [2600, 5600] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
+        const [tall, tallMobile] = STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : STATES[k].toolbox ? [2600, 5600] : STATES[k].devices ? [2400, 6200] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
         fs.writeFileSync(mobile, `<!doctype html><body style="margin:0;background:#333"><iframe src="${path.basename(file)}" width="360" height="${tallMobile}" style="border:0;display:block"></iframe></body>`);
         for (const [w, size, target] of [["1440", `1440,${tall}`, file], ["1024", `1024,${tall}`, file], ["360", `600,${tallMobile}`, mobile]]) {
           const png = path.join(out, `admin-ui-${k}-${w}.png`);

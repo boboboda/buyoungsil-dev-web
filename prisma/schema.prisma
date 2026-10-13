@@ -942,3 +942,27 @@ model StudioAccessKey {
   @@index([app, revokedAt])
   @@map("studio_access_keys")
 }
+
+// 통제실 '장비 상태': 서버1·서버2·메인PC 가 1분마다 보내는 최신 값(장비 하나에 1행). 숫자만(호스트 이름·IP·프로세스 없음)
+model DeviceStat {
+  device     String   @id // server1 | server2 | main-pc
+  data       Json // { cpuPct, ram, gpu, disks, containers? } (검증한 값만)
+  measuredAt DateTime // 장비가 읽은 시각
+  receivedAt DateTime // 서버가 받은 시각(오래된 값·끊김 판정 기준)
+
+  @@map("device_stats")
+}
+
+// 장비 상태 짧은 이력: 5분에 한 점, 24시간 지나면 지운다
+model DeviceStatSample {
+  id      Int      @id @default(autoincrement())
+  device  String
+  at      DateTime
+  cpuPct  Float?
+  ramPct  Float?
+  gpuPct  Float?
+  diskPct Float? // 가장 많이 찬 디스크
+
+  @@index([device, at])
+  @@map("device_stat_samples")
+}

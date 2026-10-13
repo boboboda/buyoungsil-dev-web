@@ -1,10 +1,12 @@
 // lib/factory/statusBar.ts
-// 관리자 하단 상태바(모든 /admin 화면)용 가벼운 요약: 감독 프로그램 연결·진행/대기 일감 수·마지막 응답·서버 빌드 커밋·AI 한도.
+// 관리자 하단 상태바(모든 /admin 화면)용 가벼운 요약: 감독 프로그램 연결·진행/대기 일감 수·마지막 응답·서버 빌드 커밋·AI 한도·장비별 CPU/RAM.
 // 통제실 전체 현황(supervisorSnapshot)보다 적게 읽는다. 표가 없거나 읽기에 실패한 항목은 null(화면에는 '-').
 import type { UsageLimitsView } from "@/lib/claude-status/limits";
+import type { DeviceBrief } from "@/lib/factory/devices";
 
 import prisma from "@/lib/prisma";
 import { readLimits } from "@/lib/claude-status/stats";
+import { deviceBriefs } from "@/lib/factory/devices";
 import { getSupervisorInfo } from "@/lib/factory/settings";
 
 // lib/factory/supervisor.ts 의 ONLINE_MS 와 같은 기준(90초 안에 응답하면 연결됨)
@@ -22,6 +24,7 @@ export interface StatusBarData {
   build: { commit: string; at: number | null } | null; // 마지막으로 성공한 서버 배포 커밋
   claude: UsageLimitsView | null;
   codex: UsageLimitsView | null;
+  devices?: DeviceBrief[] | null; // 장비 상태(서버1·서버2·메인PC). 표가 없거나 실패하면 null
 }
 
 const settle = async <T>(p: Promise<T>): Promise<T | null> => {
@@ -36,7 +39,7 @@ const settle = async <T>(p: Promise<T>): Promise<T | null> => {
 
 export async function statusBarSnapshot(): Promise<StatusBarData> {
   const now = Date.now();
-  const [last, running, approved, pending, info, deploy, limits] =
+  const [last, running, approved, pending, info, deploy, limits, devices] =
     await Promise.all([
       settle(
         prisma.factoryWorkerToken.findFirst({
@@ -57,6 +60,7 @@ export async function statusBarSnapshot(): Promise<StatusBarData> {
         }),
       ),
       readLimits(now),
+      settle(deviceBriefs(now)),
     ]);
   const lastSeen = last?.lastUsedAt?.getTime() ?? null;
 
@@ -77,5 +81,6 @@ export async function statusBarSnapshot(): Promise<StatusBarData> {
       : null,
     claude: limits.limits,
     codex: limits.codexLimits,
+    devices,
   };
 }
