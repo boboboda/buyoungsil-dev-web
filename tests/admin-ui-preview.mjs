@@ -1,8 +1,8 @@
 // 관리자 HUD 디자인 미리보기(로그인 없이 보는 하니스).
 // 실제 관리자 레이아웃(app/admin/layout.tsx: 상단바·하단 상태줄)·통제실 탭·AI USAGE 패널을 가짜 데이터로 그려 HTML 로 만들고,
 // Tailwind(저장소 설정 그대로) + app/admin/admin-ui.css 를 붙인다. --shot 이면 헤드리스 Chrome/Edge 로 스크린샷도 찍는다.
-// 상태 3종: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패)
-// 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{live,waiting,failed}.html
+// 상태 4종: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패) · history(이력 전체 보기)
+// 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{live,waiting,failed,history}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
 // API·DB·키는 쓰지 않는다. 결과 폴더(tests/.out)는 커밋하지 않는다.
 import fs from "node:fs";
@@ -48,6 +48,7 @@ const topBar = loadTs("components/admin/ui/AdminTopBar.tsx", {
   "@/config/site": site,
 });
 const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters });
+const { HistoryPanelView } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx });
 
 // ── 가짜 데이터 ──
 const now = Date.UTC(2026, 9, 13, 3, 42, 0); // 12:42 KST
@@ -83,6 +84,42 @@ const STATES = {
     barError: "상태 갱신 실패",
   },
 };
+// 이력 전체 보기: 서버 배포 탭에서 [전체 보기]를 누른 모양(95개 중 첫 20개 + [더 보기]). 다른 상태는 최근 목록(5개만)
+STATES.history = { ...STATES.live, title: "이력 전체 보기", history: "all" };
+
+const iso = (t) => new Date(t).toISOString();
+const deployRow = (i) => ({
+  id: `cdep${i}`,
+  threadId: `cthr${i % 7}`,
+  threadTitle: ["관리자 화면 뒤 흰색 노출 수정", "AI 한도 자동 갱신", "관리자 UI 2차: 터미널 HUD 스타일", "통제실 '히스토리 전체 보기' 복구", "공장 정비 대기열·배포 묶기", "앱 공장 통제실: 승인·배포 할 일", "통제실 탭화"][i % 7],
+  commit: `${(0x1a81574 + i * 7919).toString(16)}0000`,
+  via: i % 3 ? "통제실" : "자동",
+  requestedAt: iso(now - i * 3 * HOUR),
+  startedAt: iso(now - i * 3 * HOUR + MIN),
+  finishedAt: i === 0 ? null : iso(now - i * 3 * HOUR + 4 * MIN),
+  ok: i === 0 ? null : i % 9 !== 4,
+  result: i === 0 ? null : i % 9 === 4 ? "빌드 실패: next build 종료 코드 1\nType error: …\n로그 끝" : "배포 완료 · 헬스체크 통과",
+  items: i % 2 ? [{ title: `정비 지시 ${i}-1`, commit: "ebde9fa" }, { title: `정비 지시 ${i}-2`, commit: "1a81574" }] : null,
+});
+const historyData = {
+  deploys: Array.from({ length: 40 }, (_, i) => deployRow(i)),
+  updates: [],
+  threads: [],
+  totals: { deploys: 95, updates: 130, threads: 45 },
+};
+const noop2 = () => {};
+const historyPanel = (state) =>
+  h(HistoryPanelView, {
+    data: STATES[state].history === "all" ? historyData : { ...historyData, deploys: historyData.deploys.slice(0, 5) },
+    open: true,
+    tab: "deploys",
+    full: STATES[state].history === "all" ? { kind: "deploys", items: historyData.deploys.slice(0, 20), nextCursor: "cdep19", total: 95, loading: false, error: null } : null,
+    onToggle: noop2,
+    onTab: noop2,
+    onShowAll: noop2,
+    onMore: noop2,
+    onShowRecent: noop2,
+  });
 
 // ── 화면 ──
 const { Card, CardBody, Button, Input } = heroui;
@@ -156,6 +193,7 @@ function leftWork(state) {
         ),
       ),
     ),
+    historyPanel(state),
     // 일감 카드
     h(
       "div",
@@ -258,8 +296,9 @@ if (process.argv.includes("--shot")) {
         if (only && only !== k) continue;
         // 헤드리스 창은 최소 폭이 있어(약 500px) 360px 은 iframe 에 넣어 찍는다
         const mobile = path.join(out, `admin-ui-${k}-360.html`);
-        fs.writeFileSync(mobile, `<!doctype html><body style="margin:0;background:#333"><iframe src="${path.basename(file)}" width="360" height="2600" style="border:0;display:block"></iframe></body>`);
-        for (const [w, size, target] of [["1440", "1440,1500", file], ["1024", "1024,1500", file], ["360", "600,2600", mobile]]) {
+        const [tall, tallMobile] = STATES[k].history ? [3600, 6400] : [2200, 3600]; // 이력 패널이 들어가 길다
+        fs.writeFileSync(mobile, `<!doctype html><body style="margin:0;background:#333"><iframe src="${path.basename(file)}" width="360" height="${tallMobile}" style="border:0;display:block"></iframe></body>`);
+        for (const [w, size, target] of [["1440", `1440,${tall}`, file], ["1024", `1024,${tall}`, file], ["360", `600,${tallMobile}`, mobile]]) {
           const png = path.join(out, `admin-ui-${k}-${w}.png`);
           const r = spawnSync(browser, ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", `--user-data-dir=${profile}`, `--window-size=${size}`, `--screenshot=${png}`, pathToFileURL(target).href], { timeout: 60_000 });
           console.log(r.status === 0 && fs.existsSync(png) ? `스크린샷: ${png}` : `스크린샷 실패(${k} ${w})`);

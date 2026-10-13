@@ -10,6 +10,7 @@ import {
   APPROVAL_ACTIONS,
   approvalInbox,
   deployHistory,
+  historyTotals,
   maintenanceSummary,
   runApproval,
   supervisorUpdateHistory,
@@ -21,15 +22,18 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 async function overview() {
-  const [supervisor, inbox, updates, deploys, threads] = await Promise.all([
-    supervisorSnapshot(),
-    approvalInbox(),
-    supervisorUpdateHistory(),
-    deployHistory(),
-    maintenanceSummary(),
-  ]);
+  const [supervisor, inbox, updates, deploys, threads, totals] =
+    await Promise.all([
+      supervisorSnapshot(),
+      approvalInbox(),
+      supervisorUpdateHistory(),
+      deployHistory(),
+      maintenanceSummary(),
+      historyTotals(),
+    ]);
 
-  return { supervisor, inbox, updates, deploys, threads };
+  // 이력은 최근 것만 싣는다. 전체는 /api/admin/factory/history 로 쪽마다 읽는다(totals = 종류별 전체 개수)
+  return { supervisor, inbox, updates, deploys, threads, totals };
 }
 
 export async function GET() {

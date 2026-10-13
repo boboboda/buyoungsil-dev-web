@@ -80,7 +80,31 @@ interface Overview {
     deployResult: string | null;
     updatedAt: string;
   }[];
+  // 종류별 전체 개수(예전 서버에는 없다)
+  totals?: Record<HistoryKind, number>;
   message?: string;
+}
+
+export type HistoryKind = "deploys" | "updates" | "threads";
+export type HistoryData = Pick<Overview, HistoryKind | "totals">;
+type HistoryItem = HistoryData[HistoryKind][number];
+
+// [전체 보기]: /api/admin/factory/history 에서 HISTORY_PAGE 개씩 읽어 붙인 목록
+export const HISTORY_PAGE = 20;
+export interface FullHistory {
+  kind: HistoryKind;
+  items: HistoryItem[];
+  nextCursor: string | null;
+  total: number;
+  loading: boolean;
+  error: string | null;
+}
+
+// 다음 쪽을 붙인다. 읽는 사이 순서가 바뀌어(정비 대화는 마지막 활동순) 겹친 항목은 한 번만
+export function mergeHistory(prev: HistoryItem[], next: HistoryItem[]) {
+  const seen = new Set(prev.map((i) => String(i.id)));
+
+  return [...prev, ...next.filter((i) => !seen.has(String(i.id)))];
 }
 
 const when = (v: string | null | undefined) =>
@@ -145,9 +169,66 @@ export default function FactoryOverview({
   const [data, setData] = useState<Overview | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<"updates" | "deploys" | "threads">("deploys");
+  const [tab, setTab] = useState<HistoryKind>("deploys");
   // 업데이트·배포 이력은 길어서 기본으로 접어 둔다. 펼침 여부는 이 브라우저에 기억
   const [historyOpen, setHistoryOpen] = useState(false);
+  // [전체 보기]로 연 탭의 전체 목록(20개씩 [더 보기]). null 이면 overview 의 최근 목록
+  const [full, setFull] = useState<FullHistory | null>(null);
+
+  const loadAll = async (kind: HistoryKind, prev?: FullHistory) => {
+    const base: FullHistory = prev ?? {
+      kind,
+      items: [],
+      nextCursor: null,
+      total: data?.totals?.[kind] ?? 0,
+      loading: true,
+      error: null,
+    };
+
+    setFull({ ...base, loading: true, error: null });
+    const qs = new URLSearchParams({ kind, limit: String(HISTORY_PAGE) });
+
+    if (prev?.nextCursor) qs.set("cursor", prev.nextCursor);
+    try {
+      const res = await fetch(`/api/admin/factory/history?${qs}`, {
+        cache: "no-store",
+      });
+      const d = (await res.json().catch(() => ({}))) as {
+        items?: HistoryItem[];
+        nextCursor?: string | null;
+        total?: number;
+        message?: string;
+      };
+
+      if (!res.ok || !d.items) throw new Error(d.message ?? "읽지 못했어요.");
+      setFull((cur) =>
+        // 그 사이 다른 탭으로 옮겼거나 [최근만 보기]를 눌렀으면 버린다
+        cur?.kind !== kind
+          ? cur
+          : {
+              kind,
+              items: mergeHistory(base.items, d.items!),
+              nextCursor: d.nextCursor ?? null,
+              total: d.total ?? base.total,
+              loading: false,
+              error: null,
+            },
+      );
+    } catch (e) {
+      setFull((cur) =>
+        cur?.kind !== kind
+          ? cur
+          : {
+              ...base,
+              loading: false,
+              error:
+                e instanceof Error && e.message !== "Failed to fetch"
+                  ? e.message
+                  : "서버에 연결하지 못했어요.",
+            },
+      );
+    }
+  };
 
   useEffect(() => {
     try {
@@ -390,205 +471,184 @@ export default function FactoryOverview({
 
       {children}
 
-      <Card className="mb-6" data-title="history · 업데이트·배포">
-        <CardBody className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <button
-              aria-expanded={historyOpen}
-              className="flex min-h-11 items-center gap-2 text-left font-semibold sm:min-h-0"
-              type="button"
-              onClick={toggleHistory}
-            >
-              <span className="text-default-500">
-                {historyOpen ? "▾" : "▸"}
+      <HistoryPanelView
+        data={data}
+        full={full}
+        open={historyOpen}
+        tab={tab}
+        onMore={() => full && full.nextCursor && loadAll(full.kind, full)}
+        onShowAll={() => loadAll(tab)}
+        onShowRecent={() => setFull(null)}
+        onTab={(k) => {
+          setTab(k);
+          setFull(null);
+        }}
+        onToggle={toggleHistory}
+      />
+    </>
+  );
+}
+
+const HISTORY_TABS = [
+  ["deploys", "서버 배포"],
+  ["updates", "감독 프로그램 업데이트"],
+  ["threads", "정비 대화"],
+] as const;
+
+const EMPTY: Record<HistoryKind, string> = {
+  deploys: "배포 기록이 없어요.",
+  updates: "업데이트 기록이 없어요(감독 프로그램이 다음에 알려 주면 쌓여요).",
+  threads: "정비 대화가 없어요.",
+};
+
+// 업데이트·배포 이력 패널(보기 전용: 상태·읽기는 FactoryOverview 가 한다. 미리보기·시험도 이걸 그린다)
+// 탭마다 최근 목록 아래 [전체 보기] → 같은 패널 안에서 전체 목록(시간 역순)을 20개씩 [더 보기]
+export function HistoryPanelView({
+  data,
+  open,
+  tab,
+  full,
+  onToggle,
+  onTab,
+  onShowAll,
+  onMore,
+  onShowRecent,
+}: {
+  data: HistoryData | null;
+  open: boolean;
+  tab: HistoryKind;
+  full: FullHistory | null;
+  onToggle: () => void;
+  onTab: (k: HistoryKind) => void;
+  onShowAll: () => void;
+  onMore: () => void;
+  onShowRecent: () => void;
+}) {
+  const all = full && full.kind === tab ? full : null;
+  const list: HistoryItem[] = all ? all.items : (data?.[tab] ?? []);
+  const total = all ? all.total : data?.totals?.[tab];
+  const count = (k: HistoryKind) => data?.totals?.[k] ?? data?.[k].length ?? 0;
+
+  return (
+    <Card className="mb-6" data-title="history · 업데이트·배포">
+      <CardBody className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            aria-expanded={open}
+            className="flex min-h-11 items-center gap-2 text-left font-semibold sm:min-h-0"
+            type="button"
+            onClick={onToggle}
+          >
+            <span className="text-default-500">{open ? "▾" : "▸"}</span>
+            업데이트·배포 이력
+            {!open && data && (
+              <span className="text-xs font-normal text-default-500">
+                (배포 {count("deploys")} · 업데이트 {count("updates")} · 정비{" "}
+                {count("threads")}, 눌러서 펼치기)
               </span>
-              업데이트·배포 이력
-              {!historyOpen && data && (
-                <span className="text-xs font-normal text-default-500">
-                  (배포 {data.deploys.length} · 업데이트 {data.updates.length} ·
-                  정비 {data.threads.length}, 눌러서 펼치기)
+            )}
+          </button>
+          {open && (
+            <div className="flex flex-wrap gap-1">
+              {HISTORY_TABS.map(([k, label]) => (
+                <Button
+                  key={k}
+                  color={tab === k ? "primary" : "default"}
+                  size="sm"
+                  variant={tab === k ? "solid" : "flat"}
+                  onPress={() => onTab(k)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {open && !data && <p className="text-sm text-default-500">읽는 중…</p>}
+
+        {open && data && (
+          <div className="space-y-2" data-history={all ? "all" : "recent"}>
+            {all && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-default-200 pb-2 text-xs">
+                <span className="font-semibold">
+                  전체 이력 · 최신순{" "}
+                  <span className="font-mono text-default-500">
+                    {all.items.length} / {all.total}
+                  </span>
                 </span>
-              )}
-            </button>
-            {historyOpen && (
-              <div className="flex flex-wrap gap-1">
-                {(
-                  [
-                    ["deploys", "서버 배포"],
-                    ["updates", "감독 프로그램 업데이트"],
-                    ["threads", "정비 대화"],
-                  ] as const
-                ).map(([k, label]) => (
-                  <Button
-                    key={k}
-                    color={tab === k ? "primary" : "default"}
-                    size="sm"
-                    variant={tab === k ? "solid" : "flat"}
-                    onPress={() => setTab(k)}
-                  >
-                    {label}
-                  </Button>
-                ))}
+                <Button size="sm" variant="flat" onPress={onShowRecent}>
+                  최근만 보기
+                </Button>
               </div>
             )}
-          </div>
+            {list.length === 0 && !all?.loading && (
+              <p className="text-sm text-default-500">{EMPTY[tab]}</p>
+            )}
+            {tab === "deploys" &&
+              (list as HistoryData["deploys"]).map((d) => (
+                <DeployRow key={d.id} d={d} />
+              ))}
+            {tab === "updates" &&
+              (list as HistoryData["updates"]).map((u) => (
+                <UpdateRow key={u.id} u={u} />
+              ))}
+            {tab === "threads" &&
+              (list as HistoryData["threads"]).map((t) => (
+                <ThreadRow key={t.id} t={t} />
+              ))}
 
-          {historyOpen && !data && (
-            <p className="text-sm text-default-500">읽는 중…</p>
-          )}
-
-          {historyOpen && data && tab === "deploys" && (
-            <div className="space-y-2">
-              {data.deploys.length === 0 && (
-                <p className="text-sm text-default-500">배포 기록이 없어요.</p>
-              )}
-              {data.deploys.map((d) => {
-                const st = deployStatus(d);
-
-                return (
-                  <div
-                    key={d.id}
-                    className="rounded-lg border border-default-200 p-2 text-sm"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Chip color={st.color} size="sm" variant="flat">
-                        {st.label}
-                      </Chip>
-                      <span className="font-mono text-xs">
-                        {short(d.commit)}
-                      </span>
-                      <span className="font-medium">{d.threadTitle}</span>
-                      {d.via && (
-                        <span className="text-xs text-default-500">
-                          (
-                          {d.via === "자동" ? "자동 배포" : `${d.via}에서 요청`}
-                          )
-                        </span>
-                      )}
-                    </div>
-                    {d.items && d.items.length > 0 && (
-                      <ul className="mt-1 text-xs text-default-500">
-                        {d.items.map((i, n) => (
-                          <li key={`${n}-${i.commit}`} className="break-words">
-                            • {i.title} ({short(i.commit)})
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <div className="mt-1 font-mono text-xs text-default-500">
-                      요청 {when(d.requestedAt)} · 시작 {when(d.startedAt)} ·
-                      완료 {when(d.finishedAt)}
-                    </div>
-                    {d.result && <ResultText text={d.result} />}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {historyOpen && data && tab === "updates" && (
-            <div className="space-y-2">
-              {data.updates.length === 0 && (
-                <p className="text-sm text-default-500">
-                  업데이트 기록이 없어요(감독 프로그램이 다음에 알려 주면
-                  쌓여요).
-                </p>
-              )}
-              {data.updates.map((u) => {
-                const r = updateResult(u);
-
-                return (
-                  <div
-                    key={u.id}
-                    className="rounded-lg border border-default-200 p-2 text-sm"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Chip color={r.color} size="sm" variant="flat">
-                        {r.label}
-                      </Chip>
-                      <span className="font-mono text-xs">
-                        {u.fromCommit
-                          ? `${short(u.fromCommit)} → ${short(u.commit)}`
-                          : short(u.commit)}
-                      </span>
-                      <span className="font-mono text-xs text-default-500">
-                        {when(u.at)}
-                      </span>
-                    </div>
-                    {u.subject && (
-                      <div className="mt-1 text-xs">📝 {u.subject}</div>
-                    )}
-                    {u.thread && (
-                      <div className="mt-1 text-xs text-default-500">
-                        🛠 정비: {u.thread.title}
-                      </div>
-                    )}
-                    {u.note && (
-                      <div className="mt-1 break-words text-xs text-default-600">
-                        {u.note}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {historyOpen && data && tab === "threads" && (
-            <div className="space-y-2">
-              {data.threads.length === 0 && (
-                <p className="text-sm text-default-500">정비 대화가 없어요.</p>
-              )}
-              {data.threads.map((t) => (
-                <div
-                  key={t.id}
-                  className="rounded-lg border border-default-200 p-2 text-sm"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Chip
-                      color={t.status === "open" ? "primary" : "default"}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {all ? (
+                <>
+                  {all.nextCursor && (
+                    <Button
+                      className="min-h-11 sm:min-h-0"
+                      isDisabled={all.loading}
                       size="sm"
                       variant="flat"
+                      onPress={onMore}
                     >
-                      {t.status === "open" ? "열림" : "닫힘"}
-                    </Chip>
-                    {t.lastTurnStatus && (
-                      <Chip
-                        color={
-                          t.lastTurnStatus === "failed"
-                            ? "danger"
-                            : t.lastTurnStatus === "done"
-                              ? "success"
-                              : "warning"
-                        }
-                        size="sm"
-                        variant="flat"
-                      >
-                        {TURN_LABEL[t.lastTurnStatus] ?? t.lastTurnStatus}
-                      </Chip>
-                    )}
-                    <span className="font-medium">{t.title}</span>
-                  </div>
-                  <div className="mt-1 text-xs text-default-500">
-                    지시 {t.turns}개 · 올린 커밋 {short(t.pushedCommit)} ·{" "}
-                    {t.deployInProgress
-                      ? "🚀 배포 진행 중"
-                      : t.needsDeploy
-                        ? "⏳ 배포 필요"
-                        : t.deployedAt
-                          ? `✅ 배포 완료 ${when(t.deployedAt)}`
-                          : t.pushedCommit
-                            ? "배포 필요 없음"
-                            : "올린 커밋 없음"}{" "}
-                    · 마지막 활동 {when(t.updatedAt)}
-                  </div>
-                  {t.deployResult && t.needsDeploy && !t.deployInProgress && (
-                    <div className="mt-1 break-words text-xs text-danger-500">
-                      지난 배포: {t.deployResult}
-                    </div>
+                      더 보기 (
+                      {Math.min(HISTORY_PAGE, all.total - all.items.length) ||
+                        HISTORY_PAGE}
+                      개)
+                    </Button>
                   )}
-                </div>
-              ))}
+                  {all.loading && (
+                    <span className="text-xs text-default-500">읽는 중…</span>
+                  )}
+                  {!all.loading && !all.nextCursor && !all.error && (
+                    <span className="text-xs text-default-500">
+                      끝까지 다 봤어요.
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Button
+                    className="min-h-11 sm:min-h-0"
+                    size="sm"
+                    variant="flat"
+                    onPress={onShowAll}
+                  >
+                    전체 보기{total !== undefined ? ` · 총 ${total}개` : ""}
+                  </Button>
+                  {total !== undefined && total > list.length && (
+                    <span className="text-xs text-default-500">
+                      최근 {list.length}개만 보이는 중
+                    </span>
+                  )}
+                </>
+              )}
+              {all?.error && (
+                <span className="text-xs text-danger-500">
+                  {all.error}
+                </span>
+              )}
+            </div>
+
+            {tab === "threads" && (
               <p className="text-xs text-default-500">
                 대화 내용·이어서 지시는{" "}
                 <a className="underline" href="/admin/factory?tab=jobs">
@@ -596,11 +656,125 @@ export default function FactoryOverview({
                 </a>
                 의 「공장 정비」에서 해요.
               </p>
-            </div>
-          )}
-        </CardBody>
-      </Card>
-    </>
+            )}
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function DeployRow({ d }: { d: HistoryData["deploys"][number] }) {
+  const st = deployStatus(d);
+
+  return (
+    <div className="rounded-lg border border-default-200 p-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Chip color={st.color} size="sm" variant="flat">
+          {st.label}
+        </Chip>
+        <span className="font-mono text-xs">{short(d.commit)}</span>
+        <span className="font-medium">{d.threadTitle}</span>
+        {d.via && (
+          <span className="text-xs text-default-500">
+            ({d.via === "자동" ? "자동 배포" : `${d.via}에서 요청`})
+          </span>
+        )}
+      </div>
+      {d.items && d.items.length > 0 && (
+        <ul className="mt-1 text-xs text-default-500">
+          {d.items.map((i, n) => (
+            <li key={`${n}-${i.commit}`} className="break-words">
+              • {i.title} ({short(i.commit)})
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-1 font-mono text-xs text-default-500">
+        요청 {when(d.requestedAt)} · 시작 {when(d.startedAt)} · 완료{" "}
+        {when(d.finishedAt)}
+      </div>
+      {d.result && <ResultText text={d.result} />}
+    </div>
+  );
+}
+
+function UpdateRow({ u }: { u: HistoryData["updates"][number] }) {
+  const r = updateResult(u);
+
+  return (
+    <div className="rounded-lg border border-default-200 p-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Chip color={r.color} size="sm" variant="flat">
+          {r.label}
+        </Chip>
+        <span className="font-mono text-xs">
+          {u.fromCommit
+            ? `${short(u.fromCommit)} → ${short(u.commit)}`
+            : short(u.commit)}
+        </span>
+        <span className="font-mono text-xs text-default-500">{when(u.at)}</span>
+      </div>
+      {u.subject && <div className="mt-1 text-xs">📝 {u.subject}</div>}
+      {u.thread && (
+        <div className="mt-1 text-xs text-default-500">
+          🛠 정비: {u.thread.title}
+        </div>
+      )}
+      {u.note && (
+        <div className="mt-1 break-words text-xs text-default-600">{u.note}</div>
+      )}
+    </div>
+  );
+}
+
+function ThreadRow({ t }: { t: HistoryData["threads"][number] }) {
+  return (
+    <div className="rounded-lg border border-default-200 p-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Chip
+          color={t.status === "open" ? "primary" : "default"}
+          size="sm"
+          variant="flat"
+        >
+          {t.status === "open" ? "열림" : "닫힘"}
+        </Chip>
+        {t.lastTurnStatus && (
+          <Chip
+            color={
+              t.lastTurnStatus === "failed"
+                ? "danger"
+                : t.lastTurnStatus === "done"
+                  ? "success"
+                  : "warning"
+            }
+            size="sm"
+            variant="flat"
+          >
+            {TURN_LABEL[t.lastTurnStatus] ?? t.lastTurnStatus}
+          </Chip>
+        )}
+        <span className="font-medium">{t.title}</span>
+      </div>
+      <div className="mt-1 text-xs text-default-500">
+        지시 {t.turns}개 · 올린 커밋 {short(t.pushedCommit)} ·{" "}
+        {t.deployInProgress
+          ? "🚀 배포 진행 중"
+          : t.needsDeploy
+            ? "⏳ 배포 필요"
+            : t.deployedAt
+              ? `✅ 배포 완료 ${when(t.deployedAt)}`
+              : t.pushedCommit
+                ? "배포 필요 없음"
+                : "올린 커밋 없음"}{" "}
+        · 마지막 활동 {when(t.updatedAt)}
+      </div>
+      {t.deployResult && t.needsDeploy && !t.deployInProgress && (
+        <div className="mt-1 break-words text-xs text-danger-500">
+          지난 배포: {t.deployResult}
+        </div>
+      )}
+    </div>
   );
 }
 

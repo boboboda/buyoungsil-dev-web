@@ -148,10 +148,13 @@ export async function approvalInbox() {
 }
 
 /** 감독 프로그램 업데이트 이력. 커밋을 GitHub 에 올린 정비 대화가 있으면 그 제목도 붙인다. */
-export async function supervisorUpdateHistory(limit = 40) {
+export async function supervisorUpdateHistory(limit = 40, cursor?: number) {
   const events = await prisma.factorySupervisorEvent.findMany({
     orderBy: { id: "desc" },
     take: limit,
+    // 쪽 나누기: cursor 는 앞 쪽 마지막 항목 id(그 항목은 빼고 다음부터)
+    cursor: cursor === undefined ? undefined : { id: cursor },
+    skip: cursor === undefined ? 0 : 1,
   });
   const commits = [
     ...new Set(events.filter((e) => e.fromCommit).map((e) => e.commit)),
@@ -186,10 +189,13 @@ const parseItems = (raw: string | null) => {
 };
 
 /** 서버 배포 이력(정비 제목·포함된 지시 포함) */
-export async function deployHistory(limit = 40) {
+export async function deployHistory(limit = 40, cursor?: string) {
   const rows = await prisma.factoryDeploy.findMany({
-    orderBy: { requestedAt: "desc" },
+    orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
     take: limit,
+    // 쪽 나누기: cursor 는 앞 쪽 마지막 항목 id(그 항목은 빼고 다음부터)
+    cursor: cursor === undefined ? undefined : { id: cursor },
+    skip: cursor === undefined ? 0 : 1,
     include: { maintenance: { select: { id: true, title: true } } },
   });
 
@@ -209,10 +215,13 @@ export async function deployHistory(limit = 40) {
 }
 
 /** 정비 대화 요약(제목·상태·올린 커밋·배포 필요 여부). 대화 본문은 공장 정비 패널에서 본다. */
-export async function maintenanceSummary(limit = 30) {
+export async function maintenanceSummary(limit = 30, cursor?: string) {
   const threads = await prisma.factoryMaintenance.findMany({
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
     take: limit,
+    // 쪽 나누기: cursor 는 앞 쪽 마지막 항목 id(그 항목은 빼고 다음부터)
+    cursor: cursor === undefined ? undefined : { id: cursor },
+    skip: cursor === undefined ? 0 : 1,
     include: {
       messages: {
         where: { role: "user" },
@@ -237,4 +246,56 @@ export async function maintenanceSummary(limit = 30) {
     deployResult: t.deployResult ? excerpt(t.deployResult, 200) : null,
     updatedAt: t.updatedAt,
   }));
+}
+
+// ── 이력 전체 보기(통제실 이력 패널의 [전체 보기]·[더 보기]) ──
+export const HISTORY_KINDS = ["deploys", "updates", "threads"] as const;
+export type HistoryKind = (typeof HISTORY_KINDS)[number];
+export const HISTORY_PAGE = 20;
+export const HISTORY_PAGE_MAX = 100;
+
+/** 이력 종류별 전체 개수(통제실 요약 줄·[전체 보기 · 총 N개]) */
+export async function historyTotals(): Promise<Record<HistoryKind, number>> {
+  const [deploys, updates, threads] = await Promise.all([
+    prisma.factoryDeploy.count(),
+    prisma.factorySupervisorEvent.count(),
+    prisma.factoryMaintenance.count(),
+  ]);
+
+  return { deploys, updates, threads };
+}
+
+/**
+ * 이력 한 쪽(시간 역순). limit 은 1~100(기본 20), cursor 는 앞 쪽의 nextCursor.
+ * 형식이 틀린 cursor 는 null(→ 400). 한 개 더 읽어서 다음 쪽이 있는지 안다.
+ */
+export async function historyPage(
+  kind: HistoryKind,
+  opts: { limit?: number; cursor?: string | null } = {},
+) {
+  const raw = Math.floor(Number(opts.limit ?? HISTORY_PAGE));
+  const limit = Number.isFinite(raw)
+    ? Math.min(HISTORY_PAGE_MAX, Math.max(1, raw))
+    : HISTORY_PAGE;
+  const cursor = opts.cursor || undefined;
+
+  if (cursor && !(kind === "updates" ? /^\d{1,12}$/ : ID_RE).test(cursor))
+    return null;
+  const [rows, totals] = await Promise.all([
+    kind === "deploys"
+      ? deployHistory(limit + 1, cursor)
+      : kind === "updates"
+        ? supervisorUpdateHistory(limit + 1, cursor ? Number(cursor) : undefined)
+        : maintenanceSummary(limit + 1, cursor),
+    historyTotals(),
+  ]);
+  const items = rows.slice(0, limit);
+  const last = items[items.length - 1];
+
+  return {
+    kind,
+    items,
+    nextCursor: rows.length > limit && last ? String(last.id) : null,
+    total: totals[kind],
+  };
 }
