@@ -81,7 +81,7 @@ export default function ToolBrokerSettings() {
   );
 
   return (
-    <div className="space-y-3 rounded-lg border border-default-200 p-4">
+    <div className="scroll-mt-24 space-y-3 rounded-lg border border-default-200 p-4" id="tool-broker">
       <h2 className="font-semibold">도구 요청 중계</h2>
       <p className="text-sm text-default-500">
         AI(Claude·Codex)는 앱 폴더에 요청서만 쓰고, 감독 프로그램이 허용된 도구만 대신 실행해 결과를 폴더에 돌려줘요. AI 의 샌드박스·네트워크 권한은 그대로예요.

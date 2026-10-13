@@ -186,7 +186,7 @@ export default function SecretEntries() {
           </div>
         </div>
 
-        <div className="space-y-1 border-t border-default-200 pt-3 text-sm">
+        <div className="scroll-mt-24 space-y-1 border-t border-default-200 pt-3 text-sm" id="ai-tools">
           <h3 className="font-semibold">🤖 AI 도구 상태(작업 PC, 읽기 전용)</h3>
           <div className="break-words">Claude Code: {data?.aiTools.claude ?? "확인 안 함"}</div>
           <div className="break-words">Codex: {data?.aiTools.codex ?? "확인 안 함"}</div>

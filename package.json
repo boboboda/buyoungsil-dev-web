@@ -20,6 +20,7 @@
     "test:factory-history": "node tests/factory-history.test.mjs",
     "test:home-stats": "node tests/home-stats.test.mjs",
     "test:admin-users": "node tests/admin-users.test.mjs",
+    "test:toolbox": "node tests/toolbox.test.mjs",
     "preview:admin-ui":"node tests/admin-ui-preview.mjs",
     "lint": "eslint --fix --color"
   },

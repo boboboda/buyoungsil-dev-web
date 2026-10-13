@@ -1,7 +1,7 @@
 // components/admin/factory/FactoryConsole.tsx
 // 앱 공장 통제실 본체: 머리말 + 상단 탭 + 탭 내용. 기능 컴포넌트는 그대로 두고 위치만 탭으로 나눈다.
 // [현황] 감독 프로그램·승인·배포 할 일·이력  [일감] 앱 일감·수정 지시·공장 정비
-// [출시] 출시 패키지  [설정] AI·도구·텔레그램·PC 토큰·키·배포 계정·프로젝트 연결·작업 규칙  [사용량] Claude 세션·토큰
+// [출시] 출시 패키지  [설정] 도구함 한눈에 보기·AI·도구·텔레그램·PC 토큰·키·배포 계정·프로젝트 연결·작업 규칙  [사용량] Claude 세션·토큰
 // 넓은 화면은 왼쪽 작업 영역(약 7) + 오른쪽 AI 사용량 계기판(약 3, 따라옴), 좁은 화면은 계기판이 위에 접혀 있다.
 import { Card, CardBody } from "@heroui/react";
 
@@ -22,6 +22,7 @@ import SupervisorControl from "./SupervisorControl";
 import TelegramSetup from "./TelegramSetup";
 import UsageDash from "./UsageDash";
 import ToolBrokerSettings from "./ToolBrokerSettings";
+import ToolboxPanel from "./ToolboxPanel";
 import WorkerTokens from "./WorkerTokens";
 import WorkRules from "./WorkRules";
 
@@ -90,6 +91,7 @@ export default async function FactoryConsole({ tab }: { tab: FactoryTab }) {
 
           {tab === "settings" && (
             <div className="space-y-6">
+              <ToolboxPanel />
               <DefaultAiSettings />
               <ToolBrokerSettings />
               <TelegramSetup />

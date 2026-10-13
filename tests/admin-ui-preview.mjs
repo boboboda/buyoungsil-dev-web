@@ -3,6 +3,7 @@
 // Tailwind(저장소 설정 그대로) + app/admin/admin-ui.css 를 붙인다. --shot 이면 헤드리스 Chrome/Edge 로 스크린샷도 찍는다.
 // 상태: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패) · history(이력 전체 보기)
 //       · users(가입자 명단, 가짜 30명) · users-empty(가입자 0명)
+//       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
 // 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
 // API·DB·키는 쓰지 않는다. 결과 폴더(tests/.out)는 커밋하지 않는다.
@@ -52,6 +53,10 @@ const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/componen
 const { HistoryPanelView } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx });
 const members = loadTs("lib/admin/members.ts");
 const { default: MembersView } = loadTs("components/admin/users/MembersView.tsx", { "next/link": link, "@/components/admin/ui/meters": meters, "@/lib/admin/members": members });
+const mask = loadTs("lib/factory/mask.ts");
+const toolBroker = loadTs("lib/factory/toolBroker.ts", { "@/lib/factory/mask": mask });
+const toolboxLib = loadTs("lib/factory/toolbox.ts", { "@/lib/factory/toolBroker": toolBroker });
+const { ToolboxView } = loadTs("components/admin/factory/ToolboxPanel.tsx", { "@/lib/prisma": { __esModule: true, default: null }, "@/lib/factory/toolbox": toolboxLib });
 
 // ── 가짜 데이터 ──
 const now = Date.UTC(2026, 9, 13, 3, 42, 0); // 12:42 KST
@@ -92,6 +97,9 @@ STATES.history = { ...STATES.live, title: "이력 전체 보기", history: "all"
 // 가입자 명단(/admin/users): 가짜 30명(이름·이메일은 만든 값) 첫 쪽 25명 / 0명
 STATES.users = { ...STATES.live, title: "가입자 명단 · 30명", users: "many" };
 STATES["users-empty"] = { ...STATES.live, title: "가입자 명단 · 0명", users: "empty" };
+// 도구함 한눈에 보기(통제실 [설정] 맨 위): 중계 '허용' + 최근 기록 / 읽기 실패
+STATES.toolbox = { ...STATES.live, title: "도구함 · 중계 허용", toolbox: "live" };
+STATES["toolbox-failed"] = { ...STATES.live, title: "도구함 · 읽기 실패", toolbox: "failed" };
 
 const iso = (t) => new Date(t).toISOString();
 const deployRow = (i) => ({
@@ -251,6 +259,18 @@ function leftWork(state) {
   );
 }
 
+// 도구함: 실제 정리 함수(buildToolbox)에 가짜 읽은 값을 넣는다. 실패 모양은 칸별 실패(중계 기록·PC 정보) + 패널 전체 실패(null) 두 가지를 한 화면에
+const toolUse = (total, ok, denied, failed) => ({ total, ok, denied, failed });
+const toolboxData = {
+  live: toolboxLib.buildToolbox({
+    broker: { mode: "allow", maxRequests: 30, toolTimeoutSec: 0 },
+    runtime: { claudeTool: "2.1.0 (Claude Code) · 로그인됨", codexTool: "0.42.0 · 로그인 안 됨", aiToolsAt: iso(now - HOUR), ffmpeg: "7.1-full_build-www.gyan.dev | C:/x/ffmpeg.exe", ffprobe: "7.1-full_build-www.gyan.dev | C:/x/ffprobe.exe" },
+    usage: { echo: toolUse(2, 2, 0, 0), "toolkit.run": toolUse(17, 14, 1, 2), "?": toolUse(1, 0, 1, 0) },
+    connectorToken: true,
+  }),
+  failed: toolboxLib.buildToolbox({ broker: null, runtime: null, usage: null, connectorToken: false }),
+};
+
 function page(state) {
   const st = STATES[state];
   // 실제 레이아웃에 실제 상단바·상태줄 '보기' 부품을 가짜 값으로 끼운다(훅 없이)
@@ -263,6 +283,24 @@ function page(state) {
   });
 
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
+  if (st.toolbox)
+    return h(
+      AdminLayout,
+      null,
+      h(
+        "div",
+        { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+        h(
+          "div",
+          { className: "fx-split-main" },
+          h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+          h(FactoryTabs, { active: "settings" }),
+          h(ToolboxView, { toolbox: toolboxData[st.toolbox] }),
+          st.toolbox === "failed" ? h("h2", { className: "fx-label mt-10 mb-3" }, "── 패널 전체 실패 ──") : null,
+          st.toolbox === "failed" ? h(ToolboxView, { toolbox: null }) : null,
+        ),
+      ),
+    );
 
   return h(
     AdminLayout,
@@ -325,7 +363,7 @@ if (process.argv.includes("--shot")) {
         if (only && only !== k) continue;
         // 헤드리스 창은 최소 폭이 있어(약 500px) 360px 은 iframe 에 넣어 찍는다
         const mobile = path.join(out, `admin-ui-${k}-360.html`);
-        const [tall, tallMobile] = STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
+        const [tall, tallMobile] = STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : STATES[k].toolbox ? [2600, 5600] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
         fs.writeFileSync(mobile, `<!doctype html><body style="margin:0;background:#333"><iframe src="${path.basename(file)}" width="360" height="${tallMobile}" style="border:0;display:block"></iframe></body>`);
         for (const [w, size, target] of [["1440", `1440,${tall}`, file], ["1024", `1024,${tall}`, file], ["360", `600,${tallMobile}`, mobile]]) {
           const png = path.join(out, `admin-ui-${k}-${w}.png`);
