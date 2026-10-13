@@ -5,6 +5,7 @@ import FeaturedProjects from "@/components/home/FeaturedProjects";
 import RecentNotes from "@/components/home/RecentNotes";
 import CTASection from "@/components/home/CTASection";
 import { fetchAllProjects } from "@/serverActions/projects";
+import { getTodayVisitorCount, getTotalVisitorCount } from "@/serverActions/visitor";
 import { siteConfig } from "@/config/site";
 import prisma from "@/lib/prisma";
 import type { Note, NoteCategory, SubCategory } from "@/types";
@@ -64,12 +65,44 @@ async function fetchHomeNotes(): Promise<{ notes: Note[]; total: number }> {
   }
 }
 
+// 한국 시간(Asia/Seoul) 기준 오늘 날짜 "YYYY-MM-DD"
+function kstToday(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+// 운영 시작일을 1일째로 센 오늘까지의 날수 (둘 다 한국 날짜)
+function daysSinceStart(startedAt: string, today: string): number {
+  const ms = Date.parse(`${today}T00:00:00Z`) - Date.parse(`${startedAt}T00:00:00Z`);
+  return Math.floor(ms / (1000 * 60 * 60 * 24)) + 1;
+}
+
+// 방문자 수 조회가 실패하면 null (그 카드만 숨기고 홈은 그린다).
+// 오늘 방문자의 '오늘'은 recordVisit 과 같은 서버 시간대 날짜(컨테이너 TZ=Asia/Seoul)다.
+async function safeCount(read: () => Promise<number>, what: string): Promise<number | null> {
+  try {
+    return await read();
+  } catch (error) {
+    console.error(`홈 ${what} 조회 실패:`, error);
+    return null;
+  }
+}
+
 export default async function Home() {
-  // 프로젝트(실패 시 빈 목록)와 노트를 한꺼번에 읽는다
-  const [rawProjects, { notes: recentNotes, total: totalNotes }] = await Promise.all([
-    fetchAllProjects(),
-    fetchHomeNotes(),
-  ]);
+  // 프로젝트(실패 시 빈 목록)·노트·방문자 수를 한꺼번에 읽는다
+  const [rawProjects, { notes: recentNotes, total: totalNotes }, todayVisitors, totalVisitors] =
+    await Promise.all([
+      fetchAllProjects(),
+      fetchHomeNotes(),
+      safeCount(getTodayVisitorCount, "오늘 방문자"),
+      safeCount(getTotalVisitorCount, "총 방문자"),
+    ]);
+
+  const daysRunning = daysSinceStart(siteConfig.startedAt, kstToday());
 
   // 🔥 Date를 string으로 변환
   const projects = rawProjects.map(project => ({
@@ -86,7 +119,13 @@ export default async function Home() {
 
   return (
     <div className="flex flex-col w-full overflow-x-hidden">
-      <Hero totalProjects={projects.length} totalNotes={totalNotes} />
+      <Hero
+        totalProjects={projects.length}
+        totalNotes={totalNotes}
+        daysRunning={daysRunning}
+        todayVisitors={todayVisitors}
+        totalVisitors={totalVisitors}
+      />
       <FeaturedProjects projects={featuredProjects} />
       <RecentNotes notes={recentNotes} />
       <CTASection />

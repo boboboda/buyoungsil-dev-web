@@ -5,6 +5,8 @@ export const siteConfig = {
   description:
     "코딩천재 부영실의 개발한 앱 소개, 개발노트 정보 교환, 제작의뢰 등 정보 교환을 위한 홈페이지 입니다.",
   url: "https://www.buyoungsilcoding.com",
+  // 홈페이지 운영 시작일 (홈 히어로의 '운영 N일째' 기준, 한국 날짜)
+  startedAt: "2024-01-01",
   // 🔥 사이트 문의/개인정보 담당 메일. 블로그 전용 메일로 바꾸는 것을 권장합니다.
   contactEmail: "kju9038@gmail.com",
   // 상단 메뉴 (PC·모바일 공통). activePaths: 이 메뉴를 켜 둘 다른 주소(첫 경로 기준)

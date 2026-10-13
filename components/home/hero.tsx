@@ -4,10 +4,27 @@ import Animation from "./animation"; // 🔥 기존 애니메이션 import
 interface HeroProps {
   totalProjects: number;
   totalNotes: number;
+  daysRunning: number;
+  todayVisitors: number | null; // null = 조회 실패
+  totalVisitors: number | null;
 }
 
-// 통계는 DB 에서 센 실제 값만 쓴다. 0 이면 그 숫자는 숨긴다.
-export default function Hero({ totalProjects, totalNotes }: HeroProps) {
+// 카드 개수별 PC 열 수 (4개까지는 한 줄, 5~6개는 3열 두 줄). 모바일은 늘 2열
+const SM_COLS: Record<number, string> = {
+  1: "sm:grid-cols-1",
+  2: "sm:grid-cols-2",
+  3: "sm:grid-cols-3",
+  4: "sm:grid-cols-4",
+};
+
+// 통계는 실제 값만 쓴다. 0 이거나 조회에 실패하면 그 숫자는 숨긴다.
+export default function Hero({
+  totalProjects,
+  totalNotes,
+  daysRunning,
+  todayVisitors,
+  totalVisitors,
+}: HeroProps) {
   const stats = [
     {
       icon: "💼",
@@ -22,8 +39,30 @@ export default function Hero({ totalProjects, totalNotes }: HeroProps) {
       label: "공개 개발노트",
       suffix: "개",
       color: "from-indigo-500 to-blue-500"
+    },
+    {
+      icon: "📅",
+      value: daysRunning,
+      label: "홈페이지 운영",
+      suffix: "일째",
+      color: "from-blue-500 to-cyan-500"
+    },
+    {
+      icon: "👋",
+      value: todayVisitors,
+      label: "오늘 방문자",
+      suffix: "명",
+      color: "from-green-500 to-emerald-500"
+    },
+    {
+      icon: "🌟",
+      value: totalVisitors,
+      label: "총 방문자",
+      suffix: "명",
+      color: "from-orange-500 to-red-500"
     }
-  ].filter((stat) => stat.value > 0);
+  ].filter((stat): stat is typeof stat & { value: number } => (stat.value ?? 0) > 0);
+  const smCols = SM_COLS[stats.length] ?? "sm:grid-cols-3";
 
   return (
     <section className="relative w-full py-12 md:py-20 overflow-hidden">
@@ -61,18 +100,18 @@ export default function Hero({ totalProjects, totalNotes }: HeroProps) {
 
             {/* 통계 카드 (보여줄 숫자가 없으면 통째로 숨김) */}
             {stats.length > 0 && (
-            <div className="grid grid-cols-2 gap-3 pt-4 max-w-md mx-auto lg:mx-0 animate-fade-in-up animation-delay-400">
+            <div className={`grid grid-cols-2 ${smCols} gap-3 pt-4 max-w-2xl mx-auto lg:mx-0 animate-fade-in-up animation-delay-400`}>
               {stats.map((stat, index) => (
                 <div
                   key={index}
-                  className="relative p-4 rounded-xl bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 group"
+                  className="relative min-w-0 p-3 sm:p-4 rounded-xl bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 group"
                 >
                   {/* 호버 그라데이션 */}
                   <div className={`absolute inset-0 rounded-xl bg-gradient-to-r ${stat.color} opacity-0 group-hover:opacity-20 transition-opacity duration-300`} />
                   
                   <div className="relative">
                     <div className="text-2xl mb-1">{stat.icon}</div>
-                    <div className={`text-2xl md:text-3xl font-bold bg-gradient-to-r ${stat.color} bg-clip-text text-transparent`}>
+                    <div className={`text-xl sm:text-2xl font-bold break-all bg-gradient-to-r ${stat.color} bg-clip-text text-transparent`}>
                       {stat.value.toLocaleString()}
                       <span className="text-sm ml-1">{stat.suffix}</span>
                     </div>
