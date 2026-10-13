@@ -4,6 +4,7 @@
 // 상태: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패) · history(이력 전체 보기)
 //       · users(가입자 명단, 가짜 30명) · users-empty(가입자 0명)
 //       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
+//       · history-merged(이력 [전체 히스토리] 탭: 배포·감독·정비를 합친 최신순 20개 + 긴 빌드 로그 접힘)
 // 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
 // API·DB·키는 쓰지 않는다. 결과 폴더(tests/.out)는 커밋하지 않는다.
@@ -94,6 +95,7 @@ const STATES = {
 };
 // 이력 전체 보기: 서버 배포 탭에서 [전체 보기]를 누른 모양(95개 중 첫 20개 + [더 보기]). 다른 상태는 최근 목록(5개만)
 STATES.history = { ...STATES.live, title: "이력 전체 보기", history: "all" };
+STATES["history-merged"] = { ...STATES.live, title: "이력 · 전체 히스토리 탭", history: "merged" };
 // 가입자 명단(/admin/users): 가짜 30명(이름·이메일은 만든 값) 첫 쪽 25명 / 0명
 STATES.users = { ...STATES.live, title: "가입자 명단 · 30명", users: "many" };
 STATES["users-empty"] = { ...STATES.live, title: "가입자 명단 · 0명", users: "empty" };
@@ -121,13 +123,45 @@ const historyData = {
   threads: [],
   totals: { deploys: 95, updates: 130, threads: 45 },
 };
+// [전체 히스토리] 탭: 배포·감독 프로그램 업데이트·정비 대화를 시각순으로 합친 첫 20개(배포 하나는 긴 빌드 로그)
+const updateRow = (i) => ({
+  id: 130 - i,
+  at: iso(now - (i * 4 + 1) * HOUR),
+  fromCommit: i % 2 ? null : `${(0xbeef000 + i).toString(16)}`,
+  commit: `${(0xc0de000 + i * 31).toString(16)}000`,
+  subject: ["관리자 화면 뒤 흰색 노출 수정", "정비 대기열 묶음 배포", "도구 요청 중계 제한 시간", "AI 한도 자동 갱신"][i % 4],
+  note: i % 2 ? "자동 업데이트 확인: 이미 최신" : "자동 업데이트 완료 → 재시작",
+  thread: i % 2 ? null : { id: `cthr${i}`, title: "통제실 탭화" },
+});
+const threadRow = (i) => ({
+  id: `cthr${i}`,
+  title: ["통제실 히스토리 '전체' 탭", "도구함 한눈에 보기", "가입자 명단", "홈 통계 카드 복구"][i % 4],
+  status: i ? "closed" : "open",
+  lastTurnStatus: i ? "done" : "running",
+  turns: 1 + i,
+  pushedCommit: i ? `${(0x1a605bd + i).toString(16)}000` : null,
+  needsDeploy: i === 1,
+  deployInProgress: false,
+  deployedAt: i > 1 ? iso(now - (i * 7) * HOUR) : null,
+  deployResult: null,
+  updatedAt: iso(now - (i * 5 + 0.5) * HOUR),
+});
+const longLog = ["빌드 실패: next build 종료 코드 1", ...Array.from({ length: 24 }, (_, i) => `  ./components/admin/factory/FactoryOverview.tsx:${100 + i}:5 Type error: 로그 줄 ${i + 1}`)].join("\n");
+const mergedItems = [
+  ...historyData.deploys.slice(0, 12).map((d, i) => ({ type: "deploys", at: d.requestedAt, item: i === 4 ? { ...d, ok: false, result: longLog } : d })),
+  ...Array.from({ length: 8 }, (_, i) => updateRow(i)).map((u) => ({ type: "updates", at: u.at, item: u })),
+  ...Array.from({ length: 4 }, (_, i) => threadRow(i)).map((t) => ({ type: "threads", at: t.updatedAt, item: t })),
+]
+  .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+  .slice(0, 20);
 const noop2 = () => {};
 const historyPanel = (state) =>
   h(HistoryPanelView, {
     data: STATES[state].history === "all" ? historyData : { ...historyData, deploys: historyData.deploys.slice(0, 5) },
     open: true,
-    tab: "deploys",
+    tab: STATES[state].history === "merged" ? "all" : "deploys",
     full: STATES[state].history === "all" ? { kind: "deploys", items: historyData.deploys.slice(0, 20), nextCursor: "cdep19", total: 95, loading: false, error: null } : null,
+    merged: STATES[state].history === "merged" ? { filter: "all", items: mergedItems, nextCursor: "d:cdep11.u:123.t:cthr3", total: 270, loading: false, error: null } : null,
     onToggle: noop2,
     onTab: noop2,
     onShowAll: noop2,

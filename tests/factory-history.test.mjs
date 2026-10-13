@@ -267,3 +267,131 @@ test("예전 서버(totals 없음)에서도 [전체 보기]는 보인다", () =>
   assert.match(html, /전체 보기<\/button>/);
   assert.doesNotMatch(html, /최근 \d+개만/);
 });
+
+// ── [전체 히스토리] 탭: 세 종류를 최신순으로 합친 목록(kind=all) ──
+async function readMerged(limit) {
+  const pages = [];
+  let cursor = null;
+  for (let n = 0; n < 100; n++) {
+    const p = await approvals.historyAllPage({ limit, cursor });
+    pages.push(p);
+    if (!p.nextCursor) break;
+    cursor = p.nextCursor;
+  }
+  return pages;
+}
+
+test("전체 히스토리: 20개씩 끝까지 읽으면 세 종류 270개가 겹침·빠짐 없이 최신순, 종류 안 순서도 그대로", async () => {
+  const pages = await readMerged();
+  assert.equal(pages.length, 14); // 270 = 20 × 13 + 10
+  assert.deepEqual(pages.map((p) => p.items.length), [...Array(13).fill(20), 10]);
+  assert.ok(pages.every((p) => p.kind === "all" && p.total === 270));
+  assert.equal(pages.at(-1).nextCursor, null);
+  const all = pages.flatMap((p) => p.items);
+  assert.equal(new Set(all.map((m) => `${m.type}:${m.item.id}`)).size, 270);
+  const times = all.map((m) => Date.parse(m.at));
+  assert.ok(times.every((t, i) => i === 0 || times[i - 1] >= t), "시간 역순");
+  // 종류마다 따로 읽은 전체 목록과 순서가 같다
+  for (const kind of ["deploys", "updates", "threads"]) {
+    const alone = (await readAll(kind)).flatMap((p) => p.items.map((i) => String(i.id)));
+    assert.deepEqual(all.filter((m) => m.type === kind).map((m) => String(m.item.id)), alone);
+  }
+  // 제일 최근은 업데이트 130번(T0+129분)
+  assert.deepEqual([all[0].type, all[0].item.id], ["updates", 130]);
+  // 같은 시각이면 배포 → 업데이트 → 정비 순
+  const order = { deploys: 0, updates: 1, threads: 2 };
+  for (let i = 1; i < all.length; i++)
+    if (times[i - 1] === times[i]) assert.ok(order[all[i - 1].type] <= order[all[i].type]);
+});
+
+test("전체 히스토리: limit 은 1~100, 잘못된 cursor 는 null(→ 400)", async () => {
+  assert.equal((await approvals.historyAllPage({ limit: 1000 })).items.length, 100);
+  assert.equal((await approvals.historyAllPage({ limit: 0 })).items.length, 1);
+  assert.deepEqual((await readMerged(100)).map((p) => [p.items.length, !!p.nextCursor]), [[100, true], [100, true], [70, false]]);
+  for (const bad of ["../etc", "d:../x", "u:abc", "x:1", "u:1.u:2", "d:", "u:1:2"])
+    assert.equal(await approvals.historyAllPage({ cursor: bad }), null, bad);
+  assert.deepEqual(approvals.parseAllCursor("u:5.t:cthr000001"), { updates: "5", threads: "cthr000001" });
+});
+
+test("API kind=all: 관리자만, no-store, 쪽 이어 읽기, 잘못된 cursor 400", async () => {
+  admin = false;
+  const denied = await get("kind=all");
+  assert.equal(denied.status, 401);
+  assert.doesNotMatch(JSON.stringify(await denied.json()), /items/);
+  admin = true;
+  const ok = await get("kind=all&limit=20");
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get("cache-control"), "no-store");
+  const body = await ok.json();
+  assert.deepEqual([body.kind, body.items.length, body.total], ["all", 20, 270]);
+  assert.ok(body.items.every((m) => ["deploys", "updates", "threads"].includes(m.type) && m.item && m.at));
+  const next = await (await get(`kind=all&limit=20&cursor=${encodeURIComponent(body.nextCursor)}`)).json();
+  assert.equal(next.items.length, 20);
+  assert.ok(Date.parse(body.items[19].at) >= Date.parse(next.items[0].at));
+  const bad = await get("kind=all&cursor=zz:1");
+  assert.equal(bad.status, 400);
+  assert.equal(bad.headers.get("cache-control"), "no-store");
+  assert.equal((await get("kind=everything")).status, 400);
+});
+
+const mixed = (pages) => json(pages.flatMap((p) => p.items));
+
+test("탭 줄 맨 앞 [전체 히스토리 · 총 N개]는 접힘·펼침·탭 상관없이 늘 보인다", () => {
+  for (const props of [{ open: false }, { open: true }, { tab: "updates" }, { tab: "threads" }, { tab: "all" }, { data: null, open: false }]) {
+    const html = render(props);
+    const tabs = html.match(/data-history-tabs[^]*?<\/div>/)[0];
+    assert.match(tabs, /^data-history-tabs[^>]*>\s*<button[^>]*data-tab="all"/, "탭 줄 맨 앞");
+    assert.match(tabs, /전체 히스토리/);
+    assert.match(tabs, /서버 배포[^]*감독 프로그램 업데이트[^]*정비 대화/);
+    if (props.data !== null) assert.match(tabs, /총 270개/);
+  }
+  // 예전 서버(totals 없음)는 최근 목록 길이 합
+  assert.match(render({ data: { ...recent, totals: undefined } }), /총 110개/);
+  // 기존 세 탭은 그대로(기본 [서버 배포] 최근 목록 + [전체 보기])
+  assert.match(render({}), /전체 보기 · 총 95개/);
+});
+
+test("전체 히스토리 탭: 줄마다 종류 표시, 더 보기 → 끝까지, 종류 필터, 읽는 중·실패", async () => {
+  const pages = await readMerged();
+  const first = mixed(pages.slice(0, 1));
+  const one = render({ tab: "all", merged: { filter: "all", items: first, nextCursor: pages[0].nextCursor, total: 270, loading: false, error: null } });
+  assert.match(one, /data-history="merged"/);
+  assert.match(one, /전체 히스토리 · 최신순/);
+  assert.match(one, /20 \/ 270/);
+  assert.match(one, /더 보기 \(20개\)/);
+  assert.equal(rows(one), 20);
+  assert.equal((one.match(/data-kind="/g) ?? []).length, 20);
+  assert.match(one, /🔄 감독/);
+  for (const f of ["all", "deploys", "updates", "threads"]) assert.match(one, new RegExp(`data-filter="${f}"`));
+  assert.match(one, /data-filter="all" aria-pressed="true"/);
+
+  const done = render({ tab: "all", merged: { filter: "all", items: view.mergeMixed(mixed(pages), first), nextCursor: null, total: 270, loading: false, error: null } });
+  assert.equal(rows(done), 270);
+  for (const label of ["🚀 배포", "🔄 감독", "🛠 정비"]) assert.match(done, new RegExp(label));
+  assert.doesNotMatch(done, /더 보기/);
+  assert.match(done, /끝까지 다 봤어요/);
+
+  // 필터 '배포': 그 종류만(종류 표시는 배포만)
+  const dep = (await readAll("deploys")).flatMap((p) => p.items.map((item) => ({ type: "deploys", item })));
+  const only = render({ tab: "all", merged: { filter: "deploys", items: json(dep), nextCursor: null, total: 95, loading: false, error: null } });
+  assert.equal(rows(only), 95);
+  assert.deepEqual([...new Set(only.match(/data-kind="[a-z]+"/g))], ['data-kind="deploys"']);
+  assert.match(only, /data-filter="deploys" aria-pressed="true"/);
+
+  assert.match(render({ tab: "all", merged: null }), /읽는 중…/);
+  const failed = render({ tab: "all", merged: { filter: "all", items: [], nextCursor: null, total: 270, loading: false, error: "서버에 연결하지 못했어요." } });
+  assert.match(failed, /서버에 연결하지 못했어요/);
+  assert.doesNotMatch(failed, /기록이 없어요/);
+});
+
+test("긴 로그(빌드 로그 끝부분)는 3줄까지만 보이고 [펼치기], 짧은 결과는 그대로", () => {
+  const log = ["빌드 실패: next build 종료 코드 1", ...Array.from({ length: 30 }, (_, i) => `로그 ${i}`)].join("\n");
+  const longDeploy = { ...recent.deploys[0], ok: false, result: log };
+  const html = render({ data: { ...recent, deploys: [longDeploy, { ...recent.deploys[1], result: "배포 완료" }] } });
+  assert.match(html, /data-result="folded"/);
+  assert.match(html, /line-clamp-3/);
+  assert.match(html, /펼치기 \(31줄\)/);
+  assert.match(html, /data-result="short"/);
+  assert.ok(view.isLongResult("x".repeat(181)));
+  assert.ok(!view.isLongResult("한 줄\n두 줄\n세 줄"));
+});

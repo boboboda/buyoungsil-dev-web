@@ -107,6 +107,38 @@ export function mergeHistory(prev: HistoryItem[], next: HistoryItem[]) {
   return [...prev, ...next.filter((i) => !seen.has(String(i.id)))];
 }
 
+// [전체 히스토리] 탭: 세 종류를 최신순으로 합친 목록. 종류 필터가 '전체'면 kind=all, 아니면 그 종류만 읽는다
+export type HistoryTab = HistoryKind | "all";
+export type HistoryFilter = HistoryKind | "all";
+export interface MixedItem {
+  type: HistoryKind;
+  item: HistoryItem;
+}
+export interface MergedHistory {
+  filter: HistoryFilter;
+  items: MixedItem[];
+  nextCursor: string | null;
+  total: number;
+  loading: boolean;
+  error: string | null;
+}
+
+export function mergeMixed(prev: MixedItem[], next: MixedItem[]) {
+  const key = (m: MixedItem) => `${m.type}:${m.item.id}`;
+  const seen = new Set(prev.map(key));
+
+  return [...prev, ...next.filter((m) => !seen.has(key(m)))];
+}
+
+// 전체 히스토리 탭 이름 옆 배지: 세 종류 전체 개수 합(예전 서버는 최근 목록 길이)
+export const totalOf = (data: HistoryData | null) =>
+  data
+    ? (["deploys", "updates", "threads"] as const).reduce(
+        (n, k) => n + (data.totals?.[k] ?? data[k].length),
+        0,
+      )
+    : undefined;
+
 const when = (v: string | null | undefined) =>
   v ? new Date(v).toLocaleString("ko-KR") : "-";
 const short = (c: string | null | undefined) => (c ? c.slice(0, 7) : "-");
@@ -169,11 +201,77 @@ export default function FactoryOverview({
   const [data, setData] = useState<Overview | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<HistoryKind>("deploys");
+  const [tab, setTab] = useState<HistoryTab>("deploys");
   // 업데이트·배포 이력은 길어서 기본으로 접어 둔다. 펼침 여부는 이 브라우저에 기억
   const [historyOpen, setHistoryOpen] = useState(false);
   // [전체 보기]로 연 탭의 전체 목록(20개씩 [더 보기]). null 이면 overview 의 최근 목록
   const [full, setFull] = useState<FullHistory | null>(null);
+  // [전체 히스토리] 탭의 합친 목록(20개씩 [더 보기])
+  const [merged, setMerged] = useState<MergedHistory | null>(null);
+
+  const loadMerged = async (filter: HistoryFilter, prev?: MergedHistory) => {
+    const base: MergedHistory = prev ?? {
+      filter,
+      items: [],
+      nextCursor: null,
+      total:
+        filter === "all"
+          ? (totalOf(data) ?? 0)
+          : (data?.totals?.[filter] ?? 0),
+      loading: true,
+      error: null,
+    };
+
+    setMerged({ ...base, loading: true, error: null });
+    const qs = new URLSearchParams({ kind: filter, limit: String(HISTORY_PAGE) });
+
+    if (prev?.nextCursor) qs.set("cursor", prev.nextCursor);
+    try {
+      const res = await fetch(`/api/admin/factory/history?${qs}`, {
+        cache: "no-store",
+      });
+      const d = (await res.json().catch(() => ({}))) as {
+        items?: unknown[];
+        nextCursor?: string | null;
+        total?: number;
+        message?: string;
+      };
+
+      if (!res.ok || !d.items) throw new Error(d.message ?? "읽지 못했어요.");
+      // kind=all 은 { type, item }, 한 종류만 읽으면 항목 그대로라 종류를 붙인다
+      const items =
+        filter === "all"
+          ? (d.items as MixedItem[])
+          : (d.items as HistoryItem[]).map((item) => ({ type: filter, item }));
+
+      setMerged((cur) =>
+        // 그 사이 필터를 바꿨으면 버린다
+        cur?.filter !== filter
+          ? cur
+          : {
+              filter,
+              items: mergeMixed(base.items, items),
+              nextCursor: d.nextCursor ?? null,
+              total: d.total ?? base.total,
+              loading: false,
+              error: null,
+            },
+      );
+    } catch (e) {
+      setMerged((cur) =>
+        cur?.filter !== filter
+          ? cur
+          : {
+              ...base,
+              loading: false,
+              error:
+                e instanceof Error && e.message !== "Failed to fetch"
+                  ? e.message
+                  : "서버에 연결하지 못했어요.",
+            },
+      );
+    }
+  };
 
   const loadAll = async (kind: HistoryKind, prev?: FullHistory) => {
     const base: FullHistory = prev ?? {
@@ -235,14 +333,13 @@ export default function FactoryOverview({
       setHistoryOpen(localStorage.getItem("factory.historyOpen") === "1");
     } catch {}
   }, []);
-  const toggleHistory = () =>
-    setHistoryOpen((v) => {
-      try {
-        localStorage.setItem("factory.historyOpen", v ? "0" : "1");
-      } catch {}
-
-      return !v;
-    });
+  const setOpen = (v: boolean) => {
+    try {
+      localStorage.setItem("factory.historyOpen", v ? "1" : "0");
+    } catch {}
+    setHistoryOpen(v);
+  };
+  const toggleHistory = () => setOpen(!historyOpen);
 
   const load = useCallback(async () => {
     try {
@@ -474,14 +571,23 @@ export default function FactoryOverview({
       <HistoryPanelView
         data={data}
         full={full}
+        merged={merged}
         open={historyOpen}
         tab={tab}
+        onFilter={(f) => loadMerged(f)}
         onMore={() => full && full.nextCursor && loadAll(full.kind, full)}
-        onShowAll={() => loadAll(tab)}
+        onMoreMerged={() =>
+          merged && merged.nextCursor && loadMerged(merged.filter, merged)
+        }
+        onShowAll={() => tab !== "all" && loadAll(tab)}
         onShowRecent={() => setFull(null)}
         onTab={(k) => {
+          // 접혀 있을 때 탭을 누르면 펼친다
+          if (!historyOpen) setOpen(true);
           setTab(k);
           setFull(null);
+          // 전체 히스토리는 누를 때마다 첫 쪽부터 새로 읽는다(필터는 유지)
+          if (k === "all") loadMerged(merged?.filter ?? "all");
         }}
         onToggle={toggleHistory}
       />
@@ -501,33 +607,55 @@ const EMPTY: Record<HistoryKind, string> = {
   threads: "정비 대화가 없어요.",
 };
 
+// 전체 히스토리에서 줄마다 붙는 종류 표시와 필터 이름
+const KIND_BADGE: Record<HistoryKind, { label: string; color: ChipColor }> = {
+  deploys: { label: "🚀 배포", color: "danger" },
+  updates: { label: "🔄 감독", color: "secondary" },
+  threads: { label: "🛠 정비", color: "warning" },
+};
+const FILTERS = [
+  ["all", "전체"],
+  ["deploys", "배포"],
+  ["updates", "감독"],
+  ["threads", "정비"],
+] as const;
+
 // 업데이트·배포 이력 패널(보기 전용: 상태·읽기는 FactoryOverview 가 한다. 미리보기·시험도 이걸 그린다)
-// 탭마다 최근 목록 아래 [전체 보기] → 같은 패널 안에서 전체 목록(시간 역순)을 20개씩 [더 보기]
+// 탭 줄 맨 앞 [전체 히스토리 · N]은 접혀 있어도 늘 보인다 → 세 종류를 최신순으로 합쳐 20개씩 [더 보기], 종류 필터
+// 나머지 탭은 최근 목록 아래 [전체 보기] → 같은 패널 안에서 그 종류 전체 목록(시간 역순)을 20개씩 [더 보기]
 export function HistoryPanelView({
   data,
   open,
   tab,
   full,
+  merged = null,
   onToggle,
   onTab,
   onShowAll,
   onMore,
   onShowRecent,
+  onFilter = () => {},
+  onMoreMerged = () => {},
 }: {
   data: HistoryData | null;
   open: boolean;
-  tab: HistoryKind;
+  tab: HistoryTab;
   full: FullHistory | null;
+  merged?: MergedHistory | null;
   onToggle: () => void;
-  onTab: (k: HistoryKind) => void;
+  onTab: (k: HistoryTab) => void;
   onShowAll: () => void;
   onMore: () => void;
   onShowRecent: () => void;
+  onFilter?: (f: HistoryFilter) => void;
+  onMoreMerged?: () => void;
 }) {
+  const kindTab = tab === "all" ? null : tab;
   const all = full && full.kind === tab ? full : null;
-  const list: HistoryItem[] = all ? all.items : (data?.[tab] ?? []);
-  const total = all ? all.total : data?.totals?.[tab];
+  const list: HistoryItem[] = all ? all.items : kindTab ? (data?.[kindTab] ?? []) : [];
+  const total = all ? all.total : kindTab ? data?.totals?.[kindTab] : undefined;
   const count = (k: HistoryKind) => data?.totals?.[k] ?? data?.[k].length ?? 0;
+  const grand = totalOf(data);
 
   return (
     <Card className="mb-6" data-title="history · 업데이트·배포">
@@ -548,26 +676,52 @@ export function HistoryPanelView({
               </span>
             )}
           </button>
-          {open && (
-            <div className="flex flex-wrap gap-1">
-              {HISTORY_TABS.map(([k, label]) => (
-                <Button
-                  key={k}
-                  color={tab === k ? "primary" : "default"}
-                  size="sm"
-                  variant={tab === k ? "solid" : "flat"}
-                  onPress={() => onTab(k)}
+          {/* 탭 줄은 접혀 있어도 늘 보인다. 맨 앞 [전체 히스토리]는 눈에 띄게(테두리·배지) */}
+          <div className="flex flex-wrap gap-1" data-history-tabs role="tablist">
+            <Button
+              aria-selected={open && tab === "all"}
+              className="font-semibold"
+              color="secondary"
+              data-tab="all"
+              role="tab"
+              size="sm"
+              variant={open && tab === "all" ? "solid" : "bordered"}
+              onPress={() => onTab("all")}
+            >
+              🗂 전체 히스토리
+              {grand !== undefined && (
+                <span
+                  className="rounded-full bg-secondary-100 px-1.5 font-mono text-[11px] text-secondary-700"
+                  data-history-total
                 >
-                  {label}
-                </Button>
-              ))}
-            </div>
-          )}
+                  총 {grand}개
+                </span>
+              )}
+            </Button>
+            {HISTORY_TABS.map(([k, label]) => (
+              <Button
+                key={k}
+                aria-selected={open && tab === k}
+                color={open && tab === k ? "primary" : "default"}
+                data-tab={k}
+                role="tab"
+                size="sm"
+                variant={open && tab === k ? "solid" : "flat"}
+                onPress={() => onTab(k)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
         </div>
 
         {open && !data && <p className="text-sm text-default-500">읽는 중…</p>}
 
-        {open && data && (
+        {open && data && tab === "all" && (
+          <MergedList merged={merged} onFilter={onFilter} onMore={onMoreMerged} />
+        )}
+
+        {open && data && kindTab && (
           <div className="space-y-2" data-history={all ? "all" : "recent"}>
             {all && (
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-default-200 pb-2 text-xs">
@@ -583,7 +737,7 @@ export function HistoryPanelView({
               </div>
             )}
             {list.length === 0 && !all?.loading && (
-              <p className="text-sm text-default-500">{EMPTY[tab]}</p>
+              <p className="text-sm text-default-500">{EMPTY[kindTab]}</p>
             )}
             {tab === "deploys" &&
               (list as HistoryData["deploys"]).map((d) => (
@@ -664,12 +818,108 @@ export function HistoryPanelView({
   );
 }
 
-function DeployRow({ d }: { d: HistoryData["deploys"][number] }) {
+// [전체 히스토리] 탭 내용: 종류 필터 + 합친 목록(줄마다 종류 표시) + [더 보기]
+function MergedList({
+  merged,
+  onFilter,
+  onMore,
+}: {
+  merged: MergedHistory | null;
+  onFilter: (f: HistoryFilter) => void;
+  onMore: () => void;
+}) {
+  const filter = merged?.filter ?? "all";
+  const items = merged?.items ?? [];
+
+  return (
+    <div className="space-y-2" data-history="merged">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-default-200 pb-2 text-xs">
+        <span className="font-semibold">
+          전체 히스토리 · 최신순{" "}
+          {merged && (
+            <span className="font-mono text-default-500">
+              {items.length} / {merged.total}
+            </span>
+          )}
+        </span>
+        <div aria-label="종류 필터" className="flex flex-wrap gap-1" role="group">
+          {FILTERS.map(([f, label]) => (
+            <Button
+              key={f}
+              aria-pressed={filter === f}
+              className="min-h-11 sm:min-h-0"
+              color={filter === f ? "secondary" : "default"}
+              data-filter={f}
+              size="sm"
+              variant={filter === f ? "solid" : "flat"}
+              onPress={() => onFilter(f)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      {items.length === 0 && merged && !merged.loading && !merged.error && (
+        <p className="text-sm text-default-500">
+          {filter === "all" ? "기록이 없어요." : EMPTY[filter]}
+        </p>
+      )}
+      {items.map((m) => {
+        const badge = (
+          <Chip color={KIND_BADGE[m.type].color} data-kind={m.type} size="sm" variant="bordered">
+            {KIND_BADGE[m.type].label}
+          </Chip>
+        );
+
+        return m.type === "deploys" ? (
+          <DeployRow key={`d-${m.item.id}`} badge={badge} d={m.item as HistoryData["deploys"][number]} />
+        ) : m.type === "updates" ? (
+          <UpdateRow key={`u-${m.item.id}`} badge={badge} u={m.item as HistoryData["updates"][number]} />
+        ) : (
+          <ThreadRow key={`t-${m.item.id}`} badge={badge} t={m.item as HistoryData["threads"][number]} />
+        );
+      })}
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        {merged?.nextCursor && (
+          <Button
+            className="min-h-11 sm:min-h-0"
+            isDisabled={merged.loading}
+            size="sm"
+            variant="flat"
+            onPress={onMore}
+          >
+            더 보기 (
+            {Math.min(HISTORY_PAGE, merged.total - items.length) || HISTORY_PAGE}
+            개)
+          </Button>
+        )}
+        {(!merged || merged.loading) && (
+          <span className="text-xs text-default-500">읽는 중…</span>
+        )}
+        {merged && !merged.loading && !merged.nextCursor && !merged.error && items.length > 0 && (
+          <span className="text-xs text-default-500">끝까지 다 봤어요.</span>
+        )}
+        {merged?.error && (
+          <span className="text-xs text-danger-500">{merged.error}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DeployRow({
+  d,
+  badge,
+}: {
+  d: HistoryData["deploys"][number];
+  badge?: ReactNode;
+}) {
   const st = deployStatus(d);
 
   return (
     <div className="rounded-lg border border-default-200 p-2 text-sm">
       <div className="flex flex-wrap items-center gap-2">
+        {badge}
         <Chip color={st.color} size="sm" variant="flat">
           {st.label}
         </Chip>
@@ -699,12 +949,19 @@ function DeployRow({ d }: { d: HistoryData["deploys"][number] }) {
   );
 }
 
-function UpdateRow({ u }: { u: HistoryData["updates"][number] }) {
+function UpdateRow({
+  u,
+  badge,
+}: {
+  u: HistoryData["updates"][number];
+  badge?: ReactNode;
+}) {
   const r = updateResult(u);
 
   return (
     <div className="rounded-lg border border-default-200 p-2 text-sm">
       <div className="flex flex-wrap items-center gap-2">
+        {badge}
         <Chip color={r.color} size="sm" variant="flat">
           {r.label}
         </Chip>
@@ -721,17 +978,22 @@ function UpdateRow({ u }: { u: HistoryData["updates"][number] }) {
           🛠 정비: {u.thread.title}
         </div>
       )}
-      {u.note && (
-        <div className="mt-1 break-words text-xs text-default-600">{u.note}</div>
-      )}
+      {u.note && <ResultText text={u.note} />}
     </div>
   );
 }
 
-function ThreadRow({ t }: { t: HistoryData["threads"][number] }) {
+function ThreadRow({
+  t,
+  badge,
+}: {
+  t: HistoryData["threads"][number];
+  badge?: ReactNode;
+}) {
   return (
     <div className="rounded-lg border border-default-200 p-2 text-sm">
       <div className="flex flex-wrap items-center gap-2">
+        {badge}
         <Chip
           color={t.status === "open" ? "primary" : "default"}
           size="sm"
@@ -778,23 +1040,37 @@ function ThreadRow({ t }: { t: HistoryData["threads"][number] }) {
   );
 }
 
-// 배포 결과: 첫 줄(요약)만 보이고, 로그 끝부분 같은 나머지는 접어 둔다
+// 배포 결과·업데이트 소식: 길면(빌드 로그 끝부분 등) 3줄까지만 보이고 [펼치기]로 전부 본다
+export const RESULT_FOLD_LINES = 3;
+export const RESULT_FOLD_CHARS = 180;
+
+export function isLongResult(text: string) {
+  return (
+    text.split("\n").length > RESULT_FOLD_LINES ||
+    text.length > RESULT_FOLD_CHARS
+  );
+}
+
 function ResultText({ text }: { text: string }) {
-  const [first, ...rest] = text.split("\n");
-  const more = rest.join("\n").trim();
+  const [open, setOpen] = useState(false);
+  const long = isLongResult(text);
 
   return (
-    <div className="mt-1 break-words text-xs text-default-600">
-      <div className="whitespace-pre-wrap">{first}</div>
-      {more && (
-        <details className="mt-1">
-          <summary className="cursor-pointer text-default-500">
-            자세히 ({rest.length}줄)
-          </summary>
-          <div className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap rounded border border-default-200 bg-background p-2 font-mono text-[11px]">
-            {more}
-          </div>
-        </details>
+    <div className="mt-1 break-words text-xs text-default-600" data-result={long ? (open ? "open" : "folded") : "short"}>
+      <div
+        className={`whitespace-pre-wrap ${long && !open ? "line-clamp-3" : long ? "max-h-64 overflow-y-auto rounded border border-default-200 bg-background p-2 font-mono text-[11px]" : ""}`}
+      >
+        {text}
+      </div>
+      {long && (
+        <button
+          aria-expanded={open}
+          className="mt-1 min-h-8 text-default-500 underline"
+          type="button"
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "접기" : `펼치기 (${text.split("\n").length}줄)`}
+        </button>
       )}
     </div>
   );

@@ -299,3 +299,78 @@ export async function historyPage(
     total: totals[kind],
   };
 }
+
+// ── 전체 히스토리(세 종류를 시간순으로 합친 목록) ──
+// 항목 시각: 서버 배포는 요청 시각, 업데이트는 소식 시각, 정비 대화는 마지막 활동 시각.
+// cursor 는 종류마다 앞 쪽에서 마지막으로 보여 준 id 를 묶은 것: "d:<id>.u:<번호>.t:<id>"(아직 안 나온 종류는 빠짐)
+const ALL_TAG = { deploys: "d", updates: "u", threads: "t" } as const;
+
+export function parseAllCursor(raw: string | null | undefined) {
+  const out: Partial<Record<HistoryKind, string>> = {};
+
+  if (!raw) return out;
+  for (const part of raw.split(".")) {
+    const [tag, id, ...extra] = part.split(":");
+    const kind = HISTORY_KINDS.find((k) => ALL_TAG[k] === tag);
+
+    if (!kind || extra.length || !id || out[kind] !== undefined) return null;
+    if (!(kind === "updates" ? /^\d{1,12}$/ : ID_RE).test(id)) return null;
+    out[kind] = id;
+  }
+
+  return out;
+}
+
+const atOf = (kind: HistoryKind, row: { requestedAt?: unknown; at?: unknown; updatedAt?: unknown }) =>
+  new Date((kind === "deploys" ? row.requestedAt : kind === "updates" ? row.at : row.updatedAt) as string | Date).getTime();
+
+/**
+ * 전체 히스토리 한 쪽(최신 먼저). 종류마다 limit+1 개를 읽어 이미 정렬된 세 목록을 앞에서부터 합친다(종류 안의 순서는 그대로라 쪽 사이에 빠짐·겹침이 없다).
+ * 항목은 { type, at, item } (item 은 같은 종류 탭의 항목 모양). 형식이 틀린 cursor 는 null(→ 400).
+ */
+export async function historyAllPage(opts: { limit?: number; cursor?: string | null } = {}) {
+  const raw = Math.floor(Number(opts.limit ?? HISTORY_PAGE));
+  const limit = Number.isFinite(raw)
+    ? Math.min(HISTORY_PAGE_MAX, Math.max(1, raw))
+    : HISTORY_PAGE;
+  const cur = parseAllCursor(opts.cursor);
+
+  if (!cur) return null;
+  const [d, u, t, totals] = await Promise.all([
+    deployHistory(limit + 1, cur.deploys),
+    supervisorUpdateHistory(limit + 1, cur.updates ? Number(cur.updates) : undefined),
+    maintenanceSummary(limit + 1, cur.threads),
+    historyTotals(),
+  ]);
+  const lists = { deploys: d, updates: u, threads: t } as const;
+  const used: Record<HistoryKind, number> = { deploys: 0, updates: 0, threads: 0 };
+  const items: { type: HistoryKind; at: string; item: (typeof lists)[HistoryKind][number] }[] = [];
+
+  while (items.length < limit) {
+    let pick: HistoryKind | null = null;
+
+    // 같은 시각이면 배포 → 업데이트 → 정비 순
+    for (const k of HISTORY_KINDS) {
+      const row = lists[k][used[k]];
+
+      if (row && (!pick || atOf(k, row) > atOf(pick, lists[pick][used[pick]]))) pick = k;
+    }
+    if (!pick) break;
+    const row = lists[pick][used[pick]++];
+
+    items.push({ type: pick, at: new Date(atOf(pick, row)).toISOString(), item: row });
+  }
+  const more = HISTORY_KINDS.some((k) => lists[k].length > used[k]);
+  const next = HISTORY_KINDS.flatMap((k) => {
+    const id = used[k] ? String(lists[k][used[k] - 1].id) : cur[k];
+
+    return id ? [`${ALL_TAG[k]}:${id}`] : [];
+  }).join(".");
+
+  return {
+    kind: "all" as const,
+    items,
+    nextCursor: more ? next : null,
+    total: totals.deploys + totals.updates + totals.threads,
+  };
+}
