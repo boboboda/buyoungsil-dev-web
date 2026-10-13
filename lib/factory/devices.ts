@@ -727,6 +727,8 @@ export interface DeviceView {
   disks: (GbPair & { mount: string; pct: number | null })[];
   // 최근 24시간, 1시간씩 24칸(그 시간의 최고값, 값이 없으면 null). 마지막 칸 = 지금 시간
   history: { cpu: (number | null)[]; ram: (number | null)[] };
+  // 실행 중인 모든 것(컨테이너·프로세스·요약). 아직 못 받았으면 null
+  running: RunningInput | null;
 }
 
 export interface DeployCounts {
@@ -810,6 +812,7 @@ export function toDeviceView(
     ram: data?.ram ? { ...data.ram, pct: pctOf(data.ram) } : null,
     gpu: data?.gpu ?? { state: "unknown" },
     disks: (data?.disks ?? []).map((d) => ({ ...d, pct: pctOf(d) })),
+    running: data?.running ?? null,
     history: {
       cpu: hourlyMax(
         mine.map((s) => ({ at: s.at.getTime(), v: s.cpuPct })),

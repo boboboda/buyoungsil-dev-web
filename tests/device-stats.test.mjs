@@ -250,7 +250,8 @@ test("GET 관리자 전용: 관리자 아니면 막고, 관리자는 no-store �
 
 // ── 화면 ──
 const meters = loadTs("components/admin/ui/meters.tsx");
-const panel = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters });
+const runningPanel = loadTs("components/admin/factory/RunningPanel.tsx", { "@/components/admin/ui/meters": meters });
+const panel = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters, "./RunningPanel": runningPanel });
 
 test("임계값 색: 70% 미만 정상, 70% 이상 주의, 90% 이상 위험, 끊긴 장비는 회색 + '지난 값'", () => {
   assert.deepEqual(panel.metricReading(69.4, true), { pct: 69, tone: "ok", state: "정상" });
@@ -419,4 +420,47 @@ test("서버 수집 스크립트(bash): 문법 확인, print 결과가 서버 �
   assert.equal(v.ok, true, v.reason);
   assert.ok(!(run.stdout + chk.stdout + chk.stderr).includes("secret-token-should-not-print"), "토큰 미출력");
   assert.match(chk.stdout, /토큰 파일: 있음/);
+});
+
+// ── 실행 중인 모든 것(화면) ──
+const runRow = (device, running) => ({ device, data: { cpuPct: 5, ram: { usedGb: 2, totalGb: 8 }, gpu: { state: "none" }, disks: [], running }, measuredAt: new Date(NOW - MIN), receivedAt: new Date(NOW - MIN) });
+const cnt = (over = {}) => ({ name: "web", image: "nginx:1.25", state: "running", status: "Up", uptimeSec: 7 * 86400 + 3 * 3600, stoppedSec: null, restarts: 0, cpuPct: 0.5, memMb: 120, project: "shop", flags: [], ...over });
+
+test("실행 목록: DeviceView 에 running 이 실리고(없으면 null), 기존 필드는 그대로", () => {
+  const r = { containers: [cnt()], processes: null, summary: { stoppedContainers: 1, danglingImages: 2, imageBytes: 1_200_000_000, volumes: 3 }, error: null, truncated: false };
+  const v = devices.toDeviceView("server1", runRow("server1", r), [], NOW);
+  assert.equal(v.running.containers[0].name, "web");
+  assert.equal(v.cpuPct, 5);
+  assert.equal(devices.toDeviceView("server2", null, [], NOW).running, null);
+});
+
+test("실행 목록 화면: 요약 헤더·메모리 큰 순·한글 의심 배지·가동 시간·보고 없음 문구·읽기 전용", () => {
+  const r1 = { containers: [cnt({ name: "small", memMb: 10 }), cnt({ name: "big", memMb: 900, restarts: 5, flags: ["restart_loop", "long_running"] }), cnt({ name: "old", state: "exited", stoppedSec: 3 * 86400, memMb: null, project: null, flags: ["stopped", "unlabeled"] })], processes: null, summary: { stoppedContainers: 1, danglingImages: 2, imageBytes: 1_200_000_000, volumes: 3 }, error: null, truncated: false };
+  const r3 = { containers: null, processes: [{ pid: 7, name: "node", dir: "app", memMb: 800, cpuSec: 120, startedAt: NOW / 1000 - 3600, child: false, ports: [3000], flags: ["heavy_orphan"] }], summary: null, error: null, truncated: false };
+  const r2 = { containers: null, processes: null, summary: null, error: "docker 없음", truncated: false };
+  const devs = [devices.toDeviceView("server1", runRow("server1", r1), [], NOW), devices.toDeviceView("server2", runRow("server2", r2), [], NOW), devices.toDeviceView("main-pc", runRow("main-pc", r3), [], NOW)];
+  const html = renderToStaticMarkup(h(runningPanel.RunningSection, { devices: devs, now: NOW }));
+  assert.match(html, /실행 중 컨테이너 2 · 멈춘 1 · 안 쓰는 이미지 2\(1\.2GB\) · 볼륨 3/);
+  assert.ok(html.indexOf("big") < html.indexOf("small"), "메모리 큰 순");
+  for (const t of ["재시작 반복", "오래 가동", "멈춘 지 오래됨", "소속 불명", "덩치 큰 고아 프로세스", "7일 3시간", "⚠ 2", "⚠ 1"]) assert.ok(html.includes(t), t);
+  assert.match(html, /docker 없음/);
+  assert.match(html, /감독 밖/);
+  assert.match(html, /포트<\/span><span[^>]*>3000/);
+  assert.match(html, /자원 점검 필요: 서버1 big 오래 가동·재시작 반복 외 2건/);
+  assert.ok(!/<button/.test(html), "종료·삭제·정리 버튼 없음");
+  const none = devs.map((d) => devices.toDeviceView(d.device, null, [], NOW));
+  const empty = renderToStaticMarkup(h(runningPanel.RunningSection, { devices: none, now: NOW }));
+  assert.equal((empty.match(/아직 못 받았어요/g) ?? []).length, 3);
+  assert.match(empty, /서버에서 스크립트 갱신 필요/);
+  assert.ok(!empty.includes("자원 점검 필요"));
+});
+
+test("자원 점검 줄: 의심이 없으면 안 보이고, 시간·추이 글자", () => {
+  const v = devices.toDeviceView("server1", runRow("server1", { containers: [cnt()], processes: null, summary: null, error: null, truncated: false }), [], NOW);
+  assert.equal(runningPanel.alertLine(runningPanel.resourceAlerts([v])), null);
+  assert.equal(renderToStaticMarkup(h(runningPanel.ResourceAlertView, { devices: [v] })), "");
+  assert.equal(runningPanel.uptimeText(7 * 86400 + 3 * 3600), "7일 3시간");
+  assert.equal(runningPanel.uptimeText(5 * 3600 + 20 * 60), "5시간 20분");
+  assert.equal(runningPanel.trendText([{ t: 1, mb: 100 }, { t: 2, mb: 220 }]), "▲ +120MB");
+  assert.equal(runningPanel.trendText([{ t: 1, mb: 300 }, { t: 2, mb: 200 }]), "▼ -100MB");
 });

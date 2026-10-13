@@ -24,6 +24,8 @@ import {
   updatedText,
 } from "@/components/admin/ui/meters";
 
+import { RunningSection } from "./RunningPanel";
+
 const REFRESH_MS = 30_000;
 
 const STATE_LED: Record<DeviceState, { tone: MeterTone; text: string }> = {
@@ -306,6 +308,7 @@ export function DevicePanelView({
             색과 함께 글자로도 표시해요: 70% 이상 ▲ 주의, 90% 이상 ✕ 위험. 10분 넘게
             값이 안 오면 &apos;오래된 값&apos;, 30분 넘으면 &apos;끊김&apos;.
           </p>
+          <RunningSection devices={data.devices} now={now} />
           <Deploys now={now} v={data.deploys} />
         </div>
       )}

@@ -15,6 +15,7 @@ import FactoryTabs from "./FactoryTabs";
 import { FACTORY_TABS, type FactoryTab } from "./consoleTabs";
 import MaintenancePanel from "./MaintenancePanel";
 import ReleaseAccounts from "./ReleaseAccounts";
+import ResourceAlertStrip from "./RunningPanel";
 import ReleasePanel from "./ReleasePanel";
 import RevisionSender from "./RevisionSender";
 import SecretEntries from "./SecretEntries";
@@ -92,9 +93,12 @@ export default async function FactoryConsole({
           <FactoryTabs active={tab} />
 
           {tab === "status" && (
-            <FactoryOverview initialTab={historyTab}>
-              <SupervisorSummary />
-            </FactoryOverview>
+            <div className="space-y-4">
+              <ResourceAlertStrip />
+              <FactoryOverview initialTab={historyTab}>
+                <SupervisorSummary />
+              </FactoryOverview>
+            </div>
           )}
 
           {tab === "jobs" && (

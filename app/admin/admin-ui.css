@@ -763,6 +763,13 @@ html[data-admin] main:has(> .factory-ui) {
   line-height: 1.25rem;
   white-space: nowrap;
 }
+/* 실행 목록: 긴 문장·배지는 줄바꿈(모바일 가로 스크롤 방지) */
+.factory-ui [data-resource-alert] .fx-led,
+.factory-ui [data-flag] .fx-led,
+.factory-ui [data-running-device] .fx-led {
+  white-space: normal;
+  min-width: 0;
+}
 .factory-ui .fx-led-sym {
   font-size: 0.75rem;
   line-height: 1;

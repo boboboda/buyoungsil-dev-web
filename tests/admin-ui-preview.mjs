@@ -77,7 +77,8 @@ const mask = loadTs("lib/factory/mask.ts");
 const toolBroker = loadTs("lib/factory/toolBroker.ts", { "@/lib/factory/mask": mask });
 const toolboxLib = loadTs("lib/factory/toolbox.ts", { "@/lib/factory/toolBroker": toolBroker });
 const devicesLib = loadTs("lib/factory/devices.ts", { "@/lib/prisma": { __esModule: true, default: null } });
-const { DevicePanelView } = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters });
+const runningPanel = loadTs("components/admin/factory/RunningPanel.tsx", { "@/components/admin/ui/meters": meters });
+const { DevicePanelView } = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters, "./RunningPanel": runningPanel });
 const toolkitLib = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
 const studioLib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkitLib });
 const { default: StudioWorkbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/studioProjects": studioLib });
@@ -138,12 +139,16 @@ STATES["toolbox-failed"] = { ...STATES.live, title: "도구함 · 읽기 실패"
 // 장비 상태(통제실 [사용량] 맨 위): 서버1 CPU 위험·RAM 주의 + 컨테이너 5개, 서버2 40분 끊김(GPU 없음), 메인PC 12분 오래된 값(GPU 있음)
 const devRow = (device, ago, data) => ({ device, data, measuredAt: new Date(now - ago), receivedAt: new Date(now - ago) });
 const devSamples = (device, f) => Array.from({ length: 288 }, (_, i) => ({ device, at: new Date(now - i * 5 * MIN), cpuPct: f(i), ramPct: 50 }));
+const runC = (name, over = {}) => ({ name, image: "app:1", state: "running", status: "Up", uptimeSec: 2 * 86400, stoppedSec: null, restarts: 0, cpuPct: 0.8, memMb: 120, project: "buyoungsil", flags: [], ...over });
+const trend = (from, to) => Array.from({ length: 8 }, (_, i) => ({ t: Math.floor(now / 1000) - (7 - i) * 180, mb: from + ((to - from) * i) / 7 }));
+const runServer1 = { containers: [runC("buyoungsil-web", { memMb: 640, uptimeSec: 9 * 86400 + 5 * 3600, cpuPct: 12.4, flags: ["long_running"], memTrend: trend(480, 640) }), runC("postgres", { memMb: 310, memTrend: trend(300, 310) }), runC("redis", { memMb: 40 }), runC("studio-api", { restarts: 6, memMb: 95, flags: ["restart_loop"] }), runC("old-test", { state: "exited", status: "Exited", uptimeSec: null, stoppedSec: 12 * 86400, memMb: null, cpuPct: null, project: null, flags: ["stopped", "unlabeled"] })], processes: null, summary: { stoppedContainers: 1, danglingImages: 7, imageBytes: 3_400_000_000, volumes: 9 }, error: null, truncated: false };
+const runMain = { containers: null, processes: [{ pid: 4120, name: "node", dir: "selfdev", memMb: 910, cpuSec: 5400, startedAt: Math.floor(now / 1000) - 3 * 86400, child: false, ports: [3000, 9229], flags: ["heavy_orphan"], memTrend: trend(700, 910) }, { pid: 880, name: "claude", dir: "factory", memMb: 420, cpuSec: 800, startedAt: Math.floor(now / 1000) - 4 * 3600, child: true, ports: [], flags: [] }], summary: null, error: null, truncated: false };
 const devicesData = {
   asOf: now,
   devices: [
-    devicesLib.toDeviceView("server1", devRow("server1", 40_000, { cpuPct: 93.4, ram: { usedGb: 24.6, totalGb: 31.2 }, gpu: { state: "none" }, disks: [{ mount: "/", usedGb: 402.1, totalGb: 468.4 }, { mount: "/data", usedGb: 610, totalGb: 1832.2 }], containers: { state: "ok", names: ["buyoungsil-web", "postgres", "redis", "studio-api", "uptime"] } }), devSamples("server1", (i) => 20 + ((i * 7) % 60)), now),
+    devicesLib.toDeviceView("server1", devRow("server1", 40_000, { cpuPct: 93.4, ram: { usedGb: 24.6, totalGb: 31.2 }, gpu: { state: "none" }, disks: [{ mount: "/", usedGb: 402.1, totalGb: 468.4 }, { mount: "/data", usedGb: 610, totalGb: 1832.2 }], containers: { state: "ok", names: ["buyoungsil-web", "postgres", "redis", "studio-api", "uptime"] }, running: runServer1 }), devSamples("server1", (i) => 20 + ((i * 7) % 60)), now),
     devicesLib.toDeviceView("server2", devRow("server2", 40 * MIN, { cpuPct: 3.1, ram: { usedGb: 2.1, totalGb: 15.5 }, gpu: { state: "none" }, disks: [{ mount: "/", usedGb: 88.2, totalGb: 233.7 }] }), devSamples("server2", () => 4), now),
-    devicesLib.toDeviceView("main-pc", devRow("main-pc", 12 * MIN, { cpuPct: 17.3, ram: { usedGb: 48.3, totalGb: 63.7 }, gpu: { state: "ok", list: [{ utilPct: 2, memUsedGb: 9.6, memTotalGb: 15.9, tempC: 41 }] }, disks: [{ mount: "C:", usedGb: 819.8, totalGb: 930.5 }, { mount: "E:", usedGb: 14.3, totalGb: 3726 }, { mount: "F:", usedGb: 144.4, totalGb: 1816.3 }, { mount: "D:", usedGb: 561.3, totalGb: 931.5 }] }), devSamples("main-pc", (i) => (i < 30 ? 60 : 15)), now),
+    devicesLib.toDeviceView("main-pc", devRow("main-pc", 12 * MIN, { cpuPct: 17.3, ram: { usedGb: 48.3, totalGb: 63.7 }, gpu: { state: "ok", list: [{ utilPct: 2, memUsedGb: 9.6, memTotalGb: 15.9, tempC: 41 }] }, disks: [{ mount: "C:", usedGb: 819.8, totalGb: 930.5 }, { mount: "E:", usedGb: 14.3, totalGb: 3726 }, { mount: "F:", usedGb: 144.4, totalGb: 1816.3 }, { mount: "D:", usedGb: 561.3, totalGb: 931.5 }], running: runMain }), devSamples("main-pc", (i) => (i < 30 ? 60 : 15)), now),
   ],
   deploys: { containers: { state: "ok", count: 5, names: ["buyoungsil-web", "postgres", "redis", "studio-api", "uptime"], asOf: now - 40_000 }, homepage: { released: 4, total: 11 }, storeReleased: 2 },
 };
