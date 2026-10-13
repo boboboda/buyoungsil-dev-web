@@ -1,10 +1,13 @@
 // components/admin/factory/AppProjectLinks.tsx
 // 공장 앱 ↔ 홈페이지 Project 연결. 프로젝트는 출시 대상 앱에만 둔다(출시 패키지에 추가할 때 고르거나, 출시 카드에서 연결).
 // 여기서는 출시 대상 앱만 연결할 수 있고, 출시 대상이 아닌데 연결된 앱은 목록으로만 보여 주며 [연결 풀기]만 둔다(프로젝트는 지우지 않음).
+// 고르는 칸은 [출시] 카드와 같은 공용 ProjectLinkSelect. 저장은 이 화면이 쓰던 /api/admin/factory/apps 그대로.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, CardHeader } from "@heroui/react";
+
+import ProjectLinkSelect from "./ProjectLinkSelect";
 
 interface AppRow {
   appSlug: string;
@@ -33,7 +36,6 @@ interface Data {
 export default function AppProjectLinks() {
   const [data, setData] = useState<Data | null>(null);
   const [open, setOpen] = useState(false);
-  const [choice, setChoice] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -79,12 +81,12 @@ export default function AppProjectLinks() {
   };
 
   return (
-    <Card className="mb-6">
+    <Card>
       <CardHeader className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col">
-          <span className="font-semibold">🔗 홈페이지 프로젝트 연결</span>
+          <span className="font-semibold">홈페이지 프로젝트 연결</span>
           <span className="text-xs text-default-500">
-            프로젝트는 출시 대상 앱에만 연결해요. 출시 패키지에 추가할 때 고르거나, 출시 카드나 여기서 기존 프로젝트를 골라 이어 주세요.
+            프로젝트는 출시 대상 앱에만 연결해요. [출시] 탭에서 출시 패키지에 추가할 때 고르거나, 출시 카드나 여기서 기존 프로젝트를 골라 이어 주세요.
           </span>
         </div>
         <Button className="min-h-11 w-full sm:min-h-0 sm:w-auto" size="sm" variant="flat" onPress={() => setOpen((v) => !v)}>
@@ -96,22 +98,22 @@ export default function AppProjectLinks() {
           {!data ? (
             <p className="text-sm text-default-500">읽는 중…</p>
           ) : targets.length === 0 ? (
-            <p className="text-sm text-default-500">출시 대상인 앱이 없어요. 출시 패키지 화면에서 스토어에 올릴 앱을 추가하세요.</p>
+            <p className="text-sm text-default-500">출시 대상인 앱이 없어요. [출시] 탭에서 스토어에 올릴 앱을 추가하세요.</p>
           ) : (
-            targets.map((a) => {
-              const selected = choice[a.appSlug] ?? "";
-
-              return (
+            targets.map((a) => (
                 <div key={a.appSlug} className="flex flex-col gap-2 border-b border-default-100 pb-3 last:border-0 sm:flex-row sm:items-center">
                   <div className="min-w-0 sm:w-64">
                     <div className="truncate font-medium">{a.title}</div>
-                    <div className="text-xs text-default-500">
+                    <div className="font-mono text-xs text-default-500">
                       {a.appSlug} · {a.stack}
                     </div>
                   </div>
                   {a.projectId ? (
                     <div className="flex flex-1 flex-wrap items-center gap-2 text-sm">
-                      <span>✅ {a.projectTitle}</span>
+                      <span className="flex items-center gap-2">
+                        <span aria-hidden className="fx-dot fx-ok" />
+                        {a.projectTitle}
+                      </span>
                       <Button
                         className="min-h-11 sm:min-h-0"
                         isDisabled={busy !== null}
@@ -123,33 +125,18 @@ export default function AppProjectLinks() {
                       </Button>
                     </div>
                   ) : (
-                    <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center">
-                      <select
-                        className="w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:flex-1 sm:text-sm"
-                        value={selected}
-                        onChange={(e) => setChoice((c) => ({ ...c, [a.appSlug]: e.target.value }))}
-                      >
-                        <option value="">프로젝트 고르기…</option>
-                        {data.projects.map((p) => (
-                          <option key={p.id} disabled={!!p.linkedApp} value={p.id}>
-                            {p.title} ({p.platform}, {p.status}){p.linkedApp ? ` — ${p.linkedApp} 에 연결됨` : ""}
-                          </option>
-                        ))}
-                      </select>
-                      <Button
-                        className="min-h-11 sm:min-h-0"
-                        color="primary"
-                        isDisabled={!selected || busy !== null}
-                        size="sm"
-                        onPress={() => save(a.appSlug, selected)}
-                      >
-                        {busy === a.appSlug ? "저장 중…" : "연결"}
-                      </Button>
-                    </div>
+                    <ProjectLinkSelect
+                      appName={a.title}
+                      appSlug={a.appSlug}
+                      busy={busy !== null}
+                      currentId={null}
+                      projects={data.projects}
+                      saving={busy === a.appSlug}
+                      onLink={(projectId) => save(a.appSlug, projectId)}
+                    />
                   )}
                 </div>
-              );
-            })
+              ))
           )}
           {strays.length > 0 && (
             <div className="space-y-2 rounded-lg border border-warning-200 p-2">

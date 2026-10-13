@@ -232,10 +232,11 @@ export default function MaintenancePanel() {
               </button>
               {i.status !== "running" && (
                 <div className="flex shrink-0 gap-1">
+                  {/* 승인은 [현황] 탭 '승인·배포 할 일' 또는 이 정비 대화 안(지시 아래)에서 한다 */}
                   {i.status === "awaiting_approval" && (
-                    <Button color="primary" isDisabled={busy} size="sm" onPress={() => post({ action: "approve", turnId: i.turnId })}>
-                      승인
-                    </Button>
+                    <a className="inline-flex min-h-8 items-center rounded-md px-2 text-xs text-warning underline" href="/admin/factory?tab=status">
+                      승인은 [현황]
+                    </a>
                   )}
                   <Button isDisabled={busy} size="sm" variant="flat" onPress={() => post({ action: "cancel", turnId: i.turnId }, `이 지시를 취소할까요?\n「${i.firstLine}」`)}>
                     취소

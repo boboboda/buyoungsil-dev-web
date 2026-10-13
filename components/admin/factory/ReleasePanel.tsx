@@ -27,6 +27,7 @@ import StoreAssetsView from "./StoreAssetsView";
 import TestApkBox from "./TestApkBox";
 import ReviewBox, { ReviewBadge } from "./ReviewBox";
 import UploadTestBox from "./UploadTestBox";
+import ProjectLinkSelect from "./ProjectLinkSelect";
 import { BuildResultView, FirstVideoPanel, LinkWaitPanel, ListingCopy, ReviewPanel, isYoutubeUrl } from "./ReleaseReview";
 import {
   JOB_KIND_TEXT,
@@ -356,11 +357,7 @@ function ProjectBox({
   setNotice: (v: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [pick, setPick] = useState(app.projectId ?? "");
   const [checking, setChecking] = useState(false);
-  const options = pickableProjects(data, app.appSlug);
-
-  useEffect(() => setPick(app.projectId ?? ""), [app.projectId]);
 
   const syncHomepage = async () => {
     if (!app.projectId) {
@@ -415,38 +412,15 @@ function ProjectBox({
         공개 여부는 그대로예요.
       </p>
       {open && (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <select aria-label="연결할 홈페이지 프로젝트" className={`${input} sm:flex-1`} value={pick} onChange={(e) => setPick(e.target.value)}>
-            <option value="">프로젝트 고르기…</option>
-            {options.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.title} ({p.platform}, {p.status}){p.id === app.projectId ? " — 지금 연결됨" : ""}
-              </option>
-            ))}
-          </select>
-          <Button
-            className="min-h-11 sm:min-h-0"
-            color="primary"
-            isDisabled={busy || !pick || pick === app.projectId}
-            size="sm"
-            onPress={() => call({ action: "linkProject", appSlug: app.appSlug, projectId: pick })}
-          >
-            연결
-          </Button>
-          {app.projectId && (
-            <Button
-              className="min-h-11 sm:min-h-0"
-              isDisabled={busy}
-              size="sm"
-              variant="light"
-              onPress={() => {
-                if (window.confirm(`${app.displayName}: 홈페이지 프로젝트 연결을 풀까요?\n(프로젝트는 지워지지 않아요)`)) call({ action: "linkProject", appSlug: app.appSlug, projectId: null });
-              }}
-            >
-              연결 풀기
-            </Button>
-          )}
-        </div>
+        <ProjectLinkSelect
+          appName={app.displayName}
+          appSlug={app.appSlug}
+          busy={busy}
+          currentId={app.projectId}
+          projects={data.projects ?? []}
+          onLink={(projectId) => call({ action: "linkProject", appSlug: app.appSlug, projectId })}
+          onUnlink={() => call({ action: "linkProject", appSlug: app.appSlug, projectId: null })}
+        />
       )}
     </div>
   );
