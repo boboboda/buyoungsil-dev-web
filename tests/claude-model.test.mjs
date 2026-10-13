@@ -301,6 +301,7 @@ const approvals = {
   deployHistory: async () => [],
   historyTotals: async () => ({ deploys: 0, updates: 0, threads: 0 }),
   maintenanceSummary: async () => [],
+  activeNow: async () => ({ running: [], queued: 0, next: null }),
   supervisorUpdateHistory: async () => [],
 };
 const savedDefault = [];

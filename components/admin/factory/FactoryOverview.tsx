@@ -5,10 +5,20 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { Button, Card, CardBody, Chip } from "@heroui/react";
+import { Button, Card, CardBody } from "@heroui/react";
 
 import ClaudeModelSelect, { ModelTag } from "./ClaudeModelSelect";
-import { StatusDot } from "./fx";
+import {
+  type StatusInfo,
+  formatElapsed,
+  isLiveKind,
+  jobStatusInfo,
+  KindChip,
+  StatusChip,
+  StatusDot,
+  turnStatusInfo,
+  type StatusKind,
+} from "./fx";
 
 import { AI_LABELS, isAiEngine, isClaudeModel, type AiEngine, type TaskModel } from "@/lib/factory/ai";
 
@@ -85,11 +95,30 @@ interface Overview {
     deployResult: string | null;
     updatedAt: string;
   }[];
+  // [현황] 맨 위 '지금 진행 중' 띠(예전 서버에는 없다 → 띠가 '진행 중인 작업 없음'으로 보인다)
+  active?: ActiveNow;
   // 종류별 전체 개수(예전 서버에는 없다. jobs 는 앱 일감을 넣은 서버부터)
   totals?: Partial<Record<HistoryKind, number>>;
   // 기본 모델·주사용 AI(승인 줄의 '기본 설정 사용' 표시)
   supervisor?: { defaultClaudeModel?: string | null; defaultAiEngine?: string };
   message?: string;
+}
+
+// 서버가 알려 주는 진행 중 일감·정비 지시와 대기 개수(진행 중 서버 배포는 inbox.deploys 에서 합친다)
+export interface ActiveItem {
+  type: "job" | "maintenance" | "deploy";
+  id: string;
+  title: string;
+  sub?: string | null;
+  kindLabel: string;
+  startedAt: string | null;
+  aiEngine?: string | null;
+  aiModel?: string | null;
+}
+export interface ActiveNow {
+  running: ActiveItem[];
+  queued: number;
+  next: { type: "job" | "maintenance"; title: string } | null;
 }
 
 export type HistoryKind = "deploys" | "updates" | "threads" | "jobs";
@@ -166,18 +195,6 @@ export const totalOf = (data: HistoryData | null) =>
       )
     : undefined;
 
-// 앱 일감 상태 → 한국어 이름·색
-const JOB_STATUS: Record<string, { label: string; color: ChipColor }> = {
-  pending: { label: "승인 대기", color: "warning" },
-  approved: { label: "대기열", color: "warning" },
-  running: { label: "진행 중", color: "primary" },
-  review: { label: "검토 대기", color: "warning" },
-  linkwait: { label: "영상 링크 대기", color: "warning" },
-  done: { label: "완료", color: "success" },
-  failed: { label: "실패", color: "danger" },
-  cancelled: { label: "취소", color: "default" },
-};
-
 // 줄을 누르면 [일감] 탭의 그 일감 상세가 열린다
 export const jobHref = (id: string) =>
   `/admin/factory?tab=jobs&job=${encodeURIComponent(id)}`;
@@ -186,53 +203,54 @@ const when = (v: string | null | undefined) =>
   v ? new Date(v).toLocaleString("ko-KR") : "-";
 const short = (c: string | null | undefined) => (c ? c.slice(0, 7) : "-");
 
-const TURN_LABEL: Record<string, string> = {
-  awaiting_approval: "승인 기다림",
-  queued: "대기열",
-  running: "진행 중",
-  done: "완료",
-  failed: "실패",
-  cancelled: "취소",
-};
-
-type ChipColor =
-  | "default"
-  | "primary"
-  | "secondary"
-  | "success"
-  | "warning"
-  | "danger";
-
 // 업데이트 소식 문구로 결과를 나눈다(감독 프로그램 update.mjs 의 "자동 업데이트 …" 문구)
 function updateResult(u: Overview["updates"][number]): {
   label: string;
-  color: ChipColor;
+  kind: StatusKind;
 } {
   const n = u.note ?? "";
 
-  if (n.includes("실패")) return { label: "실패·되돌림", color: "danger" };
+  if (n.includes("실패")) return { label: "실패·되돌림", kind: "fail" };
   if (n.startsWith("자동 업데이트 확인:") && n.includes("성공"))
-    return { label: "새 버전 확인됨", color: "success" };
+    return { label: "새 버전 확인됨", kind: "done" };
   if (n.startsWith("자동 업데이트 완료"))
-    return { label: "받음(재시작)", color: "primary" };
+    return { label: "받음(재시작)", kind: "done" };
   if (n.startsWith("자동 업데이트 시작"))
-    return { label: "받는 중", color: "primary" };
-  if (n.includes("건너뜀")) return { label: "건너뜀", color: "default" };
-  if (n.includes("이미 최신")) return { label: "이미 최신", color: "default" };
-  if (u.fromCommit) return { label: "버전 바뀜", color: "primary" };
+    return { label: "받는 중", kind: "run" };
+  if (n.includes("건너뜀")) return { label: "건너뜀", kind: "cancel" };
+  if (n.includes("이미 최신")) return { label: "이미 최신", kind: "done" };
+  if (u.fromCommit) return { label: "버전 바뀜", kind: "done" };
 
-  return { label: "소식", color: "default" };
+  return { label: "소식", kind: "info" };
 }
 
 function deployStatus(d: Overview["deploys"][number]): {
   label: string;
-  color: ChipColor;
+  kind: StatusKind;
 } {
-  if (d.ok === true) return { label: "완료", color: "success" };
-  if (d.ok === false) return { label: "실패", color: "danger" };
-  if (d.startedAt) return { label: "진행 중(빌드)", color: "primary" };
+  if (d.ok === true) return { label: "완료", kind: "done" };
+  if (d.ok === false) return { label: "실패", kind: "fail" };
+  if (d.startedAt) return { label: "진행 중(빌드)", kind: "run" };
 
-  return { label: "진행 중(PC 대기)", color: "primary" };
+  return { label: "진행 중(PC 대기)", kind: "run" };
+}
+
+// 정비 대화 한 줄의 상태: 배포 중이면 진행 중, 아니면 마지막 지시의 상태(없으면 상태 칩 없음)
+function threadStatus(t: HistoryData["threads"][number]): StatusInfo | null {
+  if (t.deployInProgress) return { kind: "run", label: "배포 진행 중" };
+
+  return t.lastTurnStatus ? turnStatusInfo(t.lastTurnStatus) : null;
+}
+
+// '진행 중만 보기': 진행 중이거나 사람이 눌러야 하는 줄
+export function isLiveItem(type: HistoryKind, item: HistoryItem) {
+  if (type === "jobs") return isLiveKind(jobStatusInfo((item as JobHistoryItem).status).kind);
+  if (type === "deploys") return isLiveKind(deployStatus(item as Overview["deploys"][number]).kind);
+  if (type === "updates") return isLiveKind(updateResult(item as Overview["updates"][number]).kind);
+
+  const s = threadStatus(item as HistoryData["threads"][number]);
+
+  return !!s && isLiveKind(s.kind);
 }
 
 // children(감독 프로그램 카드)은 "할 일"과 "이력" 사이에 놓는다.
@@ -453,7 +471,9 @@ export default function FactoryOverview({
 
   return (
     <>
-      <Card className="mb-6" data-title="todo · 승인·배포">
+      <ActiveStrip active={data?.active} deploys={inbox?.deploys} loading={!data} />
+
+      <Card className="mb-6" data-title="todo · 승인·배포" id="factory-todo">
         <CardBody className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-semibold">
@@ -478,13 +498,13 @@ export default function FactoryOverview({
           {inbox?.deploys.map((d) => (
             <div
               key={`d-${d.threadId}`}
-              className="flex flex-col gap-2 rounded-lg border border-danger-200 p-2 sm:flex-row sm:items-center sm:justify-between"
+              className="fx-row flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between"
+              data-st={d.inProgress ? "run" : "approval"}
             >
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Chip color="danger" size="sm" variant="flat">
-                    🚀 서버 배포
-                  </Chip>
+                  <StatusChip kind={d.inProgress ? "run" : "approval"} label={d.inProgress ? "배포 진행 중" : "승인 필요"} />
+                  <KindChip label="🚀 서버 배포" />
                   <span className="font-medium">{d.title}</span>
                 </div>
                 <div className="mt-1 font-mono text-xs text-default-500">
@@ -554,13 +574,13 @@ export default function FactoryOverview({
           {inbox?.turns.map((t) => (
             <div
               key={`t-${t.id}`}
-              className="flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between"
+              className="fx-row flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between"
+              data-st="approval"
             >
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Chip color="warning" size="sm" variant="flat">
-                    🛠 정비 지시
-                  </Chip>
+                  <StatusChip kind="approval" />
+                  <KindChip label="🛠 정비 지시" />
                   <span className="font-medium">{t.threadTitle}</span>
                   <span className="font-mono text-xs text-default-500">
                     {t.source ?? ""} · {when(t.createdAt)}
@@ -596,24 +616,13 @@ export default function FactoryOverview({
           {inbox?.jobs.map((j) => (
             <div
               key={`j-${j.id}`}
-              className="flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between"
+              className="fx-row flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between"
+              data-st="approval"
             >
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Chip
-                    color={
-                      j.kind === "release"
-                        ? "success"
-                        : j.kind === "new"
-                          ? "primary"
-                          : "default"
-                    }
-                    size="sm"
-                    variant="flat"
-                  >
-                    {j.kind === "release" ? "📦 " : "📱 "}
-                    {j.kindLabel}
-                  </Chip>
+                  <StatusChip kind="approval" />
+                  <KindChip label={`${j.kind === "release" ? "📦 " : "📱 "}${j.kindLabel}`} />
                   <span className="font-medium">{j.title}</span>
                   <span className="font-mono text-xs text-default-500">
                     {j.appSlug} · {j.stack} · {when(j.createdAt)}
@@ -696,11 +705,11 @@ const EMPTY: Record<HistoryKind, string> = {
 };
 
 // 전체 히스토리에서 줄마다 붙는 종류 표시와 필터 이름
-const KIND_BADGE: Record<HistoryKind, { label: string; color: ChipColor }> = {
-  deploys: { label: "🚀 배포", color: "danger" },
-  updates: { label: "🔄 감독", color: "secondary" },
-  threads: { label: "🛠 정비", color: "warning" },
-  jobs: { label: "📦 일감", color: "success" },
+const KIND_BADGE: Record<HistoryKind, { label: string }> = {
+  deploys: { label: "🚀 배포" },
+  updates: { label: "🔄 감독" },
+  threads: { label: "🛠 정비" },
+  jobs: { label: "📦 일감" },
 };
 const FILTERS = [
   ["all", "전체"],
@@ -726,6 +735,7 @@ export function HistoryPanelView({
   onShowRecent,
   onFilter = () => {},
   onMoreMerged = () => {},
+  initialLiveOnly = false,
 }: {
   data: HistoryData | null;
   open: boolean;
@@ -739,7 +749,10 @@ export function HistoryPanelView({
   onShowRecent: () => void;
   onFilter?: (f: HistoryFilter) => void;
   onMoreMerged?: () => void;
+  initialLiveOnly?: boolean; // '진행 중만 보기' 처음 값(시험·미리보기용)
 }) {
+  const [liveOnly, setLiveOnly] = useState(initialLiveOnly);
+  const toggleLive = () => setLiveOnly((v) => !v);
   const kindTab = tab === "all" ? null : tab;
   const all = full && full.kind === tab ? full : null;
   // 앱 일감은 최근 목록이 없고(overview 에는 개수만) 탭을 누르면 바로 전체 목록을 읽는다
@@ -833,7 +846,13 @@ export function HistoryPanelView({
         {open && !data && <p className="text-sm text-default-500">읽는 중…</p>}
 
         {open && data && tab === "all" && (
-          <MergedList merged={merged} onFilter={onFilter} onMore={onMoreMerged} />
+          <MergedList
+            liveOnly={liveOnly}
+            merged={merged}
+            onFilter={onFilter}
+            onLive={toggleLive}
+            onMore={onMoreMerged}
+          />
         )}
 
         {open && data && kindTab && (
@@ -857,8 +876,23 @@ export function HistoryPanelView({
             {kindTab === "jobs" && !all && (
               <p className="text-sm text-default-500">읽는 중…</p>
             )}
+            {tab === "jobs" && (
+              <div className="flex flex-wrap items-center gap-2">
+                <LiveToggle liveOnly={liveOnly} onLive={toggleLive} />
+                {liveOnly && (
+                  <span className="text-xs text-default-500" data-live-note>
+                    불러온 {list.length}개 중 진행 중·승인 필요만 보여요.
+                  </span>
+                )}
+              </div>
+            )}
             {tab === "jobs" &&
-              (list as JobHistoryItem[]).map((j) => <JobRow key={j.id} j={j} />)}
+              (list as JobHistoryItem[])
+                .filter((j) => !liveOnly || isLiveItem("jobs", j))
+                .map((j) => <JobRow key={j.id} j={j} />)}
+            {tab === "jobs" && liveOnly && !all?.loading && (list as JobHistoryItem[]).every((j) => !isLiveItem("jobs", j)) && (
+              <p className="text-sm text-default-500">진행 중이거나 승인이 필요한 일감이 없어요.</p>
+            )}
             {tab === "deploys" &&
               (list as HistoryData["deploys"]).map((d) => (
                 <DeployRow key={d.id} d={d} />
@@ -943,13 +977,18 @@ function MergedList({
   merged,
   onFilter,
   onMore,
+  liveOnly,
+  onLive,
 }: {
   merged: MergedHistory | null;
   onFilter: (f: HistoryFilter) => void;
   onMore: () => void;
+  liveOnly: boolean;
+  onLive: () => void;
 }) {
   const filter = merged?.filter ?? "all";
   const items = merged?.items ?? [];
+  const shown = liveOnly ? items.filter((m) => isLiveItem(m.type, m.item)) : items;
 
   return (
     <div className="space-y-2" data-history="merged">
@@ -977,19 +1016,24 @@ function MergedList({
               {label}
             </Button>
           ))}
+          <LiveToggle liveOnly={liveOnly} onLive={onLive} />
         </div>
       </div>
+      {liveOnly && items.length > 0 && (
+        <p className="text-xs text-default-500" data-live-note>
+          불러온 {items.length}개 중 진행 중·승인 필요 {shown.length}개만 보여요{merged?.nextCursor ? " (더 보기를 누르면 더 찾아요)" : ""}.
+        </p>
+      )}
+      {liveOnly && items.length > 0 && shown.length === 0 && (
+        <p className="text-sm text-default-500">진행 중이거나 승인이 필요한 줄이 없어요.</p>
+      )}
       {items.length === 0 && merged && !merged.loading && !merged.error && (
         <p className="text-sm text-default-500">
           {filter === "all" ? "기록이 없어요." : EMPTY[filter]}
         </p>
       )}
-      {items.map((m) => {
-        const badge = (
-          <Chip color={KIND_BADGE[m.type].color} data-kind={m.type} size="sm" variant="bordered">
-            {KIND_BADGE[m.type].label}
-          </Chip>
-        );
+      {shown.map((m) => {
+        const badge = <KindChip kind={m.type} label={KIND_BADGE[m.type].label} />;
 
         return m.type === "deploys" ? (
           <DeployRow key={`d-${m.item.id}`} badge={badge} d={m.item as HistoryData["deploys"][number]} />
@@ -1039,12 +1083,10 @@ function DeployRow({
   const st = deployStatus(d);
 
   return (
-    <div className="rounded-lg border border-default-200 p-2 text-sm">
+    <div className="fx-row rounded-lg border border-default-200 p-2 text-sm" data-st={st.kind}>
       <div className="flex flex-wrap items-center gap-2">
+        <StatusChip kind={st.kind} label={st.label} />
         {badge}
-        <Chip color={st.color} size="sm" variant="flat">
-          {st.label}
-        </Chip>
         <span className="font-mono text-xs">{short(d.commit)}</span>
         <span className="font-medium">{d.threadTitle}</span>
         {d.via && (
@@ -1066,7 +1108,7 @@ function DeployRow({
         요청 {when(d.requestedAt)} · 시작 {when(d.startedAt)} · 완료{" "}
         {when(d.finishedAt)}
       </div>
-      {d.result && <ResultText text={d.result} />}
+      {d.result && <ResultText fail={st.kind === "fail"} text={d.result} />}
     </div>
   );
 }
@@ -1081,12 +1123,10 @@ function UpdateRow({
   const r = updateResult(u);
 
   return (
-    <div className="rounded-lg border border-default-200 p-2 text-sm">
+    <div className="fx-row rounded-lg border border-default-200 p-2 text-sm" data-st={r.kind}>
       <div className="flex flex-wrap items-center gap-2">
+        <StatusChip kind={r.kind} label={r.label} />
         {badge}
-        <Chip color={r.color} size="sm" variant="flat">
-          {r.label}
-        </Chip>
         <span className="font-mono text-xs">
           {u.fromCommit
             ? `${short(u.fromCommit)} → ${short(u.commit)}`
@@ -1100,26 +1140,22 @@ function UpdateRow({
           🛠 정비: {u.thread.title}
         </div>
       )}
-      {u.note && <ResultText text={u.note} />}
+      {u.note && <ResultText fail={r.kind === "fail"} text={u.note} />}
     </div>
   );
 }
 
 // 앱 일감 한 줄: 제목(누르면 [일감] 탭의 그 일감 상세)·앱·종류·상태·시각·모델·결과 요약(길면 접기)
 function JobRow({ j, badge }: { j: JobHistoryItem; badge?: ReactNode }) {
-  const st = JOB_STATUS[j.status] ?? { label: j.status, color: "default" as ChipColor };
+  const st = jobStatusInfo(j.status);
   const engine = (j.aiEngine === "codex" ? "codex" : "claude") as AiEngine;
 
   return (
-    <div className="rounded-lg border border-default-200 p-2 text-sm" data-job={j.id}>
+    <div className="fx-row rounded-lg border border-default-200 p-2 text-sm" data-job={j.id} data-st={st.kind}>
       <div className="flex flex-wrap items-center gap-2">
+        <StatusChip kind={st.kind} label={st.label} />
         {badge}
-        <Chip color={st.color} size="sm" variant="flat">
-          {st.label}
-        </Chip>
-        <Chip color={j.kind === "new" ? "primary" : "default"} size="sm" variant="bordered">
-          {j.kindLabel}
-        </Chip>
+        <KindChip label={j.kindLabel} />
         <a className="min-w-0 break-words font-medium underline decoration-default-300 underline-offset-2" href={jobHref(j.id)}>
           {j.title}
         </a>
@@ -1132,7 +1168,7 @@ function JobRow({ j, badge }: { j: JobHistoryItem; badge?: ReactNode }) {
         <span className="font-sans">{AI_LABELS[engine]}</span>
         <ModelTag engine={engine} model={j.aiModel} />
       </div>
-      {j.result && <ResultText text={j.result} />}
+      {j.result && <ResultText fail={st.kind === "fail"} text={j.result} />}
     </div>
   );
 }
@@ -1144,33 +1180,18 @@ function ThreadRow({
   t: HistoryData["threads"][number];
   badge?: ReactNode;
 }) {
+  const st = threadStatus(t);
+
   return (
-    <div className="rounded-lg border border-default-200 p-2 text-sm">
+    <div className="fx-row rounded-lg border border-default-200 p-2 text-sm" data-st={st?.kind ?? "info"}>
       <div className="flex flex-wrap items-center gap-2">
+        {st && <StatusChip kind={st.kind} label={st.label} />}
         {badge}
-        <Chip
-          color={t.status === "open" ? "primary" : "default"}
-          size="sm"
-          variant="flat"
-        >
-          {t.status === "open" ? "열림" : "닫힘"}
-        </Chip>
-        {t.lastTurnStatus && (
-          <Chip
-            color={
-              t.lastTurnStatus === "failed"
-                ? "danger"
-                : t.lastTurnStatus === "done"
-                  ? "success"
-                  : "warning"
-            }
-            size="sm"
-            variant="flat"
-          >
-            {TURN_LABEL[t.lastTurnStatus] ?? t.lastTurnStatus}
-          </Chip>
-        )}
         <span className="font-medium">{t.title}</span>
+        {/* 대화(스레드)가 열려 있는지일 뿐 작업 상태가 아니다 → 흐린 보조 표시 */}
+        <span className="fx-faint text-xs" data-thread-open={t.status === "open" ? "open" : "closed"}>
+          {t.status === "open" ? "대화 열림" : "대화 닫힘"}
+        </span>
       </div>
       <div className="mt-1 text-xs text-default-500">
         지시 {t.turns}개 · 올린 커밋 {short(t.pushedCommit)} ·{" "}
@@ -1205,12 +1226,12 @@ export function isLongResult(text: string) {
   );
 }
 
-function ResultText({ text }: { text: string }) {
+function ResultText({ text, fail = false }: { text: string; fail?: boolean }) {
   const [open, setOpen] = useState(false);
   const long = isLongResult(text);
 
   return (
-    <div className="mt-1 break-words text-xs text-default-600" data-result={long ? (open ? "open" : "folded") : "short"}>
+    <div className={`mt-1 break-words text-xs ${fail ? "fx-fail-text" : "text-default-600"}`} data-fail-reason={fail ? "" : undefined} data-result={long ? (open ? "open" : "folded") : "short"}>
       <div
         className={`whitespace-pre-wrap ${long && !open ? "line-clamp-3" : long ? "max-h-64 overflow-y-auto rounded border border-default-200 bg-background p-2 font-mono text-[11px]" : ""}`}
       >
@@ -1227,5 +1248,129 @@ function ResultText({ text }: { text: string }) {
         </button>
       )}
     </div>
+  );
+}
+
+// '진행 중만 보기' 토글(전체 히스토리 탭·앱 일감 탭)
+function LiveToggle({ liveOnly, onLive }: { liveOnly: boolean; onLive: () => void }) {
+  return (
+    <Button
+      aria-pressed={liveOnly}
+      className="min-h-11 sm:min-h-0"
+      color={liveOnly ? "primary" : "default"}
+      data-live-toggle
+      size="sm"
+      variant={liveOnly ? "solid" : "flat"}
+      onPress={onLive}
+    >
+      {liveOnly ? "▶ 진행 중만 보는 중" : "▶ 진행 중만 보기"}
+    </Button>
+  );
+}
+
+// 띠에 보일 최대 개수. 더 있으면 '외 N개'
+export const ACTIVE_MAX = 3;
+
+// 진행 중 목록: 서버가 준 일감·정비 + 진행 중인 서버 배포(inbox.deploys). 시작이 빠른 것부터
+export function activeItems(active: ActiveNow | undefined, deploys: Overview["inbox"]["deploys"] | undefined): ActiveItem[] {
+  const dep: ActiveItem[] = (deploys ?? [])
+    .filter((d) => d.inProgress)
+    .map((d) => ({
+      type: "deploy" as const,
+      id: d.threadId,
+      title: d.title,
+      sub: d.commit ? short(d.commit) : null,
+      kindLabel: "서버 배포",
+      startedAt: d.requestedAt,
+    }));
+
+  return [...(active?.running ?? []), ...dep].sort((a, b) => (Date.parse(a.startedAt ?? "") || Infinity) - (Date.parse(b.startedAt ?? "") || Infinity));
+}
+
+const activeHref = (it: ActiveItem) => (it.type === "job" ? jobHref(it.id) : it.type === "deploy" ? "#factory-todo" : "/admin/factory?tab=jobs");
+const TYPE_ICON = { job: "📦", maintenance: "🛠", deploy: "🚀" } as const;
+
+// [현황] 맨 위 '지금 진행 중' 띠. 값은 7초마다 읽는 overview(active + inbox.deploys) 하나에서만 온다
+// (아래 이력·할 일과 같은 응답이라 서로 어긋나지 않는다). now 를 주면 그 시각 기준(시험·미리보기), 아니면 10초마다 갱신
+export function ActiveStrip({
+  active,
+  deploys,
+  loading = false,
+  now,
+}: {
+  active: ActiveNow | undefined;
+  deploys?: Overview["inbox"]["deploys"];
+  loading?: boolean;
+  now?: number;
+}) {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (now !== undefined) return;
+    const t = setInterval(() => setTick((n) => n + 1), 10000);
+
+    return () => clearInterval(t);
+  }, [now]);
+  void tick;
+  const at = now ?? Date.now();
+  const items = activeItems(active, deploys);
+  const shown = items.slice(0, ACTIVE_MAX);
+  const queued = active?.queued ?? 0;
+
+  return (
+    <section aria-label="지금 진행 중" className="mb-4 space-y-2" data-active-strip data-title="now · 지금 진행 중">
+      {loading && <p className="text-sm text-default-500">읽는 중…</p>}
+      {!loading && items.length === 0 && (
+        <p className="text-base font-semibold" data-active-none>
+          <span className="fx-faint">▶</span> 진행 중인 작업 없음 · 대기 {queued}개
+        </p>
+      )}
+      {shown.map((it) => (
+        <a
+          key={`${it.type}-${it.id}`}
+          className="fx-active-item flex flex-col gap-1 rounded-lg p-3 no-underline"
+          data-active-item={it.type}
+          href={activeHref(it)}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusChip kind="run" />
+            <KindChip label={`${TYPE_ICON[it.type]} ${it.kindLabel}`} />
+            <span className="fx-active-title">{it.title}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-default-500">
+            {it.sub && <span className="font-mono">{it.sub}</span>}
+            <span className="font-mono" data-elapsed>
+              {it.startedAt ? `경과 ${formatElapsed(at - Date.parse(it.startedAt))}` : "시작하는 중"}
+            </span>
+            {it.aiEngine && (
+              <span>
+                {isAiEngine(it.aiEngine) ? AI_LABELS[it.aiEngine] : it.aiEngine}
+                {it.aiModel && (
+                  <>
+                    {" · "}
+                    <ModelTag engine={it.aiEngine} model={it.aiModel} />
+                  </>
+                )}
+              </span>
+            )}
+          </div>
+        </a>
+      ))}
+      {items.length > ACTIVE_MAX && (
+        <p className="text-sm text-default-500" data-active-more>
+          외 {items.length - ACTIVE_MAX}개 진행 중
+        </p>
+      )}
+      {!loading && items.length > 0 && queued > 0 && (
+        <p className="fx-faint text-sm" data-active-queued>
+          대기 {queued}개{active?.next ? ` · 다음 차례: ${active.next.title}` : ""}
+        </p>
+      )}
+      {!loading && items.length === 0 && active?.next && (
+        <p className="fx-faint text-sm" data-active-next>
+          다음 차례: {active.next.title}
+        </p>
+      )}
+    </section>
   );
 }

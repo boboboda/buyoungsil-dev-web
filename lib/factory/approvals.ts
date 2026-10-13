@@ -150,6 +150,60 @@ export async function approvalInbox() {
   };
 }
 
+/**
+ * 지금 진행 중인 일감·정비 지시와 대기 개수(통제실 [현황] 맨 위 '지금 진행 중' 띠, 읽기 전용).
+ * 진행 중 서버 배포는 approvalInbox().deploys 에 이미 있어서 화면이 합친다. 기획서·로그·작업 PC 이름은 싣지 않는다.
+ */
+export async function activeNow() {
+  const [jobs, turns, queuedJobs, queuedTurns, nextJob, nextTurn] = await Promise.all([
+    prisma.factoryJob.findMany({
+      where: { status: "running" },
+      orderBy: { startedAt: "asc" },
+      take: 10,
+      select: { id: true, appSlug: true, title: true, kind: true, releaseKind: true, aiEngine: true, aiModel: true, startedAt: true },
+    }),
+    prisma.factoryMaintenanceMessage.findMany({
+      where: { role: "user", status: "running" },
+      orderBy: { startedAt: "asc" },
+      take: 10,
+      include: { maintenance: { select: { id: true, title: true } } },
+    }),
+    prisma.factoryJob.count({ where: { status: "approved" } }),
+    prisma.factoryMaintenanceMessage.count({ where: { role: "user", status: "queued" } }),
+    prisma.factoryJob.findFirst({ where: { status: "approved" }, orderBy: { createdAt: "asc" }, select: { title: true, createdAt: true } }),
+    prisma.factoryMaintenanceMessage.findFirst({ where: { role: "user", status: "queued" }, orderBy: { createdAt: "asc" }, include: { maintenance: { select: { title: true } } } }),
+  ]);
+  const nextIsTurn = !!nextTurn && (!nextJob || nextTurn.createdAt < nextJob.createdAt);
+  const next = nextIsTurn ? { type: "maintenance" as const, title: nextTurn.maintenance.title } : nextJob ? { type: "job" as const, title: nextJob.title } : null;
+
+  return {
+    running: [
+      ...jobs.map((j) => ({
+        type: "job" as const,
+        id: j.id,
+        title: j.title,
+        sub: j.appSlug,
+        kindLabel: KIND_LABELS[j.releaseKind ? "release" : j.kind === "new" ? "new" : "revision"] ?? j.kind,
+        startedAt: j.startedAt,
+        aiEngine: j.aiEngine,
+        aiModel: j.aiModel,
+      })),
+      ...turns.map((t) => ({
+        type: "maintenance" as const,
+        id: t.id,
+        title: t.maintenance.title,
+        sub: null as string | null,
+        kindLabel: "정비",
+        startedAt: t.startedAt,
+        aiEngine: t.aiEngine,
+        aiModel: t.aiModel,
+      })),
+    ],
+    queued: queuedJobs + queuedTurns,
+    next,
+  };
+}
+
 /** 감독 프로그램 업데이트 이력. 커밋을 GitHub 에 올린 정비 대화가 있으면 그 제목도 붙인다. */
 export async function supervisorUpdateHistory(limit = 40, cursor?: number) {
   const events = await prisma.factorySupervisorEvent.findMany({

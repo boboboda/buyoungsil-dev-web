@@ -7,6 +7,7 @@
 //       · history-merged(이력 [전체 히스토리] 탭: 배포·감독·정비·일감을 합친 최신순 20개 + 긴 빌드 로그 접힘) · history-jobs(이력 [앱 일감] 탭: 일감 20개 + 긴 결과 접힘)
 //       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
 //       · fable-usage(AI USAGE 의 Fable 주간 한도 카드 + 오늘 모델별 비율 + 상태바 Fable) · fable-missing(Fable 값 못 받음)
+//       · status-mix(통제실 [현황] 상태 체계: '지금 진행 중' 띠 + 진행 중 1·승인 필요 1·대기 3·완료·실패 섞인 목록 + '진행 중만 보기' 켠 목록)
 //       · model-approve(승인할 때 Claude Code 모델 고르기: [현황] 승인 줄의 모델 선택(Codex 일감은 숨김) + 이력 '모델: ○○' + [설정] 기본 모델)
 // 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
@@ -58,7 +59,7 @@ const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/componen
 const aiLib = loadTs("lib/factory/ai.ts");
 const modelSelect = loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib });
 const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx").default;
-const { HistoryPanelView } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
+const { HistoryPanelView, ActiveStrip } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
 const { default: DefaultAiSettings } = loadTs("components/admin/factory/DefaultAiSettings.tsx", {
   "@/lib/factory/ai": aiLib,
   "./AiEngineSelect": loadTs("components/admin/factory/AiEngineSelect.tsx", { "@/lib/factory/ai": aiLib }),
@@ -131,6 +132,7 @@ const devicesData = {
 const devicesBrief = devicesData.devices.map((d) => ({ device: d.device, short: d.short, state: d.state, cpuPct: d.cpuPct, ramPct: d.ram?.pct ?? null }));
 STATES.devices = { ...STATES.live, title: "장비 상태", devices: true, bar: { ...STATES.live.bar, devices: devicesBrief } };
 // 인계 기록 칸(일감 상세·정비 대화의 접이식, 읽기 전용): AI 블록이 있는 정비 항목 / 블록이 없고 실패한 앱 일감 항목 (하니스에서만 펼쳐서 찍는다)
+STATES["status-mix"] = { ...STATES.live, title: "[현황] 상태 체계", statusMix: true };
 STATES.handoff = { ...STATES.live, title: "인계 기록 칸", handoff: true };
 const handoffSample = {
   v: 1, kind: "maintenance", taskId: "turn1", title: "통제실 [현황] 이력에 앱 일감 추가", engine: "claude", model: "opus", at: "2026-10-13T09:10:18.000Z", status: "done",
@@ -145,6 +147,66 @@ const handoffFailed = {
   request: "수정: 메모 삭제 버튼이 안 눌려요", doneWhen: "", done: "", remaining: "", caution: "", failReason: "필수 검증 실패: flutter analyze 오류 3개",
   files: { committed: { list: [], more: 0 }, uncommitted: { list: ["lib/main.dart", "lib/memo_list.dart"], more: 0 } },
   checks: [{ name: "필수 검증", result: "실패", detail: "flutter analyze 오류 3개" }], git: { head: "0f3c2d1e9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d", branch: "main", dirty: true },
+};
+
+// [현황] 상태 체계 견본: 진행 중 1 · 승인 필요 1 · 대기 3 · 완료 · 실패(+취소·감독·배포·정비)가 섞인 전체 히스토리, 맨 위 '지금 진행 중' 띠
+const statusMixPage = () => {
+  const run = { type: "job", id: "cjob000117", title: "물 마시기 알림 수정", sub: "water-log", kindLabel: "수정", startedAt: iso(now - 192_000), aiEngine: "claude", aiModel: "opus" };
+  const mkJob = (n, status, extra = {}) => ({ ...jobRow(n), ...extra, status, id: `cjob${String(900 - n).padStart(6, "0")}` });
+  const items = [
+    { type: "jobs", item: mkJob(0, "running", { title: "물 마시기 알림 수정", startedAt: iso(now - 192_000), result: null }) },
+    { type: "threads", item: { ...threadRow(0), title: "통제실 [현황] 색 정리", status: "open", lastTurnStatus: "awaiting_approval" } },
+    { type: "jobs", item: mkJob(1, "approved", { title: "걸음 수 기록 수정", result: null }) },
+    { type: "jobs", item: mkJob(2, "approved", { title: "메모장 수정", result: null }) },
+    { type: "jobs", item: mkJob(3, "approved", { title: "타이머 새 앱", result: null }) },
+    { type: "deploys", item: { ...historyData.deploys[0], ok: true, startedAt: iso(now - 7 * HOUR), finishedAt: iso(now - 6.9 * HOUR) } },
+    { type: "jobs", item: mkJob(4, "done", { result: "앱 완성: 화면 5개, 빌드·시험 통과" }) },
+    { type: "jobs", item: mkJob(5, "failed", { result: "필수 검증 실패: flutter analyze 오류 3개 — lib/main.dart:41 …" }) },
+    { type: "updates", item: { ...updateRow(0), note: "자동 업데이트 완료 → 재시작" } },
+    { type: "threads", item: { ...threadRow(1), status: "closed", lastTurnStatus: "done" } },
+    { type: "jobs", item: mkJob(6, "cancelled", { result: null }) },
+  ];
+  const merged = { filter: "all", items, nextCursor: "next", total: 408, loading: false, error: null };
+  const view = (liveOnly) =>
+    h(HistoryPanelView, { data: historyData, open: true, tab: "all", full: null, merged, initialLiveOnly: liveOnly, onToggle: noop2, onTab: noop2, onShowAll: noop2, onMore: noop2, onShowRecent: noop2 });
+  const todo = h(
+    Card,
+    { className: "mb-6", "data-title": "todo · 승인·배포" },
+    h(
+      CardBody,
+      { className: "space-y-3" },
+      h("div", { className: "flex items-center gap-2 font-semibold" }, h(fx.StatusDot, { tone: "warn" }), "승인·배포 할 일", h("span", { className: "font-mono" }, "(2)")),
+      ...[
+        ["approval", "🛠 정비 지시", "통제실 [현황] 색 정리", "승인"],
+        ["approval", "📱 새 앱", "timer-app 기획서", "승인"],
+      ].map(([k, kind, t, btn]) =>
+        h(
+          "div",
+          { key: t, className: "fx-row flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between", "data-st": k },
+          h("div", { className: "flex flex-wrap items-center gap-2 text-sm" }, h(fx.StatusChip, { kind: k }), h(fx.KindChip, { label: kind }), h("span", { className: "font-medium" }, t)),
+          h(Button, { color: "primary", size: "sm" }, btn),
+        ),
+      ),
+    ),
+  );
+
+  return h(
+    "div",
+    { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+    h("div", { className: "fx-split-main space-y-4" },
+      h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+      h(FactoryTabs, { active: "status" }),
+      h(ActiveStrip, { now, active: { running: [run], queued: 3, next: { type: "job", title: "걸음 수 기록 수정" } } }),
+      todo,
+      h("h2", { className: "fx-label" }, "── 전체 히스토리 (진행 중 1 · 승인 필요 1 · 대기 3 · 완료 · 실패 · 취소) ──"),
+      view(false),
+      h("h2", { className: "fx-label mt-6" }, "── '진행 중만 보기' 켠 모습 ──"),
+      view(true),
+      h("h2", { className: "fx-label mt-6" }, "── 띠: 진행 중 없음 / 4개 이상 ──"),
+      h(ActiveStrip, { now, active: { running: [], queued: 3, next: { type: "job", title: "걸음 수 기록 수정" } } }),
+      h(ActiveStrip, { now, active: { running: [1, 2, 3, 4, 5].map((n) => ({ ...run, id: `cjob${n}`, title: `앱 일감 ${n}`, startedAt: iso(now - n * 61_000) })), queued: 0, next: null } }),
+    ),
+  );
 };
 const handoffPage = () =>
   h("div", { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" }, h("div", { className: "fx-split-main space-y-4" },
@@ -410,6 +472,7 @@ function page(state) {
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
   if (st.model) return h(AdminLayout, null, modelApprove());
   if (st.handoff) return h(AdminLayout, null, handoffPage());
+  if (st.statusMix) return h(AdminLayout, null, statusMixPage());
   if (st.devices)
     return h(
       AdminLayout,
@@ -576,7 +639,7 @@ if (process.argv.includes("--shot")) {
         if (only && only !== k) continue;
         // 헤드리스 창은 최소 폭이 있어(약 500px) 360px 은 iframe 에 넣어 찍는다
         const mobile = path.join(out, `admin-ui-${k}-360.html`);
-        const [tall, tallMobile] = STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : STATES[k].toolbox ? [2600, 5600] : STATES[k].devices ? [2400, 6200] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
+        const [tall, tallMobile] = STATES[k].statusMix ? [4200, 7600] : STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : STATES[k].toolbox ? [2600, 5600] : STATES[k].devices ? [2400, 6200] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
         fs.writeFileSync(mobile, `<!doctype html><body style="margin:0;background:#333"><iframe src="${path.basename(file)}" width="360" height="${tallMobile}" style="border:0;display:block"></iframe></body>`);
         for (const [w, size, target] of [["1440", `1440,${tall}`, file], ["1024", `1024,${tall}`, file], ["360", `600,${tallMobile}`, mobile]]) {
           const png = path.join(out, `admin-ui-${k}-${w}.png`);

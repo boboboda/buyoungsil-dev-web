@@ -25,6 +25,12 @@
   --fx-warn: #fbbf24; /* 주의·대기·승인 필요 */
   --fx-bad: #f87171; /* 실패·위험 */
   --fx-led-off: #262d37; /* 꺼진 세그먼트 칸 */
+  /* 상태 칩·줄 색(진행 중/승인 필요/대기/완료/실패/취소): 칩 글자·줄 막대·줄 배경을 이름 붙여 한 곳에서 관리 */
+  --fx-st-run-ink: #04161a; /* 진행 중 채운 칩 위 글자 */
+  --fx-st-run-bar: #158a9c; /* 진행 중 줄 막대가 숨 쉴 때 어두운 쪽 */
+  --fx-st-run-wash: #0f2a31; /* 진행 중 줄 배경(패널보다 살짝 밝게) */
+  --fx-st-warn-wash: #2a2208; /* 승인 필요 칩 배경 */
+  --fx-st-bad-wash: #2d1414; /* 실패 줄·칩 배경 */
   --fx-focus: #67e8f9; /* 포커스 링 */
   --fx-mono: ui-monospace, "JetBrains Mono", Consolas, var(--font-mono), SFMono-Regular, Menlo, "Liberation Mono", monospace;
   --fx-topbar-h: 5.5rem; /* 좁은 화면: 상단바 두 줄 */
@@ -291,6 +297,55 @@
 .factory-ui .fx-bad { color: var(--fx-bad); }
 .factory-ui .fx-idle { color: var(--fx-muted); }
 .factory-ui .fx-muted { color: var(--fx-muted); }
+
+/* ── [현황] 상태 체계: 색 + 아이콘 + 글자 (components/admin/factory/fx.tsx 의 STATUS_KINDS 와 짝) ── */
+.factory-ui .fx-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+  white-space: nowrap;
+}
+.factory-ui .fx-st-run { background: var(--fx-accent); border-color: var(--fx-accent); color: var(--fx-st-run-ink); }
+.factory-ui .fx-st-approval { background: var(--fx-st-warn-wash); color: var(--fx-warn); }
+.factory-ui .fx-st-wait { border-style: dashed; border-color: var(--fx-border); color: var(--fx-dim); font-weight: 400; }
+.factory-ui .fx-st-done { color: var(--fx-ok); font-weight: 400; }
+.factory-ui .fx-st-fail { background: var(--fx-st-bad-wash); color: var(--fx-bad); }
+.factory-ui .fx-st-cancel { border-color: var(--fx-border); color: var(--fx-dim); font-weight: 400; }
+.factory-ui .fx-st-info { border-color: var(--fx-border); color: var(--fx-muted); font-weight: 400; }
+/* 종류 칩(정비/일감/배포/감독): 색 없는 윤곽선 + 작게 → 눈이 상태 칩으로 먼저 간다 */
+.factory-ui .fx-kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.375rem;
+  border: 1px solid var(--fx-border);
+  border-radius: 3px;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  color: var(--fx-muted);
+  white-space: nowrap;
+}
+.factory-ui .fx-faint { color: var(--fx-dim); }
+/* 줄: 왼쪽 막대 + 상태별 배경. 진행 중이 가장 두껍고 밝다 */
+.factory-ui .fx-row { border-left-width: 4px; border-left-color: var(--fx-border); }
+.factory-ui .fx-row[data-st="run"] { border-left-width: 6px; border-left-color: var(--fx-accent); background: var(--fx-st-run-wash); animation: fx-run-bar 2.4s ease-in-out infinite; }
+.factory-ui .fx-row[data-st="approval"] { border-left-color: var(--fx-warn); }
+.factory-ui .fx-row[data-st="fail"] { border-left-color: var(--fx-bad); background: var(--fx-st-bad-wash); }
+.factory-ui .fx-row[data-st="wait"],
+.factory-ui .fx-row[data-st="done"],
+.factory-ui .fx-row[data-st="cancel"] { border-left-width: 3px; }
+.factory-ui .fx-fail-text { color: var(--fx-bad); }
+@keyframes fx-run-bar {
+  50% { border-left-color: var(--fx-st-run-bar); }
+}
+/* '지금 진행 중' 띠 */
+.factory-ui .fx-active-item { border-left: 6px solid var(--fx-accent); background: var(--fx-st-run-wash); }
+.factory-ui .fx-active-title { font-size: 1.125rem; font-weight: 700; line-height: 1.5rem; overflow-wrap: anywhere; }
 
 /* 얇은 진행 막대 (값이 없으면 오가는 막대) */
 .factory-ui .fx-bar {

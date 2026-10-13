@@ -232,7 +232,7 @@ test("API: 관리자만, 응답은 no-store, 잘못된 kind·cursor 는 400", as
 // ── 이력 패널 보기 ──
 const aiLib = loadTs("lib/factory/ai.ts");
 const view = loadTs("components/admin/factory/FactoryOverview.tsx", {
-  "./fx": { StatusDot: () => null },
+  "./fx": loadTs("components/admin/factory/fx.tsx"),
   "@/lib/factory/ai": aiLib,
   "./ClaudeModelSelect": loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib }),
 });
@@ -525,7 +525,7 @@ test("앱 일감 탭: 줄마다 이름(앱)·종류·상태·요청/시작/완�
   assert.match(html, /href="\/admin\/factory\?tab=jobs&amp;job=cjob000119"/);
   assert.match(html, /앱 일감 119/);
   assert.match(html, /app-2/);
-  for (const label of ["완료", "실패", "취소", "승인 대기", "대기열", "진행 중", "검토 대기", "새 앱", "수정", "출시 준비"]) assert.match(html, new RegExp(label));
+  for (const label of ["완료", "실패", "취소", "승인 필요", "대기", "진행 중", "검토 필요", "새 앱", "수정", "출시 준비"]) assert.match(html, new RegExp(label));
   assert.match(html, /요청 [^<]*<\/span><span>시작 [^<]*<\/span><span>완료/);
   assert.match(html, /모델: /); // 모델을 고른 일감
   const longJob = render({ tab: "jobs", full: { kind: "jobs", items: [{ ...items[0], result: "긴 결과 ".repeat(80) }], nextCursor: null, total: 1, loading: false, error: null } });

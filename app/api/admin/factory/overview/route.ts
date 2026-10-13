@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/factory/admin";
 import { readModelChoice } from "@/lib/factory/ai";
 import {
+  activeNow,
   APPROVAL_ACTIONS,
   approvalInbox,
   deployHistory,
@@ -24,7 +25,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 async function overview() {
-  const [supervisor, inbox, updates, deploys, threads, totals] =
+  const [supervisor, inbox, updates, deploys, threads, totals, active] =
     await Promise.all([
       supervisorSnapshot(),
       approvalInbox(),
@@ -32,10 +33,12 @@ async function overview() {
       deployHistory(),
       maintenanceSummary(),
       historyTotals(),
+      activeNow(),
     ]);
 
   // 이력은 최근 것만 싣는다. 전체는 /api/admin/factory/history 로 쪽마다 읽는다(totals = 종류별 전체 개수)
-  return { supervisor, inbox, updates, deploys, threads, totals };
+  // active: [현황] 맨 위 '지금 진행 중' 띠(읽기 전용)
+  return { supervisor, inbox, updates, deploys, threads, totals, active };
 }
 
 export async function GET() {

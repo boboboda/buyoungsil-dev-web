@@ -119,3 +119,31 @@ test("장식 줄이기: 배경 눈금·글로우 없음, 각진 패널(모서리
   }
   assert.match(css, /outline: 2px solid var\(--fx-focus\)/);
 });
+
+test("상태 칩·줄 색 조합([현황]): 진행 중 채움 칩 ≥ 7:1, 승인/실패 칩 ≥ 4.5:1, 줄 배경 위 글자 ≥ 7:1", () => {
+  for (const k of ["fx-st-run-ink", "fx-st-run-bar", "fx-st-run-wash", "fx-st-warn-wash", "fx-st-bad-wash"]) assert.match(t[k] ?? "", /^#[0-9a-f]{6}$/, `토큰 ${k} 없음`);
+  assert.ok(contrast(t["fx-st-run-ink"], t["fx-accent"]) >= 7, `진행 중 칩 글자/채움 = ${contrast(t["fx-st-run-ink"], t["fx-accent"]).toFixed(2)}`);
+  assert.ok(contrast(t["fx-warn"], t["fx-st-warn-wash"]) >= 4.5, "승인 필요 칩");
+  assert.ok(contrast(t["fx-bad"], t["fx-st-bad-wash"]) >= 4.5, "실패 칩");
+  for (const wash of ["fx-st-run-wash", "fx-st-warn-wash", "fx-st-bad-wash"]) {
+    assert.ok(contrast(t["fx-text"], t[wash]) >= 7, `본문 / ${wash} = ${contrast(t["fx-text"], t[wash]).toFixed(2)}`);
+    assert.ok(contrast(t["fx-muted"], t[wash]) >= 4.5, `보조 / ${wash} = ${contrast(t["fx-muted"], t[wash]).toFixed(2)}`);
+  }
+  assert.ok(contrast(t["fx-accent"], t["fx-st-run-wash"]) >= 4.5, "진행 중 줄 위 청록 글자");
+  // 줄 왼쪽 막대(글자 아님)는 줄 배경과 3:1 이상
+  assert.ok(contrast(t["fx-accent"], t["fx-st-run-wash"]) >= 3, "진행 중 막대");
+  assert.ok(contrast(t["fx-bad"], t["fx-st-bad-wash"]) >= 3, "실패 막대");
+  // 대기(점선·흐림)·취소 칩 글자는 패널 위에서 4.5:1
+  for (const b of BACKS) {
+    assert.ok(contrast(t["fx-dim"], t[b]) >= 4.5, `대기/취소 칩 / ${b}`);
+    assert.ok(contrast(t["fx-ok"], t[b]) >= 4.5, `완료 칩 / ${b}`);
+  }
+  // 진행 중은 대기보다 확실히 눈에 띈다: 채움 색(청록)과 대기 글자(회색)의 대비가 큼
+  assert.ok(contrast(t["fx-accent"], t["fx-panel"]) > contrast(t["fx-dim"], t["fx-panel"]) + 2, "진행 중이 대기보다 밝다");
+});
+
+test("상태 칩 CSS: 종류 7가지 클래스가 있고 움직임 줄이기에서 애니메이션이 꺼진다", () => {
+  for (const k of ["run", "approval", "wait", "done", "fail", "cancel", "info"]) assert.ok(css.includes(`.fx-st-${k} `), `.fx-st-${k} 없음`);
+  assert.match(css, /\.fx-row\[data-st="run"\][^{]*\{[^}]*border-left-width:\s*6px/);
+  assert.match(css, /prefers-reduced-motion: reduce\)[\s\S]*animation:\s*none\s*!important/);
+});
