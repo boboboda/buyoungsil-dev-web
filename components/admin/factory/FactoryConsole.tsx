@@ -1,6 +1,6 @@
 // components/admin/factory/FactoryConsole.tsx
 // 앱 공장 통제실 본체: 머리말 + 상단 탭 + 탭 내용. 기능 컴포넌트는 그대로 두고 위치만 탭으로 나눈다.
-// [현황] 감독 프로그램·승인·배포 할 일·이력  [일감] 앱 일감·수정 지시·공장 정비
+// [현황] 진행 중 띠·승인·배포 할 일·정비/감독 한 줄 요약·이력  [일감] 앱 일감·수정 지시  [정비] 공장 정비 대화·대기열·로그  [감독] 감독 프로그램 상세·감독 로그
 // [출시] 출시 패키지  [설정] 도구함 한눈에 보기·AI·도구·텔레그램·PC 토큰·키·배포 계정·프로젝트 연결·작업 규칙  [사용량] 장비 상태(서버1·서버2·메인PC)·Claude 세션·토큰
 // 넓은 화면은 왼쪽 작업 영역(약 7) + 오른쪽 AI 사용량 계기판(약 3, 따라옴), 좁은 화면은 계기판이 위에 접혀 있다.
 import { Card, CardBody } from "@heroui/react";
@@ -21,6 +21,8 @@ import SecretEntries from "./SecretEntries";
 import SecretNames from "./SecretNames";
 import StudioAccessKeys from "./StudioAccessKeys";
 import SupervisorControl from "./SupervisorControl";
+import SupervisorLog from "./SupervisorLog";
+import SupervisorSummary from "./SupervisorSummary";
 import TelegramSetup from "./TelegramSetup";
 import UsageDash from "./UsageDash";
 import ToolBrokerSettings from "./ToolBrokerSettings";
@@ -35,7 +37,9 @@ import { type ClaudeStats, getClaudeStats } from "@/lib/claude-status/stats";
 
 const INTRO: Record<FactoryTab, string> = {
   status: "기획서를 승인하면 내 PC의 감독 프로그램이 가져가서 앱을 만들어요",
-  jobs: "앱 일감 목록·상세, 완성된 앱 수정 지시, 공장 정비 대화와 대기열",
+  jobs: "앱 일감 목록·상세, 완성된 앱 수정 지시",
+  maint: "공장 정비: 정비 대화 목록, 지시 대기열, 지시별 진행 로그, 커밋·서버 배포 상태",
+  supervisor: "내 PC 감독 프로그램: 연결·버전·자동 업데이트·재시작·일시 정지, 그리고 감독 로그(업데이트·재시작·장비 보고·오류)",
   release:
     "앱마다 배포 계정을 고르고 종류(첫 출시·스토어 자료 수정·프로젝트 업데이트)를 골라 승인하면, 스토어 문구·데이터 보안·콘텐츠 등급·체크리스트·개인정보처리방침 초안과 AAB 정보가 여기 모여요. 최초 업로드와 프로덕션 출시는 사람이 Play Console 에서 해요.",
   settings:
@@ -61,10 +65,12 @@ export default async function FactoryConsole({
   tab,
   jobId = null,
   historyTab,
+  threadId = null,
 }: {
   tab: FactoryTab;
   jobId?: string | null; // ?job=<id> → [일감] 탭에서 그 일감 상세를 바로 연다
   historyTab?: HistoryTab; // ?history=jobs → [현황] 이력의 그 탭을 바로 연다
+  threadId?: string | null; // ?thread=<id> → [정비] 탭에서 그 정비 대화를 바로 연다
 }) {
   const label = FACTORY_TABS.find((t) => t.key === tab)?.label;
   const stats = await readStats();
@@ -85,7 +91,7 @@ export default async function FactoryConsole({
 
           {tab === "status" && (
             <FactoryOverview initialTab={historyTab}>
-              <SupervisorControl />
+              <SupervisorSummary />
             </FactoryOverview>
           )}
 
@@ -93,11 +99,21 @@ export default async function FactoryConsole({
             <div className="space-y-6">
               <FactoryControl initialJobId={jobId} />
               <RevisionSender />
-              <Card>
-                <CardBody>
-                  <MaintenancePanel />
-                </CardBody>
-              </Card>
+            </div>
+          )}
+
+          {tab === "maint" && (
+            <Card>
+              <CardBody>
+                <MaintenancePanel initialThreadId={threadId} />
+              </CardBody>
+            </Card>
+          )}
+
+          {tab === "supervisor" && (
+            <div className="space-y-6">
+              <SupervisorControl />
+              <SupervisorLog />
             </div>
           )}
 

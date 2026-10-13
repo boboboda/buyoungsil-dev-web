@@ -23,6 +23,7 @@ import {
   validateDevicePayload,
 } from "@/lib/factory/devices";
 import { getClientIP, hit } from "@/lib/factory/http";
+import { noteDeviceReport } from "@/lib/factory/supervisorLog";
 import { saveToolkitInfo, validateToolkitReport } from "@/lib/factory/toolkit";
 import prisma from "@/lib/prisma";
 
@@ -87,14 +88,22 @@ export async function POST(req: NextRequest) {
 
   const result = validateDevicePayload(body);
 
-  if (result.ok === false) return fail(400, result.reason);
+  if (result.ok === false) {
+    const dev = typeof body === "object" && body !== null ? (body as { device?: unknown }).device : null;
+
+    if (dev === "main-pc") await noteDeviceReport("main-pc", false, result.reason);
+
+    return fail(400, result.reason);
+  }
 
   try {
     await saveDeviceStat(result.payload);
+    await noteDeviceReport(result.payload.device, true);
 
     return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("[device-stats] 저장 실패:", error);
+    await noteDeviceReport(result.payload.device, false, "저장 실패");
 
     return fail(500, "저장에 실패했습니다.");
   }

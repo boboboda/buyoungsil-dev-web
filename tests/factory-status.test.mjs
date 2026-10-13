@@ -134,7 +134,7 @@ test("띠: 정비 지시와 진행 중인 서버 배포를 합치고, 배포는 
   assert.match(out, /data-active-item="deploy"[^>]*href="#factory-todo"|href="#factory-todo"[^>]*data-active-item="deploy"/);
   assert.match(out, /경과 1분 30초/);
   assert.match(out, /Codex/);
-  assert.match(out, /href="\/admin\/factory\?tab=jobs"/);
+  assert.match(out, /href="\/admin\/factory\?tab=maint"/);
   assert.doesNotMatch(out, /배포 대기 중인 것/); // 아직 시작 안 한 배포는 '진행 중'이 아니다
   assert.deepEqual(view.activeItems(undefined, undefined), []);
 });
@@ -239,7 +239,7 @@ test("activeNow: 진행 중 일감·정비 지시, 대기 개수(승인된 일�
   assert.equal(a.queued, 3);
   assert.deepEqual(a.next, { type: "maintenance", title: "인계 기록" }); // 대기 지시(T0+4s)가 승인된 일감(T0+5s)보다 먼저 왔다
   // 읽기 전용: 기획서·로그·작업 PC 이름 같은 열은 없다
-  for (const r of a.running) assert.deepEqual(Object.keys(r).sort(), ["aiEngine", "aiModel", "id", "kindLabel", "startedAt", "sub", "title", "type"]);
+  for (const r of a.running) assert.deepEqual(Object.keys(r).sort(), ["aiEngine", "aiModel", "id", "kindLabel", "startedAt", "sub", ...(r.type === "maintenance" ? ["threadId"] : []), "title", "type"]); // 정비 지시만 대화 id(정비 탭 링크용)
 });
 
 test("overview 응답에 active 가 실리고 관리자 전용·no-store 는 그대로", () => {

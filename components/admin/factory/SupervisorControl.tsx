@@ -1,6 +1,6 @@
 // components/admin/factory/SupervisorControl.tsx
 // 감독 프로그램 상태(연결/꺼짐)와 일시 정지·재개, 자동 업데이트 켜고 끄기, 지금 업데이트, 재시작, 정비 대기열 끝나면 자동 배포 켜고 끄기.
-// 기본 AI·도구 중계 설정은 [설정] 탭, 공장 정비는 [일감] 탭에 있다.
+// [감독] 탭의 상세 카드. 기본 AI·도구 중계 설정은 [설정] 탭, 공장 정비는 [정비] 탭에 있다. [현황]에는 SupervisorSummary 한 줄만 둔다.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";

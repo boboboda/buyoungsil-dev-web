@@ -115,6 +115,7 @@ export interface ActiveItem {
   startedAt: string | null;
   aiEngine?: string | null;
   aiModel?: string | null;
+  threadId?: string; // 정비 지시면 그 정비 대화(예전 서버에는 없다)
 }
 export interface ActiveNow {
   running: ActiveItem[];
@@ -167,7 +168,9 @@ export type HistoryTab = HistoryKind | "progress";
 export const countOf = (data: HistoryData | null, k: HistoryKind) =>
   data?.totals?.[k] ?? (k === "jobs" ? 0 : (data?.[k].length ?? 0));
 
-// 줄을 누르면 [일감] 탭의 그 일감 상세가 열린다
+// 정비 줄을 누르면 [정비] 탭(대화를 알면 그 대화)이, 일감 줄을 누르면 [일감] 탭의 그 일감 상세가 열린다
+export const maintHref = (threadId?: string | null) =>
+  threadId ? `/admin/factory?tab=maint&thread=${encodeURIComponent(threadId)}` : "/admin/factory?tab=maint";
 export const jobHref = (id: string) =>
   `/admin/factory?tab=jobs&job=${encodeURIComponent(id)}`;
 
@@ -587,7 +590,13 @@ export default function FactoryOverview({
         </CardBody>
       </Card>
 
-      {children}
+      {/* 정비·감독 한 줄 요약: 상세는 각각 [정비]·[감독] 탭 */}
+      <Card className="mb-6" data-title="summary · 정비·감독 요약">
+        <CardBody className="space-y-3">
+          <MaintSummary data={data} />
+          {children}
+        </CardBody>
+      </Card>
 
       <HistoryPanelView
         data={data}
@@ -609,6 +618,34 @@ export default function FactoryOverview({
         onToggle={toggleHistory}
       />
     </>
+  );
+}
+
+// 정비 한 줄 요약(상태·진행/승인/대기 수). 재료는 [작업 진행] 보드와 같다
+function MaintSummary({ data }: { data: Overview | null }) {
+  const secs = data?.active && data.inbox ? boardSections({ active: data.active, inbox: data.inbox, jobs: null, threads: data.threads }) : null;
+  const n = (k: BoardSectionKey) => secs?.[k].filter((r) => r.type === "maintenance").length ?? 0;
+  const run = n("run");
+  const approval = n("approval");
+  const wait = n("wait");
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2" data-summary="maintenance">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <span className="flex items-center gap-2 font-semibold">
+          <StatusDot tone={run > 0 ? "ok" : approval > 0 ? "warn" : "idle"} />
+          공장 정비: {!secs ? "읽는 중…" : run > 0 ? "진행 중" : approval > 0 ? "승인 필요" : wait > 0 ? "대기" : "쉬는 중"}
+        </span>
+        {secs && (
+          <span className="font-mono text-xs text-default-500">
+            진행 {run} · 승인 필요 {approval} · 대기 {wait}
+          </span>
+        )}
+      </div>
+      <a className="inline-flex min-h-11 items-center text-sm underline sm:min-h-0" href={maintHref()}>
+        상세 보기 →
+      </a>
+    </div>
   );
 }
 
@@ -835,10 +872,10 @@ export function HistoryPanelView({
             {tab === "threads" && (
               <p className="text-xs text-default-500">
                 대화 내용·이어서 지시는{" "}
-                <a className="underline" href="/admin/factory?tab=jobs">
-                  [일감] 탭
+                <a className="underline" href={maintHref()}>
+                  [정비] 탭
                 </a>
-                의 「공장 정비」에서 해요.
+                에서 해요. (상세는 정비 탭에서)
               </p>
             )}
           </div>
@@ -873,7 +910,6 @@ export interface BoardRow {
   href: string;
 }
 
-const MAINT_HREF = "/admin/factory?tab=jobs";
 
 // 보드 네 묶음. 같은 일이 두 곳에서 오면(진행 중 + 이력) 앞선 묶음 한 곳에만 둔다
 export function boardSections(b: BoardInput): Record<BoardSectionKey, BoardRow[]> {
@@ -890,13 +926,13 @@ export function boardSections(b: BoardInput): Record<BoardSectionKey, BoardRow[]
     add("run", {
       key: `${it.type}-${it.id}`, type: it.type, title: it.title, kindLabel: it.type === "job" ? "일감" : "정비",
       status: { kind: "run", label: "진행 중" }, at: it.startedAt, engine: it.aiEngine, model: it.aiModel, app: it.sub,
-      href: it.type === "job" ? jobHref(it.id) : MAINT_HREF,
+      href: it.type === "job" ? jobHref(it.id) : maintHref(it.threadId),
     }, it.id);
   }
   for (const t of b.inbox?.turns ?? []) {
     add("approval", {
       key: `turn-${t.id}`, type: "maintenance", title: t.threadTitle, kindLabel: "정비",
-      status: { kind: "approval", label: "승인 필요" }, at: t.createdAt, engine: t.aiEngine, href: MAINT_HREF,
+      status: { kind: "approval", label: "승인 필요" }, at: t.createdAt, engine: t.aiEngine, href: maintHref(t.threadId),
     }, t.id);
   }
   for (const j of b.inbox?.jobs ?? []) {
@@ -924,7 +960,7 @@ export function boardSections(b: BoardInput): Record<BoardSectionKey, BoardRow[]
     const st = t.deployInProgress || !t.lastTurnStatus ? null : turnStatusInfo(t.lastTurnStatus);
 
     if (!st || seen.has(t.id)) continue;
-    const row: BoardRow = { key: `thread-${t.id}`, type: "maintenance", title: t.title, kindLabel: "정비", status: st, at: t.updatedAt, href: MAINT_HREF };
+    const row: BoardRow = { key: `thread-${t.id}`, type: "maintenance", title: t.title, kindLabel: "정비", status: st, at: t.updatedAt, href: maintHref(t.id) };
 
     if (st.kind === "wait") add("wait", row, t.id);
     else if (st.kind === "done" || st.kind === "fail") recent.push({ ...row, ts: Date.parse(t.updatedAt) || 0 });
@@ -1248,7 +1284,7 @@ export function activeItems(active: ActiveNow | undefined, deploys: Overview["in
   return [...(active?.running ?? []), ...dep].sort((a, b) => (Date.parse(a.startedAt ?? "") || Infinity) - (Date.parse(b.startedAt ?? "") || Infinity));
 }
 
-const activeHref = (it: ActiveItem) => (it.type === "job" ? jobHref(it.id) : it.type === "deploy" ? "#factory-todo" : "/admin/factory?tab=jobs");
+const activeHref = (it: ActiveItem) => (it.type === "job" ? jobHref(it.id) : it.type === "deploy" ? "#factory-todo" : maintHref(it.threadId));
 const TYPE_ICON = { job: "📦", maintenance: "🛠", deploy: "🚀" } as const;
 
 // [현황] 맨 위 '지금 진행 중' 띠. 값은 7초마다 읽는 overview(active + inbox.deploys) 하나에서만 온다

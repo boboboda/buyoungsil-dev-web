@@ -5,6 +5,8 @@
 export const FACTORY_TABS = [
   { key: "status", label: "현황" },
   { key: "jobs", label: "일감" },
+  { key: "maint", label: "정비" },
+  { key: "supervisor", label: "감독" },
   { key: "novels", label: "작품" },
   { key: "release", label: "출시" },
   { key: "settings", label: "설정" },
@@ -40,5 +42,8 @@ export function parseJobId(raw: string | string[] | undefined | null): string | 
 
   return v && /^[A-Za-z0-9_-]{1,40}$/.test(v) ? v : null;
 }
+
+// ?thread=<정비 대화 id> → [정비] 탭에서 그 대화를 바로 연다(형식은 일감 id 와 같다)
+export const parseThreadId = parseJobId;
 
 export const factoryTabHref = (tab: FactoryTab) => `/admin/factory?tab=${tab}`;

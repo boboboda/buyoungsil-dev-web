@@ -9,15 +9,18 @@ import { cleanAppSlots, MAX_APP_SLOTS, MIN_APP_SLOTS, setAppSlots, setCompactAft
 import { isPurpose, isToolId, PURPOSE_LABELS, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
 import prisma from "@/lib/prisma";
 import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS, toolBrokerLimitLabel } from "@/lib/factory/toolBroker";
+import { supervisorLog } from "@/lib/factory/supervisorLog";
 import { runSupervisorAction, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const denied = await requireAdmin();
 
   if (denied) return denied;
+  // ?log=1 → [감독] 탭의 감독 로그(최신이 위). 새 주소를 만들지 않고 이 주소에 얹는다
+  if (req.nextUrl.searchParams.get("log")) return NextResponse.json({ log: await supervisorLog() });
 
   return NextResponse.json(await supervisorSnapshot());
 }

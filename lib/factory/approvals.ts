@@ -191,6 +191,7 @@ export async function activeNow() {
       ...turns.map((t) => ({
         type: "maintenance" as const,
         id: t.id,
+        threadId: t.maintenance.id,
         title: t.maintenance.title,
         sub: null as string | null,
         kindLabel: "정비",

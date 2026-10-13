@@ -125,9 +125,9 @@ export function TurnLogs({ logs, running }: { logs: Msg[]; running: boolean }) {
   );
 }
 
-export default function MaintenancePanel() {
+export default function MaintenancePanel({ initialThreadId = null }: { initialThreadId?: string | null }) {
   const [data, setData] = useState<Data | null>(null);
-  const [sel, setSel] = useState<string>("new");
+  const [sel, setSel] = useState<string>(initialThreadId ?? "new");
   const [text, setText] = useState("");
   const [aiEngine, setAiEngine] = useState<TaskAiEngine>("default");
   // 통제실에서 보내는 지시는 보내는 순간이 승인이라 여기서 모델을 고른다. 승인 대기 지시는 지시마다 따로

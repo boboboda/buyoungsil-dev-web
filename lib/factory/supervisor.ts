@@ -24,6 +24,7 @@ import {
   setSupervisorEnabled,
   type SupervisorRuntime,
 } from "@/lib/factory/settings";
+import { addSupervisorLog, type SupervisorLogKind } from "@/lib/factory/supervisorLog";
 import { notifyText } from "@/lib/factory/telegram";
 
 const ONLINE_MS = 90_000;
@@ -149,7 +150,12 @@ export async function noteSupervisorRuntime(
     next.restartFailNotified = pc.restartFail;
     notes.push(`🔄❌ 감독 프로그램 재시작 실패\n${pc.restartFail}`);
   }
-  if (await saveSupervisorRuntime(next, cur)) for (const n of notes) void notifyText(n, "/admin/factory");
+  if (await saveSupervisorRuntime(next, cur)) {
+    for (const n of notes) {
+      void notifyText(n, "/admin/factory");
+      await addSupervisorLog("restart", n.replaceAll("\n", " "), !n.includes("실패"));
+    }
+  }
 }
 
 export type SupervisorSnapshot = Awaited<ReturnType<typeof supervisorSnapshot>>;
@@ -199,5 +205,19 @@ export async function runSupervisorAction(action: SupervisorAction): Promise<{ m
       break;
   }
 
+  if (action !== "status") await addSupervisorLog(ACTION_LOG[action][0], ACTION_LOG[action][1]);
+
   return { message, snapshot: await supervisorSnapshot() };
 }
+
+// 감독 로그에 남기는 한 줄(사람이 통제실·커넥터로 보낸 신호)
+const ACTION_LOG: Record<Exclude<SupervisorAction, "status">, [SupervisorLogKind, string]> = {
+  update_now: ["update", "지금 업데이트 요청"],
+  restart: ["restart", "재시작 요청"],
+  pause: ["pause", "새 일감 받기 일시 정지"],
+  resume: ["pause", "새 일감 받기 재개"],
+  auto_update_on: ["setting", "자동 업데이트 켬"],
+  auto_update_off: ["setting", "자동 업데이트 끔"],
+  auto_deploy_on: ["setting", "자동 배포 켬"],
+  auto_deploy_off: ["setting", "자동 배포 끔"],
+};
