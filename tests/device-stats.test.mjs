@@ -194,6 +194,9 @@ let workerOk = false;
 const post = loadTs("app/api/factory/device-stats/route.ts", {
   "@/lib/claude-status/auth": loadTs("lib/claude-status/auth.ts"),
   "@/lib/factory/auth": { isValidFactoryWorkerToken: async (a) => workerOk && a === "Bearer worker-token-xxxxxxxxxxxx" },
+  "@/lib/factory/supervisorLog": { noteDeviceReport: async () => {} },
+  "@/lib/factory/toolkit": { saveToolkitInfo: async () => ({}), validateToolkitReport: () => ({ ok: false, reason: "x" }) },
+  "@/lib/prisma": { __esModule: true, default: prisma },
   "@/lib/factory/devices": devices,
   "@/lib/factory/http": loadTs("lib/factory/http.ts", { "@/lib/factory/auth": {} }),
 });
@@ -352,7 +355,7 @@ test("메인PC 수집: nvidia-smi 읽기·CPU 차이·없으면 '확인 못 함'
     },
   });
   assert.deepEqual(disks.map((d) => d.mount), ["C:", "D:"]); // 시스템 드라이브 먼저
-  const body = await collector.collect({ prevCpu: { idle: 0, total: 0 }, cpu: { idle: 50, total: 100 }, totalmem: 32 * 1024 ** 3, freemem: 8 * 1024 ** 3, gpu: missing, disks });
+  const body = await collector.collect({ prevCpu: { idle: 0, total: 0 }, cpu: { idle: 50, total: 100 }, totalmem: 32 * 1024 ** 3, freemem: 8 * 1024 ** 3, gpu: missing, disks, running: null });
   assert.deepEqual(Object.keys(body).sort(), ["cpuPct", "device", "disks", "gpu", "measuredAt", "ram"]);
   assert.equal(body.device, "main-pc");
   assert.equal(body.cpuPct, 50);
@@ -395,7 +398,8 @@ test("서버 수집 스크립트(bash): 문법 확인, print 결과가 서버 �
   const script = path.join(repo, "tools/factory-supervisor/device-stats.sh");
   const src = fs.readFileSync(script, "utf8");
   assert.match(src, /docker ps --format '\{\{\.Names\}\}'/);
-  assert.ok(!/docker (inspect|ps -a|ps --format '[^']*(Image|Ports|Env))/.test(src), "이름 말고는 안 읽음");
+  assert.ok(!/docker (ps --format '[^']*(Ports|Env|Mounts|Command)|inspect[^\n]*(\.Env|\.Cmd|Mounts|Args))/.test(src), "환경변수·명령줄·마운트·포트는 안 읽음");
+  assert.ok(!/docker (rm|stop|kill|restart|prune|rmi|system prune|volume rm|exec|run)\b/.test(src), "읽기 전용: 종료·삭제·정리 명령 없음");
   assert.ok(!/hostname|ip addr|ifconfig/.test(src), "호스트 정보 안 읽음");
   assert.match(src, /-H @<\(printf 'Authorization: Bearer %s\\n' "\$tok"\)/, "토큰은 명령줄에 안 보이게");
   const bash = spawnSync("bash", ["-n", script]);

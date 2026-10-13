@@ -5,7 +5,7 @@
 //   node devicestats.mjs once    한 번 읽어서 화면에 보여 준다(서버로 보내지 않음, 값 확인용)
 //
 // 보내는 값은 숫자뿐: CPU %, RAM 사용/전체 GB, GPU 사용률·VRAM·온도, 드라이브 문자(C: 등)별 사용/전체 GB.
-// 호스트 이름·IP·사용자 이름·프로세스 목록은 보내지 않는다. 인증은 감독 프로그램의 작업 PC 토큰(api 함수)을 그대로 쓴다.
+// 호스트 이름·IP·사용자 이름은 보내지 않는다. 프로세스는 running.processes 로만(아래), 명령줄은 읽지도 않는다. 인증은 감독 프로그램의 작업 PC 토큰(api 함수)을 그대로 쓴다.
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -18,6 +18,11 @@ const DISK_TIMEOUT_MS = 3000;
 const POST_TIMEOUT_MS = 10_000;
 const MAX_DISKS = 4;
 const GB = 1024 ** 3;
+const PROC_TIMEOUT_MS = 12_000;
+export const MAX_RUNNING_ITEMS = 15;
+export const MAX_BODY_CHARS = 7600; // 서버 제한 8KB 보다 조금 작게
+// 감독 프로그램 자식이 아니어도 모으는 프로세스 이름(node/python/java/dart/flutter/adb/emulator/docker 계열 + 작업 도구)
+const WATCH_NAME_RE = /^(node|python[\d.]*|pythonw|java|javaw|dart|flutter|adb|emulator|qemu-system-.*|docker.*|com\.docker\..*|ffmpeg|claude|codex)$/i;
 
 const round1 = (v) => Math.round(v * 10) / 10;
 const pctOf = (used, total) => (total > 0 ? round1(Math.min(100, Math.max(0, (used / total) * 100))) : null);
@@ -109,17 +114,114 @@ export async function readDisks({ statfs = fs.promises.statfs, platform = proces
     .slice(0, MAX_DISKS);
 }
 
-// 서버로 보낼 본문(숫자만). prevCpu: 지난 표본(1분 평균 CPU 를 내려고)
-export async function collect({ prevCpu = null, cpu = cpuTimes(), totalmem = os.totalmem(), freemem = os.freemem(), gpu, disks } = {}) {
-  const [g, d] = await Promise.all([gpu ?? readGpu(), disks ?? readDisks()]);
-  return {
+const PS_SCRIPT = [
+  "$ErrorActionPreference='SilentlyContinue';",
+  "$p=@(Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ pid=[int]$_.ProcessId; ppid=[int]$_.ParentProcessId; name=$_.Name;",
+  "mem=[math]::Round($_.WorkingSetSize/1MB,1); cpu=[math]::Round(([double]$_.UserModeTime+[double]$_.KernelModeTime)/1e7,1);",
+  "start=$(if($_.CreationDate){[DateTimeOffset]::new($_.CreationDate).ToUnixTimeSeconds()}else{$null});",
+  "dir=$(if($_.ExecutablePath){Split-Path (Split-Path $_.ExecutablePath -Parent) -Leaf}else{$null}) } });",
+  "$l=@(Get-NetTCPConnection -State Listen | ForEach-Object { [pscustomobject]@{ pid=[int]$_.OwningProcess; port=[int]$_.LocalPort } });",
+  "[pscustomobject]@{ p=$p; l=$l } | ConvertTo-Json -Compress -Depth 4",
+].join(" ");
+
+// 프로세스 목록(이름·메모리·시작 시각·폴더 이름·리슨 포트만; 명령줄은 읽지 않는다). Windows 만. 실패하면 null
+export function readProcessList({ run = execFile, platform = process.platform } = {}) {
+  return new Promise((resolve) => {
+    if (platform !== "win32") return resolve(null);
+    try {
+      run(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", PS_SCRIPT],
+        { timeout: PROC_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+        (err, stdout) => {
+          if (err) return resolve(null);
+          try {
+            resolve(JSON.parse(String(stdout)));
+          } catch {
+            resolve(null);
+          }
+        },
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+const asList = (v) => (Array.isArray(v) ? v : v && typeof v === "object" ? [v] : []);
+
+// 프로세스 원본 → 보낼 항목. 감독 프로그램 자식(selfPid 의 후손)과 이름이 감시 대상인 것만, 메모리 큰 순 상위 15개
+export function pickProcesses(raw, { selfPid = process.pid, limit = MAX_RUNNING_ITEMS } = {}) {
+  const procs = asList(raw?.p).filter((p) => p && Number.isFinite(Number(p.pid)));
+  const parentOf = new Map(procs.map((p) => [Number(p.pid), Number(p.ppid)]));
+  const isChild = (pid) => {
+    let cur = parentOf.get(pid);
+    for (let i = 0; i < 32 && cur !== undefined; i++) {
+      if (cur === selfPid) return true;
+      cur = parentOf.get(cur);
+    }
+    return false;
+  };
+  const ports = new Map();
+  for (const l of asList(raw?.l)) {
+    const pid = Number(l?.pid);
+    const port = Number(l?.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
+    if (!ports.has(pid)) ports.set(pid, new Set());
+    ports.get(pid).add(port);
+  }
+  const items = [];
+  for (const p of procs) {
+    const pid = Number(p.pid);
+    const name = String(p.name ?? "").replace(/\.exe$/i, "");
+    const child = pid === selfPid || isChild(pid);
+    if (!child && !WATCH_NAME_RE.test(name)) continue;
+    items.push({
+      pid,
+      name: name.slice(0, 60),
+      dir: p.dir ? String(p.dir).slice(0, 40) : null,
+      memMb: Number.isFinite(Number(p.mem)) ? round1(Number(p.mem)) : null,
+      cpuSec: Number.isFinite(Number(p.cpu)) ? round1(Number(p.cpu)) : null,
+      startedAt: Number.isFinite(Number(p.start)) ? Math.round(Number(p.start)) : null,
+      child,
+      ports: [...(ports.get(pid) ?? [])].sort((a, b) => a - b).slice(0, 5),
+    });
+  }
+  items.sort((a, b) => (b.memMb ?? -1) - (a.memMb ?? -1));
+  return { items: items.slice(0, limit), truncated: items.length > limit };
+}
+
+// 본문이 8KB 를 넘으면 프로세스를 뒤에서부터 줄이고 truncated 표시
+export function fitRunning(body, maxChars = MAX_BODY_CHARS) {
+  const r = body.running;
+  if (!r?.processes) return body;
+  while (JSON.stringify(body).length > maxChars && r.processes.length > 0) {
+    r.processes.pop();
+    r.truncated = true;
+  }
+  return body;
+}
+
+// 실행 중인 프로세스 현황(읽기 전용). 못 읽으면 processes:null + 이유 한 줄(전체 보고는 계속)
+export async function collectRunning({ list, selfPid = process.pid } = {}) {
+  const raw = list === undefined ? await readProcessList() : list;
+  if (!raw) return { containers: null, processes: null, summary: null, error: "프로세스 목록을 읽지 못함", truncated: false };
+  const { items, truncated } = pickProcesses(raw, { selfPid });
+  return { containers: null, processes: items, summary: null, error: null, truncated };
+}
+
+// 서버로 보낼 본문(숫자와 이름만). prevCpu: 지난 표본(1분 평균 CPU 를 내려고)
+export async function collect({ prevCpu = null, cpu = cpuTimes(), totalmem = os.totalmem(), freemem = os.freemem(), gpu, disks, running } = {}) {
+  const [g, d, r] = await Promise.all([gpu ?? readGpu(), disks ?? readDisks(), running === undefined ? collectRunning().catch(() => null) : running]);
+  return fitRunning({
     device: "main-pc",
     measuredAt: Math.round(Date.now() / 1000),
     cpuPct: cpuPctBetween(prevCpu, cpu),
     ram: { usedGb: round1((totalmem - freemem) / GB), totalGb: round1(totalmem / GB) },
     gpu: g,
     disks: d,
-  };
+    ...(r ? { running: r } : {}),
+  });
 }
 
 // 감독 프로그램이 부른다. 1분마다 읽어 보낸다. 반환: stop()

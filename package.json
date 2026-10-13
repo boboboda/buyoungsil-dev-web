@@ -25,7 +25,7 @@
     "test:studio-projects": "node tests/studio-projects.test.mjs",
     "test:toolbox": "node tests/toolbox.test.mjs",
     "test:toolkit-tools": "node tests/toolkit-tools.test.mjs && node tools/factory-supervisor/tests/toolkitinfo.test.mjs",
-    "test:device-stats": "node tests/device-stats.test.mjs",
+    "test:device-stats": "node tests/device-stats.test.mjs && node tests/device-stats-running.test.mjs",
     "test:handoff": "node tests/handoff.test.mjs && node tests/memory-ui.test.mjs",
     "test:claude-model": "node tests/claude-model.test.mjs",
     "test:fable-usage": "node tests/fable-usage.test.mjs",

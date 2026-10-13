@@ -11,6 +11,7 @@
 //     "gpu": { "state": "ok", "list": [{ "utilPct", "memUsedGb", "memTotalGb", "tempC" }] } | { "state": "none" | "unknown" },
 //     "disks": [{ "mount": "/" | "C:", "usedGb", "totalGb" }],   // 최대 4개
 //     "containers": { "state": "ok", "names": ["web", …] } | { "state": "unknown" }  // 서버1만, 컨테이너 이름만
+//     "running": { containers[], processes[], summary{stoppedContainers,danglingImages,imageBytes,volumes}, error, truncated }  // 선택. 항목당 이름·상태·메모리만(명령줄·환경변수가 든 항목은 400), 장비당 15개까지
 //   }
 // 정해진 필드 외의 값은 버린다. 범위 밖·음수·숫자 아닌 값은 400, 토큰이 틀리면 401.
 import { NextRequest, NextResponse } from "next/server";

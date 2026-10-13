@@ -4,6 +4,7 @@
 // - 보는 쪽: GET /api/admin/factory/devices (관리자만), 하단 상태바 요약
 // 값은 숫자뿐이다. 장비 이름은 허용 목록만, 사용률은 0~100, 음수·NaN·문자열은 거부한다.
 // 서버1은 실행 중인 Docker 컨테이너 '이름'만 같이 보낸다(이미지·포트·환경변수 없음).
+// 실행 중인 모든 것(running: 컨테이너·프로세스 이름/상태/메모리)도 같은 행에 넣고, 메모리 추이·의심 표시를 서버가 붙인다(화면은 따로).
 // 최신 값은 장비마다 1행(device_stats), 이력은 5분에 한 점씩 24시간(device_stat_samples, 오래된 건 저장할 때 지움).
 import prisma from "@/lib/prisma";
 
@@ -65,12 +66,71 @@ export type ContainersInput =
   | { state: "ok"; names: string[] }
   | { state: "unknown" }; // docker 권한 없음 등
 
+export const RUN_FLAGS = [
+  "long_running",
+  "restart_loop",
+  "stopped",
+  "unlabeled",
+  "heavy_orphan",
+] as const;
+
+export type RunFlag = (typeof RUN_FLAGS)[number];
+
+export interface TrendPoint {
+  t: number; // 유닉스 초
+  mb: number;
+}
+
+export interface RunningContainer {
+  name: string;
+  image: string | null;
+  state: string;
+  status: string | null;
+  uptimeSec: number | null;
+  stoppedSec: number | null;
+  restarts: number | null;
+  cpuPct: number | null;
+  memMb: number | null;
+  project: string | null;
+  flags: RunFlag[];
+  memTrend?: TrendPoint[];
+}
+
+export interface RunningProcess {
+  pid: number;
+  name: string;
+  dir: string | null;
+  memMb: number | null;
+  cpuSec: number | null;
+  startedAt: number | null;
+  child: boolean;
+  ports: number[];
+  flags: RunFlag[];
+  memTrend?: TrendPoint[];
+}
+
+export interface RunningSummary {
+  stoppedContainers: number | null;
+  danglingImages: number | null;
+  imageBytes: number | null;
+  volumes: number | null;
+}
+
+export interface RunningInput {
+  containers: RunningContainer[] | null;
+  processes: RunningProcess[] | null;
+  summary: RunningSummary | null;
+  error: string | null;
+  truncated: boolean;
+}
+
 export interface DeviceData {
   cpuPct: number | null;
   ram: GbPair | null;
   gpu: GpuInput;
   disks: (GbPair & { mount: string })[];
   containers?: ContainersInput;
+  running?: RunningInput;
 }
 
 export interface DevicePayload {
@@ -168,6 +228,314 @@ function parseContainers(v: unknown): ContainersInput | undefined | typeof BAD {
   return { state: "ok", names: [...new Set(names)].sort() };
 }
 
+// ── 실행 중인 것(running) ─────────────────────
+// 컨테이너(서버)·프로세스(메인PC)의 이름·상태·메모리만 받는다. 명령줄·환경변수·마운트가 든 항목은 400.
+// 저장할 때 메모리 추이(최근 30분, 최대 10점, 상위 5개)와 의심 표시(flags)를 서버가 계산해 붙인다(보낸 쪽 값은 버림).
+
+export const MAX_RUNNING_ITEMS = 15;
+export const LONG_RUNNING_SEC = 7 * 24 * 3600;
+export const STOPPED_LONG_SEC = 24 * 3600;
+export const RESTART_LOOP_COUNT = 3;
+export const HEAVY_ORPHAN_MB = 500;
+export const TREND_EVERY_MS = 3 * 60_000;
+export const TREND_WINDOW_MS = 30 * 60_000;
+export const TREND_MAX_POINTS = 10;
+export const TREND_TOP = 5;
+const RUN_STATES = ["running", "exited", "restarting", "paused", "created", "dead", "removing"];
+const IMAGE_RE = /^[A-Za-z0-9][A-Za-z0-9_./:-]{0,199}$/;
+const FORBIDDEN_KEYS = new Set([
+  "env", "environment", "cmd", "command", "cmdline", "commandline", "args", "argv",
+  "entrypoint", "mounts", "binds", "labels", "path", "exe", "token", "password", "secret", "auth",
+]);
+
+const hasForbidden = (o: Record<string, unknown>) =>
+  Object.keys(o).some((k) => FORBIDDEN_KEYS.has(k.toLowerCase()));
+
+function cleanStr(v: unknown, max: number, strip: RegExp): string | null {
+  if (typeof v !== "string") return null;
+
+  const out = v.replace(strip, "").trim().slice(0, max);
+
+  return out || null;
+}
+
+function runInt(v: unknown, min: number, max: number): number | null | typeof BAD {
+  const n = numIn(v, min, max);
+
+  return n === BAD || n === null ? n : Math.round(n);
+}
+
+function parseTrend(v: unknown): TrendPoint[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+
+  const out: TrendPoint[] = [];
+
+  for (const p of v.slice(-TREND_MAX_POINTS)) {
+    if (!isRecord(p)) continue;
+
+    const t = numIn(p.t, 0, 4e9);
+    const mb = numIn(p.mb, 0, 1e7);
+
+    if (t === BAD || mb === BAD || t === null || mb === null) continue;
+    out.push({ t: Math.round(t), mb });
+  }
+
+  return out.length ? out : undefined;
+}
+
+const parseFlags = (v: unknown): RunFlag[] =>
+  Array.isArray(v) ? RUN_FLAGS.filter((f) => v.includes(f)) : [];
+
+function parseContainerItem(c: unknown): RunningContainer | typeof BAD {
+  if (!isRecord(c) || hasForbidden(c)) return BAD;
+  if (typeof c.name !== "string" || !CONTAINER_RE.test(c.name)) return BAD;
+
+  let image: string | null = null;
+
+  if (c.image !== undefined && c.image !== null) {
+    if (typeof c.image !== "string" || !IMAGE_RE.test(c.image) || c.image.includes("//")) return BAD;
+    image = c.image;
+  }
+
+  const state = typeof c.state === "string" ? c.state.toLowerCase() : "";
+
+  if (!RUN_STATES.includes(state)) return BAD;
+
+  const uptimeSec = runInt(c.uptimeSec, 0, 1e9);
+  const stoppedSec = runInt(c.stoppedSec, 0, 1e9);
+  const restarts = runInt(c.restarts, 0, 1e7);
+  const cpuPct = numIn(c.cpuPct, 0, 10_000);
+  const memMb = numIn(c.memMb, 0, 1e7);
+
+  if ([uptimeSec, stoppedSec, restarts, cpuPct, memMb].includes(BAD)) return BAD;
+
+  const memTrend = parseTrend(c.memTrend);
+
+  return {
+    name: c.name,
+    image,
+    state,
+    status: cleanStr(c.status, 80, /[^A-Za-z0-9 _.,:()/-]/g),
+    uptimeSec: uptimeSec as number | null,
+    stoppedSec: stoppedSec as number | null,
+    restarts: restarts as number | null,
+    cpuPct: cpuPct as number | null,
+    memMb: memMb as number | null,
+    project: cleanStr(c.project, 60, /[^A-Za-z0-9_.-]/g),
+    flags: parseFlags(c.flags),
+    ...(memTrend ? { memTrend } : {}),
+  };
+}
+
+function parseProcessItem(p: unknown): RunningProcess | typeof BAD {
+  if (!isRecord(p) || hasForbidden(p)) return BAD;
+
+  const pid = runInt(p.pid, 0, 4_294_967_295);
+  const name = cleanStr(
+    typeof p.name === "string" ? p.name.replace(/\.exe$/i, "") : null,
+    60,
+    /[^A-Za-z0-9 _.()-]/g,
+  );
+
+  if (pid === BAD || pid === null || !name || !/[A-Za-z0-9]/.test(name)) return BAD;
+
+  const memMb = numIn(p.memMb, 0, 1e7);
+  const cpuSec = numIn(p.cpuSec, 0, 1e9);
+  const startedAt = runInt(p.startedAt, 0, 4e9);
+
+  if ([memMb, cpuSec, startedAt].includes(BAD)) return BAD;
+  if (p.ports !== undefined && p.ports !== null && !Array.isArray(p.ports)) return BAD;
+
+  const ports: number[] = [];
+
+  for (const port of (p.ports as unknown[] | undefined)?.slice(0, 8) ?? []) {
+    const n = runInt(port, 1, 65535);
+
+    if (n === BAD || n === null) return BAD;
+    if (!ports.includes(n)) ports.push(n);
+  }
+
+  // 폴더는 마지막 이름 하나만(경로 전체·사용자 폴더는 받지 않는다)
+  const dirLeaf =
+    typeof p.dir === "string" ? (p.dir.split(/[\\/]/).filter(Boolean).pop() ?? "") : null;
+  const memTrend = parseTrend(p.memTrend);
+
+  return {
+    pid,
+    name,
+    dir: cleanStr(dirLeaf, 40, /[^A-Za-z0-9 _.()-]/g),
+    memMb: memMb as number | null,
+    cpuSec: cpuSec as number | null,
+    startedAt: startedAt as number | null,
+    child: p.child === true,
+    ports,
+    flags: parseFlags(p.flags),
+    ...(memTrend ? { memTrend } : {}),
+  };
+}
+
+function parseRunning(v: unknown): RunningInput | undefined | typeof BAD {
+  if (v === undefined || v === null) return undefined;
+  if (!isRecord(v) || hasForbidden(v)) return BAD;
+
+  let truncated = v.truncated === true;
+  let containers: RunningContainer[] | null = null;
+  let processes: RunningProcess[] | null = null;
+
+  for (const key of ["containers", "processes"] as const) {
+    const raw = v[key];
+
+    if (raw === undefined || raw === null) continue;
+    if (!Array.isArray(raw) || raw.length > 100) return BAD;
+    if (raw.length > MAX_RUNNING_ITEMS) truncated = true;
+
+    const items: unknown[] = [];
+
+    for (const item of raw.slice(0, MAX_RUNNING_ITEMS)) {
+      const parsed =
+        key === "containers" ? parseContainerItem(item) : parseProcessItem(item);
+
+      if (parsed === BAD) return BAD;
+      items.push(parsed);
+    }
+    if (key === "containers") containers = items as RunningContainer[];
+    else processes = items as RunningProcess[];
+  }
+
+  let summary: RunningSummary | null = null;
+
+  if (v.summary !== undefined && v.summary !== null) {
+    if (!isRecord(v.summary) || hasForbidden(v.summary)) return BAD;
+
+    const s = v.summary;
+    const stoppedContainers = runInt(s.stoppedContainers, 0, 1e6);
+    const danglingImages = runInt(s.danglingImages, 0, 1e6);
+    const imageBytes = runInt(s.imageBytes, 0, 1e15);
+    const volumes = runInt(s.volumes, 0, 1e6);
+
+    if ([stoppedContainers, danglingImages, imageBytes, volumes].includes(BAD)) return BAD;
+    summary = {
+      stoppedContainers: stoppedContainers as number | null,
+      danglingImages: danglingImages as number | null,
+      imageBytes: imageBytes as number | null,
+      volumes: volumes as number | null,
+    };
+  }
+
+  return {
+    containers,
+    processes,
+    summary,
+    error: cleanStr(v.error, 80, /[^\p{L}\p{N} _.,:()/-]/gu),
+    truncated,
+  };
+}
+
+// 메모리가 계속 늘어나는가: 4점 이상, 처음보다 10MB·5% 이상 늘고, 단계의 75% 이상이 줄지 않음
+function rising(pts: TrendPoint[] | undefined): boolean {
+  if (!pts || pts.length < 4) return false;
+
+  const first = pts[0].mb;
+  const last = pts[pts.length - 1].mb;
+
+  if (last - first < Math.max(10, first * 0.05)) return false;
+
+  let up = 0;
+
+  for (let i = 1; i < pts.length; i++) if (pts[i].mb >= pts[i - 1].mb) up++;
+
+  return up >= (pts.length - 1) * 0.75;
+}
+
+// 이전 추이에 지금 값을 이어 붙인다: 마지막 점에서 3분 넘게 지났을 때만 새 점, 30분 지난 점은 버리고 최대 10점
+function nextTrend(
+  prev: TrendPoint[] | undefined,
+  memMb: number | null,
+  nowMs: number,
+): TrendPoint[] | undefined {
+  const nowSec = Math.round(nowMs / 1000);
+  const pts = (prev ?? []).filter(
+    (p) => p.t * 1000 >= nowMs - TREND_WINDOW_MS && p.t <= nowSec,
+  );
+  const last = pts[pts.length - 1];
+
+  if (memMb !== null && (!last || nowMs - last.t * 1000 >= TREND_EVERY_MS))
+    pts.push({ t: nowSec, mb: memMb });
+
+  return pts.length ? pts.slice(-TREND_MAX_POINTS) : undefined;
+}
+
+function topIndexes(items: { memMb: number | null }[]): Set<number> {
+  return new Set(
+    items
+      .map((it, i) => [it.memMb ?? -1, i] as const)
+      .sort((a, b) => b[0] - a[0])
+      .slice(0, TREND_TOP)
+      .filter(([m]) => m >= 0)
+      .map(([, i]) => i),
+  );
+}
+
+/** 저장 직전: 이전 값과 이어 메모리 추이(상위 5개)를 만들고 의심 표시(flags)를 계산한다. 보낸 쪽의 flags·추이는 버린다 */
+export function enrichRunning(
+  cur: RunningInput,
+  prev: RunningInput | undefined,
+  nowMs = Date.now(),
+): RunningInput {
+  const nowSec = nowMs / 1000;
+  const procKey = (p: RunningProcess) => `${p.name}:${p.pid}:${p.startedAt ?? ""}`;
+  const prevC = new Map((prev?.containers ?? []).map((c) => [c.name, c]));
+  const prevP = new Map((prev?.processes ?? []).map((p) => [procKey(p), p]));
+
+  const withTrend = <T extends { memMb: number | null; memTrend?: TrendPoint[] }>(
+    items: T[],
+    old: (it: T) => TrendPoint[] | undefined,
+  ): T[] => {
+    const top = topIndexes(items);
+
+    return items.map((it, i) => {
+      const { memTrend: _dropped, ...rest } = it;
+      const trend = top.has(i) ? nextTrend(old(it), it.memMb, nowMs) : undefined;
+
+      return (trend ? { ...rest, memTrend: trend } : rest) as T;
+    });
+  };
+
+  const containers = cur.containers
+    ? withTrend(cur.containers, (c) => prevC.get(c.name)?.memTrend).map(
+        (c): RunningContainer => {
+          const flags: RunFlag[] = [];
+
+          if (c.state === "running" && (c.uptimeSec ?? 0) > LONG_RUNNING_SEC && rising(c.memTrend))
+            flags.push("long_running");
+          if ((c.restarts ?? 0) >= RESTART_LOOP_COUNT) flags.push("restart_loop");
+          if (c.state !== "running" && (c.stoppedSec ?? 0) >= STOPPED_LONG_SEC)
+            flags.push("stopped");
+          if (!c.project) flags.push("unlabeled");
+
+          return { ...c, flags };
+        },
+      )
+    : null;
+
+  const processes = cur.processes
+    ? withTrend(cur.processes, (p) => prevP.get(procKey(p))?.memTrend).map(
+        (p): RunningProcess => {
+          const flags: RunFlag[] = [];
+
+          if (p.startedAt !== null && nowSec - p.startedAt > LONG_RUNNING_SEC && rising(p.memTrend))
+            flags.push("long_running");
+          if (!p.child && (p.memMb ?? 0) > HEAVY_ORPHAN_MB && /^(node|python)/i.test(p.name))
+            flags.push("heavy_orphan");
+
+          return { ...p, flags };
+        },
+      )
+    : null;
+
+  return { ...cur, containers, processes };
+}
+
 export type DeviceValidateResult =
   | { ok: true; payload: DevicePayload }
   | { ok: false; reason: string };
@@ -225,6 +593,11 @@ export function validateDevicePayload(
   if (containers === BAD)
     return { ok: false, reason: "컨테이너 목록이 올바르지 않습니다." };
 
+  const running = parseRunning(body.running);
+
+  if (running === BAD)
+    return { ok: false, reason: "실행 현황(running) 값이 올바르지 않습니다." };
+
   return {
     ok: true,
     payload: {
@@ -236,6 +609,7 @@ export function validateDevicePayload(
         gpu,
         disks,
         ...(containers ? { containers } : {}),
+        ...(running ? { running } : {}),
       },
     },
   };
@@ -263,8 +637,27 @@ export async function saveDeviceStat(
   p: DevicePayload,
   now = new Date(),
 ): Promise<{ sampled: boolean }> {
+  let data = p.data;
+
+  // 실행 현황은 이전 값과 이어서 추이·의심 표시를 만든다(이전 값을 못 읽어도 저장은 계속)
+  if (data.running) {
+    let prev: RunningInput | undefined;
+
+    try {
+      const row = await prisma.deviceStat.findUnique({
+        where: { device: p.device },
+        select: { data: true },
+      });
+
+      prev = row ? storedData(p.device, row.data)?.running : undefined;
+    } catch {
+      prev = undefined;
+    }
+    data = { ...data, running: enrichRunning(data.running, prev, now.getTime()) };
+  }
+
   const values = {
-    data: p.data as object,
+    data: data as object,
     measuredAt: p.measuredAt ?? now,
     receivedAt: now,
   };
@@ -285,7 +678,7 @@ export async function saveDeviceStat(
     return { sampled: false };
 
   await prisma.deviceStatSample.create({
-    data: { device: p.device, at: now, ...samplePoint(p.data) },
+    data: { device: p.device, at: now, ...samplePoint(data) },
   });
   await prisma.deviceStatSample.deleteMany({
     where: { at: { lt: new Date(now.getTime() - HISTORY_MS) } },
