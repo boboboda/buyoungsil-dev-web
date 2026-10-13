@@ -226,7 +226,6 @@ export const config = {
   matcher: [
     "/",
     "/note/:path*",
-    "/release/:path*",
     "/admin/:path*",
     "/signin",
     "/signup",

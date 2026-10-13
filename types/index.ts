@@ -80,36 +80,6 @@ export type NoteEditorType = "add" | "edit" | "read";
 
 export { columns, noteColumns };
 
-export interface App {
-  id: string;
-  name: string;
-  title: string;
-  description: string;
-  appLink: string;
-  coverImage?: string | null;
-  databaseId?: string | null;
-  tags: Tag[];
-  createdAt: string;
-  updatedAt?: string;
-}
-
-export interface Tag {
-  id: string;
-  name: string;
-  color: string;
-}
-
-export interface AppInput {
-  title: string;
-  description: string;
-  appLink: string;
-  coverImage?: string;
-  tags: { name: string; color: string }[];
-  databaseId?: string;
-}
-
-
-
 export interface Project {
   id: string;
   name: string;
