@@ -9,7 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { brokerRules, brokerSettings, createBroker, loadToolkitManifest, readRequest, safeAppPath, TOOLREQ_PATH, validateRequest } from "../toolbroker.mjs";
+import { brokerRules, brokerSettings, createBroker, imageToolRules, jobUsableTools, loadToolkitManifest, readRequest, safeAppPath, TOOLREQ_PATH, validateRequest } from "../toolbroker.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -259,6 +259,31 @@ test("toolkit.run refuses undeclared commands, bad args, path escapes and secret
   request(f.app, "c10", "toolkit.run", { command: "pixel" });
   await broker(f, { mode: "report" }, { requiredSecrets: ["PIXEL_TOKEN"], secrets: { PIXEL_TOKEN: SECRET } }).b.tick();
   assert.match(response(f.app, "c10").message, /허용' 모드/);
+});
+
+test("toolkit.run honors tools.json enabled/manual: refuses disabled and manual tools, allows tools without the fields", async (t) => {
+  const f = fixture(t);
+  toolkit(f, {
+    off: { entry: "cli.py", enabled: false },
+    handmade: { entry: "cli.py", manual: true },
+    plain: { entry: "cli.py" },
+    both: { entry: "cli.py", enabled: true, manual: false },
+    "pixel-codex": { entry: "cli.py", manual: true },
+    "pixel-generate": { entry: "cli.py", enabled: false },
+    "asset-export": { entry: "cli.py" },
+  }, 'console.log("ran")');
+  // 목록: 일감에서 쓸 수 있는 도구만 남는다. 원본 목록(loadToolkitManifest)에는 전부 남는다
+  const m = loadToolkitManifest(f.toolkit);
+  assert.deepEqual(Object.keys(m.tools).sort(), ["asset-export", "both", "handmade", "off", "pixel-codex", "pixel-generate", "plain"]);
+  assert.deepEqual(Object.keys(jobUsableTools(m.tools)).sort(), ["asset-export", "both", "plain"]);
+  assert.equal(imageToolRules(f.toolkit), "");
+  for (const [id, command] of [["m1", "off"], ["m2", "handmade"], ["m3", "plain"], ["m4", "both"]]) request(f.app, id, "toolkit.run", { command });
+  await broker(f, { mode: "allow" }).b.tick();
+  assert.equal(response(f.app, "m1").status, "denied");
+  assert.match(response(f.app, "m1").message, /꺼져 있는 도구/);
+  assert.equal(response(f.app, "m2").status, "denied");
+  assert.match(response(f.app, "m2").message, /사람이 직접 쓰는 도구/);
+  for (const id of ["m3", "m4"]) assert.notEqual(response(f.app, id).status, "denied", id);
 });
 
 const FAKE_CLI = `

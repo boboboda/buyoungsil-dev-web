@@ -157,12 +157,17 @@ export function validateManifest(m, toolkitDir) {
     if (!Array.isArray(secrets) || secrets.some((s) => typeof s !== "string" || !SECRET_NAME_RE.test(s))) return bad("secrets 는 키 이름(대문자·숫자·_) 배열이에요.");
     const timeoutSec = t.timeoutSec === undefined ? 120 : t.timeoutSec;
     if (!Number.isInteger(timeoutSec) || timeoutSec < 1 || timeoutSec > LIMITS.toolTimeoutCapSec) return bad(`timeoutSec 는 1~${LIMITS.toolTimeoutCapSec} 정수예요.`);
-    tools[name] = { entry: t.entry, entryFull, args, timeoutSec, network: t.network === true, secrets: [...new Set(secrets)] };
+    tools[name] = { entry: t.entry, entryFull, args, timeoutSec, network: t.network === true, enabled: t.enabled !== false, manual: t.manual === true, secrets: [...new Set(secrets)] };
   }
   return { ok: true, tools };
 }
 
 /** 툴킷 목록에 선언된 비밀값 이름(중계가 켜져 있으면 AI 환경에서 빼고 도구에만 준다) */
+/** 일감(자동 실행) 안에서 쓸 수 있는 도구만: enabled=false(꺼짐)·manual=true(사람이 직접 쓰는 도구)는 뺀다. 필드가 없으면 허용 */
+export function jobUsableTools(tools) {
+  return Object.fromEntries(Object.entries(tools).filter(([, t]) => t.enabled !== false && t.manual !== true));
+}
+
 export function toolkitSecretNames(toolkitDir) {
   const m = loadToolkitManifest(toolkitDir);
   return m.ok ? [...new Set(Object.values(m.tools).flatMap((t) => t.secrets))] : [];
@@ -196,6 +201,8 @@ const toolkitAdapter = {
     if (!manifest.ok) return { ok: false, status: manifest.missing ? "failed" : "denied", reason: manifest.reason };
     const tool = Object.hasOwn(manifest.tools, args.command) ? manifest.tools[args.command] : null;
     if (!tool) return { ok: false, reason: `tools.json 에 없는 하위 명령이에요: ${args.command}` };
+    if (tool.enabled === false) return { ok: false, reason: `꺼져 있는 도구라 실행할 수 없어요: ${args.command}` };
+    if (tool.manual === true) return { ok: false, reason: `사람이 직접 쓰는 도구라 일감 안에서는 실행할 수 없어요: ${args.command}` };
     const given = args.args === undefined ? {} : args.args;
     if (!given || typeof given !== "object" || Array.isArray(given)) return { ok: false, reason: "toolkit.run 의 args.args 는 객체여야 해요." };
     const unknown = Object.keys(given).filter((k) => !tool.args.some((a) => a.name === k));
@@ -490,13 +497,14 @@ export function imageToolRules(toolkitDir) {
   if (!toolkitDir) return "";
   const m = loadToolkitManifest(toolkitDir);
   if (!m.ok) return "";
-  const gen = ["pixel-codex", "pixel-generate"].filter((n) => Object.hasOwn(m.tools, n));
+  const usable = jobUsableTools(m.tools);
+  const gen = ["pixel-codex", "pixel-generate"].filter((n) => Object.hasOwn(usable, n));
   if (!gen.length) return "";
   const lines = [
     `- 작업 중 이미지가 필요하면 toolkit.run 으로 ${gen.map((n) => `\`${n}\``).join(" 또는 ")} 를 요청하세요. 결과는 .factory/assets/(git 무시)에 생기고 통제실 일감 상세에서 볼 수 있어요.`,
     "- 결과 파일과 report.json 을 확인해서 이상하면(채움 비율 낮음, 색 수·크기 문제, 그림이 어색함) 설명이나 인자를 바꿔 다시 요청하세요(일감당 요청 한도 안에서). 같은 인자로 반복하지 마세요.",
   ];
-  if (Object.hasOwn(m.tools, "asset-export")) {
+  if (Object.hasOwn(usable, "asset-export")) {
     lines.push("- 좋으면 직접 복사하지 말고 `asset-export` 도구로 앱의 assets 폴더에 넣은 뒤, 코드에서 그 경로를 쓰고 커밋하세요. .factory/ 안 파일은 커밋되지 않아요.");
   }
   return lines.join("\n") + "\n";
