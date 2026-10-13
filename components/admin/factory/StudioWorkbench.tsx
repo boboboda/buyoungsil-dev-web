@@ -168,6 +168,7 @@ const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((
 
 export default function StudioWorkbench({
   apps,
+  toolApps = [],
   initial,
   tools,
   toolsReported,
@@ -175,7 +176,8 @@ export default function StudioWorkbench({
   initialStudio = "game",
   initialPicked = null,
 }: {
-  apps: StudioAppInfo[];
+  apps: StudioAppInfo[]; // 제품만
+  toolApps?: StudioAppInfo[]; // 도구·플랫폼(이름만 접어서 보임)
   initial: StudioProjects;
   tools: StudioToolRow[];
   toolsReported: boolean;
@@ -196,7 +198,7 @@ export default function StudioWorkbench({
   const all: StudioAppInfo[] = [
     ...apps,
     ...Object.keys(saved)
-      .filter((s) => !apps.some((a) => a.appSlug === s))
+      .filter((s) => !apps.some((a) => a.appSlug === s) && !toolApps.some((a) => a.appSlug === s))
       .map((appSlug) => ({ appSlug, title: appSlug, stack: "", status: "", finishedAt: null, done: false })),
   ];
   const inStudio = all.filter((a) => saved[a.appSlug]?.kind === studio);
@@ -294,6 +296,19 @@ export default function StudioWorkbench({
             <h3 className="fx-label mb-1">미분류 ({unclassified.length})</h3>
             {unclassified.length ? <ul className="grid gap-2">{unclassified.map(listButton)}</ul> : <p className="text-sm fx-muted">모든 프로젝트의 종류가 정해졌어요.</p>}
           </div>
+          {toolApps.length ? (
+            <details data-studio-tool-apps>
+              <summary className="fx-label cursor-pointer">도구·플랫폼 ({toolApps.length})</summary>
+              <ul className="mt-1 grid gap-1 text-sm">
+                {toolApps.map((a) => (
+                  <li key={a.appSlug} className="break-all font-mono">
+                    {a.appSlug}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 text-xs fx-muted">일감은 [일감] 탭에서 보내요.</p>
+            </details>
+          ) : null}
         </div>
 
         <div className="min-w-0">

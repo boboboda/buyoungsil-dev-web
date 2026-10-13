@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, CardHeader } from "@heroui/react";
 
+import { APP_ROLE_LABELS, APP_ROLES, type AppRole } from "@/lib/factory/appRoles";
+
 import ProjectLinkSelect from "./ProjectLinkSelect";
 
 interface AppRow {
@@ -16,6 +18,7 @@ interface AppRow {
   projectId: string | null;
   projectTitle: string | null;
   storeTarget: boolean;
+  role: AppRole;
 }
 
 interface ProjectRow {
@@ -76,6 +79,24 @@ export default function AppProjectLinks() {
   // 출시 대상이 아닌데 프로젝트가 연결된 앱(새 앱 승인 때 자동으로 만들던 예전 연결 등)
   const strays = data?.apps.filter((a) => !a.storeTarget && a.projectId) ?? [];
   const unlinkedCount = targets.filter((a) => !a.projectId).length;
+  const saveRole = async (appSlug: string, role: AppRole) => {
+    setBusy(appSlug);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/factory/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appRole: { appSlug, role } }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { message?: string; appRoles?: Record<string, AppRole> };
+
+      if (res.ok) setData((d) => (d ? { ...d, apps: d.apps.map((a) => (a.appSlug === appSlug ? { ...a, role } : a)) } : d));
+      setNotice(body.message ?? (res.ok ? "저장했어요." : "저장하지 못했어요."));
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    }
+    setBusy(null);
+  };
   const unlink = (a: AppRow) => {
     if (window.confirm(`${a.appSlug} 의 프로젝트 연결을 풀까요?\n(프로젝트는 지워지지 않아요)`)) save(a.appSlug, null);
   };
@@ -153,6 +174,30 @@ export default function AppProjectLinks() {
                     연결 풀기
                   </Button>
                 </div>
+              ))}
+            </div>
+          )}
+          {data && data.apps.length > 0 && (
+            <div className="space-y-2 rounded-lg border border-default-200 p-2" data-app-roles>
+              <div className="text-sm font-medium">앱 역할</div>
+              <p className="text-xs text-default-500">제품(앱·게임)만 [스튜디오] 프로젝트 목록에 나와요. 도구·플랫폼은 이름만 접어서 보여 줘요. 일감은 그대로 보낼 수 있어요.</p>
+              {data.apps.map((a) => (
+                <label key={a.appSlug} className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="min-w-0 break-all font-mono sm:w-64">{a.appSlug}</span>
+                  <select
+                    aria-label={`${a.appSlug} 역할`}
+                    className="min-h-11 rounded border border-default-300 bg-transparent px-2 sm:min-h-0"
+                    disabled={busy !== null}
+                    value={a.role}
+                    onChange={(e) => saveRole(a.appSlug, e.target.value as AppRole)}
+                  >
+                    {APP_ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {APP_ROLE_LABELS[r]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               ))}
             </div>
           )}

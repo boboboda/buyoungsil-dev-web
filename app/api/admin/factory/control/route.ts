@@ -7,6 +7,7 @@ import { requireAdmin } from "@/lib/factory/admin";
 import { isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
 import { cleanAppSlots, MAX_APP_SLOTS, MIN_APP_SLOTS, setAppSlots, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
 import { isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
+import { APP_ROLES_KEY, applyAppRolePatch, readAppRoles } from "@/lib/factory/appRoles";
 import { applyStudioPatch, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
 import prisma from "@/lib/prisma";
 import { createAdminStudioJob, STUDIO_REQUEST_SOURCE } from "@/lib/studio/requests";
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     toolPurpose?: unknown;
     studioProject?: unknown;
     studioJob?: unknown;
+    appRole?: unknown;
     enabled?: unknown;
     autoUpdate?: unknown;
     autoDeploy?: unknown;
@@ -129,6 +131,24 @@ export async function POST(req: NextRequest) {
     await prisma.factorySetting.upsert({ where: { key: STUDIO_PROJECTS_KEY }, create: { key: STUDIO_PROJECTS_KEY, value }, update: { value } });
 
     return NextResponse.json({ message: res.message, studioProjects: res.projects });
+  }
+
+  // 앱 역할: { appRole: { appSlug, role: product|tool } }. 저장은 factory_settings 의 appRoles 한 칸(앱 레코드 없어도 됨)
+  if (body && Object.hasOwn(body, "appRole")) {
+    const patch = body.appRole as { appSlug?: unknown } | null;
+    const slug = typeof patch?.appSlug === "string" ? patch.appSlug.trim() : "";
+    const [row, known] = await Promise.all([
+      prisma.factorySetting.findUnique({ where: { key: APP_ROLES_KEY } }),
+      slug ? prisma.factoryJob.findFirst({ where: { appSlug: slug }, select: { id: true } }) : null,
+    ]);
+    const res = applyAppRolePatch(readAppRoles(row?.value), body.appRole, new Set(known ? [slug] : []));
+
+    if (!res.ok) return NextResponse.json({ message: res.message }, { status: 400 });
+    const value = JSON.stringify(res.roles);
+
+    await prisma.factorySetting.upsert({ where: { key: APP_ROLES_KEY }, create: { key: APP_ROLES_KEY, value }, update: { value } });
+
+    return NextResponse.json({ message: res.message, appRoles: res.roles });
   }
 
   // 스튜디오 [일감 만들기]: { studioJob: { appSlug, kind: regen|layout|free, tool, propName?, placement?, instruction?, note? } }. 관리자 세션 전용 — Studio 요청과 같은 검증·지시문 경로로 '승인 대기' 일감을 만든다

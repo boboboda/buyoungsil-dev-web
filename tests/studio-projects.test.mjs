@@ -23,7 +23,8 @@ function loadTs(relative, dependencies = {}) {
 
 const mask = loadTs("lib/factory/mask.ts");
 const toolkit = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
-const lib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkit });
+const roles = loadTs("lib/factory/appRoles.ts");
+const lib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkit, "@/lib/factory/appRoles": roles });
 const { default: Workbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkit, "@/lib/factory/studioProjects": lib });
 
 const reported = new Set(["pixel-generate", "pixel-anim", "env-doctor"]);
@@ -151,4 +152,58 @@ test("일감 보내기 카드: 저장된 연결 도구만 고르고, 종류 3가
   const none = renderToStaticMarkup(h(Workbench, { apps, tools, toolsReported: true, initial: { "saessak-hub": { kind: "game", tools: [] } }, initialPicked: "saessak-hub" }));
   assert.match(none, /연결된 도구가 없어요/);
   assert.doesNotMatch(none, /data-send-submit/);
+});
+
+test("앱 역할: 값 없음 → product, game-toolkit·app-kit 기본 tool, 저장값이 기본값을 이김", () => {
+  assert.equal(roles.APP_ROLE_LABELS.product, "제품");
+  assert.equal(roles.APP_ROLE_LABELS.tool, "도구·플랫폼");
+  assert.equal(roles.resolveAppRole({}, "saessak-hub"), "product");
+  assert.equal(roles.resolveAppRole({}, "game-toolkit"), "tool");
+  assert.equal(roles.resolveAppRole({}, "app-kit"), "tool");
+  assert.equal(roles.resolveAppRole({ "game-toolkit": "product" }, "game-toolkit"), "product");
+  assert.equal(roles.resolveAppRole({ "saessak-hub": "tool" }, "saessak-hub"), "tool");
+  assert.deepEqual(roles.readAppRoles(JSON.stringify({ "app-kit": "product", "memo-app": "tool", bad: "x", "ok-app": "owner", "BAD SLUG": "tool" })), { "app-kit": "product", "memo-app": "tool" });
+  assert.deepEqual(roles.readAppRoles("{깨짐"), {});
+  assert.deepEqual(roles.readAppRoles(null), {});
+});
+
+test("앱 역할 저장: 잘못된 값·모르는 앱 거절, 저장 가능", () => {
+  const k = new Set(["saessak-hub"]);
+
+  assert.equal(roles.applyAppRolePatch({}, { appSlug: "saessak-hub", role: "owner" }, k).ok, false);
+  assert.equal(roles.applyAppRolePatch({}, { appSlug: "saessak-hub" }, k).ok, false);
+  assert.equal(roles.applyAppRolePatch({}, { appSlug: "BAD", role: "tool" }, k).ok, false);
+  assert.equal(roles.applyAppRolePatch({}, { appSlug: "no-such-app", role: "tool" }, k).ok, false);
+  assert.equal(roles.applyAppRolePatch({}, null, k).ok, false);
+  const r = roles.applyAppRolePatch({}, { appSlug: "saessak-hub", role: "tool" }, k);
+
+  assert.ok(r.ok);
+  assert.deepEqual(r.roles, { "saessak-hub": "tool" });
+  assert.ok(roles.applyAppRolePatch({}, { appSlug: "game-toolkit", role: "product" }, k).ok, "일감이 없어도 기본 목록 앱은 정할 수 있다");
+});
+
+test("스튜디오 목록 필터: 제품만 프로젝트 목록, tool 은 접힌 구역에 이름만, 저장값은 그대로", () => {
+  const all = ["saessak-hub", "game-toolkit", "app-kit", "memo-app"].map((appSlug) => ({ appSlug, title: appSlug, stack: "", status: "done", finishedAt: null, done: true }));
+  const { products, toolApps } = lib.splitStudioApps(all, {});
+
+  assert.deepEqual(products.map((a) => a.appSlug), ["saessak-hub", "memo-app"]);
+  assert.deepEqual(toolApps.map((a) => a.appSlug), ["game-toolkit", "app-kit"]);
+  const moved = lib.splitStudioApps(all, { "game-toolkit": "product", "memo-app": "tool" });
+
+  assert.deepEqual(moved.products.map((a) => a.appSlug), ["saessak-hub", "game-toolkit"]);
+  const tools = [{ id: "pixel-generate", desc: "", purpose: "game", purposeSource: "saved", enabled: true }];
+  // tool 앱에 예전 studioProjects 값이 있어도 읽히고(지우지 않음), 프로젝트 목록·미분류에는 나오지 않는다
+  const initial = { "saessak-hub": { kind: "game", tools: [] }, "game-toolkit": { kind: "game", tools: ["pixel-generate"] } };
+
+  assert.ok(lib.readStudioProjects(JSON.stringify(initial))["game-toolkit"]);
+  const out = renderToStaticMarkup(h(Workbench, { apps: products, toolApps, tools, toolsReported: true, initial, initialPicked: "saessak-hub" }));
+
+  assert.match(out, /data-studio-tool-apps/);
+  assert.ok(out.includes("도구·플랫폼 (2)"));
+  assert.equal((out.match(/data-studio-project="game-toolkit"/g) ?? []).length, 0);
+  assert.match(out, /data-studio-project="saessak-hub"/);
+  assert.match(out, /data-studio-project="memo-app"/);
+  const none = renderToStaticMarkup(h(Workbench, { apps: products, tools, toolsReported: true, initial: {} }));
+
+  assert.doesNotMatch(none, /data-studio-tool-apps/);
 });

@@ -80,7 +80,7 @@ const devicesLib = loadTs("lib/factory/devices.ts", { "@/lib/prisma": { __esModu
 const runningPanel = loadTs("components/admin/factory/RunningPanel.tsx", { "@/components/admin/ui/meters": meters });
 const { DevicePanelView } = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters, "./RunningPanel": runningPanel });
 const toolkitLib = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
-const studioLib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkitLib });
+const studioLib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/appRoles": loadTs("lib/factory/appRoles.ts") });
 const { default: StudioWorkbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/studioProjects": studioLib });
 const { ToolkitToolsView } = loadTs("components/admin/factory/ToolkitToolsPanel.tsx", {
   "@/lib/prisma": { __esModule: true, default: null },
@@ -598,6 +598,7 @@ function page(state) {
           h(FactoryTabs, { active: "studio" }),
           h(StudioWorkbench, {
             apps: studioApps,
+            toolApps: [{ appSlug: "game-toolkit", title: "game-toolkit", stack: "", status: "done", finishedAt: null, done: true }, { appSlug: "app-kit", title: "app-kit", stack: "", status: "done", finishedAt: null, done: true }],
             tools: studioTools,
             toolsReported: true,
             recent: { "saessak-hub": [{ id: "j9", title: "새싹 허브 (Studio: 소품 다시 요청 shelf_2)", status: "pending", createdAt: "2026-10-13T14:20:00.000Z" }, { id: "j8", title: "새싹 허브 (Studio: 배치 적용)", status: "done", createdAt: "2026-10-12T09:05:00.000Z" }] },

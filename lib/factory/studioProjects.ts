@@ -4,6 +4,7 @@
 //   { [appSlug]: { kind: "game" | "app", tools: [도구 id…], templateId?: string, studioUrl?: "https://…" } }
 // - 종류는 관리자가 지정할 때만 생긴다(자동 분류 없음). 종류가 없는 프로젝트는 '미분류'.
 // - 도구 id 는 감독 프로그램이 보고한 tools.json 목록 안에서만, 손으로 해야 하는 도구(MANUAL_TOOL_IDS)는 연결할 수 없다.
+import { resolveAppRole, type AppRoles } from "@/lib/factory/appRoles";
 import type { Purpose } from "@/lib/factory/toolkit";
 
 export const STUDIO_PROJECTS_KEY = "studioProjects";
@@ -187,4 +188,12 @@ export function buildStudioApps(jobs: readonly { appSlug: string; title: string;
   }
 
   return [...apps.values()].sort((a, b) => Number(b.done) - Number(a.done));
+}
+
+/** 앱 목록 → 제품(스튜디오 프로젝트 목록에 나옴)과 도구·플랫폼(이름만 접어서 보임). 저장된 studioProjects 값은 건드리지 않는다 */
+export function splitStudioApps<T extends { appSlug: string }>(apps: readonly T[], roles: AppRoles): { products: T[]; toolApps: T[] } {
+  return {
+    products: apps.filter((a) => resolveAppRole(roles, a.appSlug) === "product"),
+    toolApps: apps.filter((a) => resolveAppRole(roles, a.appSlug) === "tool"),
+  };
 }

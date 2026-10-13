@@ -11,6 +11,7 @@ import { createProjectRecord } from "@/lib/projects/createProjectRecord";
 import { hasUnfilledPlaceholder } from "@/lib/privacy/template";
 import { readStoreAssets } from "@/lib/factory/storeAssets";
 import { storeTitleOf } from "@/lib/factory/appName";
+import { APP_ROLES_KEY, readAppRoles, resolveAppRole, type AppRole } from "@/lib/factory/appRoles";
 
 /** 기획서 본문에서 홈페이지 소개용 첫 문단을 뽑는다. (제목·목록 기호 제거, 200자) */
 export function summarizePlan(plan: string): string {
@@ -338,7 +339,7 @@ export async function linkProjectOnAdd(appSlug: string, choice: { projectId?: st
 
 /** 공장 앱(일감이 한 번이라도 있었던 appSlug)과 연결 상태, 고를 수 있는 Project 목록. */
 export async function listAppProjectLinks() {
-  const [jobs, links, projects] = await Promise.all([
+  const [jobs, links, projects, rolesRow] = await Promise.all([
     prisma.factoryJob.findMany({
       orderBy: { createdAt: "desc" },
       select: { appSlug: true, title: true, stack: true, kind: true },
@@ -348,7 +349,9 @@ export async function listAppProjectLinks() {
       orderBy: { updatedAt: "desc" },
       select: { id: true, title: true, name: true, platform: true, status: true },
     }),
+    prisma.factorySetting.findUnique({ where: { key: APP_ROLES_KEY } }),
   ]);
+  const roles = readAppRoles(rolesRow?.value);
   const linkBySlug = new Map(links.map((l) => [l.appSlug, l.projectId]));
   const targetBySlug = new Map(links.map((l) => [l.appSlug, l.storeTarget]));
   const projectById = new Map(projects.map((p) => [p.id, p]));
@@ -356,7 +359,7 @@ export async function listAppProjectLinks() {
   const newTitle = new Map(jobs.filter((j) => j.kind === "new").map((j) => [j.appSlug, j.title]));
   const seen = new Set<string>();
   // storeTarget: 출시 대상(출시 패키지 목록)인지. 대상이 아닌데 연결된 앱은 통제실에서 [연결 풀기]만 보여 준다
-  const apps: { appSlug: string; title: string; stack: string; projectId: string | null; projectTitle: string | null; storeTarget: boolean }[] = [];
+  const apps: { appSlug: string; title: string; stack: string; projectId: string | null; projectTitle: string | null; storeTarget: boolean; role: AppRole }[] = [];
 
   // 표시 이름은 새 앱 일감의 제목을 우선한다(수정 지시 제목은 "앱 (무엇)" 꼴이라). 없으면 가장 최근 일감 제목
   for (const j of jobs) {
@@ -371,6 +374,7 @@ export async function listAppProjectLinks() {
       projectId,
       projectTitle: projectId ? (projectById.get(projectId)?.title ?? "(삭제된 프로젝트)") : null,
       storeTarget: targetBySlug.get(j.appSlug) === true,
+      role: resolveAppRole(roles, j.appSlug),
     });
   }
 

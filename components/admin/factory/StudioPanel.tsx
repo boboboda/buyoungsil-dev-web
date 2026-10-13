@@ -4,7 +4,8 @@
 // 읽기에 실패해도 통제실은 뜬다.
 import prisma from "@/lib/prisma";
 import { readToolkitView } from "@/lib/factory/toolkit";
-import { buildStudioApps, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
+import { APP_ROLES_KEY, readAppRoles } from "@/lib/factory/appRoles";
+import { buildStudioApps, splitStudioApps, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
 
 import { STUDIO_REQUEST_SOURCE } from "@/lib/studio/requests";
 
@@ -12,13 +13,14 @@ import StudioWorkbench, { type StudioSentJob, type StudioToolRow } from "./Studi
 
 export default async function StudioPanel() {
   try {
-    const [jobs, setting, view, sent] = await Promise.all([
+    const [jobs, setting, rolesRow, view, sent] = await Promise.all([
       prisma.factoryJob.findMany({
         orderBy: { createdAt: "desc" },
         take: 500,
         select: { appSlug: true, title: true, stack: true, status: true, finishedAt: true, kind: true },
       }),
       prisma.factorySetting.findUnique({ where: { key: STUDIO_PROJECTS_KEY } }),
+      prisma.factorySetting.findUnique({ where: { key: APP_ROLES_KEY } }),
       readToolkitView(prisma),
       prisma.factoryJob.findMany({ where: { source: STUDIO_REQUEST_SOURCE }, orderBy: { createdAt: "desc" }, take: 100, select: { id: true, appSlug: true, title: true, status: true, createdAt: true } }),
     ]);
@@ -31,7 +33,9 @@ export default async function StudioPanel() {
     }
     const tools: StudioToolRow[] = view.rows.map((r) => ({ id: r.id, desc: r.desc, purpose: r.purpose, purposeSource: r.purposeSource, enabled: r.enabled }));
 
-    return <StudioWorkbench apps={buildStudioApps(jobs)} initial={readStudioProjects(setting?.value)} tools={tools} recent={recent} toolsReported={!!view.info && view.info.state === "ok"} />;
+    const { products, toolApps } = splitStudioApps(buildStudioApps(jobs), readAppRoles(rolesRow?.value));
+
+    return <StudioWorkbench apps={products} toolApps={toolApps} initial={readStudioProjects(setting?.value)} tools={tools} recent={recent} toolsReported={!!view.info && view.info.state === "ok"} />;
   } catch (error) {
     console.error("[studio] 스튜디오 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
 
