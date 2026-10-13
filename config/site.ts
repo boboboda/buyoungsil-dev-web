@@ -40,6 +40,7 @@ export const siteConfig = {
     { key: "adminWorks", label: "💻 외주 신청", short: "외주", href: "/admin/works" },
     { key: "adminBoards", label: "💬 앱별 공지/문의 게시판", short: "문의함", href: "/admin/boards" },
     { key: "adminAnalytics", label: "📈 분석", short: "분석", href: "/admin/analytics" },
+    { key: "adminUsers", label: "👥 가입자", short: "가입자", href: "/admin/users" },
   ],
   // 관리자 콘솔 상단바에만 더 보이는 메뉴와 순서
   adminConsoleExtraNavItems: [
@@ -55,6 +56,7 @@ export const siteConfig = {
     "adminDrafts",
     "adminBoards",
     "adminWorks",
+    "adminUsers",
     "adminAnalytics",
     "adminCategories",
   ],

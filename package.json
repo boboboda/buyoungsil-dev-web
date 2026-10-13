@@ -8,7 +8,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "test:ai-harness": "node tools/factory-supervisor/tests/ai-harness.test.mjs && node tools/factory-supervisor/tests/toolbroker.test.mjs && node tools/factory-supervisor/tests/secrets.test.mjs && node tools/factory-supervisor/tests/assetupload.test.mjs && node tools/factory-supervisor/tests/publicprojects.test.mjs && node tools/factory-supervisor/tests/storetarget.test.mjs && node tools/factory-supervisor/tests/projectlink.test.mjs && node tools/factory-supervisor/tests/compact.test.mjs && node tools/factory-supervisor/tests/testapk.test.mjs && node tools/factory-supervisor/tests/uploadauth.test.mjs && node tools/factory-supervisor/tests/reviewstatus.test.mjs",
-    "test:access-control": "node tests/access-control.test.mjs",
+    "test:access-control": "node tests/access-control.test.mjs && node tests/admin-users.test.mjs",
     "test:redirects": "node tests/redirects.test.mjs",
     "test:admin-cleanup": "node tests/admin-cleanup.test.mjs",
     "test:factory-ui": "node tests/factory-ui.test.mjs",
@@ -19,6 +19,7 @@
     "test:admin-backdrop": "node tests/admin-backdrop.test.mjs",
     "test:factory-history": "node tests/factory-history.test.mjs",
     "test:home-stats": "node tests/home-stats.test.mjs",
+    "test:admin-users": "node tests/admin-users.test.mjs",
     "preview:admin-ui":"node tests/admin-ui-preview.mjs",
     "lint": "eslint --fix --color"
   },

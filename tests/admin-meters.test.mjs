@@ -262,7 +262,7 @@ const bar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/adm
 test("관리자 상단바: 메뉴 순서·지금 위치 강조·사이트로·시각·로그아웃", () => {
   assert.deepEqual(
     top.adminNavList().map((i) => i.short),
-    ["대시보드", "통제실", "글/노트", "프로젝트", "이야기", "초안함", "문의함", "외주", "분석", "카테고리"],
+    ["대시보드", "통제실", "글/노트", "프로젝트", "이야기", "초안함", "문의함", "외주", "가입자", "분석", "카테고리"],
   );
   assert.equal(top.isAdminNavActive("/admin", "/admin"), true);
   assert.equal(top.isAdminNavActive("/admin/factory", "/admin"), false, "대시보드는 정확히 /admin 일 때만");

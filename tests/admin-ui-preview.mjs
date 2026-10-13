@@ -1,8 +1,9 @@
 // 관리자 HUD 디자인 미리보기(로그인 없이 보는 하니스).
 // 실제 관리자 레이아웃(app/admin/layout.tsx: 상단바·하단 상태줄)·통제실 탭·AI USAGE 패널을 가짜 데이터로 그려 HTML 로 만들고,
 // Tailwind(저장소 설정 그대로) + app/admin/admin-ui.css 를 붙인다. --shot 이면 헤드리스 Chrome/Edge 로 스크린샷도 찍는다.
-// 상태 4종: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패) · history(이력 전체 보기)
-// 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{live,waiting,failed,history}.html
+// 상태: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패) · history(이력 전체 보기)
+//       · users(가입자 명단, 가짜 30명) · users-empty(가입자 0명)
+// 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
 // API·DB·키는 쓰지 않는다. 결과 폴더(tests/.out)는 커밋하지 않는다.
 import fs from "node:fs";
@@ -49,6 +50,8 @@ const topBar = loadTs("components/admin/ui/AdminTopBar.tsx", {
 });
 const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters });
 const { HistoryPanelView } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx });
+const members = loadTs("lib/admin/members.ts");
+const { default: MembersView } = loadTs("components/admin/users/MembersView.tsx", { "next/link": link, "@/components/admin/ui/meters": meters, "@/lib/admin/members": members });
 
 // ── 가짜 데이터 ──
 const now = Date.UTC(2026, 9, 13, 3, 42, 0); // 12:42 KST
@@ -86,6 +89,9 @@ const STATES = {
 };
 // 이력 전체 보기: 서버 배포 탭에서 [전체 보기]를 누른 모양(95개 중 첫 20개 + [더 보기]). 다른 상태는 최근 목록(5개만)
 STATES.history = { ...STATES.live, title: "이력 전체 보기", history: "all" };
+// 가입자 명단(/admin/users): 가짜 30명(이름·이메일은 만든 값) 첫 쪽 25명 / 0명
+STATES.users = { ...STATES.live, title: "가입자 명단 · 30명", users: "many" };
+STATES["users-empty"] = { ...STATES.live, title: "가입자 명단 · 0명", users: "empty" };
 
 const iso = (t) => new Date(t).toISOString();
 const deployRow = (i) => ({
@@ -120,6 +126,27 @@ const historyPanel = (state) =>
     onMore: noop2,
     onShowRecent: noop2,
   });
+
+// 가짜 가입자 30명: 이메일 / Google / GitHub / 이메일+Google 이 돌아가며, 0번은 관리자
+const SURNAMES = ["김", "이", "박", "최", "정", "강", "조", "윤", "장", "임"];
+const memberRows = Array.from({ length: 30 }, (_, i) => ({
+  id: `cfake${String(i).padStart(4, "0")}`,
+  name: i === 4 ? "아주아주긴이름을쓰는회원님의닉네임입니다" : `${SURNAMES[i % 10]}회원${String(30 - i).padStart(2, "0")}`,
+  email: i === 4 ? "a.very.long.email.address.for.layout.check@example-company.co.kr" : `member${30 - i}@example.com`,
+  role: i === 0 ? "admin" : "user",
+  methods: [["email"], ["google"], ["github"], ["email", "google"]][i % 4],
+  joinedAt: iso(now - (i < 2 ? i * 5 * HOUR + 30 * MIN : i * 2.5 * 24 * HOUR)),
+}));
+const usersData = {
+  many: {
+    summary: { total: 30, today: 2, week: 3, month: 6, byMethod: { email: 15, google: 15, github: 7 }, byRole: { admin: 1, user: 29 } },
+    list: { items: memberRows.slice(0, 25), total: 30, page: 1, pages: 2, limit: 25 },
+  },
+  empty: {
+    summary: { total: 0, today: 0, week: 0, month: 0, byMethod: { email: 0, google: 0, github: 0 }, byRole: { admin: 0, user: 0 } },
+    list: { items: [], total: 0, page: 1, pages: 1, limit: 25 },
+  },
+};
 
 // ── 화면 ──
 const { Card, CardBody, Button, Input } = heroui;
@@ -231,9 +258,11 @@ function page(state) {
     "./admin-ui.css": {},
     "@/config/fonts": { fontMono: { variable: "" } },
     "@/components/admin/ui/AdminDocumentTheme": { __esModule: true, default: () => null },
-    "@/components/admin/ui/AdminTopBar": { __esModule: true, default: () => h(topBar.AdminTopBarView, { pathname: "/admin/factory", clock: "12:42", account: "부영실" }) },
+    "@/components/admin/ui/AdminTopBar": { __esModule: true, default: () => h(topBar.AdminTopBarView, { pathname: st.users ? "/admin/users" : "/admin/factory", clock: "12:42", account: "부영실" }) },
     "@/components/admin/ui/AdminStatusBar": { __esModule: true, default: () => h(statusBar.AdminStatusBarView, { data: st.bar, now, error: st.barError ?? null }) },
   });
+
+  if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
 
   return h(
     AdminLayout,
@@ -296,7 +325,7 @@ if (process.argv.includes("--shot")) {
         if (only && only !== k) continue;
         // 헤드리스 창은 최소 폭이 있어(약 500px) 360px 은 iframe 에 넣어 찍는다
         const mobile = path.join(out, `admin-ui-${k}-360.html`);
-        const [tall, tallMobile] = STATES[k].history ? [3600, 6400] : [2200, 3600]; // 이력 패널이 들어가 길다
+        const [tall, tallMobile] = STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
         fs.writeFileSync(mobile, `<!doctype html><body style="margin:0;background:#333"><iframe src="${path.basename(file)}" width="360" height="${tallMobile}" style="border:0;display:block"></iframe></body>`);
         for (const [w, size, target] of [["1440", `1440,${tall}`, file], ["1024", `1024,${tall}`, file], ["360", `600,${tallMobile}`, mobile]]) {
           const png = path.join(out, `admin-ui-${k}-${w}.png`);
