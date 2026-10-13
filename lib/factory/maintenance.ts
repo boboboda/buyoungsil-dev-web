@@ -11,9 +11,12 @@
 //   배포는 GitHub main 의 가장 최근 정비 커밋 하나로, 그때까지 배포 안 된 지시들이 모두 들어간다(main 은 한 줄로 쌓이므로).
 //   설정 '대기열 끝나면 자동 배포'(기본 꺼짐)가 켜져 있으면 그때 한 번 자동으로 요청한다(지난 배포 뒤 실패한 지시가 있으면 안 함).
 // - 통제실에서 보낸 지시는 바로 대기열에, 채팅(커넥터)에서 보낸 지시는 승인을 기다린다. 채팅에서는 배포할 수 없다.
+import type { Prisma } from "@prisma/client";
+
 import prisma from "@/lib/prisma";
 import { isAiEngine, readModelChoice, type AiEngine, type ClaudeModel } from "@/lib/factory/ai";
 import { maskSecrets } from "@/lib/factory/mask";
+import { cleanHandoff } from "@/lib/factory/handoff";
 import { notifyDeployReady, notifyMaintenance, notifyText } from "@/lib/factory/telegram";
 import { getDefaultAiEngine, getDefaultClaudeModel, getSettingValue, isAutoDeployEnabled, setSettingValue } from "@/lib/factory/settings";
 
@@ -592,6 +595,7 @@ export async function reportTurn(body: TurnReport): Promise<Result> {
   const sessionId = typeof d.sessionId === "string" && /^[0-9a-f-]{8,64}$/i.test(d.sessionId) ? d.sessionId : undefined;
   const pushed = typeof d.pushedCommit === "string" && COMMIT_RE.test(d.pushedCommit) ? d.pushedCommit : undefined;
   const needsDeploy = !!pushed && d.needsDeploy === true;
+  const handoff = cleanHandoff(d.handoff);
   const thread = await prisma.factoryMaintenance.findUnique({ where: { id: turn.maintenanceId } });
   // 진행 중인 배포([지금 배포])가 있으면 그 배포 상태는 건드리지 않는다(끝난 뒤 결과가 사라지지 않게)
   const deploying = !!thread?.deployRequestedAt && !thread.deployedAt && !thread.deployResult;
@@ -601,7 +605,15 @@ export async function reportTurn(body: TurnReport): Promise<Result> {
     data: { status: ok ? "done" : "failed", finishedAt: new Date(), heartbeatAt: new Date(), ...(pushed ? { pushedCommit: pushed, needsDeploy } : {}) },
   });
   await prisma.factoryMaintenanceMessage.create({
-    data: { maintenanceId: turn.maintenanceId, role: "assistant", aiEngine: turn.aiEngine, aiModel: turn.aiModel, text: maskSecrets(clean(d.text, 20_000)) || (ok ? "완료(요약 없음)" : "실패(사유 없음)") },
+    data: {
+      maintenanceId: turn.maintenanceId,
+      role: "assistant",
+      aiEngine: turn.aiEngine,
+      aiModel: turn.aiModel,
+      text: maskSecrets(clean(d.text, 20_000)) || (ok ? "완료(요약 없음)" : "실패(사유 없음)"),
+      // 인계 기록(읽기 전용 표시용): 형식이 맞는 항목만, 정리해서 저장. 예전 감독 프로그램은 안 보내서 NULL
+      ...(handoff ? { handoff: handoff as unknown as Prisma.InputJsonObject } : {}),
+    },
   });
   await prisma.factoryMaintenance.update({
     where: { id: turn.maintenanceId },
@@ -726,7 +738,7 @@ export async function maintenanceOverview(opts: { threadId?: string; limit?: num
         updatedAt: t.updatedAt,
         messages: [...t.messages.filter((m) => m.role !== "log"), ...logs.slice(-60)]
           .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-          .map((m) => ({ id: m.id, role: m.role, text: m.text, status: m.status, aiEngine: m.aiEngine, aiModel: m.aiModel, source: m.source, createdAt: m.createdAt, pushedCommit: m.pushedCommit, deployedAt: m.deployedAt })),
+          .map((m) => ({ id: m.id, role: m.role, text: m.text, status: m.status, aiEngine: m.aiEngine, aiModel: m.aiModel, source: m.source, createdAt: m.createdAt, pushedCommit: m.pushedCommit, deployedAt: m.deployedAt, handoff: m.role === "assistant" ? m.handoff : null })),
       };
     }),
   };

@@ -117,6 +117,7 @@ function jobsWith(state, { defaultModel = null } = {}) {
     "@/lib/factory/reviewVideo": { deleteReviewVideo: async () => {} },
     "@/lib/factory/mask": mask,
     "@/lib/factory/toolBroker": { cleanToolRequests: () => null },
+    "@/lib/factory/handoff": { cleanHandoff: () => null },
   });
   return { jobs, calls };
 }
@@ -236,6 +237,7 @@ function maintWith(turns, { defaultModel = null, defaultEngine = "claude" } = {}
     "@/lib/factory/mask": mask,
     "@/lib/factory/telegram": { notifyDeployReady: async () => {}, notifyMaintenance: async () => {}, notifyText: async () => {} },
     "@/lib/factory/settings": { getDefaultAiEngine: async () => defaultEngine, getDefaultClaudeModel: async () => defaultModel, getSettingValue: async () => null, isAutoDeployEnabled: async () => false, setSettingValue: async () => {} },
+    "@/lib/factory/handoff": { cleanHandoff: () => null },
   });
   return { maint, created };
 }

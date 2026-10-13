@@ -57,6 +57,7 @@ const topBar = loadTs("components/admin/ui/AdminTopBar.tsx", {
 const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters, "@/lib/claude-status/fable": fableLib });
 const aiLib = loadTs("lib/factory/ai.ts");
 const modelSelect = loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib });
+const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx").default;
 const { HistoryPanelView } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
 const { default: DefaultAiSettings } = loadTs("components/admin/factory/DefaultAiSettings.tsx", {
   "@/lib/factory/ai": aiLib,
@@ -129,6 +130,33 @@ const devicesData = {
 };
 const devicesBrief = devicesData.devices.map((d) => ({ device: d.device, short: d.short, state: d.state, cpuPct: d.cpuPct, ramPct: d.ram?.pct ?? null }));
 STATES.devices = { ...STATES.live, title: "장비 상태", devices: true, bar: { ...STATES.live.bar, devices: devicesBrief } };
+// 인계 기록 칸(일감 상세·정비 대화의 접이식, 읽기 전용): AI 블록이 있는 정비 항목 / 블록이 없고 실패한 앱 일감 항목 (하니스에서만 펼쳐서 찍는다)
+STATES.handoff = { ...STATES.live, title: "인계 기록 칸", handoff: true };
+const handoffSample = {
+  v: 1, kind: "maintenance", taskId: "turn1", title: "통제실 [현황] 이력에 앱 일감 추가", engine: "claude", model: "opus", at: "2026-10-13T09:10:18.000Z", status: "done",
+  request: "[현황] 히스토리에 '앱 일감' 기록도 전부 보이게", hasAiBlock: true, doneWhen: "탭 줄에 [앱 일감 · 총 N개] 항상 보임, 전체 히스토리에도 합침", done: "jobs 이력 API·탭·전체 히스토리 합치기, factory_jobs 인덱스 마이그레이션",
+  remaining: "배포 후 실제 화면에서 줄 클릭 확인", caution: "일감 목록 탭의 최근 50개 제한은 그대로(안내만 추가)",
+  files: { committed: { list: ["lib/factory/approvals.ts", "components/admin/factory/FactoryOverview.tsx", "tests/factory-history.test.mjs"], more: 8 }, uncommitted: { list: [], more: 0 } },
+  checks: [{ name: "감독 문법·타입 검사", result: "통과" }, { name: "prisma validate", result: "통과" }, { name: "앱 빌드", result: "건너뜀", detail: "Mac 필요" }],
+  git: { head: "a6bed92b6f2a4f1f3c2f5f9f6e6d2e8c1a1b2c3d", branch: "main", dirty: false },
+};
+const handoffFailed = {
+  ...handoffSample, kind: "job", taskId: "cjob000118", appSlug: "memo-pad", title: "메모장 수정", engine: "codex", model: "기본", at: "2026-10-13T08:30:00.000Z", status: "failed", hasAiBlock: false,
+  request: "수정: 메모 삭제 버튼이 안 눌려요", doneWhen: "", done: "", remaining: "", caution: "", failReason: "필수 검증 실패: flutter analyze 오류 3개",
+  files: { committed: { list: [], more: 0 }, uncommitted: { list: ["lib/main.dart", "lib/memo_list.dart"], more: 0 } },
+  checks: [{ name: "필수 검증", result: "실패", detail: "flutter analyze 오류 3개" }], git: { head: "0f3c2d1e9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d", branch: "main", dirty: true },
+};
+const handoffPage = () =>
+  h("div", { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" }, h("div", { className: "fx-split-main space-y-4" },
+    h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+    h(FactoryTabs, { active: "jobs" }),
+    h("h2", { className: "fx-label" }, "── 정비 대화의 결과 아래 (AI 인계 블록 있음) ──"),
+    h("div", { "data-open-details": true }, h(HandoffBox, { entry: handoffSample })),
+    h("h2", { className: "fx-label mt-6" }, "── 일감 상세의 결과 아래 (AI 블록 없음 · 실패) ──"),
+    h("div", { "data-open-details": true }, h(HandoffBox, { entry: handoffFailed })),
+    h("h2", { className: "fx-label mt-6" }, "── 접힌 모습(기본) ──"),
+    h(HandoffBox, { entry: handoffSample }),
+  ));
 // 승인할 때 모델 고르기: 앱 일감(opus 고름)·정비 지시(기본 설정 사용)·Codex 출시 일감(모델 칸 없음) + 일감 이력 + 설정 탭 기본 모델
 STATES["model-approve"] = { ...STATES.live, title: "승인 · 모델 고르기", model: true };
 // Fable 사용량: Fable 주간 한도 카드(37%) + 오늘 모델별 비율 막대 + 상태바 'Fable 주 37%' / Fable 값을 못 받음('값 없음(한도 정보 못 받음)')
@@ -381,6 +409,7 @@ function page(state) {
 
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
   if (st.model) return h(AdminLayout, null, modelApprove());
+  if (st.handoff) return h(AdminLayout, null, handoffPage());
   if (st.devices)
     return h(
       AdminLayout,
@@ -500,6 +529,8 @@ function modelApprove() {
 // ── CSS: 저장소 Tailwind 설정 + 관리자 CSS ──
 fs.mkdirSync(out, { recursive: true });
 const bodies = Object.fromEntries(Object.keys(STATES).map((k) => [k, renderToStaticMarkup(page(k))]));
+// 인계 기록 견본은 앞의 두 칸만 펼쳐서 찍는다(세 번째는 접힌 기본 모습)
+bodies.handoff = bodies.handoff.replace(/<details /g, (m, i, all) => (all.slice(0, i).split("<details ").length <= 2 ? "<details open=\"\" " : m));
 const scan = path.join(out, "admin-ui-scan.html");
 fs.writeFileSync(scan, Object.values(bodies).join("\n")); // Tailwind 가 쓰인 클래스를 찾을 수 있게 먼저 쓴다
 const postcss = require("postcss");

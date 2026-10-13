@@ -6,6 +6,7 @@ import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { acquireWorkspace, engineOf, ENGINE_LABELS, eventDecoder, excludeHarnessState, gitSnapshot, handoffPrompt, harnessFile, lockPath, recordLifecycle, recoverWorkspace, redactAiText, saveHandoff, startAi, stopAi, verifyWorkspace } from "./ai-runner.mjs";
 import { keyFilesToCommit } from "./keyguard.mjs";
+import { checksFromVerification, headOf } from "./handoff.mjs";
 
 const usage = `사용법:
   node tools/factory-supervisor/ai.mjs run claude|codex --project <폴더> [--prompt <지시>] [--stack <종류>]
@@ -62,6 +63,7 @@ async function main() {
     try { sessions = JSON.parse(fs.readFileSync(sessionsFile, "utf8")); } catch { /* first invocation */ }
     const turn = async (prompt) => {
       recordLifecycle(dir, engine, "session-start", "terminal");
+      const startHead = headOf(dir) || undefined; // 인계 기록: 이번 실행에서 커밋된 파일을 가려내는 기준
       const decode = eventDecoder(engine);
       const child = startAi(engine, {}, { cwd: dir, sessionId: sessions[engine], env: process.env });
       currentChild = child;
@@ -91,8 +93,11 @@ async function main() {
       const code = await new Promise((resolve) => { child.on("error", (e) => { stderr = e.message; resolve(-1); }); child.on("close", (c) => resolve(c)); });
       clearTimeout(timer); clearTimeout(graceTimer); lines.close();
       if (sessionId) { sessions[engine] = sessionId; fs.writeFileSync(sessionsFile, JSON.stringify(sessions), { mode: 0o600 }); }
-      const verification = !interrupted && !timedOut && (code === 0 || killedAfterResult) && result && !result.is_error ? await verify() : { ok: false, reason: timedOut ? "작업 시간 초과" : interrupted ? "사용자 중단" : result?.result || stderr || `AI 종료 코드 ${code}` };
-      saveHandoff(dir, { engine, sessionId, taskId: "terminal", status: verification.ok ? "done" : "failed", summary: result?.result || "", verification });
+      const aiFinished = !interrupted && !timedOut && (code === 0 || killedAfterResult) && result && !result.is_error;
+      const verification = aiFinished ? await verify() : { ok: false, reason: timedOut ? "작업 시간 초과" : interrupted ? "사용자 중단" : result?.result || stderr || `AI 종료 코드 ${code}` };
+      // 인계 기록(.factory/handoff.json): 실패해도 남긴다. 검사는 AI 가 끝난 뒤에만 돌아서, 아니면 '건너뜀'
+      const checks = aiFinished ? checksFromVerification(verification) : [{ name: "프로젝트 검사", result: "건너뜀", detail: "AI 실행이 끝나지 않아 돌리지 않음" }];
+      saveHandoff(dir, { engine, sessionId, taskId: "terminal", status: verification.ok ? "done" : "failed", summary: result?.result || "", verification, handoff: { kind: "terminal", title: "터미널 작업", request: prompt, startHead, checks } });
       recordLifecycle(dir, engine, verification.ok ? "session-completed" : "session-failed", "terminal");
       console.log(`${ENGINE_LABELS[engine]}: ${verification.ok ? "검증 통과" : `완료하지 못함: ${redactAiText(verification.reason)}`}`);
       process.exitCode = verification.ok ? 0 : 1;

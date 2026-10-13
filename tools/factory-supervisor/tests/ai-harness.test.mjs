@@ -45,6 +45,7 @@ function jobModule(prisma) {
     "@/lib/factory/reviewVideo": { deleteReviewVideo: async () => {} },
     "@/lib/factory/mask": { maskSecrets: (v) => v },
     "@/lib/factory/toolBroker": toolBroker,
+    "@/lib/factory/handoff": { cleanHandoff: () => null },
     "@/lib/factory/settings": { getDefaultClaudeModel: async () => null },
   });
 }
@@ -55,6 +56,7 @@ function maintenanceModule(prisma) {
     "@/lib/factory/mask": { maskSecrets: (v) => v },
     "@/lib/factory/telegram": { notifyDeployReady: async () => {}, notifyMaintenance: async () => {}, notifyText: async () => {} },
     "@/lib/factory/settings": { getDefaultAiEngine: async () => "codex", getDefaultClaudeModel: async () => null, getSettingValue: async () => null, isAutoDeployEnabled: async () => false, setSettingValue: async () => {} },
+    "@/lib/factory/handoff": { cleanHandoff: () => null },
   });
 }
 
@@ -329,6 +331,7 @@ test("primary AI persists, defaults to Claude, and rejects invalid values withou
     "@/lib/prisma": { __esModule: true, default: { factorySetting: { findUnique: async () => row, upsert: async q => { row = q.create; } } } },
     "@/lib/factory/ai": ai,
     "@/lib/factory/toolBroker": toolBroker,
+    "@/lib/factory/handoff": { cleanHandoff: () => null },
   });
   assert.equal(await settings.getDefaultAiEngine(), "claude");
   await settings.setDefaultAiEngine("codex");
@@ -382,6 +385,7 @@ function hookFixture(defaultEngine = "codex") {
     "@/lib/factory/settings": { getDefaultAiEngine: async () => defaultEngine },
     "@/lib/factory/mask": { maskSecrets: value => value.replaceAll("secret-fixture", "***") },
     "@/lib/factory/telegram": { notifyMaintenance: async () => { notifications++; } },
+    "@/lib/factory/handoff": { cleanHandoff: () => null },
   });
   return { hooks, messages, threads, notifications: () => notifications };
 }

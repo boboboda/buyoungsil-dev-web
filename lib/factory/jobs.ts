@@ -12,6 +12,7 @@ import { maskSecrets } from "@/lib/factory/mask";
 import { AI_LABELS, isAiEngine, readModelChoice, type AiEngine } from "@/lib/factory/ai";
 import { getDefaultClaudeModel } from "@/lib/factory/settings";
 import { cleanToolRequests, type ToolRequestRecord } from "@/lib/factory/toolBroker";
+import { cleanHandoff, type HandoffEntry } from "@/lib/factory/handoff";
 
 export const LEASE_MS = 10 * 60 * 1000;
 export const MAX_LOGS_PER_JOB = 500;
@@ -156,6 +157,7 @@ export interface ReportInput {
   failReason?: string | null;
   failStage?: string | null; // 실패한 단계(출시 일감: key, build, sign, upload, homepage, store …)
   toolRequests?: ToolRequestRecord[] | null; // 도구 요청 중계 목록(감독 프로그램이 전체를 보냄. null 이면 그대로 둔다)
+  handoff?: HandoffEntry | null; // 인계 기록 항목(일감이 끝날 때만. null 이면 그대로 둔다)
 }
 
 export type ParseResult = { ok: true; value: ReportInput } | { ok: false; reason: string };
@@ -209,6 +211,7 @@ export function parseReport(body: unknown): ParseResult {
       failStage: typeof b.failStage === "string" && /^[a-z_-]{1,40}$/.test(b.failStage) ? b.failStage : null,
       build: cleanBuild(b.build),
       toolRequests: cleanToolRequests(b.toolRequests),
+      handoff: cleanHandoff(b.handoff),
     },
   };
 }
@@ -250,6 +253,7 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   const data: Prisma.FactoryJobUpdateManyMutationInput = { leaseUntil: lease };
   if (input.phase !== undefined) data.phase = input.phase;
   if (input.toolRequests) data.toolRequests = input.toolRequests as unknown as Prisma.InputJsonArray;
+  if (input.handoff) data.handoff = input.handoff as unknown as Prisma.InputJsonObject;
 
   // 검토가 필요한 출시 일감은 [이대로 진행] 전에는 완료가 될 수 없다(완료 보고가 와도 검토 대기로 둔다)
   let status = input.status;

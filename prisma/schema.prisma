@@ -601,6 +601,7 @@ model FactoryJob {
   releaseNotes    String?   @db.Text // 앱 업데이트: 출시 노트(What's new, 비우면 공장이 초안)
   buildResult     Json? // 앱 업데이트 결과: 버전 이름·코드, AAB 크기, 시험 요약, 업로드 트랙
   toolRequests    Json? // 도구 요청 중계 목록: [{ id, tool, status, at, ms, message }] (비밀값 없음)
+  handoff         Json? // 인계 기록 마지막 항목(Claude Code ↔ Codex 공유 인계, 읽기 전용 표시용). lib/factory/handoff.ts 가 정리해서 저장. 비밀값·기획서·diff 없음
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
   startedAt       DateTime?
@@ -830,6 +831,7 @@ model FactoryMaintenanceMessage {
   pushedCommit  String? // user 지시: 이 지시가 GitHub 에 올린 커밋
   needsDeploy   Boolean            @default(false) // user 지시: 서버 코드가 바뀌었는지
   deployedAt    DateTime? // user 지시: 이 지시의 커밋이 포함된 배포가 끝난 시각
+  handoff       Json? // assistant 결과: 이 지시가 끝날 때 남긴 인계 기록 항목(읽기 전용 표시용, lib/factory/handoff.ts)
   maintenance   FactoryMaintenance @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
 
   @@index([maintenanceId, createdAt])

@@ -11,6 +11,8 @@ import ClaudeModelSelect, { ModelTag } from "./ClaudeModelSelect";
 import { JobSteps, ProgressBar, StatusDot, jobTone } from "./fx";
 import { AI_LABELS, isClaudeModel, type AiEngine, type TaskModel } from "@/lib/factory/ai";
 import type { ToolRequestRecord } from "@/lib/factory/toolBroker";
+import type { HandoffEntry } from "@/lib/factory/handoff";
+import HandoffBox from "./HandoffBox";
 
 type Status =
   | "pending"
@@ -54,6 +56,7 @@ interface JobDetail extends JobRow {
   images: { id: string; label: string; url: string; createdAt: string }[];
   logs: { id: number; at: string; level: string; message: string }[];
   toolRequests?: ToolRequestRecord[] | null; // 도구 요청 중계 목록(예전 서버면 없음)
+  handoff?: HandoffEntry | null; // 인계 기록 마지막 항목(예전 서버·예전 일감이면 없음)
 }
 
 interface Usage {
@@ -576,6 +579,9 @@ function JobDetailView({
             <p className="mt-1 whitespace-pre-wrap">{job.summary}</p>
           </div>
         )}
+
+        {/* 인계 기록(읽기 전용 접이식): 기록이 없는 예전 일감은 칸을 보이지 않는다 */}
+        <HandoffBox entry={job.handoff} />
 
         {/* 도구 요청 중계 */}
         {Array.isArray(job.toolRequests) && job.toolRequests.length > 0 && (

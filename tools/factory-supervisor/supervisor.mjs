@@ -38,7 +38,8 @@ import { refreshPathFromRegistry, toolLabel } from "./pcenv.mjs";
 import { maybeRestart, onRestartSignal, readRestartMark, restartPending, restartQuery } from "./restart.mjs";
 import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
-import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
+import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, makeHandoffEntry, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
+import { checksFromVerification, headOf } from "./handoff.mjs";
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames } from "./toolbroker.mjs";
 import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
 import { createAssetUploader } from "./assetupload.mjs";
@@ -649,6 +650,19 @@ async function flush(st, extra = {}) {
 async function finish(st, status, fields) {
   st.job.aiOutcome = { ...st.job.aiOutcome, status, summary: fields?.summary, failReason: fields?.failReason, sessionId: st.sessionId };
   if (st.dir !== cfg.workDir) recordLifecycle(st.dir, st.job.aiEngine, status, st.job.id);
+  // 인계 기록 항목: Git·변경 파일·검사 같은 사실은 여기서 직접 채우고, 요청·남은 작업·주의는 AI 최종 답변의 '## 인계' 블록에서 읽는다.
+  // 실패한 일감도 남긴다. 같은 항목을 통제실에 보고하고(일감 상세 '인계 기록'), 폴더의 .factory/handoff.json 에도 쓴다
+  if (st.dir !== cfg.workDir) {
+    try {
+      const o = st.job.aiOutcome;
+      const failed = status === "failed";
+      const reason = String(fields?.failReason ?? "");
+      const verification = o.verification ?? (failed && /^필수 검증 실패/.test(reason) ? { ok: false, reason: reason.replace(/^필수 검증 실패:\s*/, "") } : null);
+      const checks = verification ? checksFromVerification(verification, "필수 검증") : [{ name: "필수 검증", result: "건너뜀", detail: failed ? "검증 전에 실패" : "해당 없음" }];
+      o.handoffEntry = makeHandoffEntry(st.dir, { ...o.handoff, engine: st.job.aiEngine, taskId: st.job.id, status: failed ? "failed" : "done", summary: st.handoffText ?? fields?.summary, failReason: failed ? reason : undefined, checks }, st.redact);
+      fields = { ...fields, handoff: o.handoffEntry };
+    } catch (e) { addLog(st, "warn", `인계 기록 만들기 실패: ${maskText(e.message)}`); }
+  }
   // 키 파일 때문에 앱 폴더 커밋을 멈췄으면 통제실에 보이게(파일 이름만)
   if (st.job.keyBlocked?.length && !st.keyBlockedShown) {
     st.keyBlockedShown = true;
@@ -695,6 +709,8 @@ async function runJob(job) {
     if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(job.appSlug)) throw new Error("앱 폴더 이름이 올바르지 않습니다.");
     dir = path.join(cfg.workDir, job.appSlug);
     lock = acquireWorkspace(dir, { engine: job.aiEngine, taskId: job.id });
+    // 인계 기록에 쓸 일감 정보(요청은 앞부분만, 기획서 전문은 넣지 않음)
+    job.aiOutcome = { handoff: { kind: "job", appSlug: job.appSlug, title: job.title, request: `${job.kind === "new" ? "새 앱" : job.kind === "release" ? "출시 준비" : "수정"}: ${String(job.planMarkdown ?? job.prompt ?? "").replace(/^#.*$/gm, " ").slice(0, 600)}`, model: job.aiEngine === "claude" ? job.aiModel || "기본" : cfg.codexModel || "기본" } };
     await runJobUnlocked(job, lock);
   } catch (e) {
     await failEarly(job, e.message);
@@ -723,6 +739,7 @@ async function runJobUnlocked(job, lock) {
   } catch (e) {
     return failEarly(job, e.message);
   }
+  if (job.aiOutcome?.handoff) job.aiOutcome.handoff.startHead = headOf(dir) || undefined;
 
   const allowed = Object.fromEntries((job.requiredSecrets ?? []).map((n) => [n, secrets[n]]));
   const rel = job.kind === "release" ? (job.release ?? null) : null; // 서버가 준 출시 정보(종류·단계·outbox·키). 예전 서버면 없음
@@ -799,7 +816,7 @@ async function runJobUnlocked(job, lock) {
   const decode = eventDecoder(job.aiEngine);
   st.child = child;
   child.stdin.on("error", () => {});
-  child.stdin.end(handoffPrompt(dir, promptFor(job)));
+  child.stdin.end(handoffPrompt(dir, promptFor(job), { appScope: true }));
   // 도구 요청 중계: AI 가 도는 동안만 몇 초마다 .factory/requests/ 를 본다(꺼짐 모드면 아무것도 하지 않음)
   const reqSecrets = job.requiredSecrets ?? [];
   st.broker = createBroker({
@@ -885,6 +902,7 @@ async function runJobUnlocked(job, lock) {
       // 출시 일감: Claude 가 남긴 실패 표시(fail.json) → 그 단계 실패. 아니면 outbox 를 보내고, 거절되면 홈페이지 반영 실패
       const text = st.redact(String(st.result.result ?? st.lastText ?? "").trim());
       const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result.num_turns ? `, ${st.result.num_turns}턴` : ""})`;
+      st.handoffText = text;
       await finishRelease(st, { summary: (text || "완료(요약 없음)").slice(0, 3700) + footer, checkFail: true });
     } else if (st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
       const checkBeat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
@@ -898,7 +916,7 @@ async function runJobUnlocked(job, lock) {
       addLog(st, "info", "필수 검증 통과");
       if (verification.scope === "source-only") addLog(st, "warn", "Swift 소스·구성 확인만 완료했습니다. 컴파일과 앱 실행은 Mac에서 별도 검증해야 합니다.");
       recordLifecycle(dir, job.aiEngine, "verification-passed", job.id);
-      job.aiOutcome = { status: "verified", verification };
+      job.aiOutcome = { ...job.aiOutcome, status: "verified", verification };
       const blocked = keyFilesToCommit(dir);
       if (blocked.length) {
         job.keyBlocked = blocked;
@@ -912,6 +930,7 @@ async function runJobUnlocked(job, lock) {
       addLog(st, "info", compacted.line);
       const text = st.redact(String(st.result.result ?? st.lastText ?? "").trim());
       const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result.num_turns ? `, ${st.result.num_turns}턴` : ""}${committed ? ", 앱 폴더에 커밋함" : ""})`;
+      st.handoffText = text; // 길어서 요약이 잘려도 '## 인계' 블록은 전체 답변에서 읽는다
       await finish(st, "done", { summary: (text || "완료(요약 없음)").slice(0, 3800) + footer });
     } else {
       const why = st.redact(String(st.result?.is_error ? st.result.result : "") || st.stderrTail.trim() || `claude 가 비정상 종료(코드 ${code})`);

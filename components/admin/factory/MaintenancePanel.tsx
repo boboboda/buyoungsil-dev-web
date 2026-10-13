@@ -9,6 +9,8 @@ import { Button, Chip } from "@heroui/react";
 import AiEngineSelect from "./AiEngineSelect";
 import ClaudeModelSelect, { ModelTag } from "./ClaudeModelSelect";
 import { AI_LABELS, type AiEngine, type TaskAiEngine, type TaskModel } from "@/lib/factory/ai";
+import type { HandoffEntry } from "@/lib/factory/handoff";
+import HandoffBox from "./HandoffBox";
 
 interface Msg {
   aiEngine?: AiEngine;
@@ -19,6 +21,7 @@ interface Msg {
   status: string | null;
   source: string | null;
   createdAt: string;
+  handoff?: HandoffEntry | null; // 결과(assistant) 메시지: 이 지시가 끝날 때 남긴 인계 기록(없으면 칸 숨김)
 }
 
 interface Thread {
@@ -390,6 +393,11 @@ export default function MaintenancePanel() {
                   )}
                 </div>
                 <div className="whitespace-pre-wrap break-words">{m.text}</div>
+                {m.role === "assistant" && m.handoff && (
+                  <div className="mt-2">
+                    <HandoffBox entry={m.handoff} />
+                  </div>
+                )}
                 {m.role === "user" && m.status === "awaiting_approval" && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <ClaudeModelSelect

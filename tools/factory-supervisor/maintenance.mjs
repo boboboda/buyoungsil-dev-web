@@ -230,6 +230,10 @@ async function runTurnUnlocked(m, ctx, lock) {
   const model = m.aiEngine === "claude" ? m.aiModel || null : null;
   log(`[정비] 시작: ${m.title} · ${ENGINE_LABELS[m.aiEngine]}${model ? ` · 모델 ${model}` : ""}${m.sessionId ? " (이어서)" : ""}`);
 
+  // 인계 기록에 남길 사실: 시작 때 HEAD 와 감독 프로그램이 직접 돌린 검사 결과(AI 의 말은 증거로 쓰지 않음)
+  let startHead = null;
+  const checks = [];
+  const noteCheck = (name, result, detail) => checks.push({ name, result, ...(detail ? { detail } : {}) });
   let logs = [];
   const addLog = (t) => {
     const line = redact(t).replace(/\s+/g, " ").trim().slice(0, 1500);
@@ -243,7 +247,11 @@ async function runTurnUnlocked(m, ctx, lock) {
   const finish = async (done) => {
     done.text = redact(done.text);
     recordLifecycle(dir, m.aiEngine, done.ok ? "done" : "failed", m.turnId);
-    try { saveHandoff(dir, { engine: m.aiEngine, taskId: m.turnId, threadId: m.threadId, sessionId: done.sessionId, status: done.ok ? "done" : "failed", summary: done.text, verification: done.pushedCommit ? "passed-before-push" : "see-result" }, redact); }
+    // 인계 기록(.factory/handoff.json): 사실은 여기서 채우고, 요청·남은 작업·주의는 AI 답변의 '## 인계' 블록에서. 실패한 지시도 남긴다
+    try {
+      const handoff = { kind: "maintenance", title: m.title, request: m.text, model, startHead: startHead || undefined, checks, failReason: done.ok ? undefined : done.text };
+      done.handoff = saveHandoff(dir, { engine: m.aiEngine, taskId: m.turnId, threadId: m.threadId, sessionId: done.sessionId, status: done.ok ? "done" : "failed", summary: done.text, verification: done.pushedCommit ? "passed-before-push" : "see-result", handoff }, redact) ?? undefined;
+    }
     catch (e) { addLog(`상태 인계 기록 실패: ${e.message}`); }
     // 성공한 지시만: 이 정비 대화가 이어 쓸 Claude 세션을 /compact 로 정리한다(완료 보고 전이라 다음 지시보다 먼저 끝난다). 실패해도 결과는 그대로
     if (done.ok) {
@@ -262,7 +270,7 @@ async function runTurnUnlocked(m, ctx, lock) {
   const prepNotes = [];
   const why = prepare(dir, git, m, prepNotes);
   if (why) return finish({ ok: false, text: `정비를 시작하지 못했어요. ${why}` });
-  const startHead = out(git(["rev-parse", "HEAD"]));
+  startHead = out(git(["rev-parse", "HEAD"]));
   addLog(`정비 폴더 준비: ${dir} (main ${short(startHead)})`);
   prepNotes.forEach(addLog);
 
@@ -342,6 +350,7 @@ async function runTurnUnlocked(m, ctx, lock) {
   const okRun = result && !result.is_error && (code === 0 || killedAfterResult);
   const claudeText = String(result?.result ?? lastText ?? "").trim();
   if (!okRun) {
+    noteCheck("감독 문법·타입 검사", "건너뜀", "AI 실행이 정상 종료되지 않음");
     return finish({ ok: false, text: `${ENGINE_LABELS[m.aiEngine]}가 정상적으로 끝나지 않았어요(코드 ${code}${model ? `, 모델 ${model}` : ""}).\n${claudeText || tail(stderrTail, 1500)}`, sessionId });
   }
 
@@ -357,6 +366,7 @@ async function runTurnUnlocked(m, ctx, lock) {
     addLog("Codex 변경 검사: 통과하면 감독 프로그램이 로컬 커밋합니다.");
     await flush();
     const failure = gate(dir, git, out(git(["rev-parse", "origin/main"])) || startHead, true);
+    noteCheck("감독 문법·타입 검사", failure ? "실패" : "통과", failure || undefined);
     if (failure) { keepLocal(); return finish({ ok: false, text: [claudeText, `검증 실패 — 변경 파일을 정비 폴더에 보존했어요.\n${failure}`].join("\n"), sessionId }); }
     const added = git(["add", "-A"]);
     const committed = added.status === 0 ? git(["commit", "-m", `공장 정비: ${m.title.slice(0, 80)}`]) : added;
@@ -375,6 +385,7 @@ async function runTurnUnlocked(m, ctx, lock) {
   if (newCommits === 0) {
     writeUnpushed(dir, m, null);
     notes.push("코드 변경(새 커밋)이 없어서 GitHub 에 올릴 것이 없어요.");
+    if (!checks.length) noteCheck("감독 문법·타입 검사", "건너뜀", "코드 변경(새 커밋) 없음");
     return finish({ ok: true, text: [claudeText, "", ...notes.map((n) => `— ${n}`)].join("\n"), sessionId });
   }
 
@@ -394,6 +405,7 @@ async function runTurnUnlocked(m, ctx, lock) {
   addLog("검사: 감독 프로그램 문법, 타입 검사(tsc)…");
   await flush();
   const g = precheckedHead && precheckedHead === out(git(["rev-parse", "HEAD"])) ? null : gate(dir, git, remoteBefore);
+  if (precheckedHead && !g && checks.length) { /* 위에서 이미 같은 검사를 통과 */ } else noteCheck("감독 문법·타입 검사", g ? "실패" : "통과", g || undefined);
   if (g) {
     keepLocal();
     notes.push(`검사를 통과하지 못해 GitHub 에 올리지 않았어요(커밋 ${newCommits}개는 정비 폴더에 남아 있음). 이어서 고쳐 달라고 지시하면 그 위에서 이어 해요.\n${g}`);

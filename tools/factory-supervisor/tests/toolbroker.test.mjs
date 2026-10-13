@@ -441,6 +441,7 @@ test("server stores the broker setting as JSON and survives corrupt values", asy
     "@/lib/prisma": { __esModule: true, default: { factorySetting: { findUnique: async () => row, upsert: async (q) => { row = { value: q.update.value }; } } } },
     "@/lib/factory/ai": loadTs("lib/factory/ai.ts"),
     "@/lib/factory/toolBroker": serverBroker,
+    "@/lib/factory/handoff": { cleanHandoff: () => null },
   });
   assert.equal((await settings.getToolBrokerSettings()).mode, "off");
   await settings.setToolBrokerSettings({ mode: "report" });
@@ -469,6 +470,7 @@ test("report parsing carries the cleaned tool list and ignores it when absent", 
     "@/lib/factory/reviewVideo": { deleteReviewVideo: async () => {} },
     "@/lib/factory/mask": { maskSecrets: (v) => v },
     "@/lib/factory/toolBroker": serverBroker,
+    "@/lib/factory/handoff": { cleanHandoff: () => null },
     "@/lib/factory/settings": { getDefaultClaudeModel: async () => null },
   });
   const at = new Date().toISOString();
