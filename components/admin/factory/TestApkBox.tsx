@@ -11,6 +11,12 @@ import { fmtSize, type ReadyItem, type ReleaseApp } from "./releaseTypes";
 const MARK = (ok: boolean | null) => (ok === true ? "✅" : ok === false ? "⬜" : "⏳");
 const RUNNING = ["pending", "approved", "running"];
 const when = (v: string | null) => (v ? new Date(v).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "-");
+// APK 에 든 CPU 종류 한 줄. 예전 것(null)은 표시하지 않는다
+const ABI_LINE: Record<string, string> = {
+  "arm64-v8a": "📱 휴대폰용(arm64) — 에뮬레이터(x86_64)나 아주 오래된 32비트 폰에는 설치되지 않을 수 있어요.",
+  universal: "모든 CPU 용(예전 방식, 파일이 커요).",
+};
+const abiLine = (abi: string | null) => (abi ? (ABI_LINE[abi] ?? `CPU ${abi} 전용`) : null);
 
 export default function TestApkBox({ app, busy, call }: { app: ReleaseApp; busy: boolean; call: (body: Record<string, unknown>) => void }) {
   const t = app.testApk;
@@ -40,6 +46,7 @@ export default function TestApkBox({ app, busy, call }: { app: ReleaseApp; busy:
       <div className="mt-2 space-y-2 text-sm">
         <p className="text-xs text-default-500">
           등록된 서명 키로 release APK 를 만들어 휴대폰에서 바로 설치해 시험해요. Play Console 은 건드리지 않아요.
+          휴대폰용(arm64) 하나만 만들어요: 에뮬레이터(x86_64)나 아주 오래된 32비트 폰에는 설치되지 않을 수 있어요.
         </p>
         <ul className="space-y-0.5 text-xs">
           {ready.map((r) => (
@@ -98,6 +105,7 @@ export default function TestApkBox({ app, busy, call }: { app: ReleaseApp; busy:
                   커밋 {f.gitCommit ?? "-"} · SHA-256 <code>{f.sha256.slice(0, 12)}</code>
                   {f.keyLabel ? ` · 서명 키 ${f.keyLabel}` : ""}
                 </div>
+                {abiLine(f.abi) && <div className="text-xs">{abiLine(f.abi)}</div>}
                 <a
                   className="flex min-h-12 w-full items-center justify-center rounded-xl bg-primary px-4 text-base font-semibold text-primary-foreground sm:w-auto sm:inline-flex"
                   download={f.fileName}

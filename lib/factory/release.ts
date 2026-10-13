@@ -18,7 +18,7 @@ import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import { uploadTestState } from "@/lib/factory/uploadTest";
 import { APP_NAME_SOURCE_LABELS, cleanAppName, pickAppName, storeTitleOf } from "@/lib/factory/appName";
 import { isStoreTarget, storeTargetBlockReason } from "@/lib/factory/storeTarget";
-import { TEST_APK_MAX, apkReadiness, apkStackSupported, listTestApks } from "@/lib/factory/testApk";
+import { TEST_APK_ABI, TEST_APK_MAX, apkReadiness, apkStackSupported, listTestApks } from "@/lib/factory/testApk";
 
 // 출시 일감 종류. 종류마다 서버가 만드는 지시문과 허용 동작(outbox 파일·키 준비)이 다르다.
 // project(프로젝트 업데이트)는 예전 종류: 예전 일감 기록이 읽히고 커넥터 호환으로만 받는다(통제실에서는 고르지 않음. 홈페이지만 고치려면 store + 덮어쓰기)
@@ -1462,10 +1462,10 @@ export async function buildReleasePlan(
       "",
       ...keySection("단계 key → build"),
       "## 단계 build: release APK 만들기",
-      "- Flutter: `flutter build apk --release` (모든 ABI 가 든 APK 하나). 버전(pubspec.yaml 의 version)은 지금 값 그대로 두세요.",
+      "- Flutter: `flutter build apk --release --split-per-abi` (CPU 종류별로 따로 나와요). 이 중 휴대폰용 `app-arm64-v8a-release.apk` 하나만 써요. 다른 ABI 파일(armeabi-v7a·x86_64)과 `app-release.apk` 는 쓰지 마세요. 버전(pubspec.yaml 의 version)은 지금 값 그대로 두세요.",
       "- 서명은 반드시 위 키로(앱 자체 key.properties 또는 FACTORY_KEYSTORE_* 환경변수). 디버그 키로 서명되면 감독 프로그램이 거절해요.",
       "  서명 설정이 아직 없으면 android/app/build.gradle(.kts) 의 signingConfigs.release 만 고치세요(환경변수를 읽게). 그 밖의 코드는 바꾸지 마세요.",
-      '- 다 만들면 `.factory/apk.json` 에 {"path": "build/app/outputs/flutter-apk/app-release.apk", "versionName": "1.0.0", "versionCode": 1} 를 쓰세요(경로는 앱 폴더 기준).',
+      '- 다 만들면 `.factory/apk.json` 에 {"path": "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk", "versionName": "1.0.0", "versionCode": 1} 를 쓰세요(경로는 앱 폴더 기준).',
       "- APK 는 PC 에만 두세요. 서버로 올리는 일(검사·홈페이지 업로드)은 감독 프로그램이 해요(sign = apksigner 확인, upload).",
       "",
       "## 하지 말 것",
@@ -1576,6 +1576,7 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
         reviewApprovedAt: true,
         redoNote: true,
         releaseNotes: true,
+        planMarkdown: true,
       },
     }),
     prisma.factoryApp.findMany({ where: { appSlug: { in: rel.map((j) => j.appSlug) } }, include: { key: true, releaseAccount: { include: { defaultKey: true } } } }),
@@ -1612,8 +1613,11 @@ export async function releaseJobExtras(jobs: { id: string; appSlug: string; kind
       // Play Developer API 업로드(감독 프로그램이 직접): 스토어 자료 수정 = 등록정보·이미지, 첫 출시 = 업데이트 AAB → 비공개 테스트 트랙.
       // 서비스 계정 키는 경로만 준다(감독 프로그램이 읽어 토큰을 받고, 내용은 어디에도 보내지 않는다). missing 이 있으면 업로드하지 않는다.
       // 첫 출시(검토 단계가 있는 새 일감)는 Play 에 올리지 않는다(최초 AAB 는 사람이 Console 에 직접). 예전 첫 출시 일감만 업데이트 AAB 업로드.
-      // 시험용 APK: 올릴 수 있는 최대 크기(감독 프로그램이 미리 확인)
-      ...(kind === "apk" ? { apk: { maxBytes: TEST_APK_MAX, keyLabel: key ? (key.name ?? key.path) : null } } : {}),
+      // 시험용 APK: 올릴 수 있는 최대 크기와 받을 ABI(감독 프로그램이 미리 확인).
+      // arm64 만 받는 건 --split-per-abi 지시문으로 만든 일감만. 예전 지시문(app-release.apk) 일감은 abi null 로 예전처럼(재시도도 깨지지 않게)
+      ...(kind === "apk"
+        ? { apk: { maxBytes: TEST_APK_MAX, abi: r?.planMarkdown.includes("--split-per-abi") ? TEST_APK_ABI : null, keyLabel: key ? (key.name ?? key.path) : null } }
+        : {}),
       play:
         kind === "project" || kind === "apk" || (kind === "first" && reviewRequired)
           ? null

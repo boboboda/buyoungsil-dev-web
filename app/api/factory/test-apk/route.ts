@@ -3,7 +3,7 @@
 // APK 는 공개 업로드 서버가 아니라 DB 에 조각으로 둔다(관리자만 내려받기, 앱당 최근 5개). 조각 크기는 TEST_APK_CHUNK(기본 512KB)
 // 하나로 정하고 시작 응답 chunkSize 로 알려 준다. nginx `location /` 기본 본문 한도(1MB)에 걸리지 않게 작게 둔다.
 //
-// 1) POST JSON { jobId, size, sha256, versionName?, versionCode?, builtAt?, gitCommit?, signerSha256?, keyLabel? } → 200 { apkId, chunkSize, count }
+// 1) POST JSON { jobId, size, sha256, versionName?, versionCode?, builtAt?, gitCommit?, signerSha256?, keyLabel?, abi? } → 200 { apkId, chunkSize, count }
 // 2) PUT ?apkId=…&idx=0..count-1, 본문 = 조각(application/octet-stream, chunkSize 크기, 마지막만 작음) → 200 { complete }
 //    마지막 조각까지 받으면 서버가 SHA-256 을 다시 재서 맞을 때만 내려받기 목록에 올린다(틀리면 지우고 422).
 import { NextRequest, NextResponse } from "next/server";

@@ -223,6 +223,7 @@ export interface TestApkFile {
   gitCommit: string | null;
   signerSha256: string | null;
   keyLabel: string | null;
+  abi: string | null; // arm64-v8a(휴대폰용) | universal(모든 ABI) 등. 예전 것은 null
   createdAt: string;
 }
 export interface TestApkState {

@@ -871,7 +871,7 @@ model FactoryReviewVideoChunk {
   @@map("factory_review_video_chunks")
 }
 
-// 출시 패키지 '시험용 APK': 감독 프로그램이 서명된 release APK 를 8MB 조각으로 올리고, 통제실(관리자만)이 내려받는다.
+// 출시 패키지 '시험용 APK': 감독 프로그램이 서명된 release APK 를 조각(chunkSize)으로 올리고, 통제실(관리자만)이 내려받는다.
 // 공개 업로드 서버가 아니라 DB 에 둔다(관리자 전용 주소·삭제 가능). 앱당 다 받은 것 최근 5개만 남긴다. 키·비밀번호는 없다.
 model FactoryTestApk {
   id           String    @id @default(cuid())
@@ -886,6 +886,7 @@ model FactoryTestApk {
   gitCommit    String? // 앱 폴더 커밋(짧은 해시, 고친 채면 +dirty)
   signerSha256 String? // 서명 인증서 SHA-256 지문(공개 정보)
   keyLabel     String? // 서명에 쓴 키 이름(표시용, 값 없음)
+  abi          String? // APK 에 든 CPU 종류: arm64-v8a(휴대폰용) | universal(모든 ABI) 등. 예전 행은 null
   chunkCount   Int
   chunkSize    Int       @default(8388608) // 이 APK 의 조각 크기(마지막 조각만 작음). 예전 행은 8MB
   received     Int       @default(0)

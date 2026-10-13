@@ -16,6 +16,10 @@ export const TEST_APK_CHUNK_MAX = 8 * 1024 * 1024;
 export const TEST_APK_KEEP = 5;
 // 받다가 끊긴(다 못 받은) APK 는 이 시간이 지나면 지운다
 const STALE_MS = 6 * 60 * 60 * 1000;
+// 시험용 APK 는 최신 안드로이드 폰용 arm64 하나만 만든다(flutter build apk --release --split-per-abi 의 app-arm64-v8a-release.apk).
+// 감독 프로그램이 APK 안의 lib/<ABI>/ 로 확인해 abi 로 보낸다. universal 은 예전 방식(모든 ABI 가 든 APK)
+export const TEST_APK_ABI = "arm64-v8a";
+const ABIS = ["arm64-v8a", "armeabi-v7a", "x86_64", "x86", "universal"];
 // 시험용 APK 를 만들 수 있는 앱 종류(지금은 Flutter 만)
 export const APK_STACKS = ["flutter"];
 
@@ -104,7 +108,7 @@ const str = (v: unknown, max: number) => (typeof v === "string" && v.trim() ? v.
 
 /**
  * 올리기 시작: 실행 중인 시험용 APK 일감만. 크기·SHA-256·버전 등 정보를 먼저 받고 apkId 를 돌려준다(이 일감이 받다 만 것은 지움).
- * body: { jobId, size, sha256, versionName?, versionCode?, builtAt?, gitCommit?, signerSha256?, keyLabel? }
+ * body: { jobId, size, sha256, versionName?, versionCode?, builtAt?, gitCommit?, signerSha256?, keyLabel?, abi? }
  */
 export async function startTestApk(body: Record<string, unknown>): Promise<Res & { apkId?: string; chunkSize?: number; count?: number }> {
   const jobId = typeof body.jobId === "string" && ID_RE.test(body.jobId) ? body.jobId : null;
@@ -142,6 +146,7 @@ export async function startTestApk(body: Record<string, unknown>): Promise<Res &
       gitCommit: str(body.gitCommit, 60),
       signerSha256: signer && HEX64.test(signer) ? signer : null,
       keyLabel: str(body.keyLabel, 80),
+      abi: typeof body.abi === "string" && ABIS.includes(body.abi) ? body.abi : null,
       chunkCount: count,
       chunkSize: TEST_APK_CHUNK,
     },
@@ -224,6 +229,7 @@ export interface TestApkInfo {
   gitCommit: string | null;
   signerSha256: string | null;
   keyLabel: string | null;
+  abi: string | null;
   createdAt: Date;
 }
 
@@ -247,6 +253,7 @@ export async function listTestApks(appSlugs: string[]): Promise<Map<string, Test
       gitCommit: true,
       signerSha256: true,
       keyLabel: true,
+      abi: true,
       createdAt: true,
     },
   });
