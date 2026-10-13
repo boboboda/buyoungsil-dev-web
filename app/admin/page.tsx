@@ -207,11 +207,6 @@ export default async function AdminDashboard() {
               🧰 특수교육 도구함 요청 게시판
             </button>
           </Link>
-          <Link href="/admin/claude">
-            <button className="w-full p-4 rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white font-medium hover:shadow-lg transition-shadow">
-              🤖 클로드 작업 현황
-            </button>
-          </Link>
           <Link href="/admin/factory">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white font-medium hover:shadow-lg transition-shadow">
               🏭 앱 공장 통제실

@@ -29,6 +29,7 @@ const moved = {
   "/release/post/abc123": "/project",
   "/release/some-app": "/project",
   "/work-request": "/contact?type=work",
+  "/admin/claude": "/admin/factory?tab=usage",
 };
 
 for (const [from, to] of Object.entries(moved)) {
@@ -48,6 +49,10 @@ const kept = [
   "/api/public/projects",
   "/admin/stories",
   "/admin/works",
+  // 통제실 옛 주소는 그대로 열린다(해당 탭을 보여 줌)
+  "/admin/factory",
+  "/admin/factory/release",
+  "/admin/factory/settings",
 ];
 for (const path of kept) {
   assert.equal(resolve(path), null, `${path} 은 리다이렉트되면 안 됨`);
@@ -60,10 +65,13 @@ for (const file of [
   "app/contact/page.tsx",
   "app/stories/[slug]/page.tsx",
   "app/api/public/projects/route.ts",
+  "app/admin/factory/page.tsx",
+  "app/admin/factory/release/page.tsx",
+  "app/admin/factory/settings/page.tsx",
 ]) {
   assert.ok(existsSync(new URL(file, root)), `${file} 이 없음`);
 }
-for (const file of ["app/stories/page.tsx", "app/release/page.tsx", "app/work-request/page.tsx"]) {
+for (const file of ["app/stories/page.tsx", "app/release/page.tsx", "app/work-request/page.tsx", "app/admin/claude/page.tsx"]) {
   assert.ok(!existsSync(new URL(file, root)), `${file} 이 남아 있음`);
 }
 
