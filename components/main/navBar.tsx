@@ -178,14 +178,14 @@ export default function NavBar() {
                         className="text-white no-underline font-sans"
                         href="/signup"
                       >
-                        <Button variant="ghost">Sign Up</Button>
+                        <Button variant="ghost">회원가입</Button>
                       </Link>
                     )}
                     <Link
                       className="text-white no-underline font-sans"
                       href="/signin"
                     >
-                      <Button variant="ghost">Sign In</Button>
+                      <Button variant="ghost">로그인</Button>
                     </Link>
                   </div>
                 ) : (
@@ -315,7 +315,7 @@ export default function NavBar() {
                         href="/signup"
                       >
                         <Button size="sm" variant="ghost">
-                          Sign Up
+                          회원가입
                         </Button>
                       </Link>
                     )}
@@ -324,7 +324,7 @@ export default function NavBar() {
                       href="/signin"
                     >
                       <Button size="sm" variant="ghost">
-                        Sign In
+                        로그인
                       </Button>
                     </Link>
                   </div>

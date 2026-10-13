@@ -114,17 +114,21 @@ export default function ProjectCard({ project }: ProjectCardProps) {
             </div>
           )}
 
-          {/* 하단 정보 - 맨 아래 고정 */}
-          <div className="flex justify-between items-center text-sm text-gray-500 border-t border-gray-200 dark:border-gray-700 pt-3 mt-auto flex-shrink-0">
-            <span>📝 로그 {project.logCount || 0}개</span>
-            {project.revenue && project.revenue > 0 ? (
-              <span className="font-medium text-green-600 dark:text-green-400">
-                💰 {project.revenue.toLocaleString()}원
-              </span>
-            ) : (
-              <span className="text-gray-400">수익 집계 중</span>
-            )}
-          </div>
+          {/* 하단 정보 - 맨 아래 고정. 로그가 없거나 수익 데이터가 없으면 그 줄은 숨긴다 */}
+          {((project.logCount ?? 0) > 0 || (project.revenue ?? 0) > 0) && (
+            <div className="flex justify-between items-center text-sm text-gray-500 border-t border-gray-200 dark:border-gray-700 pt-3 mt-auto flex-shrink-0">
+              {(project.logCount ?? 0) > 0 ? (
+                <span>📝 로그 {project.logCount}개</span>
+              ) : (
+                <span />
+              )}
+              {(project.revenue ?? 0) > 0 && (
+                <span className="font-medium text-green-600 dark:text-green-400">
+                  💰 {project.revenue!.toLocaleString()}원
+                </span>
+              )}
+            </div>
+          )}
         </GradientCard>
       </Link>
       {project.appLink && store && (
