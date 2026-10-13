@@ -1,5 +1,6 @@
 // components/admin/factory/UsageDash.tsx
-// 통제실 오른쪽 'AI 사용량' 요약 계기판: Claude 5시간·7일 한도 게이지, 오늘 사용량(어제 대비), Codex 5시간·주간 게이지.
+// 통제실 오른쪽 'AI USAGE' 패널: 한도마다 한 행(사용 %·세그먼트 막대·남은 %·초기화까지·갱신 시각) — Claude 5시간·7일, Codex 5시간·주간,
+// 오늘 사용량(어제 대비 막대 + 14일 스파크라인). 반원 게이지는 좁은 패널에서 읽기 어려워 행 형태로 바꿨다.
 // 데이터는 [사용량] 탭과 같은 /api/admin/claude-status 를 5초마다 읽는다(화면이 보일 때만).
 // 넓은 화면: 오른쪽에 붙어서 따라옴(sticky). 좁은 화면: 작업 영역 위 접이식 카드(한 줄 요약 + 펼치기).
 "use client";
@@ -14,11 +15,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   agoText,
-  ArcGauge,
   Digits,
   isStale,
   Led,
+  type MeterTone,
+  meterTone,
   SegmentBar,
+  Sparkline,
   untilText,
   updatedText,
 } from "@/components/admin/ui/meters";
@@ -66,82 +69,142 @@ export function dailyCompare(daily: ClaudeDailyView[]) {
   };
 }
 
-/** 창 하나의 게이지 값과 아래 한 줄 */
+/** 한도 창 하나의 표시 값: 사용 %(없으면 null)·상태 글자·아래 한 줄 */
 export function windowReading(w: LimitWindowView | null, now: number) {
-  if (!w) return { pct: null, status: "값 없음", line: "값 없음" };
+  if (!w)
+    return {
+      pct: null,
+      tone: "idle" as MeterTone,
+      state: "값 없음",
+      line: "값 없음",
+    };
   if (w.reset)
-    return { pct: null, status: "초기화됨", line: "초기화됨 · 새 값 대기" };
+    return {
+      pct: null,
+      tone: "idle" as MeterTone,
+      state: "초기화됨",
+      line: "초기화됨 · 새 값 대기",
+    };
 
   const pct = Math.round(w.usedPct);
+  const { tone, text } = meterTone(pct);
 
   return {
     pct,
-    status: undefined,
+    tone,
+    state: text,
     line: `남은 ${Math.max(0, 100 - pct)}% · 초기화까지 ${untilText(w.resetsAt, now)}`,
   };
 }
 
-function LimitPair({
+/** 한도 한 행: [라벨 · 상태] [큰 사용 %] / [세그먼트 막대] / [남은 % · 초기화까지] [갱신 시각] */
+function LimitRow({
   name,
+  label,
+  w,
   v,
   now,
-  waiting,
-  labels,
 }: {
   name: string;
-  v: UsageLimitsView | null;
+  label: string;
+  w: LimitWindowView | null;
+  v: UsageLimitsView;
   now: number;
-  waiting: string;
-  labels: [string, string];
 }) {
-  const stale = isStale(v?.asOf, now);
-  const windows: [string, LimitWindowView | null][] = [
-    [labels[0], v?.fiveHour ?? null],
-    [labels[1], v?.sevenDay ?? null],
-  ];
+  const r = windowReading(w, now);
+  const stale = isStale(v.asOf, now);
 
   return (
-    <div className="grid grid-cols-2 gap-2">
-      {windows.map(([label, w]) => {
-        const r = v
-          ? windowReading(w, now)
-          : { pct: null, status: "수신 대기", line: "수신 대기" };
-
-        return (
-          <div key={label} className="fx-dash-cell">
-            <ArcGauge
-              label={`${name} ${label}`}
-              pct={r.pct}
-              status={r.status}
-            />
-            <p className="fx-dash-line">{r.line}</p>
-            <p
-              className={`fx-dash-line ${stale ? "fx-warn" : "fx-muted"}`}
-              title={v?.device ? `보낸 기기: ${v.device}` : undefined}
-            >
-              {stale ? "⚠ " : ""}
-              {updatedText(v?.asOf, now)}
-            </p>
-          </div>
-        );
-      })}
-      {!v ? (
-        <p className="col-span-2 text-xs fx-muted">수신 대기 — {waiting}</p>
-      ) : null}
+    <div className="fx-limit">
+      <div className="fx-limit-top">
+        <span className="fx-limit-label">{label}</span>
+        <Led tone={r.tone}>{r.state}</Led>
+        <span className={`fx-limit-pct fx-${r.tone}`}>
+          {r.pct === null ? "--" : r.pct}
+          <span className="fx-limit-unit">%</span>
+        </span>
+      </div>
+      <SegmentBar
+        label={`${name} ${label} 사용률`}
+        pct={r.pct ?? 0}
+        tone={r.pct === null ? "idle" : undefined}
+        valueText={r.pct === null ? r.state : `${r.pct}% 사용 (${r.state})`}
+      />
+      <div className="fx-limit-sub">
+        <span>{r.line}</span>
+        <span
+          className={stale ? "fx-warn" : "fx-muted"}
+          title={v.device ? `보낸 기기: ${v.device}` : undefined}
+        >
+          {stale ? "▲ " : ""}
+          {updatedText(v.asOf, now)}
+        </span>
+      </div>
     </div>
   );
 }
 
-function limitLed(v: UsageLimitsView | null, now: number) {
-  if (!v) return <Led tone="idle">수신 대기</Led>;
+function limitLed(v: UsageLimitsView | null, now: number, empty: string) {
+  if (!v) return <Led tone="idle">{empty}</Led>;
   if (v.failedAt !== null) return <Led tone="warn">수집 실패</Led>;
   if (isStale(v.asOf, now)) return <Led tone="warn">오래된 값</Led>;
 
   return <Led tone="ok">수신 중</Led>;
 }
 
+/** Claude·Codex 한도 묶음. 값이 없으면 행 대신 안내 한 줄('수신 대기'는 오른쪽 LED 에만) */
+function LimitSection({
+  name,
+  labels,
+  v,
+  now,
+  empty,
+  waiting,
+  children,
+}: {
+  name: string;
+  labels: [string, string];
+  v: UsageLimitsView | null;
+  now: number;
+  empty: string;
+  waiting: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="fx-dash-sec">
+      <div className="fx-dash-sec-head">
+        <h3 className="fx-dash-sub">{name}</h3>
+        {limitLed(v, now, empty)}
+      </div>
+      {v ? (
+        <>
+          <LimitRow
+            label={labels[0]}
+            name={name}
+            now={now}
+            v={v}
+            w={v.fiveHour}
+          />
+          <LimitRow
+            label={labels[1]}
+            name={name}
+            now={now}
+            v={v}
+            w={v.sevenDay}
+          />
+        </>
+      ) : (
+        <p className="fx-dash-wait">— {waiting}</p>
+      )}
+      {children}
+    </div>
+  );
+}
+
 const summaryPct = (w: LimitWindowView | null | undefined) =>
   w && !w.reset ? `${Math.round(w.usedPct)}%` : "--";
+
+const dayTotal = (d: ClaudeDailyView) => d.input + d.output + d.cacheCreate;
 
 export function UsageDashView({
   stats,
@@ -158,14 +221,16 @@ export function UsageDashView({
 }) {
   const claude = stats?.limits ?? null;
   const codex = stats?.codexLimits ?? null;
-  const day = dailyCompare(stats?.daily ?? []);
+  const daily = stats?.daily ?? [];
+  const day = dailyCompare(daily);
+  const totals = daily.map(dayTotal);
   const summary = `Claude 5h ${summaryPct(claude?.fiveHour)} · 7d ${summaryPct(claude?.sevenDay)}`;
 
   return (
-    <section aria-labelledby="usage-dash-title" className="fx-dash fx-panel">
-      <header className="fx-dash-head">
-        <h2 className="fx-dash-title" id="usage-dash-title">
-          AI 사용량
+    <section aria-labelledby="usage-dash-title" className="fx-hud fx-dash">
+      <header className="fx-hud-head">
+        <h2 className="fx-hud-title" id="usage-dash-title">
+          AI USAGE<span className="sr-only"> (AI 사용량)</span>
         </h2>
         {error ? (
           <Led tone="bad">갱신 실패</Led>
@@ -185,91 +250,87 @@ export function UsageDashView({
         onClick={onToggle}
       >
         <span className="font-mono">{summary}</span>
-        <span className="fx-muted">{open ? "접기 ▲" : "펼치기 ▼"}</span>
+        <span>{open ? "접기 ▲" : "펼치기 ▼"}</span>
       </button>
 
       <div
         className={`${open ? "flex" : "hidden"} fx-dash-body lg:flex`}
         id="usage-dash-body"
       >
-        <div className="fx-dash-block">
-          <div className="fx-dash-row">
-            <h3 className="fx-dash-sub">Claude 한도</h3>
-            {limitLed(claude, now)}
-          </div>
-          <LimitPair
-            labels={["5시간", "7일"]}
-            name="Claude"
-            now={now}
-            v={claude}
-            waiting="작업 PC 에서 Claude Code 를 한 번 쓰면 나타나요"
-          />
-        </div>
+        <LimitSection
+          empty="수신 대기"
+          labels={["5시간", "7일"]}
+          name="Claude"
+          now={now}
+          v={claude}
+          waiting="작업 PC 에서 Claude Code 를 한 번 쓰면 나타나요"
+        />
 
-        <div className="fx-dash-block">
-          <div className="fx-dash-row">
+        <div className="fx-dash-sec">
+          <div className="fx-dash-sec-head">
             <h3 className="fx-dash-sub">오늘 사용량</h3>
-            <span className="text-xs fx-muted">입력+출력+캐시 생성</span>
+            <span className="fx-dash-note">입력+출력+캐시 생성</span>
           </div>
-          <div className="fx-dash-row items-end">
-            <Digits size="md" unit="토큰" value={compact(day.today)} />
-            <span className="text-xs fx-muted">{day.diff}</span>
+          <div className="fx-dash-today">
+            <Digits size="lg" unit="토큰" value={compact(day.today)} />
+            <span className="fx-dash-note">{day.diff}</span>
           </div>
           <div className="fx-dash-bars">
-            <span className="text-xs">오늘</span>
+            <span>오늘</span>
             <SegmentBar
               label="오늘 사용량 (어제와 비교)"
               pct={day.todayPct}
               tone="run"
               valueText={`${compact(day.today)} 토큰`}
             />
-            <span className="text-right text-xs font-mono">
-              {compact(day.today)}
-            </span>
-            <span className="text-xs fx-muted">어제</span>
+            <span className="font-mono text-right">{compact(day.today)}</span>
+            <span className="fx-muted">어제</span>
             <SegmentBar
               label="어제 사용량"
               pct={day.yesterdayPct}
               tone="idle"
               valueText={`${compact(day.yesterday)} 토큰`}
             />
-            <span className="text-right text-xs font-mono fx-muted">
+            <span className="font-mono text-right fx-muted">
               {compact(day.yesterday)}
             </span>
           </div>
-          <p className="fx-dash-line fx-muted">
-            {stats ? updatedText(stats.asOf, now) : "갱신 기록 없음"}
-          </p>
+          {totals.length > 1 ? (
+            <div className="fx-dash-spark">
+              <Sparkline
+                label={`최근 ${totals.length}일 사용량: 가장 많은 날 ${compact(Math.max(...totals))}, 오늘 ${compact(day.today)}`}
+                values={totals}
+              />
+              <div aria-hidden className="fx-dash-spark-axis">
+                <span>{totals.length - 1}일 전</span>
+                <span>오늘</span>
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        <div className="fx-dash-block">
-          <div className="fx-dash-row">
-            <h3 className="fx-dash-sub">Codex 한도</h3>
-            {limitLed(codex, now)}
-          </div>
-          <LimitPair
-            labels={["5시간", "주간"]}
-            name="Codex"
-            now={now}
-            v={codex}
-            waiting="작업 PC 에서 Codex 수집 스크립트를 켜면 나타나요"
-          />
+        <LimitSection
+          empty="값 없음"
+          labels={["5시간", "주간"]}
+          name="Codex"
+          now={now}
+          v={codex}
+          waiting="작업 PC 에서 Codex 수집 스크립트를 켜면 나타나요"
+        >
           {codex?.failedAt ? (
-            <p className="fx-dash-line fx-warn">
-              ⚠ 마지막 수집 실패 {agoText(codex.failedAt, now)} (지난 값 표시
-              중)
+            <p className="fx-dash-note fx-warn">
+              ▲ 마지막 수집 실패 {agoText(codex.failedAt, now)} · 지난 값 표시
+              중
             </p>
           ) : null}
-          <p className="fx-dash-line fx-muted">
-            비공식 수집이라 바뀌면 멈출 수 있어요
-          </p>
-        </div>
+          <p className="fx-dash-note">비공식 수집이라 바뀌면 멈출 수 있어요</p>
+        </LimitSection>
 
         <footer className="fx-dash-foot">
           {stats
             ? `패널 갱신 ${hhmmss(stats.asOf)} · ${agoText(stats.asOf, now)}`
             : "아직 받은 값이 없어요"}
-          {error ? <span className="fx-bad"> · {error}</span> : null}
+          {error ? <span className="fx-bad"> · ✕ {error}</span> : null}
         </footer>
       </div>
     </section>

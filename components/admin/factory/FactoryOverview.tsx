@@ -212,7 +212,7 @@ export default function FactoryOverview({
 
   return (
     <>
-      <Card className="mb-6">
+      <Card className="mb-6" data-title="todo · 승인·배포">
         <CardBody className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-semibold">
@@ -390,7 +390,7 @@ export default function FactoryOverview({
 
       {children}
 
-      <Card className="mb-6">
+      <Card className="mb-6" data-title="history · 업데이트·배포">
         <CardBody className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <button

@@ -198,7 +198,7 @@ export function Button({ children, isDisabled, onPress, color, size, variant, ..
     for (const part of sel.split(",")) assert.match(part.trim(), /^\.factory-ui\b/, `범위 밖 선택자: ${part.trim()}`);
   }
   assert.match(css, /prefers-reduced-motion: reduce/);
-  for (const v of ["#0b0f14", "#111822", "#1e2a38", "#d7e2ee", "#7f93a8", "#22d3ee", "#34d399", "#fbbf24", "#f87171"]) {
+  for (const v of ["#0a0c10", "#0e1116", "#5f6b7a", "#e8edf3", "#aab5c1", "#22d3ee", "#4ade80", "#fbbf24", "#f87171"]) {
     assert.ok(css.toLowerCase().includes(v), `색 토큰 ${v} 없음`);
   }
   assert.ok(!read("styles/globals.css").includes("factory-ui"), "전역 CSS 는 건드리지 않음");

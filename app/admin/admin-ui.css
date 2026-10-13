@@ -1,141 +1,161 @@
 /* app/admin/admin-ui.css
- * 관리자 화면 전체(/admin/*)의 '디지털 계기판' 다크 테마. app/admin/layout.tsx 가 .factory-ui 로 감싼다.
- * 사이트 라이트/다크 설정과 무관하게 항상 어둡다. 공개 사이트에는 걸리지 않는다.
- * 모든 규칙은 .factory-ui 아래에서만 걸린다(HeroUI·Tailwind 전역 설정은 건드리지 않음).
- * 순서: 색 토큰 → 공통 요소(숫자·표·패널·탭·입력) → 관리자 틀 → 옛 회색 유틸리티를 토큰으로 → 계기판 부품 → 통제실 분할.
+ * 관리자 화면 전체(/admin/*)의 '터미널 HUD' 다크 테마. app/admin/layout.tsx 가 .factory-ui 로 감싼다.
+ * 거의 검은 배경 + 얇은 1px 테두리의 각진 패널(제목은 테두리 왼쪽 위에 걸림) + 숫자·라벨은 모노스페이스, 한글 본문은 사이트 기본 산세리프.
+ * 색(청록·초록·노랑·빨강)은 의미 있을 때만 쓰고 나머지는 흰색·밝은 회색. 장식 글로우·그라디언트·배경 눈금은 쓰지 않는다.
+ * 가독성 기준(tests/admin-contrast.test.mjs 가 이 파일의 토큰 값으로 계산해 검사):
+ *   본문 글자 ≥ 7:1, 보조 글자 ≥ 4.5:1(목표 7:1), 흐린 글자(placeholder·비활성) ≥ 3:1, 테두리·구분선 ≥ 3:1.
+ *   본문 15px·줄간격 1.55, 보조 13px, 대문자 모노 라벨만 12px.
+ * 모든 규칙은 .factory-ui 아래에서만 걸린다(공개 사이트·HeroUI·Tailwind 전역 설정은 건드리지 않음).
+ * 순서: 색 토큰 → 공통 요소(글자·표·패널·탭·버튼·입력) → 관리자 틀(상단바·상태줄) → 옛 회색 유틸리티를 토큰으로 → HUD 부품 → 통제실 분할·AI USAGE 패널.
  * HeroUI 색은 .factory-ui 안에서 --heroui-* 변수(HSL "h s% l%")만 덮어써서 같은 컴포넌트가 이 색을 쓰게 한다.
  */
 
 .factory-ui {
   /* 색 토큰 */
-  --fx-bg: #0b0f14;
-  --fx-panel: #111822;
-  --fx-border: #1e2a38;
-  --fx-text: #d7e2ee;
-  --fx-muted: #7f93a8;
-  --fx-accent: #22d3ee; /* 진행 중 */
-  --fx-ok: #34d399; /* 완료 */
-  --fx-warn: #fbbf24; /* 대기·승인 필요 */
-  --fx-bad: #f87171; /* 실패·중단 */
-  --fx-glow: rgba(34, 211, 238, 0.07);
-  --fx-panel-2: #0e141c; /* 패널 안쪽 칸 */
-  --fx-grid: rgba(127, 147, 168, 0.06); /* 배경 눈금선 */
-  --fx-led-off: #1a2430; /* 꺼진 LED 칸 */
-  --fx-glow-strong: 0 0 6px currentColor;
-  --fx-mono: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --fx-bg: #0a0c10; /* 바탕 */
+  --fx-panel: #0e1116; /* 패널 */
+  --fx-panel-2: #151a21; /* 패널 안쪽 칸·입력칸 */
+  --fx-border: #5f6b7a; /* 패널 테두리·구분선 (바탕·패널 대비 3:1 이상) */
+  --fx-text: #e8edf3; /* 본문 */
+  --fx-muted: #aab5c1; /* 보조 글자·라벨 */
+  --fx-dim: #8692a0; /* placeholder·비활성 */
+  --fx-accent: #22d3ee; /* 진행 중·현재 위치 */
+  --fx-ok: #4ade80; /* 정상·완료 */
+  --fx-warn: #fbbf24; /* 주의·대기·승인 필요 */
+  --fx-bad: #f87171; /* 실패·위험 */
+  --fx-led-off: #262d37; /* 꺼진 세그먼트 칸 */
+  --fx-focus: #67e8f9; /* 포커스 링 */
+  --fx-mono: ui-monospace, "JetBrains Mono", Consolas, var(--font-mono), SFMono-Regular, Menlo, "Liberation Mono", monospace;
+  --fx-topbar-h: 5.5rem; /* 좁은 화면: 상단바 두 줄 */
+  --fx-statusbar-h: 2.25rem;
+
+  /* HeroUI 글자 크기: tiny 12px → 13px */
+  --heroui-font-size-tiny: 0.8125rem;
+  --heroui-line-height-tiny: 1.25rem;
+  /* 둥근 큰 카드 → 각진 패널 */
+  --heroui-radius-small: 2px;
+  --heroui-radius-medium: 3px;
+  --heroui-radius-large: 4px;
 
   /* HeroUI 변수 (어두운 쪽 규칙: 50 이 가장 어둡고 900 이 가장 밝다) */
-  --heroui-background: 213 29% 6%;
-  --heroui-foreground: 211 40% 89%;
-  --heroui-content1: 215 33% 10%;
-  --heroui-content1-foreground: 211 40% 89%;
-  --heroui-content2: 214 30% 12%;
-  --heroui-content2-foreground: 211 40% 89%;
-  --heroui-content3: 212 30% 15%;
-  --heroui-content3-foreground: 211 40% 89%;
-  --heroui-content4: 212 30% 17%;
-  --heroui-content4-foreground: 211 40% 89%;
-  --heroui-divider: 212 30% 17%;
+  --heroui-background: 220 23% 5%;
+  --heroui-foreground: 213 33% 93%;
+  --heroui-foreground-500: 211 15% 71%;
+  --heroui-content1: 216 22% 7%;
+  --heroui-content1-foreground: 213 33% 93%;
+  --heroui-content2: 215 19% 11%;
+  --heroui-content2-foreground: 213 33% 93%;
+  --heroui-content3: 216 18% 14%;
+  --heroui-content3-foreground: 213 33% 93%;
+  --heroui-content4: 216 17% 17%;
+  --heroui-content4-foreground: 213 33% 93%;
+  --heroui-divider: 213 12% 43%;
   --heroui-divider-opacity: 1;
-  --heroui-focus: 188 86% 53%;
+  --heroui-focus: 187 92% 69%;
   --heroui-overlay: 0 0% 0%;
 
-  --heroui-default: 212 26% 24%;
-  --heroui-default-foreground: 211 40% 89%;
-  --heroui-default-50: 214 30% 8%;
-  --heroui-default-100: 214 30% 12%;
-  --heroui-default-200: 212 30% 17%;
-  --heroui-default-300: 212 26% 24%;
-  --heroui-default-400: 211 18% 56%;
-  --heroui-default-500: 211 19% 58%;
-  --heroui-default-600: 211 25% 70%;
-  --heroui-default-700: 211 32% 80%;
-  --heroui-default-800: 211 38% 86%;
-  --heroui-default-900: 211 40% 89%;
+  --heroui-default: 215 14% 26%;
+  --heroui-default-foreground: 213 33% 93%;
+  --heroui-default-50: 216 22% 7%;
+  --heroui-default-100: 215 19% 11%;
+  --heroui-default-200: 213 12% 43%; /* border-default-200 = 패널 테두리 */
+  --heroui-default-300: 215 14% 30%;
+  --heroui-default-400: 212 12% 55%;
+  --heroui-default-500: 211 15% 71%;
+  --heroui-default-600: 211 20% 80%;
+  --heroui-default-700: 212 24% 86%;
+  --heroui-default-800: 213 30% 90%;
+  --heroui-default-900: 213 33% 93%;
 
   /* 진행 중 = 청록 (primary·secondary 둘 다) */
   --heroui-primary: 188 86% 53%;
-  --heroui-primary-foreground: 213 29% 6%;
+  --heroui-primary-foreground: 220 23% 5%;
   --heroui-primary-50: 188 60% 10%;
   --heroui-primary-100: 188 65% 16%;
-  --heroui-primary-200: 188 70% 24%;
-  --heroui-primary-300: 188 75% 34%;
-  --heroui-primary-400: 188 80% 44%;
+  --heroui-primary-200: 188 70% 30%;
+  --heroui-primary-300: 188 75% 38%;
+  --heroui-primary-400: 188 80% 46%;
   --heroui-primary-500: 188 86% 53%;
   --heroui-primary-600: 188 86% 62%;
   --heroui-primary-700: 188 86% 72%;
   --heroui-primary-800: 188 86% 82%;
   --heroui-primary-900: 188 86% 90%;
   --heroui-secondary: 188 86% 53%;
-  --heroui-secondary-foreground: 213 29% 6%;
+  --heroui-secondary-foreground: 220 23% 5%;
   --heroui-secondary-50: 188 60% 10%;
   --heroui-secondary-100: 188 65% 16%;
-  --heroui-secondary-200: 188 70% 24%;
-  --heroui-secondary-300: 188 75% 34%;
-  --heroui-secondary-400: 188 80% 44%;
+  --heroui-secondary-200: 188 70% 30%;
+  --heroui-secondary-300: 188 75% 38%;
+  --heroui-secondary-400: 188 80% 46%;
   --heroui-secondary-500: 188 86% 53%;
   --heroui-secondary-600: 188 86% 62%;
   --heroui-secondary-700: 188 86% 72%;
   --heroui-secondary-800: 188 86% 82%;
   --heroui-secondary-900: 188 86% 90%;
 
-  /* 완료 = 초록 */
-  --heroui-success: 158 64% 52%;
-  --heroui-success-foreground: 213 29% 6%;
-  --heroui-success-50: 158 45% 9%;
-  --heroui-success-100: 158 50% 14%;
-  --heroui-success-200: 158 55% 22%;
-  --heroui-success-300: 158 60% 32%;
-  --heroui-success-400: 158 62% 42%;
-  --heroui-success-500: 158 64% 52%;
-  --heroui-success-600: 158 64% 62%;
-  --heroui-success-700: 158 64% 72%;
-  --heroui-success-800: 158 64% 82%;
-  --heroui-success-900: 158 64% 90%;
+  /* 정상·완료 = 초록 */
+  --heroui-success: 142 69% 58%;
+  --heroui-success-foreground: 220 23% 5%;
+  --heroui-success-50: 142 45% 9%;
+  --heroui-success-100: 142 50% 14%;
+  --heroui-success-200: 142 55% 28%;
+  --heroui-success-300: 142 60% 36%;
+  --heroui-success-400: 142 64% 46%;
+  --heroui-success-500: 142 69% 58%;
+  --heroui-success-600: 142 69% 66%;
+  --heroui-success-700: 142 69% 74%;
+  --heroui-success-800: 142 69% 84%;
+  --heroui-success-900: 142 69% 92%;
 
-  /* 대기·승인 필요 = 노랑 */
+  /* 주의·대기 = 노랑 */
   --heroui-warning: 43 96% 56%;
-  --heroui-warning-foreground: 213 29% 6%;
+  --heroui-warning-foreground: 220 23% 5%;
   --heroui-warning-50: 43 60% 9%;
   --heroui-warning-100: 43 65% 14%;
-  --heroui-warning-200: 43 70% 22%;
-  --heroui-warning-300: 43 80% 32%;
-  --heroui-warning-400: 43 90% 44%;
+  --heroui-warning-200: 43 70% 28%;
+  --heroui-warning-300: 43 80% 36%;
+  --heroui-warning-400: 43 90% 46%;
   --heroui-warning-500: 43 96% 56%;
   --heroui-warning-600: 43 96% 64%;
   --heroui-warning-700: 43 96% 72%;
   --heroui-warning-800: 43 96% 82%;
   --heroui-warning-900: 43 96% 90%;
 
-  /* 실패·중단 = 빨강 */
+  /* 실패·위험 = 빨강 */
   --heroui-danger: 0 91% 71%;
-  --heroui-danger-foreground: 213 29% 6%;
+  --heroui-danger-foreground: 220 23% 5%;
   --heroui-danger-50: 0 45% 11%;
   --heroui-danger-100: 0 50% 17%;
-  --heroui-danger-200: 0 55% 27%;
-  --heroui-danger-300: 0 65% 40%;
-  --heroui-danger-400: 0 80% 58%;
+  --heroui-danger-200: 0 55% 36%;
+  --heroui-danger-300: 0 65% 46%;
+  --heroui-danger-400: 0 80% 60%;
   --heroui-danger-500: 0 91% 71%;
   --heroui-danger-600: 0 91% 77%;
   --heroui-danger-700: 0 91% 83%;
   --heroui-danger-800: 0 91% 89%;
   --heroui-danger-900: 0 91% 94%;
 
-  /* 카드·패널: 큰 그림자 대신 1px 테두리 + 아주 약한 안쪽 글로우 */
-  --heroui-box-shadow-small: 0 0 0 1px var(--fx-border), inset 0 0 16px var(--fx-glow);
-  --heroui-box-shadow-medium: 0 0 0 1px var(--fx-border), inset 0 0 24px var(--fx-glow);
-  --heroui-box-shadow-large: 0 0 0 1px var(--fx-border), inset 0 0 32px var(--fx-glow);
+  /* 카드: 그림자 대신 1px 테두리만 */
+  --heroui-box-shadow-small: 0 0 0 1px var(--fx-border);
+  --heroui-box-shadow-medium: 0 0 0 1px var(--fx-border);
+  --heroui-box-shadow-large: 0 0 0 1px var(--fx-border);
 
   color-scheme: dark; /* 기본 select·스크롤바도 어둡게 */
-  background:
-    radial-gradient(ellipse at 50% -10%, rgba(34, 211, 238, 0.08), transparent 60%),
-    linear-gradient(var(--fx-grid) 1px, transparent 1px) 0 0 / 32px 32px,
-    linear-gradient(90deg, var(--fx-grid) 1px, transparent 1px) 0 0 / 32px 32px,
-    var(--fx-bg);
-  color: var(--fx-text);
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
   min-width: 0;
+  background: var(--fx-bg);
+  color: var(--fx-text);
+  font-size: 0.9375rem;
+  line-height: 1.55;
   overflow-wrap: anywhere;
+  word-break: keep-all; /* 한글은 낱말 단위로 줄바꿈(긴 영문·주소는 위 anywhere 로 끊김) */
+}
+@media (min-width: 1280px) {
+  .factory-ui {
+    --fx-topbar-h: 2.75rem; /* 넓은 화면: 상단바 한 줄 */
+  }
 }
 
 /* 숫자·시간·ID·로그·키 이름·커밋 해시 */
@@ -148,7 +168,24 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 표: 줄무늬 없이 얇은 구분선, 숫자 칸은 오른쪽 정렬·monospace */
+/* 작은 글자 바닥값: 12px·11px·10px → 13px (대문자 모노 라벨 .fx-label 만 12px) */
+.factory-ui .text-xs,
+.factory-ui .text-tiny,
+.factory-ui .text-\[10px\],
+.factory-ui .text-\[11px\],
+.factory-ui .text-\[12px\] {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+.factory-ui .fx-label {
+  font-family: var(--fx-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fx-muted);
+}
+
+/* 표: 줄무늬 없이 또렷한 구분선, 머리줄은 밝은 회색, 숫자 칸은 오른쪽 정렬·monospace */
 .factory-ui table {
   border-collapse: collapse;
 }
@@ -157,6 +194,10 @@
   border-bottom: 1px solid var(--fx-border);
   background: transparent;
 }
+.factory-ui table th {
+  color: var(--fx-muted);
+  font-weight: 600;
+}
 .factory-ui table td.fx-num,
 .factory-ui table th.fx-num {
   text-align: right;
@@ -164,12 +205,69 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 패널(직접 만든 칸): 1px 테두리 + 아주 약한 안쪽 글로우 */
-.factory-ui .fx-panel {
+/* 라벨/값 목록: 라벨 밝은 회색, 값 흰색 */
+.factory-ui dt {
+  color: var(--fx-muted);
+}
+.factory-ui dd {
+  color: var(--fx-text);
+}
+
+/* 패널: 얇은 1px 테두리 + 각진 모서리 */
+.factory-ui .fx-panel,
+.factory-ui .fx-hud {
   background: var(--fx-panel);
   border: 1px solid var(--fx-border);
-  box-shadow: inset 0 0 24px var(--fx-glow);
-  border-radius: 0.75rem;
+  border-radius: 3px;
+}
+
+/* 제목이 테두리 왼쪽 위에 걸린 패널: <section class="fx-hud"><header class="fx-hud-head"><h2 class="fx-hud-title">…</h2>…</header>
+ * 또는 아무 요소에 data-title="…"(HeroUI Card 포함) */
+.factory-ui .fx-hud {
+  position: relative;
+  margin-top: 0.75rem;
+  padding: 1.125rem 0.875rem 0.875rem;
+}
+.factory-ui .fx-hud-head {
+  position: absolute;
+  top: -0.75rem;
+  left: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.factory-ui .fx-hud-head > * {
+  padding: 0 0.375rem;
+  background: linear-gradient(var(--fx-bg) 50%, var(--fx-panel) 50%);
+  line-height: 1.5rem;
+}
+.factory-ui .fx-hud-title,
+.factory-ui [data-title]::before {
+  font-family: var(--fx-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fx-text);
+}
+.factory-ui [data-title] {
+  position: relative;
+  overflow: visible;
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+}
+.factory-ui [data-title]::before {
+  content: attr(data-title);
+  position: absolute;
+  z-index: 1;
+  top: -0.75rem;
+  left: 0.5rem;
+  padding: 0 0.375rem;
+  line-height: 1.5rem;
+  background: linear-gradient(var(--fx-bg) 50%, var(--fx-panel) 50%);
 }
 
 /* 상태 점 ● */
@@ -183,7 +281,7 @@
 }
 .factory-ui .fx-dot.fx-hollow {
   background: transparent;
-  box-shadow: inset 0 0 0 1px currentColor;
+  box-shadow: inset 0 0 0 1.5px currentColor;
 }
 .factory-ui .fx-run { color: var(--fx-accent); }
 .factory-ui .fx-ok { color: var(--fx-ok); }
@@ -195,10 +293,10 @@
 /* 얇은 진행 막대 (값이 없으면 오가는 막대) */
 .factory-ui .fx-bar {
   position: relative;
-  height: 3px;
+  height: 4px;
   overflow: hidden;
-  border-radius: 9999px;
-  background: var(--fx-border);
+  border-radius: 1px;
+  background: var(--fx-led-off);
 }
 .factory-ui .fx-bar > span {
   position: absolute;
@@ -231,7 +329,7 @@
   background: currentColor;
 }
 
-/* 상단 탭 */
+/* 상단 탭: 터미널 탭처럼 각진 칸, 지금 탭은 테두리로 열린 칸 + 위쪽 청록 줄 + 굵게 */
 .factory-ui .fx-tabs {
   display: flex;
   gap: 0.25rem;
@@ -245,36 +343,82 @@
   align-items: center;
   gap: 0.375rem;
   min-height: 2.75rem;
-  padding: 0 0.875rem;
-  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 0 1rem;
+  border: 1px solid transparent;
+  border-top-width: 2px;
+  border-radius: 3px 3px 0 0;
   color: var(--fx-muted);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   white-space: nowrap;
 }
 .factory-ui .fx-tab:hover {
   color: var(--fx-text);
+  border-color: var(--fx-border) var(--fx-border) transparent;
 }
 .factory-ui .fx-tab[aria-current="page"] {
-  color: var(--fx-accent);
-  border-bottom-color: var(--fx-accent);
-  font-weight: 600;
+  color: var(--fx-text);
+  background: var(--fx-panel);
+  border-color: var(--fx-border);
+  border-top-color: var(--fx-accent);
+  border-bottom-color: var(--fx-panel);
+  font-weight: 700;
 }
 
-/* 포커스 표시 유지 (기본 요소) */
+/* 포커스 링: 밝은 청록 2px */
 .factory-ui a:focus-visible,
 .factory-ui button:focus-visible,
 .factory-ui select:focus-visible,
 .factory-ui textarea:focus-visible,
 .factory-ui input:focus-visible,
 .factory-ui summary:focus-visible {
-  outline: 2px solid var(--fx-accent);
+  outline: 2px solid var(--fx-focus);
   outline-offset: 2px;
 }
 
-/* 기본 select·textarea 도 어두운 패널 색 */
+/* 버튼: 각지고 테두리가 또렷하게. 채움색은 주요(primary) 버튼만 — 노랑·초록·빨강 채움 버튼은 테두리형으로 */
+.factory-ui button.group.z-0 {
+  border: 1px solid var(--fx-border);
+}
+.factory-ui button.group.z-0.bg-primary {
+  border-color: var(--fx-accent);
+  font-weight: 600;
+}
+.factory-ui button.group.z-0[class*="bg-default/"] {
+  background: var(--fx-panel-2);
+  color: var(--fx-text);
+}
+.factory-ui button.group.z-0.bg-warning,
+.factory-ui button.group.z-0.bg-success,
+.factory-ui button.group.z-0.bg-danger {
+  background: transparent;
+  border-color: currentColor;
+  font-weight: 600;
+}
+.factory-ui button.group.z-0.bg-warning { color: var(--fx-warn); }
+.factory-ui button.group.z-0.bg-success { color: var(--fx-ok); }
+.factory-ui button.group.z-0.bg-danger { color: var(--fx-bad); }
+.factory-ui .fx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--fx-border);
+  border-radius: 2px;
+  background: var(--fx-panel-2);
+  color: var(--fx-text);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+.factory-ui .fx-btn:hover {
+  border-color: var(--fx-text);
+}
+
+/* 입력칸: 패널 안쪽 색 + 또렷한 테두리 */
 .factory-ui select,
 .factory-ui textarea {
-  background-color: var(--fx-panel);
+  background-color: var(--fx-panel-2);
   color: var(--fx-text);
   border-color: var(--fx-border);
 }
@@ -282,35 +426,110 @@
   background-color: var(--fx-panel);
   color: var(--fx-text);
 }
+.factory-ui [data-slot="input-wrapper"],
+.factory-ui [data-slot="trigger"] {
+  box-shadow: inset 0 0 0 1px var(--fx-border);
+}
+.factory-ui ::placeholder {
+  color: var(--fx-dim);
+  opacity: 1;
+}
 
-/* ── 관리자 틀: 위쪽 계기판 띠 + 본문 폭 ───────────── */
-.factory-ui .fx-admin-bar {
+/* ── 관리자 틀: 상단바(위에 붙음) · 본문 · 하단 상태줄(아래에 붙음) ───── */
+.factory-ui .fx-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem 1rem;
-  padding: 0.5rem 1rem;
+  gap: 0 0.75rem;
+  padding: 0 1rem;
+  background: var(--fx-bg);
   border-bottom: 1px solid var(--fx-border);
-  background: linear-gradient(180deg, rgba(34, 211, 238, 0.05), transparent);
-  font-family: var(--fx-mono);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
 }
-.factory-ui .fx-admin-bar-title {
-  letter-spacing: 0.18em;
+.factory-ui .fx-topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  flex-shrink: 0;
+  font-family: var(--fx-mono);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
   color: var(--fx-text);
 }
-.factory-ui .fx-admin-bar-nav {
+.factory-ui .fx-topbar-nav {
+  order: 3;
+  flex: 1 0 100%;
   display: flex;
-  gap: 1rem;
+  min-width: 0;
+  overflow-x: auto;
+  border-top: 1px solid var(--fx-border);
+  scrollbar-width: none;
 }
-.factory-ui .fx-admin-bar-nav a {
+.factory-ui .fx-topbar-link {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0 0.625rem;
+  border-bottom: 2px solid transparent;
+  color: var(--fx-muted);
+  white-space: nowrap;
+}
+.factory-ui .fx-topbar-link:hover {
+  color: var(--fx-text);
+}
+.factory-ui .fx-topbar-link[aria-current="page"] {
+  color: var(--fx-text);
+  border-bottom-color: var(--fx-accent);
+  font-weight: 700;
+}
+.factory-ui .fx-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-left: auto;
+  min-width: 0;
+  font-size: 0.8125rem;
+}
+.factory-ui .fx-topbar-right .fx-topbar-link {
+  min-height: 2rem;
+  padding: 0;
+  border-bottom: 0;
+}
+.factory-ui .fx-topbar-clock {
+  color: var(--fx-text);
+}
+.factory-ui .fx-topbar-account {
+  display: none;
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--fx-muted);
 }
-.factory-ui .fx-admin-bar-nav a:hover {
-  color: var(--fx-accent);
+@media (min-width: 640px) {
+  .factory-ui .fx-topbar-account {
+    display: inline;
+  }
 }
+@media (min-width: 1280px) {
+  .factory-ui .fx-topbar {
+    flex-wrap: nowrap;
+  }
+  .factory-ui .fx-topbar-nav {
+    order: 0;
+    flex: 1 1 auto;
+    border-top: 0;
+  }
+}
+
 .factory-ui .fx-admin-main {
+  flex: 1 0 auto;
   width: 100%;
   max-width: 80rem;
   margin: 0 auto;
@@ -321,7 +540,34 @@
   max-width: 100rem;
 }
 
-/* ── 옛 화면의 회색·흰색 유틸리티를 계기판 토큰으로 (화면마다 따로 놀지 않게) ── */
+.factory-ui .fx-statusbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  min-height: var(--fx-statusbar-h);
+  padding: 0 1rem;
+  overflow-x: auto;
+  background: var(--fx-bg);
+  border-top: 1px solid var(--fx-border);
+  color: var(--fx-muted);
+  font-family: var(--fx-mono);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  scrollbar-width: none;
+  overflow-wrap: normal;
+}
+.factory-ui .fx-statusbar-item {
+  flex-shrink: 0;
+}
+.factory-ui .fx-statusbar-item + .fx-statusbar-item {
+  margin-left: 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--fx-border);
+}
+
+/* ── 옛 화면의 회색·흰색 유틸리티를 HUD 토큰으로 (화면마다 따로 놀지 않게) ── */
 .factory-ui .bg-white,
 .factory-ui .bg-gray-800,
 .factory-ui .dark\:bg-gray-800,
@@ -337,7 +583,7 @@
 .factory-ui .hover\:bg-gray-50:hover,
 .factory-ui .hover\:bg-gray-700:hover,
 .factory-ui .dark\:hover\:bg-gray-700:hover {
-  background-color: rgba(34, 211, 238, 0.06);
+  background-color: var(--fx-panel-2);
 }
 .factory-ui .border-gray-100,
 .factory-ui .border-gray-200,
@@ -347,7 +593,7 @@
   border-color: var(--fx-border);
 }
 .factory-ui .hover\:border-gray-400:hover {
-  border-color: var(--fx-muted);
+  border-color: var(--fx-text);
 }
 .factory-ui .text-gray-400,
 .factory-ui .text-gray-500,
@@ -369,12 +615,25 @@
 .factory-ui .dark\:text-blue-400 {
   color: var(--fx-accent);
 }
-.factory-ui .bg-blue-600 {
-  background-color: #0e7490;
-}
+.factory-ui .bg-blue-600,
 .factory-ui .bg-blue-700,
 .factory-ui .hover\:bg-blue-700:hover {
-  background-color: #155e75;
+  background-color: #0e7490;
+  color: #ffffff;
+}
+/* 둥근 큰 카드 → 각진 패널 (동그란 점·알약 모양 rounded-full 은 그대로) */
+.factory-ui .rounded-lg,
+.factory-ui .rounded-xl,
+.factory-ui .rounded-2xl,
+.factory-ui .rounded-3xl {
+  border-radius: 3px;
+}
+/* 큰 그림자 → 테두리만 */
+.factory-ui .shadow,
+.factory-ui .shadow-md,
+.factory-ui .shadow-lg,
+.factory-ui .shadow-xl {
+  box-shadow: none;
 }
 /* 직접 만든 입력칸(테두리 있는 기본 input)도 패널 색 */
 .factory-ui input[class*="border"]:not([type="checkbox"]):not([type="radio"]) {
@@ -384,50 +643,37 @@
 }
 
 /* 대시보드 타일·바로가기 버튼 */
-.factory-ui .fx-tile {
-  transition: border-color 0.2s ease;
-}
 .factory-ui .fx-tile:hover {
-  border-color: var(--fx-accent);
+  border-color: var(--fx-text);
 }
 .factory-ui .fx-tile-alert {
   border-color: var(--fx-warn);
-  box-shadow: inset 0 0 24px rgba(251, 191, 36, 0.08);
 }
 .factory-ui .fx-key {
   border: 1px solid var(--fx-border);
-  border-radius: 0.5rem;
+  border-radius: 3px;
   background: var(--fx-panel);
   color: var(--fx-text);
-  font-weight: 500;
-  box-shadow: inset 0 -2px 0 rgba(34, 211, 238, 0.25);
+  font-weight: 600;
 }
 .factory-ui .fx-key:hover {
   border-color: var(--fx-accent);
   color: var(--fx-accent);
 }
 
-/* ── 계기판 부품 (components/admin/ui/meters.tsx) ──────── */
-/* 상태 LED: 빛나는 점 + 글자 */
+/* ── HUD 부품 (components/admin/ui/meters.tsx) ──────── */
+/* 상태 LED: 기호(● ▲ ✕ ○) + 글자 */
 .factory-ui .fx-led {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  font-size: 0.75rem;
-  line-height: 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
   white-space: nowrap;
 }
-.factory-ui .fx-led-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 9999px;
-  flex-shrink: 0;
-  background: currentColor;
-  box-shadow: var(--fx-glow-strong);
-}
-.factory-ui .fx-led.fx-idle .fx-led-dot {
-  box-shadow: none;
-  opacity: 0.6;
+.factory-ui .fx-led-sym {
+  font-size: 0.75rem;
+  line-height: 1;
 }
 .factory-ui .fx-blink {
   animation: fx-blink 2.4s ease-in-out infinite;
@@ -438,139 +684,70 @@
     opacity: 1;
   }
   50% {
-    opacity: 0.35;
+    opacity: 0.4;
   }
 }
 
-/* 7세그먼트풍 숫자: monospace + 고정폭 숫자 + 은은한 글로우 */
+/* 큰 숫자: monospace + 고정폭 숫자 (글로우 없음) */
 .factory-ui .fx-digits {
-  position: relative;
   display: inline-flex;
   align-items: baseline;
   font-family: var(--fx-mono);
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  line-height: 1;
-}
-.factory-ui .fx-digits-value {
-  position: relative;
-  text-shadow: 0 0 8px currentColor;
+  font-weight: 700;
+  line-height: 1.1;
 }
 .factory-ui .fx-digits-unit {
-  margin-left: 0.2em;
-  font-size: 0.5em;
+  margin-left: 0.25rem;
+  font-size: 0.8125rem;
   font-weight: 400;
   color: var(--fx-muted);
 }
 .factory-ui .fx-digits-sm {
-  font-size: 1rem;
+  font-size: 1.125rem;
 }
 .factory-ui .fx-digits-md {
-  font-size: 1.5rem;
+  font-size: 1.625rem;
 }
 .factory-ui .fx-digits-lg {
-  font-size: 1.75rem;
+  font-size: 2rem;
 }
 
-/* 반원 게이지 */
-.factory-ui .fx-gauge {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-}
-.factory-ui .fx-gauge-svg {
-  width: 100%;
-  max-width: 11rem;
-  height: auto;
-  overflow: visible;
-}
-.factory-ui .fx-gauge-track {
-  fill: none;
-  stroke: var(--fx-led-off);
-  stroke-width: 7;
-}
-.factory-ui .fx-gauge-zone {
-  fill: none;
-  stroke-width: 1.5;
-  opacity: 0.5;
-}
-.factory-ui .fx-gauge-zone.fx-warn {
-  stroke: var(--fx-warn);
-}
-.factory-ui .fx-gauge-zone.fx-bad {
-  stroke: var(--fx-bad);
-}
-.factory-ui .fx-gauge-tick {
-  stroke: var(--fx-muted);
-  stroke-width: 0.6;
-  opacity: 0.6;
-}
-.factory-ui .fx-gauge-tick.fx-major {
-  stroke-width: 1.1;
-  opacity: 0.9;
-}
-.factory-ui .fx-gauge-fill {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 7;
-  filter: drop-shadow(0 0 3px currentColor);
-}
-.factory-ui .fx-gauge-needle {
-  stroke: var(--fx-text);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  filter: drop-shadow(0 0 2px currentColor);
-}
-.factory-ui .fx-gauge-readout {
-  margin-top: -1.6rem;
-  min-height: 1.75rem;
-}
-.factory-ui .fx-gauge.fx-idle .fx-gauge-readout {
-  color: var(--fx-muted);
-}
-.factory-ui .fx-gauge-caption {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0 0.375rem;
-  margin-top: 0.25rem;
-  font-size: 0.75rem;
-}
-.factory-ui .fx-gauge-label {
-  color: var(--fx-text);
-  font-weight: 600;
-}
-.factory-ui .fx-gauge-state {
-  font-family: var(--fx-mono);
-}
-
-/* LED 세그먼트 막대 */
+/* 세그먼트 막대 */
 .factory-ui .fx-seg {
   display: flex;
   gap: 2px;
-  height: 0.625rem;
+  height: 0.75rem;
   min-width: 0;
 }
 .factory-ui .fx-seg > span {
   flex: 1 1 0;
   min-width: 0;
-  border-radius: 1px;
   background: var(--fx-led-off);
 }
 .factory-ui .fx-seg > span.fx-on {
   background: currentColor;
-  box-shadow: 0 0 4px currentColor;
-}
-.factory-ui .fx-seg.fx-idle > span.fx-on {
-  box-shadow: none;
-  opacity: 0.7;
 }
 
-/* ── 통제실 분할: 왼쪽 작업 영역 + 오른쪽 AI 사용량 계기판 ── */
+/* 막대 스파크라인 */
+.factory-ui .fx-spark {
+  display: block;
+  width: 100%;
+  height: 2.25rem;
+}
+.factory-ui .fx-spark-bar {
+  fill: var(--fx-dim);
+}
+.factory-ui .fx-spark-now {
+  fill: var(--fx-accent);
+}
+.factory-ui .fx-spark-base {
+  stroke: var(--fx-border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* ── 통제실 분할: 왼쪽 작업 영역 + 오른쪽 AI USAGE 패널 ── */
 .factory-ui .fx-split {
   display: flex;
   flex-direction: column;
@@ -581,7 +758,7 @@
   min-width: 0;
 }
 .factory-ui .fx-split-side {
-  order: -1; /* 좁은 화면: 작업 영역 위에 접힌 카드 */
+  order: -1; /* 좁은 화면: 작업 영역 위에 접힌 패널 */
   min-width: 0;
 }
 @media (min-width: 1024px) {
@@ -594,36 +771,20 @@
   .factory-ui .fx-split-side {
     order: 0;
     position: sticky;
-    top: 1rem;
-    max-height: calc(100vh - 2rem);
+    top: calc(var(--fx-topbar-h) + 0.5rem);
+    max-height: calc(100vh - var(--fx-topbar-h) - var(--fx-statusbar-h) - 1rem);
     overflow-y: auto;
+    padding-top: 0.75rem; /* 테두리에 걸린 제목이 잘리지 않게 */
+    margin-top: -0.75rem;
     scrollbar-width: thin;
   }
 }
 
-/* AI 사용량 계기판 패널 */
+/* AI USAGE 패널 */
 .factory-ui .fx-dash {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.875rem;
-}
-.factory-ui .fx-dash-head,
-.factory-ui .fx-dash-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  min-width: 0;
-}
-.factory-ui .fx-dash-title {
-  font-family: var(--fx-mono);
-  font-size: 0.8125rem;
-  letter-spacing: 0.14em;
-}
-.factory-ui .fx-dash-sub {
-  font-size: 0.8125rem;
-  font-weight: 600;
+  gap: 0.875rem;
 }
 .factory-ui .fx-dash-toggle {
   display: flex;
@@ -633,9 +794,10 @@
   min-height: 2.75rem;
   padding: 0 0.75rem;
   border: 1px solid var(--fx-border);
-  border-radius: 0.5rem;
+  border-radius: 2px;
   background: var(--fx-panel-2);
-  font-size: 0.8125rem;
+  color: var(--fx-text);
+  font-size: 0.875rem;
   text-align: left;
 }
 @media (min-width: 1024px) {
@@ -645,40 +807,117 @@
 }
 .factory-ui .fx-dash-body {
   flex-direction: column;
+  gap: 1rem;
+}
+.factory-ui .fx-dash-sec {
+  display: flex;
+  flex-direction: column;
   gap: 0.75rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--fx-border);
 }
-.factory-ui .fx-dash-block {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.75rem;
-  border: 1px solid var(--fx-border);
-  border-radius: 0.5rem;
-  background: var(--fx-panel-2);
+.factory-ui .fx-dash-sec:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
-.factory-ui .fx-dash-cell {
+.factory-ui .fx-dash-sec-head {
   display: flex;
-  flex-direction: column;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   min-width: 0;
-  text-align: center;
 }
-.factory-ui .fx-dash-line {
-  font-size: 0.6875rem;
-  line-height: 1rem;
+.factory-ui .fx-dash-sub {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--fx-text);
+}
+.factory-ui .fx-dash-note,
+.factory-ui .fx-dash-wait {
+  font-size: 0.8125rem;
+  color: var(--fx-muted);
+}
+.factory-ui .fx-dash-wait {
+  font-size: 0.875rem;
+}
+.factory-ui .fx-dash-note.fx-warn {
+  color: var(--fx-warn);
+}
+
+/* 한도 한 행 */
+.factory-ui .fx-limit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.factory-ui .fx-limit-top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  min-width: 0;
+}
+.factory-ui .fx-limit-label {
+  min-width: 2.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--fx-text);
+}
+.factory-ui .fx-limit-pct {
+  margin-left: auto;
+  font-family: var(--fx-mono);
   font-variant-numeric: tabular-nums;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.factory-ui .fx-limit-unit {
+  margin-left: 0.125rem;
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: var(--fx-muted);
+}
+.factory-ui .fx-limit-sub {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-variant-numeric: tabular-nums;
+}
+.factory-ui .fx-limit-sub > span:first-child {
+  color: var(--fx-text);
+}
+
+/* 오늘 사용량 */
+.factory-ui .fx-dash-today {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
 }
 .factory-ui .fx-dash-bars {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 3.25rem;
+  grid-template-columns: auto minmax(0, 1fr) 3.5rem;
   align-items: center;
-  gap: 0.375rem 0.5rem;
+  gap: 0.5rem 0.625rem;
+  font-size: 0.8125rem;
+}
+.factory-ui .fx-dash-spark-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.25rem;
+  font-family: var(--fx-mono);
+  font-size: 0.75rem;
+  color: var(--fx-muted);
 }
 .factory-ui .fx-dash-foot {
-  padding-top: 0.5rem;
-  border-top: 1px dashed var(--fx-border);
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--fx-border);
   font-family: var(--fx-mono);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   color: var(--fx-muted);
 }
 

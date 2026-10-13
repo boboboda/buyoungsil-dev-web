@@ -1,7 +1,7 @@
 // components/admin/ui/meters.tsx
-// 관리자 계기판 부품(겉모양만, 훅 없음): 반원 게이지(호 채움 + 바늘 + 눈금), LED 세그먼트 막대, 7세그먼트풍 숫자, 상태 LED.
-// 색은 app/admin/admin-ui.css 의 토큰을 쓴다. 색만으로 상태를 알리지 않도록 늘 글자(정상·주의·위험 등)를 같이 붙인다.
-// 계산(퍼센트→각도·세그먼트, 갱신 시각 문구)은 순수 함수로 따로 내보내 단위 시험한다.
+// 관리자 HUD 부품(겉모양만, 훅 없음): 상태 LED(기호 ● ▲ ✕ ○ + 글자), 세그먼트 막대, 모노스페이스 숫자, 막대 스파크라인.
+// 색은 app/admin/admin-ui.css 의 토큰을 쓴다. 색만으로 상태를 알리지 않도록 늘 기호와 글자(정상·주의·위험 등)를 같이 붙인다.
+// 계산(퍼센트→세그먼트·스파크라인 높이, 갱신 시각 문구)은 순수 함수로 따로 내보내 단위 시험한다.
 
 export type MeterTone = "run" | "ok" | "warn" | "bad" | "idle";
 
@@ -19,39 +19,6 @@ export function meterTone(pct: number): { tone: MeterTone; text: string } {
   if (p < 90) return { tone: "warn", text: "주의" };
 
   return { tone: "bad", text: "위험" };
-}
-
-/**
- * 퍼센트 → 바늘 각도(도). 0 은 위쪽, 음수는 왼쪽.
- * 기본 반원(sweep 180): 0% = -90°(왼쪽 끝), 50% = 0°(위), 100% = 90°(오른쪽 끝).
- */
-export function gaugeAngle(pct: number, sweep = 180) {
-  return -sweep / 2 + (clampPct(pct) / 100) * sweep;
-}
-
-/** 원 위의 점. 각도 0 = 위쪽, 시계 방향 */
-export function polar(cx: number, cy: number, r: number, deg: number) {
-  const rad = (deg * Math.PI) / 180;
-
-  return {
-    x: Math.round((cx + r * Math.sin(rad)) * 100) / 100,
-    y: Math.round((cy - r * Math.cos(rad)) * 100) / 100,
-  };
-}
-
-/** from° → to° 호(시계 방향) SVG path */
-export function arcPath(
-  cx: number,
-  cy: number,
-  r: number,
-  from: number,
-  to: number,
-) {
-  const a = polar(cx, cy, r, from);
-  const b = polar(cx, cy, r, to);
-  const large = Math.abs(to - from) > 180 ? 1 : 0;
-
-  return `M ${a.x} ${a.y} A ${r} ${r} 0 ${large} 1 ${b.x} ${b.y}`;
 }
 
 /** 켜질 세그먼트 수. 0 보다 크면 최소 1칸은 켠다(아주 적게 써도 '0' 처럼 보이지 않게) */
@@ -110,7 +77,16 @@ export const isStale = (
 
 // ── 부품 ──────────────────────────────────────
 
-/** 상태 LED: 빛나는 점 + 글자(색만으로 구분하지 않음) */
+/** 상태별 기호: 색을 못 봐도 구분되게 (● 정상·진행, ▲ 주의, ✕ 실패, ○ 꺼짐·대기) */
+export const TONE_SYMBOL: Record<MeterTone, string> = {
+  run: "●",
+  ok: "●",
+  warn: "▲",
+  bad: "✕",
+  idle: "○",
+};
+
+/** 상태 LED: 기호 + 글자(색만으로 구분하지 않음) */
 export function Led({
   tone,
   children,
@@ -122,13 +98,15 @@ export function Led({
 }) {
   return (
     <span className={`fx-led fx-${tone}`}>
-      <span aria-hidden className={`fx-led-dot${blink ? " fx-blink" : ""}`} />
+      <span aria-hidden className={`fx-led-sym${blink ? " fx-blink" : ""}`}>
+        {TONE_SYMBOL[tone]}
+      </span>
       <span>{children}</span>
     </span>
   );
 }
 
-/** 7세그먼트풍 숫자: monospace·고정폭 숫자·은은한 글로우 */
+/** 큰 숫자: monospace·고정폭 숫자 */
 export function Digits({
   value,
   unit,
@@ -146,106 +124,11 @@ export function Digits({
   );
 }
 
-const TICKS = Array.from({ length: 11 }, (_, i) => i * 10);
-
-/**
- * 반원 아날로그 게이지. pct 가 null 이면 빈 게이지(바늘 없음, "--").
- * 화면 읽기 프로그램에는 role="meter" 와 label·값을 준다.
- */
-export function ArcGauge({
-  label,
-  pct,
-  status,
-}: {
-  label: string;
-  pct: number | null;
-  status?: string; // 숫자 대신/옆에 보일 짧은 글자 (예: "수신 대기")
-}) {
-  const cx = 60;
-  const cy = 58;
-  const r = 46;
-  const has = pct !== null;
-  const p = has ? clampPct(pct) : 0;
-  const { tone, text } = has
-    ? meterTone(p)
-    : { tone: "idle" as MeterTone, text: status ?? "값 없음" };
-  const angle = gaugeAngle(p);
-  // 바늘은 눈금 안쪽에서 호 바깥까지 짧게(가운데 숫자를 가리지 않게)
-  const tipIn = polar(cx, cy, r - 15, angle);
-  const tipOut = polar(cx, cy, r + 4, angle);
-
-  return (
-    <div
-      aria-label={`${label} 사용률`}
-      aria-valuemax={100}
-      aria-valuemin={0}
-      aria-valuenow={has ? Math.round(p) : undefined}
-      aria-valuetext={
-        has ? `${Math.round(p)}% 사용 (${text})` : (status ?? "값 없음")
-      }
-      className={`fx-gauge fx-${tone}`}
-      role="meter"
-    >
-      <svg aria-hidden className="fx-gauge-svg" viewBox="0 0 120 66">
-        <path className="fx-gauge-track" d={arcPath(cx, cy, r, -90, 90)} />
-        {/* 경고 구간 표시(70~90 주의, 90~100 위험) — 아주 옅게 */}
-        <path
-          className="fx-gauge-zone fx-warn"
-          d={arcPath(cx, cy, r + 6, gaugeAngle(70), gaugeAngle(90))}
-        />
-        <path
-          className="fx-gauge-zone fx-bad"
-          d={arcPath(cx, cy, r + 6, gaugeAngle(90), 90)}
-        />
-        {TICKS.map((t) => {
-          const major = t % 50 === 0;
-          const a = polar(cx, cy, r - 6, gaugeAngle(t));
-          const b = polar(cx, cy, r - (major ? 12 : 9), gaugeAngle(t));
-
-          return (
-            <line
-              key={t}
-              className={major ? "fx-gauge-tick fx-major" : "fx-gauge-tick"}
-              x1={a.x}
-              x2={b.x}
-              y1={a.y}
-              y2={b.y}
-            />
-          );
-        })}
-        {has && p > 0 ? (
-          <path className="fx-gauge-fill" d={arcPath(cx, cy, r, -90, angle)} />
-        ) : null}
-        {has ? (
-          <line
-            className="fx-gauge-needle"
-            x1={tipIn.x}
-            x2={tipOut.x}
-            y1={tipIn.y}
-            y2={tipOut.y}
-          />
-        ) : null}
-      </svg>
-      <div className="fx-gauge-readout">
-        <Digits
-          size="lg"
-          unit={has ? "%" : undefined}
-          value={has ? String(Math.round(p)) : "--"}
-        />
-      </div>
-      <div className="fx-gauge-caption">
-        <span className="fx-gauge-label">{label}</span>
-        <span className={`fx-${tone} fx-gauge-state`}>{text}</span>
-      </div>
-    </div>
-  );
-}
-
-/** LED 세그먼트 막대. pct(0~100) 만큼 칸을 켠다 */
+/** 세그먼트 막대. pct(0~100) 만큼 칸을 켠다(색은 70% 주의·90% 위험) */
 export function SegmentBar({
   label,
   pct,
-  segments = 20,
+  segments = 24,
   tone,
   valueText,
 }: {
@@ -272,5 +155,48 @@ export function SegmentBar({
         <span key={i} aria-hidden className={i < lit ? "fx-on" : undefined} />
       ))}
     </div>
+  );
+}
+
+/** 스파크라인 막대 높이(0~max). 가장 큰 값이 max, 0 보다 크면 최소 1(아주 적게 써도 보이게) */
+export function sparkHeights(values: number[], max: number) {
+  const top = Math.max(0, ...values.map((v) => (Number.isFinite(v) ? v : 0)));
+
+  return values.map((v) =>
+    top > 0 && Number.isFinite(v) && v > 0
+      ? Math.max(1, Math.round((v / top) * max))
+      : 0,
+  );
+}
+
+/** 막대 스파크라인(마지막 막대 = 오늘, 강조). 그림은 숨기고 화면 읽기 프로그램에는 label 로 요약 */
+export function Sparkline({ values, label }: { values: number[]; label: string }) {
+  const H = 28;
+  const W = 6;
+  const GAP = 2;
+  const heights = sparkHeights(values, H);
+  const width = Math.max(1, values.length * (W + GAP) - GAP);
+
+  return (
+    <svg
+      aria-label={label}
+      className="fx-spark"
+      height={H}
+      preserveAspectRatio="none"
+      role="img"
+      viewBox={`0 0 ${width} ${H}`}
+    >
+      <line className="fx-spark-base" x1={0} x2={width} y1={H - 0.5} y2={H - 0.5} />
+      {heights.map((h, i) => (
+        <rect
+          key={i}
+          className={i === heights.length - 1 ? "fx-spark-now" : "fx-spark-bar"}
+          height={h}
+          width={W}
+          x={i * (W + GAP)}
+          y={H - h}
+        />
+      ))}
+    </svg>
   );
 }

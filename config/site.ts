@@ -30,15 +30,33 @@ export const siteConfig = {
     },
   ] as { label: string; href: string; activePaths?: string[] }[],
   // 관리자 드롭다운 (PC·모바일 공통). 여기 없는 관리자 화면도 주소는 그대로 살아 있다.
+  // short: 관리자 콘솔 상단바(app/admin/layout.tsx)에 쓰는 짧은 이름
   adminNavItems: [
-    { key: "adminDashboard", label: "📊 대시보드", href: "/admin" },
-    { key: "adminNotes", label: "📚 노트 관리", href: "/admin/notes" },
-    { key: "adminProjects", label: "💼 프로젝트", href: "/admin/projects" },
-    { key: "adminStories", label: "😅 이야기", href: "/admin/stories" },
-    { key: "adminFactory", label: "🏭 앱 공장", href: "/admin/factory" },
-    { key: "adminWorks", label: "💻 외주 신청", href: "/admin/works" },
-    { key: "adminBoards", label: "💬 앱별 공지/문의 게시판", href: "/admin/boards" },
-    { key: "adminAnalytics", label: "📈 분석", href: "/admin/analytics" },
+    { key: "adminDashboard", label: "📊 대시보드", short: "대시보드", href: "/admin" },
+    { key: "adminNotes", label: "📚 노트 관리", short: "글/노트", href: "/admin/notes" },
+    { key: "adminProjects", label: "💼 프로젝트", short: "프로젝트", href: "/admin/projects" },
+    { key: "adminStories", label: "😅 이야기", short: "이야기", href: "/admin/stories" },
+    { key: "adminFactory", label: "🏭 앱 공장", short: "통제실", href: "/admin/factory" },
+    { key: "adminWorks", label: "💻 외주 신청", short: "외주", href: "/admin/works" },
+    { key: "adminBoards", label: "💬 앱별 공지/문의 게시판", short: "문의함", href: "/admin/boards" },
+    { key: "adminAnalytics", label: "📈 분석", short: "분석", href: "/admin/analytics" },
+  ],
+  // 관리자 콘솔 상단바에만 더 보이는 메뉴와 순서
+  adminConsoleExtraNavItems: [
+    { key: "adminDrafts", label: "📥 초안함", short: "초안함", href: "/admin/drafts" },
+    { key: "adminCategories", label: "🗂 카테고리", short: "카테고리", href: "/admin/categories" },
+  ],
+  adminConsoleNavOrder: [
+    "adminDashboard",
+    "adminFactory",
+    "adminNotes",
+    "adminProjects",
+    "adminStories",
+    "adminDrafts",
+    "adminBoards",
+    "adminWorks",
+    "adminAnalytics",
+    "adminCategories",
   ],
   links: {
     github: "https://github.com/boboboda",

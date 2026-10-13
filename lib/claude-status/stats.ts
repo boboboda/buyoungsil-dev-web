@@ -50,8 +50,8 @@ export interface ClaudeStats {
   codexLimits: UsageLimitsView | null; // Codex 구독 한도(비공식 수집). 아직 못 받았으면 null
 }
 
-// 한도 스냅샷을 읽는다. 표가 아직 없거나(마이그레이션 전) 읽기에 실패해도 나머지 현황은 보여준다.
-async function readLimits(now: number) {
+// 한도 스냅샷을 읽는다. 표가 아직 없거나(마이그레이션 전) 읽기에 실패해도 나머지 현황은 보여준다(관리자 하단 상태바도 이것만 읽는다).
+export async function readLimits(now: number) {
   try {
     const rows = await prisma.aiUsageLimit.findMany({
       where: { provider: { in: ["claude", "codex"] } },

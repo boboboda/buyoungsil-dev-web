@@ -15,6 +15,7 @@ import NavBar from "@/components/main/navBar";
 import NavbarVisibilityWrapper from "@/lib/wrappers/NavbarWrapper";
 import VisitorTracker from "@/components/main/visitorTracker";
 import HideInApp from "@/components/main/HideInApp";
+import PublicChromeOnly from "@/components/main/PublicChromeOnly";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
@@ -99,7 +100,8 @@ export default async function RootLayout({
         <Providers themeProps={{ attribute: "class", defaultTheme: "light" }}>
           <div className="flex flex-col flex-grow min-h-0">
             <Header />
-            <HideInApp>
+            {/* 공개 사이트 네비바: 앱 화면·관리자 콘솔(/admin/*)에서는 숨김 */}
+            <PublicChromeOnly>
               <div className="flex flex-col w-full justify-center items-center">
                 <NavbarVisibilityWrapper>
                   <div className="w-full flex justify-center">
@@ -108,7 +110,7 @@ export default async function RootLayout({
                   <Divider className="w-full mt-4" />
                 </NavbarVisibilityWrapper>
               </div>
-            </HideInApp>
+            </PublicChromeOnly>
 
             <main className="flex-grow w-full min-h-screen">{children}</main>
 
@@ -117,11 +119,11 @@ export default async function RootLayout({
             </HideInApp>
           </div>
 
-          <HideInApp>
+          <PublicChromeOnly>
             <div className="mt-auto">
               <Footer />
             </div>
-          </HideInApp>
+          </PublicChromeOnly>
 
           {/* <AdFooter /> */}
         </Providers>

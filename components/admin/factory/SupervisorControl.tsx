@@ -195,7 +195,7 @@ export default function SupervisorControl() {
   }
 
   return (
-    <Card className="mb-6">
+    <Card className="mb-6" data-title="supervisor · 감독 프로그램">
       <CardBody className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>

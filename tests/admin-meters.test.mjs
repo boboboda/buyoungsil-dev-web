@@ -1,5 +1,5 @@
-// 관리자 계기판 시험: 게이지 계산(퍼센트→각도·세그먼트·색), 갱신 시각 문구, 게이지·LED 막대 렌더,
-// 통제실 오른쪽 'AI 사용량' 패널(수신 대기·오래된 값·수집 실패·오늘/어제·접이식), 관리자 공통 레이아웃 범위.
+// 관리자 HUD 시험: 세그먼트·스파크라인 계산, 상태 색·기호, 갱신 시각 문구, LED·막대 렌더, 상단바·하단 상태줄, 공개 크롬 숨김,
+// 통제실 오른쪽 'AI USAGE' 패널(수신 대기·오래된 값·수집 실패·오늘/어제·접이식), 관리자 공통 레이아웃 범위.
 // 실행: npm run test:admin-meters
 // TSX 를 typescript 로 변환해 react-dom/server 로 그린다(로그인·API·DB 없이 가짜 데이터).
 import test from "node:test";
@@ -35,21 +35,17 @@ const HOUR = 60 * MIN;
 // 2026-10-13 12:05 KST
 const AS_OF = Date.UTC(2026, 9, 13, 3, 5, 0);
 
-test("퍼센트 → 바늘 각도: 0%=-90°, 50%=0°, 100%=90°, 범위 밖·NaN 은 자름", () => {
-  assert.equal(m.gaugeAngle(0), -90);
-  assert.equal(m.gaugeAngle(25), -45);
-  assert.equal(m.gaugeAngle(50), 0);
-  assert.equal(m.gaugeAngle(100), 90);
-  assert.equal(m.gaugeAngle(150), 90);
-  assert.equal(m.gaugeAngle(-5), -90);
-  assert.equal(m.gaugeAngle(Number.NaN), -90);
-  assert.equal(m.gaugeAngle(50, 240), 0);
-  assert.equal(m.gaugeAngle(0, 240), -120);
-  // 원 위의 점: 0°=위, 90°=오른쪽, -90°=왼쪽
-  assert.deepEqual(m.polar(60, 58, 46, 0), { x: 60, y: 12 });
-  assert.deepEqual(m.polar(60, 58, 46, 90), { x: 106, y: 58 });
-  assert.deepEqual(m.polar(60, 58, 46, -90), { x: 14, y: 58 });
-  assert.equal(m.arcPath(60, 58, 46, -90, 90), "M 14 58 A 46 46 0 0 1 106 58");
+test("스파크라인 막대 높이: 가장 큰 날이 꼭대기, 조금이라도 쓰면 1, 0·NaN 은 0", () => {
+  assert.deepEqual(m.sparkHeights([0, 50, 100, 25], 28), [0, 14, 28, 7]);
+  assert.deepEqual(m.sparkHeights([0.001, 1000], 28), [1, 28]);
+  assert.deepEqual(m.sparkHeights([0, 0], 28), [0, 0]);
+  assert.deepEqual(m.sparkHeights([Number.NaN, 4], 10), [0, 10]);
+  assert.deepEqual(m.sparkHeights([], 10), []);
+  const svg = html(h(m.Sparkline, { values: [1, 2, 3], label: "최근 3일" }));
+  assert.match(svg, /role="img"/);
+  assert.match(svg, /aria-label="최근 3일"/);
+  assert.equal(count(svg, /class="fx-spark-bar"/g), 2);
+  assert.equal(count(svg, /class="fx-spark-now"/g), 1, "마지막(오늘) 막대만 강조");
 });
 
 test("퍼센트 → 켜진 세그먼트 수: 0 이면 0, 조금이라도 쓰면 1칸, 넘치면 전부", () => {
@@ -93,34 +89,7 @@ test("갱신 시각 문구: '12:05 갱신 · 3분 전', 오래됨(15분) 판정,
   assert.equal(m.untilText(AS_OF - HOUR, AS_OF), "0분");
 });
 
-test("반원 게이지 렌더: role=meter·값·글자, 빈 게이지는 '--'·바늘 없음", () => {
-  const g = html(h(m.ArcGauge, { label: "Claude 5시간", pct: 23.4 }));
-  assert.match(g, /role="meter"/);
-  assert.match(g, /aria-valuenow="23"/);
-  assert.match(g, /aria-valuetext="23% 사용 \(정상\)"/);
-  assert.match(g, /class="fx-gauge fx-ok"/);
-  assert.match(g, /fx-gauge-needle/);
-  assert.match(g, /fx-gauge-fill/);
-  assert.equal(count(g, /fx-gauge-tick/g), 11, "10% 마다 눈금 11개");
-  assert.equal(count(g, /fx-gauge-tick fx-major/g), 3, "0·50·100 큰 눈금");
-  assert.match(g, /<span class="fx-digits-value">23<\/span><span class="fx-digits-unit">%<\/span>/);
-  assert.match(g, />정상</);
-
-  const hi = html(h(m.ArcGauge, { label: "x", pct: 95 }));
-  assert.match(hi, /fx-gauge fx-bad/);
-  assert.match(hi, />위험</);
-
-  const empty = html(h(m.ArcGauge, { label: "Codex 5시간", pct: null, status: "수신 대기" }));
-  assert.match(empty, /class="fx-gauge fx-idle"/);
-  assert.doesNotMatch(empty, /fx-gauge-needle/);
-  assert.doesNotMatch(empty, /fx-gauge-fill/);
-  assert.doesNotMatch(empty, /aria-valuenow/);
-  assert.match(empty, /aria-valuetext="수신 대기"/);
-  assert.match(empty, /fx-digits-value">--</);
-  assert.match(empty, />수신 대기</);
-});
-
-test("LED 막대·LED·숫자 렌더", () => {
+test("세그먼트 막대·LED(기호+글자)·숫자 렌더", () => {
   const seg = html(h(m.SegmentBar, { label: "오늘", pct: 50, segments: 10 }));
   assert.equal(count(seg, /<span aria-hidden="true"/g), 10);
   assert.equal(count(seg, /class="fx-on"/g), 5);
@@ -131,8 +100,11 @@ test("LED 막대·LED·숫자 렌더", () => {
 
   const led = html(h(m.Led, { tone: "warn", children: "수집 실패" }));
   assert.match(led, /class="fx-led fx-warn"/);
-  assert.match(led, /<span aria-hidden="true" class="fx-led-dot"><\/span><span>수집 실패<\/span>/);
-  assert.match(html(h(m.Led, { tone: "run", blink: true, children: "x" })), /fx-led-dot fx-blink/);
+  assert.match(led, /<span aria-hidden="true" class="fx-led-sym">▲<\/span><span>수집 실패<\/span>/);
+  assert.match(html(h(m.Led, { tone: "run", blink: true, children: "x" })), /fx-led-sym fx-blink">●</);
+  // 색을 못 봐도 구분되는 기호
+  assert.deepEqual(m.TONE_SYMBOL, { run: "●", ok: "●", warn: "▲", bad: "✕", idle: "○" });
+  assert.match(html(h(m.SegmentBar, { label: "x", pct: 10 })), /(<span aria-hidden="true"[^>]*><\/span>){24}/, "기본 24칸");
 
   const d = html(h(m.Digits, { value: "12" }));
   assert.match(d, /<span class="fx-digits fx-digits-md"><span class="fx-digits-value">12<\/span><\/span>/);
@@ -173,27 +145,37 @@ test("오늘/어제 비교: 입력+출력+캐시 생성, 큰 쪽이 100%", () =>
   assert.deepEqual(dash.dailyCompare([]), { today: 0, yesterday: 0, todayPct: 0, yesterdayPct: 0, diff: "오늘·어제 기록 없음" });
 });
 
-test("AI 사용량 패널: Claude 게이지 2개·남은 시간·갱신 시각, 오늘 사용량, Codex 수집 실패", () => {
+test("AI USAGE 패널: 한도마다 한 행(사용 %·막대·남은 %·초기화까지·갱신 시각), 오늘 사용량, Codex 수집 실패", () => {
   const now = AS_OF + 3 * MIN + 10_000;
   const codex = limits({ fiveHour: { usedPct: 40, resetsAt: AS_OF + HOUR, reset: false }, sevenDay: null, failedAt: AS_OF + 2 * MIN });
   const out = html(h(dash.UsageDashView, { stats: stats({ codexLimits: codex }), now }));
 
-  assert.match(out, /aria-label="Claude 5시간 사용률"[^>]*aria-valuenow="23"|aria-valuenow="23"[^>]*aria-label="Claude 5시간 사용률"/);
-  assert.match(out, /aria-label="Claude 7일 사용률"/);
+  // 제목은 테두리에 걸린 'AI USAGE'
+  assert.match(out, /class="fx-hud fx-dash"/);
+  assert.match(out, /<h2 class="fx-hud-title" id="usage-dash-title">AI USAGE/);
+  assert.doesNotMatch(out, /fx-gauge/, "반원 게이지는 행 형태로 바뀜");
+  // 한도 4행 = 막대 4개 + 오늘/어제 막대 2개
+  assert.equal(count(out, /class="fx-limit"/g), 4);
+  assert.equal(count(out, /role="meter"/g), 6);
+  assert.match(out, /aria-label="Claude 5시간 사용률"[^>]*aria-valuenow="23"[^>]*aria-valuetext="23% 사용 \(정상\)"/);
+  assert.match(out, /<span class="fx-limit-pct fx-ok">23<span class="fx-limit-unit">%<\/span>/, "굵고 큰 사용 %");
+  assert.match(out, /<span class="fx-limit-pct fx-bad">92/);
+  assert.match(out, /aria-label="Claude 7일 사용률"[^>]*class="fx-seg fx-bad"/, "92% 막대는 위험 색");
+  assert.match(out, /✕<\/span><span>위험<\/span>/, "92% 는 ✕ 위험 글자");
   assert.match(out, /남은 77% · 초기화까지 2시간 11분/);
   assert.match(out, /남은 8% · 초기화까지 3일 3시간/);
-  assert.match(out, />위험</, "92% 는 위험 글자");
-  assert.ok(count(out, /12:05 갱신 · 3분 전/g) >= 4, "게이지마다 갱신 시각");
+  assert.ok(count(out, /12:05 갱신 · 3분 전/g) >= 4, "행마다 갱신 시각");
   assert.match(out, /<span>수신 중<\/span>/, "Claude LED");
-  // 오늘 사용량 1.3M(=1,250,000), 어제 대비
+  // 오늘 사용량 1.3M(=1,250,000), 어제 대비 + 스파크라인
   assert.match(out, /fx-digits-value">1\.3M</);
   assert.match(out, /어제보다 \+25%/);
   assert.match(out, /aria-label="오늘 사용량 \(어제와 비교\)"/);
+  assert.match(out, /aria-label="최근 2일 사용량: 가장 많은 날 1\.3M, 오늘 1\.3M"/);
   // Codex: 수집 실패 LED + 지난 값 표시 중, 주간 창 값 없음
   assert.match(out, /aria-label="Codex 5시간 사용률"/);
-  assert.match(out, /<span class="fx-led fx-warn"><span aria-hidden="true" class="fx-led-dot"><\/span><span>수집 실패<\/span>/);
-  assert.match(out, /마지막 수집 실패 1분 전 \(지난 값 표시 중\)/);
-  assert.match(out, /Codex 주간 사용률[^>]*aria-valuetext="값 없음"|aria-valuetext="값 없음"[^>]*Codex 주간/);
+  assert.match(out, /<span class="fx-led fx-warn"><span aria-hidden="true" class="fx-led-sym">▲<\/span><span>수집 실패<\/span>/);
+  assert.match(out, /▲ 마지막 수집 실패 1분 전 · 지난 값 표시 중/);
+  assert.match(out, /aria-label="Codex 주간 사용률"[^>]*aria-valuetext="값 없음"/);
   // 패널 아래 마지막 갱신
   assert.match(out, /패널 갱신 12:08:00 · 10초 전/);
   // 좁은 화면 요약 줄 + 접힘
@@ -203,33 +185,129 @@ test("AI 사용량 패널: Claude 게이지 2개·남은 시간·갱신 시각, 
   assert.match(html(h(dash.UsageDashView, { stats: stats(), now, open: true })), /aria-expanded="true"[\s\S]*class="flex fx-dash-body lg:flex"/);
 });
 
-test("AI 사용량 패널: 값이 없으면 빈 게이지 + 수신 대기, 15분 넘으면 오래된 값 경고, 초기화된 창", () => {
+test("AI USAGE 패널: 값이 없으면 '수신 대기'는 한 번만(오른쪽 LED), 15분 넘으면 오래된 값, 초기화된 창", () => {
   const none = html(h(dash.UsageDashView, { stats: null, now: AS_OF }));
-  assert.equal(count(none, /role="meter" /g) + count(none, /role="meter">/g), 6, "게이지 4개 + LED 막대 2개");
-  assert.equal(count(none, /fx-gauge fx-idle/g), 4);
-  assert.match(none, /수신 대기 — 작업 PC 에서 Claude Code 를 한 번 쓰면 나타나요/);
-  assert.match(none, /수신 대기 — 작업 PC 에서 Codex 수집 스크립트를 켜면 나타나요/);
+  assert.equal(count(none, /수신 대기/g), 1, "수신 대기는 패널당 한 번");
+  assert.match(none, /<span class="fx-led fx-idle"><span aria-hidden="true" class="fx-led-sym">○<\/span><span>수신 대기<\/span>/);
+  assert.match(none, /<p class="fx-dash-wait">— 작업 PC 에서 Claude Code 를 한 번 쓰면 나타나요<\/p>/);
+  assert.match(none, /<p class="fx-dash-wait">— 작업 PC 에서 Codex 수집 스크립트를 켜면 나타나요<\/p>/);
+  assert.doesNotMatch(none, /Claude[^<]*수신 대기/, "제목에 상태를 붙이지 않음");
+  assert.equal(count(none, /class="fx-limit"/g), 0);
   assert.match(none, /아직 받은 값이 없어요/);
   assert.match(none, /Claude 5h -- · 7d --/);
   assert.match(none, /오늘·어제 기록 없음/);
+  assert.doesNotMatch(none, /fx-spark/, "기록이 없으면 스파크라인 없음");
 
   const later = AS_OF + 20 * MIN;
   const old = html(h(dash.UsageDashView, { stats: stats({ limits: limits({ fiveHour: { usedPct: 50, resetsAt: AS_OF - MIN, reset: true } }) }), now: later }));
   assert.match(old, /<span>오래된 값<\/span>/);
-  assert.match(old, /fx-dash-line fx-warn"[^>]*>⚠ 12:05 갱신 · 20분 전/);
+  assert.match(old, /class="fx-warn"[^>]*>▲ 12:05 갱신 · 20분 전/);
   assert.match(old, /초기화됨 · 새 값 대기/);
+  assert.match(old, /<span class="fx-limit-pct fx-idle">--/);
   assert.match(old, /Claude 5h -- · 7d 92%/);
 
   const failed = html(h(dash.UsageDashView, { stats: stats(), now: AS_OF, error: "갱신 실패, 다시 시도 중" }));
   assert.match(failed, /fx-led fx-bad[\s\S]*갱신 실패/);
+  assert.match(failed, /✕ 갱신 실패, 다시 시도 중/);
 });
 
-test("관리자 공통 레이아웃: /admin 전체를 .factory-ui dark 로, 통제실은 좌우 분할", () => {
+const stub = { useIdleLogout: () => ({ remainingSeconds: null }) };
+const site = loadTs("config/site.ts");
+const top = loadTs("components/admin/ui/AdminTopBar.tsx", {
+  "next/link": { __esModule: true, default: ({ href, children, ...rest }) => h("a", { href, ...rest }, children) },
+  "next/navigation": { usePathname: () => "/admin", useRouter: () => ({}) },
+  "next-auth/react": { signOut: () => {}, useSession: () => ({ data: null }) },
+  "@/app/hooks/auth/useIdleLogout": stub,
+  "@/components/admin/ui/meters": m,
+  "@/config/site": site,
+});
+const bar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": m });
+
+test("관리자 상단바: 메뉴 순서·지금 위치 강조·사이트로·시각·로그아웃", () => {
+  assert.deepEqual(
+    top.adminNavList().map((i) => i.short),
+    ["대시보드", "통제실", "글/노트", "프로젝트", "이야기", "초안함", "문의함", "외주", "분석", "카테고리"],
+  );
+  assert.equal(top.isAdminNavActive("/admin", "/admin"), true);
+  assert.equal(top.isAdminNavActive("/admin/factory", "/admin"), false, "대시보드는 정확히 /admin 일 때만");
+  assert.equal(top.isAdminNavActive("/admin/factory/jobs", "/admin/factory"), true);
+  assert.equal(top.isAdminNavActive("/admin/factoryx", "/admin/factory"), false);
+  assert.equal(top.isAdminNavActive(null, "/admin"), false);
+
+  const out = html(h(top.AdminTopBarView, { pathname: "/admin/factory", clock: "12:42", account: "부영실" }));
+  assert.match(out, /<header class="fx-topbar">/);
+  assert.match(out, /<nav aria-label="관리자 메뉴"/);
+  assert.equal(count(out, /aria-current="page"/g), 1);
+  assert.match(out, /href="\/admin\/factory" aria-current="page" class="fx-topbar-link">통제실</);
+  assert.match(out, /href="\/" class="fx-topbar-link">↗ 사이트로</);
+  assert.match(out, />12:42</);
+  assert.match(out, />부영실</);
+  assert.match(out, />로그아웃</);
+  assert.match(html(h(top.AdminTopBarView, { pathname: "/admin", clock: "--:--", account: null, idleText: "04:59 후 로그아웃" })), /▲ 04:59 후 로그아웃/);
+  // 공개 네비바가 하던 비활동 자동 로그아웃 훅을 상단바가 이어서 건다
+  assert.match(read("components/admin/ui/AdminTopBar.tsx"), /useIdleLogout\(\)/);
+});
+
+test("관리자 하단 상태줄: 연결·일감·응답·빌드·AI 요약, 값 없으면 '-'", () => {
+  const now = AS_OF + 3 * MIN;
+  const data = {
+    asOf: now,
+    supervisor: { online: true, lastSeenAt: AS_OF, running: 1, waiting: 2, commit: "abc" },
+    build: { commit: "83793a957b06", at: AS_OF },
+    claude: limits({ sevenDay: { usedPct: 41.2, resetsAt: AS_OF + HOUR, reset: false } }),
+    codex: limits({ fiveHour: { usedPct: 0, resetsAt: AS_OF + HOUR, reset: false }, sevenDay: { usedPct: 17, resetsAt: AS_OF + HOUR, reset: false } }),
+  };
+  const texts = bar.statusBarParts(data, now).map((p) => p.text);
+  assert.deepEqual(texts, ["감독 연결됨", "진행 1 · 대기 2", "응답 12:05 (3분 전)", "빌드 83793a9", "Claude 5h 23% · 7d 41% | Codex 5h 0% · 주 17%"]);
+  assert.equal(bar.statusBarParts(data, now)[0].tone, "ok");
+
+  const off = bar.statusBarParts({ ...data, supervisor: { ...data.supervisor, online: false } }, now);
+  assert.equal(off[0].text, "감독 끊김");
+  assert.equal(off[0].tone, "bad");
+
+  assert.deepEqual(bar.statusBarParts(null, now).map((p) => p.text), ["감독 -", "진행 - · 대기 -", "응답 -", "빌드 -", "Claude 5h - · 7d - | Codex 5h - · 주 -"]);
+  assert.equal(bar.aiSummary(limits({ fiveHour: { usedPct: 9, resetsAt: 0, reset: true } }), null), "Claude 5h - · 7d 92% | Codex 5h - · 주 -", "초기화된 창은 -");
+  assert.equal(bar.statusBarParts(null, now, "상태 갱신 실패").at(-1).text, "상태 갱신 실패");
+
+  const out = html(h(bar.AdminStatusBarView, { data, now }));
+  assert.match(out, /<footer aria-label="관리자 상태줄" class="fx-statusbar">/);
+  assert.match(out, /class="fx-statusbar-item fx-ok"[^>]*><span aria-hidden="true">● <\/span>감독 연결됨/, "색 + 기호 + 글자");
+  assert.match(read("app/api/admin/status-bar/route.ts"), /requireAdmin\(\)/, "상태줄 API 는 관리자만");
+});
+
+test("공개 사이트 크롬: /admin·/app 에서만 숨기고 공개 화면은 그대로", () => {
+  const appPath = loadTs("lib/utils/appPath.ts");
+  for (const p of ["/admin", "/admin/factory", "/admin/notes/1"]) assert.equal(appPath.isAdminPath(p), true, p);
+  for (const p of ["/", "/note", "/administrator", "/project/admin", null]) assert.equal(appPath.isAdminPath(p), false, String(p));
+
+  let current = "/";
+  const Only = loadTs("components/main/PublicChromeOnly.tsx", {
+    "next/navigation": { usePathname: () => current },
+    "@/lib/utils/appPath": appPath,
+  }).default;
+  const render = (p) => {
+    current = p;
+    return html(h(Only, null, h("nav", null, "공개 네비바")));
+  };
+  for (const p of ["/", "/note", "/project", "/contact", "/stories/x", "/administrator"]) assert.equal(render(p), "<nav>공개 네비바</nav>", `공개 화면 ${p}`);
+  for (const p of ["/admin", "/admin/factory", "/app", "/app/x"]) assert.equal(render(p), "", `숨김 ${p}`);
+
+  const root = read("app/layout.tsx");
+  assert.match(root, /<PublicChromeOnly>\s*<div className="flex flex-col w-full justify-center items-center">\s*<NavbarVisibilityWrapper>/);
+  assert.match(root, /<PublicChromeOnly>\s*<div className="mt-auto">\s*<Footer \/>/);
+  assert.match(root, /<HideInApp>\s*<VisitorTracker \/>\s*<\/HideInApp>/, "방문 기록은 그대로");
+  assert.ok(!root.includes("admin-ui"), "공개 사이트 레이아웃에 관리자 CSS 없음");
+  const channel = read("components/channelTalkManager.tsx");
+  assert.match(channel, /if \(isAdmin\) \{\s*if \(booted\.current\) ChannelService\.hideChannelButton\(\);/);
+  assert.match(channel, /ChannelService\.showChannelButton\(\)/, "공개 화면으로 돌아가면 다시 보임");
+});
+
+test("관리자 공통 레이아웃: /admin 전체를 .factory-ui dark + 상단바·상태줄, 통제실은 좌우 분할", () => {
   const layout = read("app/admin/layout.tsx");
   assert.match(layout, /import "\.\/admin-ui\.css"/);
-  assert.match(layout, /className=\{`factory-ui dark \$\{fontMono\.variable\}/);
+  assert.match(layout, /className=\{`factory-ui dark \$\{fontMono\.variable\}`\}/);
+  assert.match(layout, /<AdminTopBar \/>\s*<div className="fx-admin-main">\{children\}<\/div>\s*<AdminStatusBar \/>/);
   assert.ok(!fs.existsSync(path.join(repo, "app/admin/factory/layout.tsx")), "통제실 따로 감싸기는 없어야 함(이중 래퍼)");
-  assert.ok(!read("app/layout.tsx").includes("admin-ui"), "공개 사이트 레이아웃은 그대로");
 
   const fc = read("components/admin/factory/FactoryConsole.tsx");
   assert.match(fc, /className="fx-split"/);
@@ -238,10 +316,16 @@ test("관리자 공통 레이아웃: /admin 전체를 .factory-ui dark 로, 통�
 
   const css = read("app/admin/admin-ui.css");
   assert.match(css, /grid-template-columns: minmax\(0, 7fr\) minmax\(19rem, 3fr\)/);
-  assert.match(css, /position: sticky/);
-  assert.match(css, /\.fx-split-side \{\s*order: -1;/, "좁은 화면: 계기판이 작업 영역 위");
+  assert.match(css, /\.fx-split-side \{\s*order: -1;/, "좁은 화면: 패널이 작업 영역 위");
+  assert.match(css, /\.fx-split-side \{\s*order: 0;\s*position: sticky;\s*top: calc\(var\(--fx-topbar-h\)/, "넓은 화면: 상단바 아래에 붙어 따라옴");
+  assert.match(css, /\.fx-topbar \{\s*position: sticky;\s*top: 0;/);
+  assert.match(css, /\.fx-statusbar \{\s*position: sticky;\s*bottom: 0;/);
   assert.match(css, /@media \(min-width: 1024px\) \{\s*\.factory-ui \.fx-dash-toggle \{\s*display: none;/, "넓은 화면: 접기 버튼 숨김");
   const reduce = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
   assert.match(reduce, /animation: none !important/);
   assert.match(reduce, /\.fx-blink/);
+  // 패널 제목이 테두리에 걸림: data-title 공통 + 통제실 주요 카드
+  assert.match(css, /\[data-title\]::before \{\s*content: attr\(data-title\);/);
+  assert.match(read("components/admin/factory/SupervisorControl.tsx"), /data-title="supervisor · 감독 프로그램"/);
+  assert.match(read("components/admin/factory/FactoryOverview.tsx"), /data-title="todo · 승인·배포"/);
 });
