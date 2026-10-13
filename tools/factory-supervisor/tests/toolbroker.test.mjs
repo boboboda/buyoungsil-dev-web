@@ -469,6 +469,7 @@ test("report parsing carries the cleaned tool list and ignores it when absent", 
     "@/lib/factory/reviewVideo": { deleteReviewVideo: async () => {} },
     "@/lib/factory/mask": { maskSecrets: (v) => v },
     "@/lib/factory/toolBroker": serverBroker,
+    "@/lib/factory/settings": { getDefaultClaudeModel: async () => null },
   });
   const at = new Date().toISOString();
   const withTools = jobs.parseReport({ jobId: "job1", toolRequests: [{ id: "r1", tool: "echo", status: "ok", at, ms: 1 }] });

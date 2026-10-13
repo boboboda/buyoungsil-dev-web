@@ -179,7 +179,7 @@ export function Button({ children, isDisabled, onPress, color, size, variant, ..
   // 정비 대기열 줄에는 승인 버튼 대신 [현황] 안내
   const mp = read("components/admin/factory/MaintenancePanel.tsx");
   assert.ok(!mp.includes('post({ action: "approve", turnId: i.turnId })'), "정비 대기열 줄에 승인 버튼이 남아 있음");
-  assert.ok(mp.includes('post({ action: "approve", turnId: m.id })'), "정비 대화 안 승인은 남아야 함");
+  assert.ok(mp.includes('post({ action: "approve", turnId: m.id'), "정비 대화 안 승인은 남아야 함");
 
   // (8) 주소: 옛 통제실 주소는 페이지가 남아 해당 탭을 그림, /admin/claude 페이지는 없음(301)
   assert.match(read("app/admin/factory/release/page.tsx"), /<FactoryConsole tab="release" \/>/);

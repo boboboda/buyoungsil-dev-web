@@ -6,6 +6,7 @@
 //       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
 //       · history-merged(이력 [전체 히스토리] 탭: 배포·감독·정비를 합친 최신순 20개 + 긴 빌드 로그 접힘)
 //       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
+//       · model-approve(승인할 때 Claude Code 모델 고르기: [현황] 승인 줄의 모델 선택(Codex 일감은 숨김) + 이력 '모델: ○○' + [설정] 기본 모델)
 // 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
 // API·DB·키는 쓰지 않는다. 결과 폴더(tests/.out)는 커밋하지 않는다.
@@ -52,7 +53,13 @@ const topBar = loadTs("components/admin/ui/AdminTopBar.tsx", {
   "@/config/site": site,
 });
 const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters });
-const { HistoryPanelView } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx });
+const aiLib = loadTs("lib/factory/ai.ts");
+const modelSelect = loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib });
+const { HistoryPanelView } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
+const { default: DefaultAiSettings } = loadTs("components/admin/factory/DefaultAiSettings.tsx", {
+  "@/lib/factory/ai": aiLib,
+  "./AiEngineSelect": loadTs("components/admin/factory/AiEngineSelect.tsx", { "@/lib/factory/ai": aiLib }),
+});
 const members = loadTs("lib/admin/members.ts");
 const { default: MembersView } = loadTs("components/admin/users/MembersView.tsx", { "next/link": link, "@/components/admin/ui/meters": meters, "@/lib/admin/members": members });
 const mask = loadTs("lib/factory/mask.ts");
@@ -119,6 +126,8 @@ const devicesData = {
 };
 const devicesBrief = devicesData.devices.map((d) => ({ device: d.device, short: d.short, state: d.state, cpuPct: d.cpuPct, ramPct: d.ram?.pct ?? null }));
 STATES.devices = { ...STATES.live, title: "장비 상태", devices: true, bar: { ...STATES.live.bar, devices: devicesBrief } };
+// 승인할 때 모델 고르기: 앱 일감(opus 고름)·정비 지시(기본 설정 사용)·Codex 출시 일감(모델 칸 없음) + 일감 이력 + 설정 탭 기본 모델
+STATES["model-approve"] = { ...STATES.live, title: "승인 · 모델 고르기", model: true };
 
 const iso = (t) => new Date(t).toISOString();
 const deployRow = (i) => ({
@@ -334,6 +343,7 @@ function page(state) {
   });
 
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
+  if (st.model) return h(AdminLayout, null, modelApprove());
   if (st.devices)
     return h(
       AdminLayout,
@@ -383,6 +393,69 @@ function page(state) {
       h("div", { className: "fx-split" }, leftWork(state), h("aside", { "aria-label": "AI 사용량 계기판", className: "fx-split-side" }, h(UsageDashView, { stats: st.stats, now, error: st.error ?? null }))),
       h("h2", { className: "fx-label mt-10 mb-3" }, `── 상태 견본: ${st.title} (패널 펼침) ──`),
       h("div", { className: "max-w-md" }, h(UsageDashView, { stats: st.stats, now, error: st.error ?? null, open: true })),
+    ),
+  );
+}
+
+// 승인 줄(FactoryOverview 의 할 일 줄과 같은 모양)에 실제 모델 선택 부품을 끼운다. Codex 일감은 부품이 스스로 숨는다
+function modelApprove() {
+  const defaults = { model: "sonnet", engine: "claude" };
+  const rows = [
+    { id: "j1", chip: "📱 새 앱", title: "timer-app 기획서", sub: "timer-app · flutter · 2026. 10. 13. 오후 12:39:00", engine: "claude", value: "opus" },
+    { id: "t1", chip: "🛠 정비 지시", title: "통제실 모델 선택", sub: "채팅 · 2026. 10. 13. 오후 12:40:00", engine: "claude", value: "default" },
+    { id: "j2", chip: "📦 출시 준비", title: "memo-app 첫 출시", sub: "memo-app · flutter · Codex 일감(모델 선택 없음)", engine: "codex", value: "default" },
+  ];
+  const jobs = [
+    ["timer-app", "Claude Code", "claude", "opus", "제작 중"],
+    ["memo-app", "Codex", "codex", null, "완료"],
+    ["weather", "Claude Code", "claude", null, "실패"],
+  ];
+
+  return h(
+    "div",
+    { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+    h(
+      "div",
+      { className: "fx-split-main" },
+      h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+      h(FactoryTabs, { active: "status" }),
+      h(
+        Card,
+        { className: "mb-6", "data-title": "todo · 승인·배포" },
+        h(
+          CardBody,
+          { className: "space-y-3" },
+          h("div", { className: "flex items-center gap-2 font-semibold" }, h(fx.StatusDot, { tone: "warn" }), "승인·배포 할 일", h("span", { className: "font-mono" }, "(3)")),
+          ...rows.map((r) =>
+            h(
+              "div",
+              { key: r.id, className: "flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between" },
+              h("div", { className: "min-w-0 text-sm" }, h("div", { className: "flex flex-wrap items-center gap-2" }, h(heroui.Chip, { size: "sm", variant: "flat", color: "primary" }, r.chip), h("span", { className: "font-medium" }, r.title), h("span", { className: "font-mono text-xs text-default-500" }, r.sub))),
+              h(
+                "div",
+                { className: "flex flex-wrap items-center gap-2", "data-approve": r.id },
+                h(modelSelect.default, { engine: r.engine, value: r.value, onChange: () => {}, defaults }),
+                h(Button, { className: "min-h-11 sm:min-h-0", color: "primary", size: "sm" }, "승인"),
+              ),
+            ),
+          ),
+        ),
+      ),
+      h("h2", { className: "fx-label mt-6 mb-3" }, "── 일감 이력: 모델: ○○ (Codex 는 표시 안 함) ──"),
+      h(
+        "div",
+        { className: "grid gap-2" },
+        ...jobs.map(([slug, ai, engine, model, status]) =>
+          h(
+            "div",
+            { key: slug, className: "rounded-lg border border-default-200 p-3" },
+            h("div", { className: "font-semibold" }, slug, " · ", status),
+            h("div", { className: "mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-default-500" }, h("span", { className: "font-mono" }, slug), h("span", null, ai), h(modelSelect.ModelTag, { engine, model })),
+          ),
+        ),
+      ),
+      h("h2", { className: "fx-label mt-6 mb-3" }, "── [설정] 주사용 AI · 기본 모델 ──"),
+      h(DefaultAiSettings),
     ),
   );
 }

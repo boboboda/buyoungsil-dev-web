@@ -7,7 +7,10 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, Chip } from "@heroui/react";
 
+import ClaudeModelSelect from "./ClaudeModelSelect";
 import { StatusDot } from "./fx";
+
+import { isAiEngine, isClaudeModel, type TaskModel } from "@/lib/factory/ai";
 
 type Action = "job_approve" | "maintenance_approve" | "deploy" | "deploy_now";
 
@@ -20,6 +23,7 @@ interface Overview {
       kind: string;
       kindLabel: string;
       stack: string;
+      aiEngine?: string; // Claude Code 일감에만 모델 선택(예전 서버에는 없다 → 숨김)
       source: string | null;
       createdAt: string;
     }[];
@@ -28,6 +32,7 @@ interface Overview {
       threadId: string;
       threadTitle: string;
       text: string;
+      aiEngine?: string;
       source: string | null;
       createdAt: string;
     }[];
@@ -82,6 +87,8 @@ interface Overview {
   }[];
   // 종류별 전체 개수(예전 서버에는 없다)
   totals?: Record<HistoryKind, number>;
+  // 기본 모델·주사용 AI(승인 줄의 '기본 설정 사용' 표시)
+  supervisor?: { defaultClaudeModel?: string | null; defaultAiEngine?: string };
   message?: string;
 }
 
@@ -360,15 +367,20 @@ export default function FactoryOverview({
     return () => clearInterval(t);
   }, [load]);
 
+  // 승인 줄마다 고른 모델(없으면 '기본 설정 사용')
+  const [models, setModels] = useState<Record<string, TaskModel>>({});
+  const pickModel = useCallback((id: string) => (m: TaskModel) => setModels((cur) => (cur[id] === m ? cur : { ...cur, [id]: m })), []);
   const act = async (action: Action, id: string, confirmText?: string) => {
     if (confirmText && !window.confirm(confirmText)) return;
     setBusy(`${action}:${id}`);
     setNotice(null);
+    const model = models[id];
+
     try {
       const res = await fetch("/api/admin/factory/overview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, id }),
+        body: JSON.stringify({ action, id, ...(model && model !== "default" ? { aiModel: model } : {}) }),
       });
       const d = (await res.json().catch(() => ({}))) as Overview;
 
@@ -382,6 +394,11 @@ export default function FactoryOverview({
   };
 
   const inbox = data?.inbox;
+  const sup = data?.supervisor;
+  const modelDefaults = {
+    model: isClaudeModel(sup?.defaultClaudeModel) ? sup.defaultClaudeModel : null,
+    engine: isAiEngine(sup?.defaultAiEngine) ? sup.defaultAiEngine : null,
+  };
   const todo = inbox
     ? inbox.jobs.length +
       inbox.turns.length +
@@ -507,15 +524,26 @@ export default function FactoryOverview({
                   {t.text}
                 </div>
               </div>
-              <Button
-                className="min-h-11 sm:min-h-0"
-                color="primary"
-                isDisabled={!!busy}
-                size="sm"
-                onPress={() => act("maintenance_approve", t.id)}
-              >
-                승인
-              </Button>
+              <div className="flex flex-wrap items-center gap-2" data-approve={t.id}>
+                {t.aiEngine && (
+                  <ClaudeModelSelect
+                    defaults={modelDefaults}
+                    disabled={!!busy}
+                    engine={t.aiEngine}
+                    value={models[t.id] ?? "default"}
+                    onChange={pickModel(t.id)}
+                  />
+                )}
+                <Button
+                  className="min-h-11 sm:min-h-0"
+                  color="primary"
+                  isDisabled={!!busy}
+                  size="sm"
+                  onPress={() => act("maintenance_approve", t.id)}
+                >
+                  승인
+                </Button>
+              </div>
             </div>
           ))}
 
@@ -551,15 +579,26 @@ export default function FactoryOverview({
                   </div>
                 )}
               </div>
-              <Button
-                className="min-h-11 sm:min-h-0"
-                color="primary"
-                isDisabled={!!busy}
-                size="sm"
-                onPress={() => act("job_approve", j.id)}
-              >
-                승인
-              </Button>
+              <div className="flex flex-wrap items-center gap-2" data-approve={j.id}>
+                {j.aiEngine && (
+                  <ClaudeModelSelect
+                    defaults={modelDefaults}
+                    disabled={!!busy}
+                    engine={j.aiEngine}
+                    value={models[j.id] ?? "default"}
+                    onChange={pickModel(j.id)}
+                  />
+                )}
+                <Button
+                  className="min-h-11 sm:min-h-0"
+                  color="primary"
+                  isDisabled={!!busy}
+                  size="sm"
+                  onPress={() => act("job_approve", j.id)}
+                >
+                  승인
+                </Button>
+              </div>
             </div>
           ))}
           {notice && <p className="text-sm text-default-600">{notice}</p>}

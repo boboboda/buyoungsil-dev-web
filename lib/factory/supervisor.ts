@@ -5,6 +5,7 @@
 import prisma from "@/lib/prisma";
 import {
   getDefaultAiEngine,
+  getDefaultClaudeModel,
   getPendingRestart,
   getPendingUpdateNow,
   getSupervisorInfo,
@@ -33,7 +34,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -52,12 +53,14 @@ export async function supervisorSnapshot() {
     getDefaultAiEngine(),
     getToolBrokerSettings(),
     isCompactAfterJobEnabled(),
+    getDefaultClaudeModel(),
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
 
   return {
     defaultAiEngine,
+    defaultClaudeModel, // 승인 때 '기본 설정 사용'이면 쓰는 Claude Code 모델(null = Claude Code 자체 기본)
     toolBroker, // 도구 요청 중계 설정(모드·상한)
     enabled,
     autoUpdate,

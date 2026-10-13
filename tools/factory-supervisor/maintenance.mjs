@@ -226,7 +226,9 @@ async function runTurnUnlocked(m, ctx, lock) {
   const s = await post(ctx, { action: "start", turnId: m.turnId, aiEngine: m.aiEngine });
   if (s.status !== 200) return log(`[정비] 시작 거절(${s.status}): ${s.data?.message ?? ""}`);
   m.aiStarted = true;
-  log(`[정비] 시작: ${m.title} · ${ENGINE_LABELS[m.aiEngine]}${m.sessionId ? " (이어서)" : ""}`);
+  // 승인 때 고른 모델(Claude Code 만, 허용 목록). 목록 밖이면 startAi 가 던져 실패로 보고된다
+  const model = m.aiEngine === "claude" ? m.aiModel || null : null;
+  log(`[정비] 시작: ${m.title} · ${ENGINE_LABELS[m.aiEngine]}${model ? ` · 모델 ${model}` : ""}${m.sessionId ? " (이어서)" : ""}`);
 
   let logs = [];
   const addLog = (t) => {
@@ -266,7 +268,8 @@ async function runTurnUnlocked(m, ctx, lock) {
 
   // Claude 실행(같은 정비면 세션 이어서)
   recordLifecycle(dir, m.aiEngine, "session-start", m.turnId);
-  const child = startAi(m.aiEngine, cfg, { cwd: dir, sessionId: m.sessionId || undefined, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, env: { ...process.env, FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId } });
+  if (m.aiEngine === "claude") addLog(`모델: ${model ?? "기본 설정(--model 없음)"}`);
+  const child = startAi(m.aiEngine, cfg, { cwd: dir, sessionId: m.sessionId || undefined, model, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, env: { ...process.env, FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId } });
   lock.setChild(child.pid || null);
   const decode = eventDecoder(m.aiEngine);
   child.stdin.on("error", () => {});
@@ -339,7 +342,7 @@ async function runTurnUnlocked(m, ctx, lock) {
   const okRun = result && !result.is_error && (code === 0 || killedAfterResult);
   const claudeText = String(result?.result ?? lastText ?? "").trim();
   if (!okRun) {
-    return finish({ ok: false, text: `${ENGINE_LABELS[m.aiEngine]}가 정상적으로 끝나지 않았어요(코드 ${code}).\n${claudeText || tail(stderrTail, 1500)}`, sessionId });
+    return finish({ ok: false, text: `${ENGINE_LABELS[m.aiEngine]}가 정상적으로 끝나지 않았어요(코드 ${code}${model ? `, 모델 ${model}` : ""}).\n${claudeText || tail(stderrTail, 1500)}`, sessionId });
   }
 
   // 커밋 안 된 변경은 올리지 않고 따로 보관(다음 지시가 깨끗한 폴더에서 시작하게)

@@ -4,8 +4,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
-import { isAiEngine, AI_LABELS } from "@/lib/factory/ai";
-import { setCompactAfterJobEnabled, setDefaultAiEngine, setToolBrokerSettings } from "@/lib/factory/settings";
+import { isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
+import { setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
 import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS, toolBrokerLimitLabel } from "@/lib/factory/toolBroker";
 import { runSupervisorAction, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
 
@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json().catch(() => null)) as {
     defaultAiEngine?: unknown;
+    defaultClaudeModel?: unknown;
     toolBroker?: unknown;
     enabled?: unknown;
     autoUpdate?: unknown;
@@ -41,6 +42,21 @@ export async function POST(req: NextRequest) {
     if (!isAiEngine(body.defaultAiEngine)) return NextResponse.json({ message: "주사용 AI를 골라 주세요." }, { status: 400 });
     await setDefaultAiEngine(body.defaultAiEngine);
     return NextResponse.json({ ...(await supervisorSnapshot()), message: `주사용 AI를 ${AI_LABELS[body.defaultAiEngine]}로 저장했어요. 새 지시부터 적용돼요.` });
+  }
+
+  // 기본 모델(승인 때 '기본 설정 사용'이면 쓰는 Claude Code 모델): { defaultClaudeModel: 별칭 | null }. null·"default" = 지정 안 함(Claude Code 자체 기본)
+  if (body && Object.hasOwn(body, "defaultClaudeModel")) {
+    const model = readModelChoice(body.defaultClaudeModel);
+
+    if (!model.ok) return NextResponse.json({ message: model.message }, { status: 400 });
+    await setDefaultClaudeModel(model.model);
+
+    return NextResponse.json({
+      ...(await supervisorSnapshot()),
+      message: model.model
+        ? `기본 모델을 ${model.model}로 저장했어요. 승인 때 '기본 설정 사용'을 고른 Claude Code 일감이 시작할 때부터 적용돼요.`
+        : "기본 모델을 지정하지 않았어요. '기본 설정 사용' 일감은 예전처럼 Claude Code 자체 기본 모델로 실행돼요.",
+    });
   }
 
   // 작업 후 컨텍스트 정리(/compact): { compactAfterJob: boolean }

@@ -103,6 +103,7 @@ export interface UpdateItem {
 
 export interface ReleaseJobInfo {
   aiEngine?: "claude" | "codex";
+  aiModel?: string | null; // Claude Code 모델(승인 때 고름)
   id: string;
   status: string;
   finishedAt: string | null;

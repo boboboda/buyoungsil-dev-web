@@ -45,6 +45,7 @@ function jobModule(prisma) {
     "@/lib/factory/reviewVideo": { deleteReviewVideo: async () => {} },
     "@/lib/factory/mask": { maskSecrets: (v) => v },
     "@/lib/factory/toolBroker": toolBroker,
+    "@/lib/factory/settings": { getDefaultClaudeModel: async () => null },
   });
 }
 function maintenanceModule(prisma) {
@@ -53,7 +54,7 @@ function maintenanceModule(prisma) {
     "@/lib/factory/ai": ai,
     "@/lib/factory/mask": { maskSecrets: (v) => v },
     "@/lib/factory/telegram": { notifyDeployReady: async () => {}, notifyMaintenance: async () => {}, notifyText: async () => {} },
-    "@/lib/factory/settings": { getDefaultAiEngine: async () => "codex", getSettingValue: async () => null, isAutoDeployEnabled: async () => false, setSettingValue: async () => {} },
+    "@/lib/factory/settings": { getDefaultAiEngine: async () => "codex", getDefaultClaudeModel: async () => null, getSettingValue: async () => null, isAutoDeployEnabled: async () => false, setSettingValue: async () => {} },
   });
 }
 

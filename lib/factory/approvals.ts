@@ -9,7 +9,7 @@
 import prisma from "@/lib/prisma";
 import { ID_RE, KIND_LABELS, adminAction } from "@/lib/factory/jobs";
 import { approveTurn, deployBundle, queueAction, requestDeploy } from "@/lib/factory/maintenance";
-import type { AiEngine } from "@/lib/factory/ai";
+import type { AiEngine, ClaudeModel } from "@/lib/factory/ai";
 
 export const APPROVAL_ACTIONS = [
   "job_approve",
@@ -43,13 +43,14 @@ export async function runApproval(
   id: string,
   via: ApprovalVia,
   aiEngine?: AiEngine,
+  aiModel: ClaudeModel | null = null, // 승인 때 고른 Claude Code 모델(null = 기본 설정 사용). Codex 일감이면 거부
 ): Promise<ApprovalResult> {
   if (!ID_RE.test(id))
     return { ok: false, status: 400, message: "id 가 올바르지 않아요." };
 
   switch (action) {
     case "job_approve": {
-      const r = await adminAction(id, { action: "approve", ...(aiEngine ? { aiEngine } : {}) });
+      const r = await adminAction(id, { action: "approve", aiModel, ...(aiEngine ? { aiEngine } : {}) });
 
       if (r.ok || r.status !== 409)
         return { ok: r.ok, status: r.status, message: r.message };
@@ -65,7 +66,7 @@ export async function runApproval(
       };
     }
     case "maintenance_approve":
-      return approveTurn(id);
+      return approveTurn(id, aiModel);
     case "deploy":
       return requestDeploy(id, via);
     case "deploy_now":
@@ -101,6 +102,7 @@ export async function approvalInbox() {
         title: true,
         kind: true,
         stack: true,
+        aiEngine: true, // 승인 화면: Claude Code 일감에만 모델 선택을 보인다
         source: true,
         createdAt: true,
       },
@@ -140,6 +142,7 @@ export async function approvalInbox() {
       threadId: t.maintenance.id,
       threadTitle: t.maintenance.title,
       text: excerpt(t.text, 400),
+      aiEngine: t.aiEngine,
       source: t.source,
       createdAt: t.createdAt,
     })),

@@ -7,8 +7,9 @@ import { Button, Card, CardBody, CardHeader, Chip, Input } from "@heroui/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import AiEngineSelect from "./AiEngineSelect";
+import ClaudeModelSelect, { ModelTag } from "./ClaudeModelSelect";
 import { JobSteps, ProgressBar, StatusDot, jobTone } from "./fx";
-import { AI_LABELS, type AiEngine } from "@/lib/factory/ai";
+import { AI_LABELS, isClaudeModel, type AiEngine, type TaskModel } from "@/lib/factory/ai";
 import type { ToolRequestRecord } from "@/lib/factory/toolBroker";
 
 type Status =
@@ -29,6 +30,7 @@ interface JobRow {
   parentJobId: string | null;
   stack: string;
   aiEngine: AiEngine;
+  aiModel?: string | null; // Claude Code 모델(승인 때 고름). 없으면 기본 설정
   requiredSecrets: string[];
   priority: number;
   status: Status;
@@ -317,6 +319,7 @@ export default function FactoryControl() {
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-default-500">
                 <span className="font-mono">{j.appSlug}</span>
                 <span>{AI_LABELS[j.aiEngine ?? "claude"]}</span>
+                <ModelTag engine={j.aiEngine ?? "claude"} model={j.aiModel} />
                 <span>{j.kind === "new" ? "새 앱" : "수정"}</span>
                 {j.phase && j.status === "running" && (
                   <span>단계: {j.phase}</span>
@@ -385,6 +388,8 @@ function JobDetailView({
   const [showPlan, setShowPlan] = useState(false);
   const [priority, setPriority] = useState(String(job.priority));
   const [aiEngine, setAiEngine] = useState<AiEngine>(job.aiEngine ?? "claude");
+  // 승인·다시 시도 때 쓸 Claude Code 모델. 다시 시도는 지난번 모델에서 시작
+  const [aiModel, setAiModel] = useState<TaskModel>(isClaudeModel(job.aiModel) ? job.aiModel : "default");
   const editable = job.status === "pending" || job.status === "approved";
   // 감독 프로그램이 도구 중계 결과를 asset-<이름> 으로 올린다. 나머지는 스크린샷
   const assets = job.images.filter((img) => img.label.startsWith("asset-"));
@@ -400,6 +405,8 @@ function JobDetailView({
     setPriority(String(job.priority));
   }, [job.id, job.priority]);
   useEffect(() => { setAiEngine(job.aiEngine ?? "claude"); }, [job.id, job.aiEngine]);
+  useEffect(() => { setAiModel(isClaudeModel(job.aiModel) ? job.aiModel : "default"); }, [job.id, job.aiModel]);
+  const modelBody = aiEngine === "claude" ? { aiModel: aiModel === "default" ? null : aiModel } : {};
 
   return (
     <Card>
@@ -410,6 +417,7 @@ function JobDetailView({
             <p className="font-mono text-xs text-default-500">
               {job.appSlug} · {job.kind === "new" ? "새 앱" : "수정 지시"} ·{" "}
               {job.stack} · {AI_LABELS[job.aiEngine ?? "claude"]}
+              {(job.aiEngine ?? "claude") === "claude" && <> · <ModelTag engine="claude" model={job.aiModel} /></>}
             </p>
           </div>
           <Chip color={STATUS[job.status].color} variant="flat">
@@ -433,6 +441,9 @@ function JobDetailView({
             <Button size="sm" variant="flat" isDisabled={busy || aiEngine === (job.aiEngine ?? "claude")} onPress={() => onAct(job.id, { action: "set-ai", aiEngine })}>AI 적용</Button>
           </div>
         )}
+        {(job.status === "pending" || job.status === "failed") && (
+          <ClaudeModelSelect disabled={busy} engine={aiEngine} label={job.status === "failed" ? "다시 시도할 모델" : "승인할 모델"} value={aiModel} onChange={setAiModel} />
+        )}
         <div className="flex flex-wrap gap-2">
           {job.status === "pending" && (
             <Button
@@ -440,7 +451,7 @@ function JobDetailView({
               color="primary"
               isDisabled={busy}
               size="sm"
-              onPress={() => onAct(job.id, { action: "approve", aiEngine })}
+              onPress={() => onAct(job.id, { action: "approve", aiEngine, ...modelBody })}
             >
               승인
             </Button>
@@ -451,7 +462,7 @@ function JobDetailView({
               color="primary"
               isDisabled={busy}
               size="sm"
-              onPress={() => onAct(job.id, { action: "retry", aiEngine })}
+              onPress={() => onAct(job.id, { action: "retry", aiEngine, ...modelBody })}
             >
               다시 시도
             </Button>

@@ -12,12 +12,29 @@ import { ID_RE, KIND_LABELS } from "@/lib/factory/jobs";
 import { runApproval } from "@/lib/factory/approvals"; // 통제실 버튼과 같은 입구
 import { maskSecrets } from "@/lib/factory/mask";
 import { releaseAppName } from "@/lib/factory/appName";
+import { CLAUDE_MODELS } from "@/lib/factory/ai";
 
 const API_TIMEOUT_MS = 5000;
 // lib/factory/release.ts 의 라벨과 같게(그 파일이 이 파일을 불러서, 순환을 피하려고 여기 따로 둔다)
 const RELEASE_KIND_TEXT: Record<string, string> = { first: "첫 출시", store: "스토어 수정", update: "앱 업데이트(기능 추가)", project: "프로젝트 업데이트(예전)", apk: "시험용 APK" };
 const STAGE_TEXT: Record<string, string> = { key: "키", build: "빌드", sign: "서명", store: "스토어 자료", upload: "업로드", homepage: "홈페이지 반영", scaffold: "준비", review: "검토 대기", code: "코드 수정", test: "시험", version: "버전 올림" };
 const MAX_BUTTON_AGE_SEC = 24 * 60 * 60; // 24시간이 지난 알림의 버튼은 무시한다
+
+// 승인 버튼의 모델 고르기(Claude Code 일감만): [🧠 모델 골라 승인]을 누르면 같은 알림의 버튼이 모델 목록으로 바뀐다.
+// 버튼 값에는 모델 이름 대신 허용 목록(CLAUDE_MODELS)의 번호만 싣는다. 목록 밖 번호는 거절.
+//   앱 일감: a:<id> 기본 설정으로 승인, ao:<id> 모델 목록 열기, a:<id>:<번호> 그 모델로 승인
+//   정비 지시: ma:<id> 기본 설정으로 승인, mo:<id> 모델 목록 열기, ma:<id>:<번호> 그 모델로 승인
+export function modelKeyboard(prefix: "a" | "ma", id: string, url: string): Record<string, string>[][] {
+  const rows: Record<string, string>[][] = [];
+
+  CLAUDE_MODELS.forEach((m, i) => {
+    if (i % 3 === 0) rows.push([]);
+    rows[rows.length - 1].push({ text: m, callback_data: `${prefix}:${id}:${i}` });
+  });
+  rows.push([{ text: "✅ 기본 설정으로 승인", callback_data: `${prefix}:${id}` }, { text: "통제실 열기", url }]);
+
+  return rows;
+}
 
 const token = () => process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
 const chatId = () => process.env.TELEGRAM_CHAT_ID?.trim() || "";
@@ -95,6 +112,7 @@ export async function notifyJobEvent(
         releaseKind: true,
         failStage: true,
         phase: true,
+        aiEngine: true,
       },
     });
 
@@ -127,7 +145,9 @@ export async function notifyJobEvent(
     ];
 
     if (event === "pending" && approveEnabled() && secret()) {
-      row.unshift({ text: "✅ 승인", callback_data: `a:${job.id}` });
+      // 모델 고르기는 Claude Code 일감만(Codex 는 기본 승인만)
+      if (job.aiEngine !== "codex") row.unshift({ text: "🧠 모델 골라 승인", callback_data: `ao:${job.id}` });
+      row.unshift({ text: "✅ 승인(기본 모델)", callback_data: `a:${job.id}` });
     }
 
     await tg("sendMessage", {
@@ -200,7 +220,10 @@ export async function notifyMaintenance(event: MaintenanceEvent, threadId: strin
     const rows: Record<string, string>[][] = [row];
 
     if (approveEnabled() && secret()) {
-      if (event === "approval" && turnId) row.unshift({ text: "✅ 정비 승인", callback_data: `ma:${turnId}` });
+      if (event === "approval" && turnId) {
+        if (last?.aiEngine !== "codex") row.unshift({ text: "🧠 모델 골라 승인", callback_data: `mo:${turnId}` });
+        row.unshift({ text: "✅ 정비 승인(기본 모델)", callback_data: `ma:${turnId}` });
+      }
       if (event === "failed" && extra.halted && turnId) {
         rows.unshift([
           { text: "▶️ 계속 진행", callback_data: `mc:${turnId}` },
@@ -301,8 +324,29 @@ export async function handleUpdate(update: Update): Promise<void> {
     return;
   }
 
-  // 공장 정비 버튼: ma:<지시 id> 승인, md:<정비 id> 배포, mc·mr·mx:<실패한 지시 id> 대기열 계속 진행·재시도·비우기
-  const mm = /^m([adcrx]):([A-Za-z0-9_-]{1,40})$/.exec(cq.data ?? "");
+  // 모델 목록 열기(ao:<일감 id>, mo:<지시 id>): 승인하지 않고 같은 알림의 버튼만 모델 목록으로 바꾼다
+  const mo = /^(a|m)o:([A-Za-z0-9_-]{1,40})$/.exec(cq.data ?? "");
+
+  if (mo && ID_RE.test(mo[2])) {
+    const age = Math.floor(Date.now() / 1000) - (cq.message?.date ?? 0);
+
+    if (!cq.message?.date || age > MAX_BUTTON_AGE_SEC || cq.message.message_id === undefined) {
+      await answer("오래된 알림이라 처리할 수 없어요. 통제실에서 하세요.");
+
+      return;
+    }
+    await tg("editMessageReplyMarkup", {
+      chat_id: chatId(),
+      message_id: cq.message.message_id,
+      reply_markup: { inline_keyboard: modelKeyboard(mo[1] === "a" ? "a" : "ma", mo[2], `${publicUrl()}/admin/factory`) },
+    });
+    await answer("승인할 모델을 골라 주세요.");
+
+    return;
+  }
+
+  // 공장 정비 버튼: ma:<지시 id>[:<모델 번호>] 승인, md:<정비 id> 배포, mc·mr·mx:<실패한 지시 id> 대기열 계속 진행·재시도·비우기
+  const mm = /^m([adcrx]):([A-Za-z0-9_-]{1,40})(?::(\d{1,2}))?$/.exec(cq.data ?? "");
 
   if (mm && ID_RE.test(mm[2])) {
     const age = Math.floor(Date.now() / 1000) - (cq.message?.date ?? 0);
@@ -312,8 +356,15 @@ export async function handleUpdate(update: Update): Promise<void> {
 
       return;
     }
+    const model = mm[3] === undefined ? null : CLAUDE_MODELS[Number(mm[3])];
+
+    if (model === undefined || (mm[3] !== undefined && mm[1] !== "a")) {
+      await answer("알 수 없는 버튼이에요.");
+
+      return;
+    }
     const act = ({ a: "maintenance_approve", d: "deploy", c: "queue_skip", r: "queue_retry", x: "queue_clear" } as const)[mm[1] as "a" | "d" | "c" | "r" | "x"];
-    const r = await runApproval(act, mm[2], "텔레그램");
+    const r = await runApproval(act, mm[2], "텔레그램", undefined, model);
 
     await answer(r.message.slice(0, 190));
     // 처리했거나 이미 (통제실 등에서) 처리된 건이면 버튼을 지운다
@@ -328,9 +379,10 @@ export async function handleUpdate(update: Update): Promise<void> {
     return;
   }
 
-  const m = /^a:([A-Za-z0-9_-]{1,40})$/.exec(cq.data ?? "");
+  const m = /^a:([A-Za-z0-9_-]{1,40})(?::(\d{1,2}))?$/.exec(cq.data ?? "");
+  const jobModel = m?.[2] === undefined ? null : CLAUDE_MODELS[Number(m[2])];
 
-  if (!m || !ID_RE.test(m[1])) {
+  if (!m || !ID_RE.test(m[1]) || jobModel === undefined) {
     await answer("알 수 없는 버튼이에요.");
 
     return;
@@ -344,7 +396,7 @@ export async function handleUpdate(update: Update): Promise<void> {
     return;
   }
 
-  const result = await runApproval("job_approve", m[1], "텔레그램");
+  const result = await runApproval("job_approve", m[1], "텔레그램", undefined, jobModel);
 
   await answer(result.message);
 

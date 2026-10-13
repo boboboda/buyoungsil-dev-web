@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { requireAdmin } from "@/lib/factory/admin";
 import { adminAction, claudeUsageFor, ID_RE } from "@/lib/factory/jobs";
 import { runApproval } from "@/lib/factory/approvals";
-import { isAiEngine } from "@/lib/factory/ai";
+import { isAiEngine, readModelChoice } from "@/lib/factory/ai";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -48,9 +48,12 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 
   // 승인은 텔레그램 버튼과 같은 입구로(이미 처리된 건이면 안내)
   if (body.aiEngine !== undefined && !isAiEngine(body.aiEngine)) return NextResponse.json({ message: "작업 AI가 올바르지 않아요." }, { status: 400 });
+  // 모델은 허용 목록(Claude Code 별칭)만. 없음·"default" 는 기본 설정 사용
+  const model = readModelChoice(body.aiModel);
+  if (!model.ok) return NextResponse.json({ message: model.message }, { status: 400 });
   const result =
     (body as Record<string, unknown>).action === "approve"
-      ? await runApproval("job_approve", id, "통제실", body.aiEngine)
+      ? await runApproval("job_approve", id, "통제실", body.aiEngine, model.model)
       : await adminAction(id, body as Record<string, unknown>);
 
   return NextResponse.json(

@@ -204,7 +204,12 @@ test("API: 관리자만, 응답은 no-store, 잘못된 kind·cursor 는 400", as
 });
 
 // ── 이력 패널 보기 ──
-const view = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": { StatusDot: () => null } });
+const aiLib = loadTs("lib/factory/ai.ts");
+const view = loadTs("components/admin/factory/FactoryOverview.tsx", {
+  "./fx": { StatusDot: () => null },
+  "@/lib/factory/ai": aiLib,
+  "./ClaudeModelSelect": loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib }),
+});
 const json = (v) => JSON.parse(JSON.stringify(v)); // 화면은 API JSON 을 받는다(Date → 문자열)
 const recent = {
   deploys: json(await approvals.deployHistory()),

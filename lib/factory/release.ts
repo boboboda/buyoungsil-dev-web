@@ -715,6 +715,7 @@ export async function releaseOverview() {
         releaseNotes: true,
         buildResult: true,
         aiEngine: true,
+        aiModel: true,
       },
     }),
     getPcPathStatus(),
@@ -897,6 +898,7 @@ export async function releaseOverview() {
         ? {
             id: lastRelease.id,
             aiEngine: lastRelease.aiEngine,
+            aiModel: lastRelease.aiModel,
             status: lastRelease.status,
             finishedAt: lastRelease.finishedAt,
             releaseKind: releaseKindOf(lastRelease.releaseKind),

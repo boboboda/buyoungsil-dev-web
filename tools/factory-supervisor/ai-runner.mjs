@@ -17,14 +17,25 @@ export function engineOf(value) {
   return value;
 }
 
-export function invocation(engine, cfg = {}, { sessionId, settings } = {}) {
+// Claude Code --model 허용 목록(홈페이지 lib/factory/ai.ts CLAUDE_MODELS 와 같게). 일감·정비 지시에 고른 모델은 이 목록만 통과한다.
+export const CLAUDE_MODELS = ["fable", "opus", "sonnet", "haiku", "best", "opusplan", "fable[1m]", "opus[1m]", "sonnet[1m]"];
+/** 일감에 고른 모델: 없으면 null(기본 동작), 목록 안이면 그 값, 목록 밖이면 던진다(조용히 다른 모델로 바꾸지 않음) */
+export function claudeModelOf(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || !CLAUDE_MODELS.includes(value)) throw new Error(`허용하지 않는 Claude Code 모델이에요: ${String(value).slice(0, 40)}`);
+  return value;
+}
+
+// model: 일감·정비 지시에 고른 Claude Code 모델(허용 목록). 없으면 설정 파일의 cfg.model, 그것도 없으면 --model 없이(예전 그대로). Codex 는 무시
+export function invocation(engine, cfg = {}, { sessionId, settings, model } = {}) {
   engine = engineOf(engine);
   if (sessionId && !/^[0-9a-f-]{8,64}$/i.test(sessionId)) throw new Error("세션 ID 형식이 올바르지 않습니다.");
   if (engine === "claude") {
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", cfg.permissionMode || "acceptEdits", "--allowedTools", cfg.allowedTools || "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch"];
     if (settings) args.push("--settings", settings);
     if (sessionId) args.push("--resume", sessionId);
-    if (cfg.model) args.push("--model", cfg.model);
+    const picked = claudeModelOf(model) || cfg.model;
+    if (picked) args.push("--model", picked); // 인자 배열의 한 칸으로만 넘긴다(셸 문자열로 잇지 않음)
     return { command: cfg.claudeCmd || "claude", args };
   }
   // Never inherit Claude's model or grant full access to match acceptEdits.

@@ -1,7 +1,7 @@
 // lib/factory/settings.ts
 // 통제실 설정값: 감독 프로그램 활성화(일시 정지), 자동 업데이트, 감독 프로그램 버전 정보, "지금 업데이트" 1회성 요청.
 import prisma from "@/lib/prisma";
-import { isAiEngine, type AiEngine } from "@/lib/factory/ai";
+import { isAiEngine, isClaudeModel, type AiEngine, type ClaudeModel } from "@/lib/factory/ai";
 import { isToolBrokerMode, normalizeToolBroker, readStoredToolBroker, TOOL_BROKER_LIMITS_VERSION, type ToolBrokerSettings } from "@/lib/factory/toolBroker";
 
 const DEFAULT_AI_KEY = "defaultAiEngine";
@@ -15,6 +15,25 @@ export async function getDefaultAiEngine(): Promise<AiEngine> {
 export async function setDefaultAiEngine(engine: AiEngine): Promise<void> {
   if (!isAiEngine(engine)) throw new Error("작업 AI가 올바르지 않아요.");
   await prisma.factorySetting.upsert({ where: { key: DEFAULT_AI_KEY }, create: { key: DEFAULT_AI_KEY, value: engine }, update: { value: engine } });
+}
+
+const DEFAULT_MODEL_KEY = "defaultClaudeModel";
+
+/** 승인 때 '기본 설정 사용'이면 쓰는 Claude Code 모델. 없거나 목록 밖이면 null(= --model 없이 Claude Code 자체 기본) */
+export async function getDefaultClaudeModel(): Promise<ClaudeModel | null> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: DEFAULT_MODEL_KEY } });
+
+  return isClaudeModel(row?.value) ? row.value : null;
+}
+
+export async function setDefaultClaudeModel(model: ClaudeModel | null): Promise<void> {
+  if (model === null) {
+    await prisma.factorySetting.deleteMany({ where: { key: DEFAULT_MODEL_KEY } });
+
+    return;
+  }
+  if (!isClaudeModel(model)) throw new Error("모델이 올바르지 않아요.");
+  await prisma.factorySetting.upsert({ where: { key: DEFAULT_MODEL_KEY }, create: { key: DEFAULT_MODEL_KEY, value: model }, update: { value: model } });
 }
 
 const TOOL_BROKER_KEY = "toolBroker";

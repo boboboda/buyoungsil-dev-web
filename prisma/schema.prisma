@@ -574,6 +574,7 @@ model FactoryJob {
   planHash        String // 기획서 sha256. 같은 기획서 중복 등록 감지
   stack           String    @default("flutter") // 앱 템플릿 종류
   aiEngine        String    @default("claude") // claude | codex. 기존 일감은 Claude 유지
+  aiModel         String? // Claude Code --model 별칭(승인 때 고름, lib/factory/ai.ts CLAUDE_MODELS). NULL = 기본 설정(시작 때 기본 모델로 채움). Codex 는 늘 NULL
   requiredSecrets String[]  @default([]) // 키 이름만. 값은 저장하지 않는다.
   priority        Int       @default(0)
   status          String    @default("pending") // pending | approved | running | review(출시 검토 대기) | done | failed | cancelled
@@ -816,6 +817,7 @@ model FactoryMaintenanceMessage {
   maintenanceId String
   role          String // user(지시) | assistant(결과) | log | system
   aiEngine      String             @default("claude") // 지시마다 선택한 실행 AI
+  aiModel       String? // Claude Code --model 별칭(승인·보낼 때 고름). NULL = 기본 설정. assistant 결과에는 실행한 모델을 복사
   text          String             @db.Text
   status        String? // user 지시: awaiting_approval | queued | running | done | failed | cancelled
   source        String? // 통제실 | 채팅

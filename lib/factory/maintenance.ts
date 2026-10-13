@@ -12,10 +12,10 @@
 //   설정 '대기열 끝나면 자동 배포'(기본 꺼짐)가 켜져 있으면 그때 한 번 자동으로 요청한다(지난 배포 뒤 실패한 지시가 있으면 안 함).
 // - 통제실에서 보낸 지시는 바로 대기열에, 채팅(커넥터)에서 보낸 지시는 승인을 기다린다. 채팅에서는 배포할 수 없다.
 import prisma from "@/lib/prisma";
-import { isAiEngine, type AiEngine } from "@/lib/factory/ai";
+import { isAiEngine, readModelChoice, type AiEngine, type ClaudeModel } from "@/lib/factory/ai";
 import { maskSecrets } from "@/lib/factory/mask";
 import { notifyDeployReady, notifyMaintenance, notifyText } from "@/lib/factory/telegram";
-import { getDefaultAiEngine, getSettingValue, isAutoDeployEnabled, setSettingValue } from "@/lib/factory/settings";
+import { getDefaultAiEngine, getDefaultClaudeModel, getSettingValue, isAutoDeployEnabled, setSettingValue } from "@/lib/factory/settings";
 
 export const TURN_ACTIVE = ["queued", "running"] as const;
 const QUEUE_STATES = ["awaiting_approval", "queued", "running"];
@@ -103,6 +103,7 @@ export async function maintenanceQueue() {
       threadTitle: t.maintenance.title,
       status: t.status,
       aiEngine: t.aiEngine,
+      aiModel: t.aiModel,
       source: t.source,
       firstLine: firstLine(t.text),
       wait,
@@ -175,9 +176,14 @@ export async function queueAction(action: "skip" | "retry" | "clear", via: strin
 // ───────── 지시 보내기 ─────────
 
 /** 새 정비(threadId 없음) 또는 기존 정비에 이어서 지시. source=통제실 이면 바로 대기열, 채팅이면 승인 대기. 처리 중이어도 대기열에 쌓는다. */
-export async function sendMaintenance(input: { threadId?: unknown; text?: unknown; aiEngine?: unknown; source: "통제실" | "채팅" }): Promise<Result> {
+export async function sendMaintenance(input: { threadId?: unknown; text?: unknown; aiEngine?: unknown; aiModel?: unknown; source: "통제실" | "채팅" }): Promise<Result> {
   if (input.aiEngine !== undefined && !isAiEngine(input.aiEngine)) return fail(400, "작업 AI가 올바르지 않아요.");
   const aiEngine = isAiEngine(input.aiEngine) ? input.aiEngine : await getDefaultAiEngine();
+  // 통제실에서 보낸 지시는 보내는 순간이 승인이라 여기서 모델을 고른다(허용 목록만, Codex 는 거부)
+  const model = readModelChoice(input.aiModel);
+
+  if (!model.ok) return fail(400, model.message);
+  if (model.model && aiEngine === "codex") return fail(400, "Codex 지시에는 모델을 고를 수 없어요(Claude Code 지시만).");
   const text = clean(input.text, MAX_TEXT);
 
   if (text.length < 5) return fail(400, "지시를 5자 이상 적어 주세요.");
@@ -195,7 +201,7 @@ export async function sendMaintenance(input: { threadId?: unknown; text?: unknow
     ? await prisma.factoryMaintenance.update({ where: { id: threadId }, data: { updatedAt: new Date() } })
     : await prisma.factoryMaintenance.create({ data: { title: text.split("\n")[0].slice(0, 60) } });
   const msg = await prisma.factoryMaintenanceMessage.create({
-    data: { maintenanceId: thread.id, role: "user", text, status, source: input.source, aiEngine },
+    data: { maintenanceId: thread.id, role: "user", text, status, source: input.source, aiEngine, aiModel: model.model },
   });
   const ahead = await aheadOf(msg);
   const halt = await getHalt();
@@ -224,8 +230,14 @@ const TURN_STATE: Record<string, string> = {
 };
 
 // 조건부 updateMany 라서 통제실·텔레그램에서 동시에 눌러도 한쪽만 승인된다. 다른 쪽에는 지금 상태를 알려 준다.
-export async function approveTurn(turnId: string): Promise<Result> {
-  const r = await prisma.factoryMaintenanceMessage.updateMany({ where: { id: turnId, role: "user", status: "awaiting_approval" }, data: { status: "queued" } });
+// aiModel: 승인 때 고른 Claude Code 모델(null = 기본 설정 사용). Codex 지시에 모델을 주면 거부한다
+export async function approveTurn(turnId: string, aiModel: ClaudeModel | null = null): Promise<Result> {
+  if (aiModel) {
+    const t = await prisma.factoryMaintenanceMessage.findUnique({ where: { id: turnId }, select: { aiEngine: true } });
+
+    if (t?.aiEngine === "codex") return fail(400, "Codex 지시에는 모델을 고를 수 없어요(Claude Code 지시만).");
+  }
+  const r = await prisma.factoryMaintenanceMessage.updateMany({ where: { id: turnId, role: "user", status: "awaiting_approval" }, data: { status: "queued", aiModel } });
 
   if (r.count) {
     const turn = await prisma.factoryMaintenanceMessage.findUnique({ where: { id: turnId }, select: { id: true, createdAt: true } });
@@ -234,7 +246,7 @@ export async function approveTurn(turnId: string): Promise<Result> {
     return {
       ok: true,
       status: 200,
-      message: ahead ? `정비 지시를 승인했어요. 대기 ${ahead + 1}번째(앞에 ${ahead}개)라 앞 지시가 끝나면 자동으로 시작해요.` : "정비 지시를 승인했어요. 진행 중인 앱 일감이 끝나면 시작해요.",
+      message: (aiModel ? `(모델: ${aiModel}) ` : "") + (ahead ? `정비 지시를 승인했어요. 대기 ${ahead + 1}번째(앞에 ${ahead}개)라 앞 지시가 끝나면 자동으로 시작해요.` : "정비 지시를 승인했어요. 진행 중인 앱 일감이 끝나면 시작해요."),
     };
   }
   const turn = await prisma.factoryMaintenanceMessage.findUnique({ where: { id: turnId }, select: { role: true, status: true } });
@@ -494,6 +506,15 @@ export async function maintenanceForNext(engines: readonly AiEngine[] = ["claude
     });
 
     if (head?.status === "queued" && engines.includes(head.aiEngine as AiEngine)) {
+      // '기본 설정 사용'으로 승인된 Claude 지시는 시작할 때 기본 모델로 채운다(이력에 실제 모델이 남게). 기본 모델이 없으면 --model 없이
+      if (head.aiEngine === "claude" && !head.aiModel) {
+        const def = await getDefaultClaudeModel().catch(() => null);
+
+        if (def) {
+          await prisma.factoryMaintenanceMessage.updateMany({ where: { id: head.id, status: "queued", aiModel: null }, data: { aiModel: def } });
+          head.aiModel = def;
+        }
+      }
       const left = await prisma.factoryMaintenanceMessage.count({ where: { role: "user", status: { in: ["awaiting_approval", "queued"] }, id: { not: head.id } } });
 
       out.maintenance = {
@@ -502,6 +523,7 @@ export async function maintenanceForNext(engines: readonly AiEngine[] = ["claude
         title: head.maintenance.title,
         text: head.text,
         aiEngine: head.aiEngine,
+        aiModel: head.aiEngine === "claude" ? head.aiModel : null, // 감독 프로그램이 --model 로 넘긴다(허용 목록 다시 확인)
         sessionId: head.aiEngine === "codex" ? head.maintenance.codexSessionId : head.maintenance.sessionId,
         previousResult: (await prisma.factoryMaintenanceMessage.findFirst({
           where: { maintenanceId: head.maintenanceId, role: "assistant" }, orderBy: { createdAt: "desc" }, select: { text: true },
@@ -522,7 +544,7 @@ export async function maintenanceForNext(engines: readonly AiEngine[] = ["claude
 export async function setTurnEngine(turnId: string, aiEngine: unknown): Promise<Result> {
   if (!isAiEngine(aiEngine)) return fail(400, "작업 AI가 올바르지 않아요.");
   const r = await prisma.factoryMaintenanceMessage.updateMany({
-    where: { id: turnId, role: "user", status: { in: ["awaiting_approval", "queued", "failed"] } }, data: { aiEngine },
+    where: { id: turnId, role: "user", status: { in: ["awaiting_approval", "queued", "failed"] } }, data: { aiEngine, ...(aiEngine === "codex" ? { aiModel: null } : {}) },
   });
   return r.count ? { ok: true, status: 200, message: "작업 AI를 바꿨어요. 다음 실행에 적용돼요." } : fail(409, "진행 중이거나 끝난 지시의 AI는 바꿀 수 없어요.");
 }
@@ -579,7 +601,7 @@ export async function reportTurn(body: TurnReport): Promise<Result> {
     data: { status: ok ? "done" : "failed", finishedAt: new Date(), heartbeatAt: new Date(), ...(pushed ? { pushedCommit: pushed, needsDeploy } : {}) },
   });
   await prisma.factoryMaintenanceMessage.create({
-    data: { maintenanceId: turn.maintenanceId, role: "assistant", aiEngine: turn.aiEngine, text: maskSecrets(clean(d.text, 20_000)) || (ok ? "완료(요약 없음)" : "실패(사유 없음)") },
+    data: { maintenanceId: turn.maintenanceId, role: "assistant", aiEngine: turn.aiEngine, aiModel: turn.aiModel, text: maskSecrets(clean(d.text, 20_000)) || (ok ? "완료(요약 없음)" : "실패(사유 없음)") },
   });
   await prisma.factoryMaintenance.update({
     where: { id: turn.maintenanceId },
@@ -704,7 +726,7 @@ export async function maintenanceOverview(opts: { threadId?: string; limit?: num
         updatedAt: t.updatedAt,
         messages: [...t.messages.filter((m) => m.role !== "log"), ...logs.slice(-60)]
           .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-          .map((m) => ({ id: m.id, role: m.role, text: m.text, status: m.status, aiEngine: m.aiEngine, source: m.source, createdAt: m.createdAt, pushedCommit: m.pushedCommit, deployedAt: m.deployedAt })),
+          .map((m) => ({ id: m.id, role: m.role, text: m.text, status: m.status, aiEngine: m.aiEngine, aiModel: m.aiModel, source: m.source, createdAt: m.createdAt, pushedCommit: m.pushedCommit, deployedAt: m.deployedAt })),
       };
     }),
   };

@@ -35,6 +35,7 @@ export async function GET(req: NextRequest) {
       parentJobId: true,
       stack: true,
       aiEngine: true,
+      aiModel: true,
       requiredSecrets: true,
       priority: true,
       status: true,

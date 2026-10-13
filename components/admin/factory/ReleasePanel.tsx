@@ -20,6 +20,7 @@ import { Button, Card, CardBody, CardHeader, Chip } from "@heroui/react";
 
 import Field from "./Field";
 import AiEngineSelect from "./AiEngineSelect";
+import { ModelTag } from "./ClaudeModelSelect";
 import { AI_LABELS, type TaskAiEngine } from "@/lib/factory/ai";
 import AppKeyLookup from "./AppKeyLookup";
 import { KeyCheckView, KeyError, UntrackView } from "./KeyVault";
@@ -166,6 +167,7 @@ function JobStatus({
         <span>
           최근 출시 일감({kind}
           {` · ${AI_LABELS[job.aiEngine ?? "claude"]}`}
+          {(job.aiEngine ?? "claude") === "claude" && <> · <ModelTag engine="claude" model={job.aiModel} /></>}
           {job.updateItemsText ? ` · 갱신: ${job.updateItemsText}` : ""}
           {job.versionName ? ` · 버전 ${job.versionName}` : ""}
           {job.overwriteProject ? (job.releaseKind === "update" ? " · 홈페이지 반영" : " · 홈페이지 덮어쓰기") : ""})

@@ -786,7 +786,11 @@ async function runJobUnlocked(job, lock) {
   const aiSecrets = Object.fromEntries(Object.entries(allowed).filter(([k]) => !toolOnly.includes(k)));
   if (toolOnly.some((k) => k in allowed)) addLog(st, "info", `도구 전용 키는 AI 환경에 넣지 않았어요: ${toolOnly.filter((k) => k in allowed).join(", ")}`);
   recordLifecycle(dir, job.aiEngine, "session-start", job.id);
+  // 승인 때 고른 모델(Claude Code 만). 허용 목록 밖이면 startAi 가 던져 일감이 실패로 보인다(다른 모델로 바꿔 돌리지 않음)
+  const model = job.aiEngine === "claude" ? job.aiModel || null : null;
+  if (job.aiEngine === "claude") addLog(st, "info", `모델: ${model ?? "기본 설정(--model 없음)"}`);
   const child = startAi(job.aiEngine, cfg, {
+    model,
     settings: job.aiEngine === "claude" ? appSettings : undefined,
     cwd: dir,
     env: { ...process.env, ...aiSecrets, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id },
@@ -912,7 +916,9 @@ async function runJobUnlocked(job, lock) {
     } else {
       const why = st.redact(String(st.result?.is_error ? st.result.result : "") || st.stderrTail.trim() || `claude 가 비정상 종료(코드 ${code})`);
       if (rel) readPhase(st);
-      await finish(st, "failed", { failReason: why.slice(-1800), ...(rel ? { failStage: st.phase } : {}) });
+      // 고른 모델을 계정에서 못 쓰는 경우 등을 알아볼 수 있게 실패 사유 끝에 모델을 붙인다
+      const modelNote = model ? `\n(모델: ${model} — 이 모델을 쓸 수 없으면 다른 모델로 다시 승인하세요)` : "";
+      await finish(st, "failed", { failReason: why.slice(-(1800 - modelNote.length)) + modelNote, ...(rel ? { failStage: st.phase } : {}) });
     }
   } finally {
     running.delete(job.id);

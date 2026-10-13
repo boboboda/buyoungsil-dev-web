@@ -9,7 +9,8 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { deleteReviewVideo } from "@/lib/factory/reviewVideo";
 import { maskSecrets } from "@/lib/factory/mask";
-import { AI_LABELS, isAiEngine, type AiEngine } from "@/lib/factory/ai";
+import { AI_LABELS, isAiEngine, readModelChoice, type AiEngine } from "@/lib/factory/ai";
+import { getDefaultClaudeModel } from "@/lib/factory/settings";
 import { cleanToolRequests, type ToolRequestRecord } from "@/lib/factory/toolBroker";
 
 export const LEASE_MS = 10 * 60 * 1000;
@@ -85,6 +86,7 @@ export interface ClaimedJob {
   parentJobId: string | null;
   stack: string;
   aiEngine: AiEngine;
+  aiModel: string | null; // Claude Code --model 별칭(Codex 는 null)
   priority: number;
   requiredSecrets: string[];
   planMarkdown: string;
@@ -111,21 +113,35 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
       FOR UPDATE SKIP LOCKED
     )
     RETURNING "id", "appSlug", "title", "kind", "parentJobId", "stack", "priority",
-              "requiredSecrets", "planMarkdown", "attempts", "aiEngine"`);
+              "requiredSecrets", "planMarkdown", "attempts", "aiEngine", "aiModel"`);
 
   rows.sort((a, b) => b.priority - a.priority);
+  await fillDefaultModel(rows);
 
   if (rows.length > 0) {
     await prisma.factoryJobLog.createMany({
       data: rows.map((r) => ({
         jobId: r.id,
         level: "info",
-        message: `${worker} 가 가져감 (시도 ${r.attempts})`,
+        message: `${worker} 가 가져감 (시도 ${r.attempts}${r.aiEngine === "claude" ? ` · 모델: ${r.aiModel ?? "Claude Code 기본"}` : ""})`,
       })),
     });
   }
 
   return rows;
+}
+
+// 승인 때 '기본 설정 사용'(aiModel NULL)이던 Claude 일감은 시작할 때 설정 탭의 기본 모델로 채운다(이력에 실제로 쓴 모델이 남게).
+// 기본 모델이 없으면 NULL 그대로(--model 없이 예전처럼). Codex 는 건드리지 않는다. 읽기 실패는 기본 동작으로.
+async function fillDefaultModel(rows: ClaimedJob[]): Promise<void> {
+  const empty = rows.filter((r) => r.aiEngine === "claude" && !r.aiModel);
+
+  if (!empty.length) return;
+  const model = await getDefaultClaudeModel().catch(() => null);
+
+  if (!model) return;
+  await prisma.factoryJob.updateMany({ where: { id: { in: empty.map((r) => r.id) }, aiModel: null }, data: { aiModel: model } });
+  for (const r of empty) r.aiModel = model;
 }
 
 // ───────────── 보고 ─────────────
@@ -324,16 +340,27 @@ async function explainNoChange(id: string, wanted: string): Promise<ActionResult
 export async function adminAction(id: string, body: Record<string, unknown>): Promise<ActionResult> {
   const now = new Date();
   if (body.aiEngine !== undefined && !isAiEngine(body.aiEngine)) return refuse(400, "작업 AI는 Claude Code 또는 Codex를 골라 주세요.");
-  const engineData = isAiEngine(body.aiEngine) ? { aiEngine: body.aiEngine } : {};
+  // Codex 로 바꾸면 고른 모델은 지운다(Codex 는 --model 을 쓰지 않음)
+  const engineData = isAiEngine(body.aiEngine) ? { aiEngine: body.aiEngine, ...(body.aiEngine === "codex" ? { aiModel: null } : {}) } : {};
+  // 모델(승인·재시도 때 고름): 허용 목록만. Codex 일감에는 고를 수 없다. 키가 없으면 승인은 '기본 설정 사용', 재시도는 그대로
+  const choice = readModelChoice(body.aiModel);
+
+  if (!choice.ok) return refuse(400, choice.message);
+  if (choice.model) {
+    const engine = isAiEngine(body.aiEngine) ? body.aiEngine : (await prisma.factoryJob.findUnique({ where: { id }, select: { aiEngine: true } }))?.aiEngine;
+
+    if (engine === "codex") return refuse(400, "Codex 일감에는 모델을 고를 수 없어요(Claude Code 일감만).");
+  }
+  const modelData = body.aiEngine === "codex" ? {} : { aiModel: choice.model };
 
   switch (body.action) {
     case "approve": {
       const res = await prisma.factoryJob.updateMany({
         where: { id, status: "pending" },
-        data: { status: "approved", approvedAt: now, ...engineData },
+        data: { status: "approved", approvedAt: now, ...modelData, ...engineData },
       });
       // 홈페이지 Project 는 여기서 만들지 않는다(출시 대상 앱만: 출시 패키지에 추가할 때 연결·생성)
-      return res.count > 0 ? done("승인했어요.") : explainNoChange(id, "승인");
+      return res.count > 0 ? done(choice.model ? `승인했어요(모델: ${choice.model}).` : "승인했어요.") : explainNoChange(id, "승인");
     }
 
     case "cancel": {
@@ -359,6 +386,7 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
       const res = await prisma.factoryJob.updateMany({
         where: { id, status: "failed" },
         data: {
+          ...(Object.hasOwn(body, "aiModel") ? modelData : {}),
           ...engineData,
           status: "approved",
           attempts: 0,

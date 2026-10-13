@@ -7,10 +7,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Chip } from "@heroui/react";
 import AiEngineSelect from "./AiEngineSelect";
-import { AI_LABELS, type AiEngine, type TaskAiEngine } from "@/lib/factory/ai";
+import ClaudeModelSelect, { ModelTag } from "./ClaudeModelSelect";
+import { AI_LABELS, type AiEngine, type TaskAiEngine, type TaskModel } from "@/lib/factory/ai";
 
 interface Msg {
   aiEngine?: AiEngine;
+  aiModel?: string | null; // 지시: 고른 모델, 결과: 실행한 모델(없으면 기본 설정)
   id: string;
   role: "user" | "assistant" | "log" | "system";
   text: string;
@@ -34,6 +36,7 @@ interface Thread {
 
 interface QueueItem {
   aiEngine?: AiEngine;
+  aiModel?: string | null;
   position: number;
   turnId: string;
   threadId: string;
@@ -97,6 +100,9 @@ export default function MaintenancePanel() {
   const [sel, setSel] = useState<string>("new");
   const [text, setText] = useState("");
   const [aiEngine, setAiEngine] = useState<TaskAiEngine>("default");
+  // 통제실에서 보내는 지시는 보내는 순간이 승인이라 여기서 모델을 고른다. 승인 대기 지시는 지시마다 따로
+  const [aiModel, setAiModel] = useState<TaskModel>("default");
+  const [turnModels, setTurnModels] = useState<Record<string, TaskModel>>({});
   const [showLogs, setShowLogs] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -227,6 +233,7 @@ export default function MaintenancePanel() {
                 <span className="ml-1 text-xs text-default-400">
                   · {i.threadTitle}
                   {` · ${AI_LABELS[i.aiEngine ?? "claude"]}`}
+                  {(i.aiEngine ?? "claude") === "claude" && <> · <ModelTag engine="claude" model={i.aiModel} /></>}
                   {i.wait && i.status !== "running" ? ` · ${i.wait}` : ""}
                 </span>
               </button>
@@ -375,6 +382,7 @@ export default function MaintenancePanel() {
                   <span>{m.role === "user" ? `👤 지시${m.source ? ` · ${m.source}` : ""}` : m.role === "assistant" ? "🤖 결과" : "ℹ️ 알림"}</span>
                   <span className="font-mono">{new Date(m.createdAt).toLocaleString("ko-KR")}</span>
                   {(m.role === "user" || m.role === "assistant") && <span>{AI_LABELS[m.aiEngine ?? "claude"]}</span>}
+                  {(m.role === "user" || m.role === "assistant") && <ModelTag engine={m.aiEngine ?? "claude"} model={m.aiModel} />}
                   {m.status && (
                     <Chip color={m.status === "failed" ? "danger" : m.status === "done" ? "success" : "warning"} size="sm" variant="flat">
                       {TURN_LABEL[m.status] ?? m.status}
@@ -383,8 +391,15 @@ export default function MaintenancePanel() {
                 </div>
                 <div className="whitespace-pre-wrap break-words">{m.text}</div>
                 {m.role === "user" && m.status === "awaiting_approval" && (
-                  <div className="mt-2 flex gap-2">
-                    <Button color="primary" isDisabled={busy} size="sm" onPress={() => post({ action: "approve", turnId: m.id })}>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <ClaudeModelSelect
+                      disabled={busy}
+                      engine={m.aiEngine ?? "claude"}
+                      label="승인할 모델"
+                      value={turnModels[m.id] ?? "default"}
+                      onChange={(v) => setTurnModels((cur) => (cur[m.id] === v ? cur : { ...cur, [m.id]: v }))}
+                    />
+                    <Button color="primary" isDisabled={busy} size="sm" onPress={() => post({ action: "approve", turnId: m.id, ...((turnModels[m.id] ?? "default") !== "default" ? { aiModel: turnModels[m.id] } : {}) })}>
                       승인
                     </Button>
                     <Button isDisabled={busy} size="sm" variant="flat" onPress={() => post({ action: "cancel", turnId: m.id })}>
@@ -427,8 +442,11 @@ export default function MaintenancePanel() {
 
       {canSend ? (
         <div className="space-y-2">
-          <AiEngineSelect allowDefault value={aiEngine} onChange={setAiEngine} disabled={busy} />
-          <p className="text-xs text-default-500">선택한 AI로 차례대로 처리해요. AI를 바꾸면 이전 결과와 현재 작업 파일을 전달해요.</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <AiEngineSelect allowDefault value={aiEngine} onChange={setAiEngine} disabled={busy} />
+            <ClaudeModelSelect disabled={busy} engine={aiEngine} value={aiModel} onChange={setAiModel} />
+          </div>
+          <p className="text-xs text-default-500">선택한 AI로 차례대로 처리해요. AI를 바꾸면 이전 결과와 현재 작업 파일을 전달해요. 모델은 Claude Code 지시에만 적용돼요.</p>
           <textarea
             className="min-h-[80px] w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm"
             maxLength={8000}
@@ -441,7 +459,7 @@ export default function MaintenancePanel() {
             color="primary"
             isDisabled={busy || text.trim().length < 5}
             size="sm"
-            onPress={() => post({ action: "send", text, aiEngine: aiEngine === "default" ? undefined : aiEngine, ...(sel !== "new" ? { threadId: sel } : {}) })}
+            onPress={() => post({ action: "send", text, aiEngine: aiEngine === "default" ? undefined : aiEngine, ...(aiModel !== "default" ? { aiModel } : {}), ...(sel !== "new" ? { threadId: sel } : {}) })}
           >
             {busy ? "보내는 중…" : sel === "new" ? "새 정비 시작" : thread?.activeTurn ? "대기열에 이어서 지시" : "이어서 지시"}
           </Button>
