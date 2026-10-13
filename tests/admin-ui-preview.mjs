@@ -6,6 +6,7 @@
 //       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
 //       · history-merged(이력 [전체 히스토리] 탭: 배포·감독·정비를 합친 최신순 20개 + 긴 빌드 로그 접힘)
 //       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
+//       · fable-usage(AI USAGE 의 Fable 주간 한도 카드 + 오늘 모델별 비율 + 상태바 Fable) · fable-missing(Fable 값 못 받음)
 //       · model-approve(승인할 때 Claude Code 모델 고르기: [현황] 승인 줄의 모델 선택(Codex 일감은 숨김) + 이력 '모델: ○○' + [설정] 기본 모델)
 // 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
@@ -42,7 +43,8 @@ const site = loadTs("config/site.ts");
 const fx = loadTs("components/admin/factory/fx.tsx");
 const tabs = loadTs("components/admin/factory/consoleTabs.ts");
 const { default: FactoryTabs } = loadTs("components/admin/factory/FactoryTabs.tsx", { "next/link": link, "./consoleTabs": tabs });
-const { UsageDashView } = loadTs("components/admin/factory/UsageDash.tsx", { "@/components/admin/ui/meters": meters });
+const fableLib = loadTs("lib/claude-status/fable.ts");
+const { UsageDashView } = loadTs("components/admin/factory/UsageDash.tsx", { "@/components/admin/ui/meters": meters, "@/lib/claude-status/fable": fableLib });
 const noop = () => ({});
 const topBar = loadTs("components/admin/ui/AdminTopBar.tsx", {
   "next/link": link,
@@ -52,7 +54,7 @@ const topBar = loadTs("components/admin/ui/AdminTopBar.tsx", {
   "@/components/admin/ui/meters": meters,
   "@/config/site": site,
 });
-const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters });
+const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters, "@/lib/claude-status/fable": fableLib });
 const aiLib = loadTs("lib/factory/ai.ts");
 const modelSelect = loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib });
 const { HistoryPanelView } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
@@ -128,6 +130,11 @@ const devicesBrief = devicesData.devices.map((d) => ({ device: d.device, short: 
 STATES.devices = { ...STATES.live, title: "장비 상태", devices: true, bar: { ...STATES.live.bar, devices: devicesBrief } };
 // 승인할 때 모델 고르기: 앱 일감(opus 고름)·정비 지시(기본 설정 사용)·Codex 출시 일감(모델 칸 없음) + 일감 이력 + 설정 탭 기본 모델
 STATES["model-approve"] = { ...STATES.live, title: "승인 · 모델 고르기", model: true };
+// Fable 사용량: Fable 주간 한도 카드(37%) + 오늘 모델별 비율 막대 + 상태바 'Fable 주 37%' / Fable 값을 못 받음('값 없음(한도 정보 못 받음)')
+const claudeFable = { ...claudeLive, extra: [{ key: "weekly_scoped · Fable", usedPct: 37, resetsAt: now + 4 * 24 * HOUR + 3 * HOUR, reset: false }, { key: "seven_day_opus", usedPct: 3, resetsAt: null, reset: false }], modelTokens: { date: "d-13", asOf: now - MIN, models: { fable: 812_000, opus: 455_000, sonnet: 120_000, haiku: 30_000, other: 3_000 } } };
+STATES["fable-usage"] = { ...STATES.live, title: "Fable 사용량", stats: { ...STATES.live.stats, limits: claudeFable }, bar: { ...STATES.live.bar, claude: claudeFable } };
+const claudeNoFable = { ...claudeLive, extra: [], modelTokens: null };
+STATES["fable-missing"] = { ...STATES.live, title: "Fable 값 없음", stats: { ...STATES.live.stats, limits: claudeNoFable }, bar: { ...STATES.live.bar, claude: claudeNoFable } };
 
 const iso = (t) => new Date(t).toISOString();
 const deployRow = (i) => ({

@@ -108,6 +108,7 @@ test("화면 값: 없음·정상·오래됨·초기화 지남·수집 실패", (
     source: null,
     extra: [],
     extraAsOf: null,
+    modelTokens: null,
     device: "pc",
   });
   assert.equal(toLimitsView({ ...base, asOf: new Date(NOW - LIMIT_STALE_MS - 1) }, NOW).stale, true);

@@ -10,9 +10,10 @@
 //     "measuredAt": 유닉스 초,   // 선택, 작업 PC 가 읽은 시각. 저장된 값보다 오래됐으면 버린다(응답 saved:false)
 //     "fiveHour": { "usedPct": 23.5, "resetsAt": 유닉스 초 },  // 선택
 //     "sevenDay": { "usedPct": 41.2, "resetsAt": 유닉스 초 },  // 선택 (ok 이면 둘 중 하나는 있어야 함)
-//     "extra": [{ "key": "seven_day_opus", "usedPct": 3, "resetsAt": 유닉스 초 | null }]  // 선택, 모델별 주간 한도 등
+//     "extra": [{ "key": "seven_day_opus", "usedPct": 3, "resetsAt": 유닉스 초 | null }],  // 선택, 모델별 주간 한도 등
+//     "modelTokens": { "date": "yyyy-MM-dd(KST)", "models": { "fable": 0, "opus": 0, "sonnet": 0, "haiku": 0, "other": 0 } }  // 선택, claude 만. 오늘 모델별 토큰 수
 //   }
-// 사용률과 초기화 시각만 받는다. 정해진 필드 외의 값은 무시한다.
+// 사용률·초기화 시각·모델별 토큰 수만 받는다. 정해진 필드 외의 값은 무시한다.
 import { NextRequest, NextResponse } from "next/server";
 
 import { isValidClaudeStatusToken } from "@/lib/claude-status/auth";

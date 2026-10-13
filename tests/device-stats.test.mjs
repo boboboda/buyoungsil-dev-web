@@ -315,7 +315,7 @@ test("패널: 읽기 실패·첫 값 없음·받은 적 없는 장비", () => {
 });
 
 test("하단 상태바: 장비별 CPU/RAM 한 칸, 끊김 표시, 받은 값이 없으면 칸 생략", async () => {
-  const bar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters });
+  const bar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters, "@/lib/claude-status/fable": loadTs("lib/claude-status/fable.ts") });
   await sampleSnapshot();
   const briefs = await devices.deviceBriefs(NOW);
   assert.equal(bar.deviceSummary(briefs), "서버1 CPU 95% RAM 77% · 서버2 끊김 · 메인PC CPU 37% RAM 39% (오래됨)");

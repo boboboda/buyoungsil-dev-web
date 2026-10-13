@@ -10,6 +10,7 @@ import type { StatusBarData } from "@/lib/factory/statusBar";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { fableWindows } from "@/lib/claude-status/fable";
 import {
   agoText,
   hhmmKst,
@@ -26,15 +27,15 @@ export interface StatusPart {
   text: string;
 }
 
-const pct = (w: UsageLimitsView["fiveHour"] | undefined) =>
+const pct = (w: { usedPct: number; reset: boolean } | null | undefined) =>
   w && !w.reset ? `${Math.round(w.usedPct)}%` : "-";
 
-/** AI 한도 한 줄: "Claude 5h 23% · 7d 41% | Codex 5h 0% · 주 17%" */
+/** AI 한도 한 줄: "Claude 5h 23% · 7d 41% · Fable 주 0% | Codex 5h 0% · 주 17%" (Fable 값을 못 받았으면 '-') */
 export function aiSummary(
   claude: UsageLimitsView | null | undefined,
   codex: UsageLimitsView | null | undefined,
 ) {
-  return `Claude 5h ${pct(claude?.fiveHour)} · 7d ${pct(claude?.sevenDay)} | Codex 5h ${pct(codex?.fiveHour)} · 주 ${pct(codex?.sevenDay)}`;
+  return `Claude 5h ${pct(claude?.fiveHour)} · 7d ${pct(claude?.sevenDay)} · Fable 주 ${pct(fableWindows(claude).week)} | Codex 5h ${pct(codex?.fiveHour)} · 주 ${pct(codex?.sevenDay)}`;
 }
 
 const pctText = (v: number | null) => (v === null ? "-" : `${Math.round(v)}%`);

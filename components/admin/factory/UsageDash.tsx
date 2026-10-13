@@ -1,6 +1,6 @@
 // components/admin/factory/UsageDash.tsx
-// 통제실 오른쪽 'AI USAGE' 패널: 한도마다 한 행(사용 %·세그먼트 막대·남은 %·초기화까지·갱신 시각) — Claude 5시간·7일, Codex 5시간·주간,
-// 오늘 사용량(어제 대비 막대 + 14일 스파크라인). 반원 게이지는 좁은 패널에서 읽기 어려워 행 형태로 바꿨다.
+// 통제실 오른쪽 'AI USAGE' 패널: 한도마다 한 행(사용 %·세그먼트 막대·남은 %·초기화까지·갱신 시각) — Claude 5시간·7일, Fable 주간(따로 카드),
+// Codex 5시간·주간, 오늘 사용량(어제 대비 막대 + 14일 스파크라인 + 모델별 비율). 반원 게이지는 좁은 패널에서 읽기 어려워 행 형태로 바꿨다.
 // 데이터는 [사용량] 탭과 같은 /api/admin/claude-status 를 5초마다 읽는다(화면이 보일 때만).
 // 넓은 화면: 오른쪽에 붙어서 따라옴(sticky). 좁은 화면: 작업 영역 위 접이식 카드(한 줄 요약 + 펼치기).
 "use client";
@@ -14,6 +14,12 @@ import type { ClaudeDailyView, ClaudeStats } from "@/lib/claude-status/stats";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  FABLE_LABELS,
+  fableWindows,
+  kstToday,
+  modelShares,
+} from "@/lib/claude-status/fable";
 import {
   agoText,
   Digits,
@@ -74,14 +80,18 @@ type WindowLike = Omit<LimitWindowView, "resetsAt"> & {
   resetsAt: number | null;
 };
 
-/** 한도 창 하나의 표시 값: 사용 %(없으면 null)·상태 글자·아래 한 줄 */
-export function windowReading(w: WindowLike | null, now: number) {
+/** 한도 창 하나의 표시 값: 사용 %(없으면 null)·상태 글자·아래 한 줄. missing: 창이 없을 때 아래 줄 */
+export function windowReading(
+  w: WindowLike | null,
+  now: number,
+  missing = "값 없음",
+) {
   if (!w)
     return {
       pct: null,
       tone: "idle" as MeterTone,
       state: "값 없음",
-      line: "값 없음",
+      line: missing,
     };
   if (w.reset)
     return {
@@ -131,6 +141,7 @@ function LimitRow({
   now,
   asOf = v.asOf,
   source = v.source,
+  missing,
 }: {
   name: string;
   label: string;
@@ -139,8 +150,9 @@ function LimitRow({
   now: number;
   asOf?: number | null;
   source?: LimitSource | null;
+  missing?: string;
 }) {
-  const r = windowReading(w, now);
+  const r = windowReading(w, now, missing);
   const stale = isStale(asOf, now);
 
   return (
@@ -222,7 +234,7 @@ function LimitSection({
             v={v}
             w={v.sevenDay}
           />
-          {(v.extra ?? []).map((x) => (
+          {fableWindows(v).rest.map((x) => (
             <LimitRow
               key={x.key}
               asOf={v.extraAsOf}
@@ -250,8 +262,135 @@ function LimitSection({
   );
 }
 
+export const FABLE_MISSING = "값 없음(한도 정보 못 받음)";
+
+/** Fable 전용 카드: 주간 한도(늘 한 행, 없으면 '값 없음(한도 정보 못 받음)' — 0% 와 구분) + 5시간(응답에 있을 때만) */
+function FableSection({
+  v,
+  now,
+}: {
+  v: UsageLimitsView | null;
+  now: number;
+}) {
+  const f = fableWindows(v);
+  // Claude 값을 아직 못 받았으면 LED 없이 안내 한 줄만('수신 대기'는 Claude 칸에 한 번)
+  const head = !v ? null : !f.week && !f.fiveHour ? (
+    <Led tone="idle">값 없음</Led>
+  ) : (
+    limitLed(v, now, "수신 대기")
+  );
+
+  return (
+    <div className="fx-dash-sec">
+      <div className="fx-dash-sec-head">
+        <h3 className="fx-dash-sub">Fable</h3>
+        {head}
+      </div>
+      {v ? (
+        <>
+          {f.fiveHour ? (
+            <LimitRow
+              asOf={v.extraAsOf}
+              label={FABLE_LABELS.fiveHour}
+              name="Claude"
+              now={now}
+              source="auto"
+              v={v}
+              w={f.fiveHour}
+            />
+          ) : null}
+          <LimitRow
+            asOf={f.week ? v.extraAsOf : null}
+            label={FABLE_LABELS.week}
+            missing={FABLE_MISSING}
+            name="Claude"
+            now={now}
+            source="auto"
+            v={v}
+            w={f.week}
+          />
+        </>
+      ) : (
+        <p className="fx-dash-wait">— Claude 한도를 받으면 함께 나타나요</p>
+      )}
+    </div>
+  );
+}
+
+/** 오늘 사용량 아래: 모델별(Fable/Opus/Sonnet/Haiku/기타) 토큰 비율 막대 */
+function ModelShareBars({
+  v,
+  today,
+}: {
+  v: UsageLimitsView | null;
+  today: string;
+}) {
+  const s = modelShares(v?.modelTokens, today);
+  const note =
+    s.state === "none"
+      ? "모델별 값 없음(작업 PC 에서 아직 안 보냄)"
+      : s.state === "old"
+        ? "모델별 값 없음(오늘 받은 값 없음)"
+        : s.state === "empty"
+          ? "오늘 모델별 기록 없음"
+          : null;
+
+  return (
+    <div className="fx-dash-models">
+      <div className="fx-dash-sec-head">
+        <h4 className="fx-dash-note">모델별 비율</h4>
+        <span className="fx-dash-note">작업 PC Claude Code 기록 기준</span>
+      </div>
+      {note ? (
+        <p className="fx-dash-wait">— {note}</p>
+      ) : (
+        <div className="fx-dash-bars">
+          {s.rows.map((r) => (
+            <ModelShareRow key={r.family} {...r} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModelShareRow({
+  label,
+  tokens,
+  pct,
+}: {
+  label: string;
+  tokens: number;
+  pct: number;
+}) {
+  const p = Math.round(pct);
+
+  return (
+    <>
+      <span className={tokens > 0 ? undefined : "fx-muted"}>{label}</span>
+      <SegmentBar
+        label={`오늘 ${label} 토큰 비율`}
+        pct={pct}
+        tone={tokens > 0 ? "run" : "idle"}
+        valueText={`${p}% (${compact(tokens)} 토큰)`}
+      />
+      <span
+        className={`font-mono text-right${tokens > 0 ? "" : " fx-muted"}`}
+      >
+        {p}% · {compact(tokens)}
+      </span>
+    </>
+  );
+}
+
 const summaryPct = (w: LimitWindowView | null | undefined) =>
   w && !w.reset ? `${Math.round(w.usedPct)}%` : "--";
+
+const fableSummary = (v: UsageLimitsView | null) => {
+  const w = fableWindows(v).week;
+
+  return w && !w.reset ? `${Math.round(w.usedPct)}%` : "--";
+};
 
 const dayTotal = (d: ClaudeDailyView) => d.input + d.output + d.cacheCreate;
 
@@ -273,7 +412,8 @@ export function UsageDashView({
   const daily = stats?.daily ?? [];
   const day = dailyCompare(daily);
   const totals = daily.map(dayTotal);
-  const summary = `Claude 5h ${summaryPct(claude?.fiveHour)} · 7d ${summaryPct(claude?.sevenDay)}`;
+  const summary = `Claude 5h ${summaryPct(claude?.fiveHour)} · 7d ${summaryPct(claude?.sevenDay)} · Fable 주 ${fableSummary(claude)}`;
+  const today = daily[daily.length - 1]?.date ?? kstToday(now);
 
   return (
     <section aria-labelledby="usage-dash-title" className="fx-hud fx-dash">
@@ -314,6 +454,8 @@ export function UsageDashView({
           v={claude}
           waiting="작업 PC 에서 Claude Code 를 한 번 쓰면 나타나요"
         />
+
+        <FableSection now={now} v={claude} />
 
         <div className="fx-dash-sec">
           <div className="fx-dash-sec-head">
@@ -356,6 +498,7 @@ export function UsageDashView({
               </div>
             </div>
           ) : null}
+          <ModelShareBars today={today} v={claude} />
         </div>
 
         <LimitSection

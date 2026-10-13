@@ -12,7 +12,7 @@
 //
 // 환경변수(상태 훅과 같음): CLAUDE_STATUS_URL(…/api/claude-status), CLAUDE_STATUS_TOKEN, CLAUDE_DEVICE_NAME
 //   보낼 주소는 CLAUDE_STATUS_URL 뒤에 /limits 를 붙인다. AI_LIMITS_URL 이 있으면 그걸 쓴다.
-// 서버로는 사용률(%)과 초기화 시각(유닉스 초)만 보낸다. Claude·Codex 토큰은 서버로 보내지 않고 출력·로그에도 남기지 않는다.
+// 서버로는 사용률(%)과 초기화 시각(유닉스 초), 오늘 모델별 토큰 수만 보낸다. Claude·Codex 토큰은 서버로 보내지 않고 출력·로그에도 남기지 않는다.
 // Claude 토큰이 만료됐으면 갱신하지 않고 '로그인 필요' 로 보고한다(Claude Code 를 한 번 쓰면 Claude Code 가 갱신한다).
 import fs from "node:fs";
 import os from "node:os";
@@ -234,13 +234,16 @@ export function parseClaudeUsage(json) {
     const usedPct = pct(utilOf(json[k]));
     if (usedPct !== null) extra.push({ key: k, usedPct, resetsAt: toEpochSec(json[k].resets_at) });
   }
+  // 확인한 형식(2026-10): limits[] = session(5시간)·weekly_all(7일)은 scope null, Fable 주간은
+  // { kind:"weekly_scoped", percent:0~100 정수, resets_at:ISO, scope:{ model:{ display_name:"Fable" } } }. Fable 5시간 항목은 없음.
+  // 모델·화면 범위(scope)가 있는 항목은 종류와 상관없이 "<kind> · <이름>" 으로 담는다(나중에 Fable 5시간이 생겨도 받게).
   for (const l of Array.isArray(json.limits) ? json.limits : []) {
-    if (!isObj(l) || l.kind !== "weekly_scoped") continue;
+    if (!isObj(l) || typeof l.kind !== "string" || !/^[a-z0-9_]{1,30}$/.test(l.kind)) continue;
     const scope = isObj(l.scope) ? l.scope : {};
     const name = [isObj(scope.model) ? scope.model.display_name : null, isObj(scope.surface) ? scope.surface.display_name : scope.surface].find(v => typeof v === "string" && v.trim());
     const usedPct = num(l.percent);
     if (!name || usedPct === null || usedPct < 0) continue;
-    extra.push({ key: `weekly_scoped · ${String(name).slice(0, 30)}`, usedPct: Math.min(100, usedPct), resetsAt: toEpochSec(l.resets_at) });
+    extra.push({ key: `${l.kind} · ${String(name).slice(0, 30)}`.slice(0, 40), usedPct: Math.min(100, usedPct), resetsAt: toEpochSec(l.resets_at) });
   }
   return { fiveHour: win(json.five_hour), sevenDay: win(json.seven_day), extra: extra.slice(0, MAX_EXTRA) };
 }
@@ -269,6 +272,83 @@ export function noteRateLimitEvent(ev, now = Date.now()) {
 }
 export const latestStreamLimits = () => lastStream;
 
+// ── 오늘(한국 시간) 모델별 토큰 ────────────────
+// Claude Code 대화 기록(~/.claude/projects/**/*.jsonl)의 assistant 줄에 message.model·usage 가 있다. 상태 훅은 모델을 보내지 않아서
+// 여기서 모델 이름과 토큰 수만 센다(대화 내용은 읽어도 보내지 않음). 상태 훅과 같이 입력+출력+캐시 생성만, 한 응답은 message.id 별 최댓값.
+export const MODEL_FAMILIES = ["fable", "opus", "sonnet", "haiku", "other"];
+export const modelFamily = id => (typeof id === "string" && /fable|opus|sonnet|haiku/i.test(id) ? id.toLowerCase().match(/fable|opus|sonnet|haiku/)[0] : "other");
+export const kstDay = ms => new Date(ms + 9 * 3600 * 1000).toISOString().slice(0, 10);
+const MAX_TRANSCRIPT_FILES = 400;
+const MAX_TRANSCRIPT_BYTES = 300 * 1024 * 1024;
+
+// 오늘 바뀐 기록 파일(하위 폴더 3단계까지). 오래된 파일은 열지 않는다.
+function todayTranscripts(root, sinceMs) {
+  const out = [];
+  const walk = (dir, depth) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (out.length >= MAX_TRANSCRIPT_FILES) return;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (depth < 3) walk(p, depth + 1);
+      } else if (e.name.endsWith(".jsonl")) {
+        try {
+          const st = fs.statSync(p);
+          if (st.mtimeMs >= sinceMs) out.push({ p, size: st.size });
+        } catch {
+          /* 지워졌으면 건너뜀 */
+        }
+      }
+    }
+  };
+  walk(root, 0);
+  return out;
+}
+
+// 반환: { date, models:{ fable, opus, sonnet, haiku, other } } 또는 null(기록 폴더가 없거나 읽을 게 없음)
+export function readModelTokens({ env = process.env, now = Date.now() } = {}) {
+  const root = path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
+  if (!fs.existsSync(root)) return null;
+  const date = kstDay(now);
+  const since = Date.parse(`${date}T00:00:00+09:00`);
+  const byId = new Map();
+  let bytes = 0;
+  for (const { p, size } of todayTranscripts(root, since)) {
+    if ((bytes += size) > MAX_TRANSCRIPT_BYTES) break;
+    let text = "";
+    try {
+      text = fs.readFileSync(p, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      if (!line.includes('"usage"') || !line.includes('"assistant"')) continue;
+      let o;
+      try {
+        o = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const m = isObj(o) && o.type === "assistant" && isObj(o.message) ? o.message : null;
+      const u = m && isObj(m.usage) ? m.usage : null;
+      const at = u ? Date.parse(o.timestamp) : NaN;
+      if (!u || !Number.isFinite(at) || kstDay(at) !== date) continue;
+      const tokens = (num(u.input_tokens) ?? 0) + (num(u.output_tokens) ?? 0) + (num(u.cache_creation_input_tokens) ?? 0);
+      const id = typeof m.id === "string" && m.id ? m.id : `${p}|${o.uuid}`; // 이어 연 대화가 같은 응답을 다시 적어도 한 번만
+      const cur = byId.get(id);
+      if (!cur || tokens > cur.tokens) byId.set(id, { family: modelFamily(m.model), tokens });
+    }
+  }
+  const models = Object.fromEntries(MODEL_FAMILIES.map(f => [f, 0]));
+  for (const { family, tokens } of byId.values()) models[family] += Math.max(0, Math.round(tokens));
+  return { date, models };
+}
+
 function readClaudeCredentials(env = process.env) {
   const dir = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
   const cred = JSON.parse(fs.readFileSync(path.join(dir, ".credentials.json"), "utf8"));
@@ -281,8 +361,16 @@ function readClaudeCredentials(env = process.env) {
 export const backoffMs = fails => BACKOFF_STEPS_MS[Math.min(Math.max(fails, 1), BACKOFF_STEPS_MS.length) - 1];
 
 // 한 번 읽어서 보낸다. state.claude 의 쉬는 시간을 지키고 갱신한다. 반환 result: "ok" | 실패 이유(토큰 값은 절대 넣지 않음)
-export async function collectClaudeOnce({ env = process.env, fetchImpl = fetch, post = postLimits, now = Date.now(), state = {}, stream = latestStreamLimits() } = {}) {
+export async function collectClaudeOnce({ env = process.env, fetchImpl = fetch, post = postLimits, now = Date.now(), state = {}, stream = latestStreamLimits(), readTokens = readModelTokens } = {}) {
   const prev = isObj(state.claude) ? state.claude : {};
+  // 오늘 모델별 토큰은 한도 수집 성공·실패와 상관없이 같이 보낸다(못 읽으면 빼고 보냄)
+  let modelTokens = null;
+  try {
+    modelTokens = readTokens({ env, now });
+  } catch {
+    modelTokens = null;
+  }
+  const withTokens = body => (modelTokens ? { ...body, modelTokens } : body);
   // 자동 수집이 안 될 때: 일감 출력에서 본 값이 10분 안이면 그걸 보낸다(서버가 더 최근 값과 비교)
   const sendStream = async () => (stream && now - stream.at <= STREAM_FRESH_MS ? post({ provider: "claude", source: "stream", status: "ok", measuredAt: Math.round(stream.at / 1000), ...stream.limits }, env) : false);
   if (prev.until && now < prev.until) {
@@ -312,7 +400,7 @@ export async function collectClaudeOnce({ env = process.env, fetchImpl = fetch, 
   }
   if (limits) {
     state.claude = {};
-    const sent = await post({ provider: "claude", source: "auto", status: "ok", measuredAt: Math.round(now / 1000), ...limits }, env);
+    const sent = await post(withTokens({ provider: "claude", source: "auto", status: "ok", measuredAt: Math.round(now / 1000), ...limits }), env);
     return { result: "ok", sent };
   }
   if (backoff) {
@@ -321,7 +409,7 @@ export async function collectClaudeOnce({ env = process.env, fetchImpl = fetch, 
     state.claude = { fails, until: now + wait, reason };
     reason = `${reason} · ${Math.round(wait / 60000)}분 뒤 다시`;
   } else state.claude = {};
-  const sent = await post({ provider: "claude", source: "auto", status: "failed", reason }, env);
+  const sent = await post(withTokens({ provider: "claude", source: "auto", status: "failed", reason }), env);
   const streamSent = await sendStream();
   return { result: reason, sent, streamSent };
 }

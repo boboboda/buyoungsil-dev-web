@@ -553,6 +553,7 @@ model AiUsageLimit {
   failReason       String? // 그 실패의 짧은 사유(예: "HTTP 429 요청 제한 · 15분 뒤 다시")
   source           String? // 지금 값의 출처: statusline | auto | stream
   extraWindows     Json? // 모델별 주간 한도 등: { asOf, windows: [{ key, usedPct, resetsAt }] }
+  modelTokens      Json? // 오늘(KST) 모델별 토큰 수: { date, asOf, models: { fable, opus, sonnet, haiku, other } } (claude 만)
   updatedAt        DateTime  @updatedAt
 
   @@map("ai_usage_limits")

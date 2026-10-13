@@ -52,7 +52,7 @@ const topBar = loadTs("components/admin/ui/AdminTopBar.tsx", {
   "@/components/admin/ui/meters": meters,
   "@/config/site": site,
 });
-const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters });
+const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters, "@/lib/claude-status/fable": loadTs("lib/claude-status/fable.ts") });
 const adminLayoutDeps = {
   "./admin-ui.css": {},
   "@/config/fonts": { fontMono: { variable: "" } },

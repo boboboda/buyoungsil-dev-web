@@ -28,6 +28,26 @@ export interface LimitWindowInput {
   resetsAt: Date;
 }
 
+// 오늘(KST) 모델별 토큰 수(입력+출력+캐시 생성). 작업 PC 의 Claude Code 대화 기록에서 모델 이름으로 나눠 센다.
+export const MODEL_FAMILIES = [
+  "fable",
+  "opus",
+  "sonnet",
+  "haiku",
+  "other",
+] as const;
+
+export type ModelFamily = (typeof MODEL_FAMILIES)[number];
+
+export interface ModelTokensInput {
+  date: string; // yyyy-MM-dd (KST)
+  models: Record<ModelFamily, number>;
+}
+
+export interface ModelTokensView extends ModelTokensInput {
+  asOf: number; // 받은 시각(ms)
+}
+
 export interface LimitsPayload {
   provider: LimitProvider;
   device: string;
@@ -38,6 +58,7 @@ export interface LimitsPayload {
   fiveHour: LimitWindowInput | null;
   sevenDay: LimitWindowInput | null;
   extra?: ExtraWindowInput[]; // 보낸 경우에만 덮어씀(상태줄은 안 보냄 → 지난 값 유지)
+  modelTokens?: ModelTokensInput; // claude 만, 보낸 경우에만 덮어씀
 }
 
 export type LimitsValidateResult =
@@ -68,6 +89,7 @@ export interface UsageLimitsView {
   source: LimitSource | null; // 지금 보이는 값의 출처
   extra: ExtraWindowView[]; // 모델별 주간 한도 등(없으면 빈 배열)
   extraAsOf: number | null;
+  modelTokens: ModelTokensView | null; // 모델별 토큰 수(받은 적 없으면 null). 날짜가 오늘이 아니면 화면이 숨긴다
   device: string;
 }
 
@@ -82,6 +104,7 @@ export interface UsageLimitRow {
   source?: string | null;
   failReason?: string | null;
   extraWindows?: unknown; // { asOf: ms, windows: [{ key, usedPct, resetsAt(ms)|null }] }
+  modelTokens?: unknown; // { date, asOf: ms, models: { fable, opus, sonnet, haiku, other } }
 }
 
 export const LIMIT_STALE_MS = 30 * 60 * 1000;
@@ -170,6 +193,36 @@ function parseExtra(
   return out;
 }
 
+const MAX_MODEL_TOKENS = 1_000_000_000_000;
+
+// 모델별 토큰 수. 없으면 undefined(지난 값 유지), 형식이 틀리면 "invalid". 빠진 모델은 0.
+export function parseModelTokens(
+  v: unknown,
+): ModelTokensInput | undefined | "invalid" {
+  if (v === undefined || v === null) return undefined;
+  if (!isRecord(v) || !isRecord(v.models)) return "invalid";
+  if (typeof v.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v.date))
+    return "invalid";
+
+  const src = v.models;
+  const models = {} as Record<ModelFamily, number>;
+
+  for (const f of MODEL_FAMILIES) {
+    const n = src[f] ?? 0;
+
+    if (
+      typeof n !== "number" ||
+      !Number.isFinite(n) ||
+      n < 0 ||
+      n > MAX_MODEL_TOKENS
+    )
+      return "invalid";
+    models[f] = Math.floor(n);
+  }
+
+  return { date: v.date, models };
+}
+
 // 읽은 시각(유닉스 초). 없으면 null(받은 시각을 씀), 미래면 지금으로, 6시간 넘게 지난 값은 "invalid".
 function parseMeasuredAt(v: unknown, now: number): Date | null | "invalid" {
   if (v === undefined || v === null) return null;
@@ -220,6 +273,15 @@ export function validateLimitsPayload(
   )
     return { ok: false, reason: "source 가 올바르지 않습니다." };
 
+  // 모델별 토큰 수는 claude 만 받는다(codex 가 보내면 무시). 한도 수집이 실패해도 같이 온다.
+  const modelTokens =
+    provider === "claude" ? parseModelTokens(body.modelTokens) : undefined;
+
+  if (modelTokens === "invalid")
+    return { ok: false, reason: "modelTokens 가 올바르지 않습니다." };
+
+  const tokensPart = modelTokens !== undefined ? { modelTokens } : {};
+
   if (status === "failed") {
     return {
       ok: true,
@@ -232,6 +294,7 @@ export function validateLimitsPayload(
         reason: cleanText(body.reason, 80),
         fiveHour: null,
         sevenDay: null,
+        ...tokensPart,
       },
     };
   }
@@ -266,9 +329,15 @@ export function validateLimitsPayload(
       fiveHour,
       sevenDay,
       ...(extra !== undefined ? { extra } : {}),
+      ...tokensPart,
     },
   };
 }
+
+const modelTokensData = (p: LimitsPayload, now: Date) =>
+  p.modelTokens !== undefined
+    ? { modelTokens: { ...p.modelTokens, asOf: now.getTime() } }
+    : {};
 
 // 최신 스냅샷 1행을 덮어쓴다. 실패 보고는 마지막 값을 남기고 실패 시각·사유만 적는다.
 // 값은 읽은 시각(measuredAt)이 저장된 값(asOf)보다 최근일 때만 덮어쓴다 → 상태줄·자동수집 중 더 최근 값이 남는다.
@@ -278,7 +347,11 @@ export async function saveLimits(
   now = new Date(),
 ): Promise<{ saved: boolean }> {
   if (p.status === "failed") {
-    const fail = { failedAt: now, failReason: p.reason };
+    const fail = {
+      failedAt: now,
+      failReason: p.reason,
+      ...modelTokensData(p, now),
+    };
 
     await prisma.aiUsageLimit.upsert({
       where: { provider: p.provider },
@@ -295,8 +368,16 @@ export async function saveLimits(
     select: { asOf: true },
   });
 
-  if (prev?.asOf && asOf.getTime() <= prev.asOf.getTime())
+  if (prev?.asOf && asOf.getTime() <= prev.asOf.getTime()) {
+    // 한도 값은 더 오래돼 버려도, 같이 온 모델별 토큰 수는 방금 센 값이라 남긴다
+    if (p.modelTokens !== undefined)
+      await prisma.aiUsageLimit.update({
+        where: { provider: p.provider },
+        data: modelTokensData(p, now),
+      });
+
     return { saved: false };
+  }
 
   // 창이 빠져 있으면(이미 초기화돼 Claude Code 가 뺀 경우 등) 지난 값도 지운다.
   // 실패 표시는 자동수집이 성공했을 때만 지운다. 상태줄 값이 와도 남겨 두고, 화면은 실패 뒤에 값이 왔으면 실패를 숨긴다.
@@ -321,6 +402,7 @@ export async function saveLimits(
           },
         }
       : {}),
+    ...modelTokensData(p, now),
   };
 
   await prisma.aiUsageLimit.upsert({
@@ -361,6 +443,14 @@ function extraView(
   return { extra, extraAsOf: typeof v.asOf === "number" ? v.asOf : null };
 }
 
+function modelTokensView(v: unknown): ModelTokensView | null {
+  if (!isRecord(v) || typeof v.asOf !== "number") return null;
+
+  const parsed = parseModelTokens(v);
+
+  return parsed && parsed !== "invalid" ? { ...parsed, asOf: v.asOf } : null;
+}
+
 function windowView(
   pct: number | null,
   resetsAt: Date | null,
@@ -399,6 +489,7 @@ export function toLimitsView(
     failReason: failing ? (row.failReason ?? null) : null,
     source: asOf !== null ? source : null,
     ...extraView(row.extraWindows, now),
+    modelTokens: modelTokensView(row.modelTokens),
     device: row.device,
   };
 }

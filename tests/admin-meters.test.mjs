@@ -26,7 +26,8 @@ function loadTs(relative, dependencies = {}) {
 }
 
 const m = loadTs("components/admin/ui/meters.tsx");
-const dash = loadTs("components/admin/factory/UsageDash.tsx", { "@/components/admin/ui/meters": m });
+const fable = loadTs("lib/claude-status/fable.ts");
+const dash = loadTs("components/admin/factory/UsageDash.tsx", { "@/components/admin/ui/meters": m, "@/lib/claude-status/fable": fable });
 const html = (el) => renderToStaticMarkup(el);
 const count = (s, re) => (s.match(re) ?? []).length;
 
@@ -154,9 +155,9 @@ test("AI USAGE 패널: 한도마다 한 행(사용 %·막대·남은 %·초기�
   assert.match(out, /class="fx-hud fx-dash"/);
   assert.match(out, /<h2 class="fx-hud-title" id="usage-dash-title">AI USAGE/);
   assert.doesNotMatch(out, /fx-gauge/, "반원 게이지는 행 형태로 바뀜");
-  // 한도 4행 = 막대 4개 + 오늘/어제 막대 2개
-  assert.equal(count(out, /class="fx-limit"/g), 4);
-  assert.equal(count(out, /role="meter"/g), 6);
+  // 한도 5행(Claude 2 + Fable 주간 '값 없음' 1 + Codex 2) = 막대 5개 + 오늘/어제 막대 2개(모델별 값이 없으면 비율 막대 없음)
+  assert.equal(count(out, /class="fx-limit"/g), 5);
+  assert.equal(count(out, /role="meter"/g), 7);
   assert.match(out, /aria-label="Claude 5시간 사용률"[^>]*aria-valuenow="23"[^>]*aria-valuetext="23% 사용 \(정상\)"/);
   assert.match(out, /<span class="fx-limit-pct fx-ok">23<span class="fx-limit-unit">%<\/span>/, "굵고 큰 사용 %");
   assert.match(out, /<span class="fx-limit-pct fx-bad">92/);
@@ -165,6 +166,10 @@ test("AI USAGE 패널: 한도마다 한 행(사용 %·막대·남은 %·초기�
   assert.match(out, /남은 77% · 초기화까지 2시간 11분/);
   assert.match(out, /남은 8% · 초기화까지 3일 3시간/);
   assert.ok(count(out, /12:05 갱신 · 3분 전/g) >= 4, "행마다 갱신 시각");
+  // Fable 값을 못 받았으면 0% 가 아니라 '값 없음(한도 정보 못 받음)'
+  assert.match(out, /aria-label="Claude Fable 주간 한도 사용률"[^>]*aria-valuetext="값 없음"/);
+  assert.match(out, /<span>값 없음\(한도 정보 못 받음\)<\/span>/);
+  assert.match(out, /모델별 값 없음\(작업 PC 에서 아직 안 보냄\)/);
   assert.match(out, /<span>수신 중<\/span>/, "Claude LED");
   // 오늘 사용량 1.3M(=1,250,000), 어제 대비 + 스파크라인
   assert.match(out, /fx-digits-value">1\.3M</);
@@ -179,13 +184,13 @@ test("AI USAGE 패널: 한도마다 한 행(사용 %·막대·남은 %·초기�
   // 패널 아래 마지막 갱신
   assert.match(out, /패널 갱신 12:08:00 · 10초 전/);
   // 좁은 화면 요약 줄 + 접힘
-  assert.match(out, /Claude 5h 23% · 7d 92%/);
+  assert.match(out, /Claude 5h 23% · 7d 92% · Fable 주 --/);
   assert.match(out, /aria-expanded="false"/);
   assert.match(out, /class="hidden fx-dash-body lg:flex"/);
   assert.match(html(h(dash.UsageDashView, { stats: stats(), now, open: true })), /aria-expanded="true"[\s\S]*class="flex fx-dash-body lg:flex"/);
 });
 
-test("AI USAGE 패널: 행마다 출처(상태줄/자동수집/일감 출력), 자동수집 실패 사유 + 지난 값, 모델별 주간 한도는 키 그대로", () => {
+test("AI USAGE 패널: 행마다 출처(상태줄/자동수집/일감 출력), 자동수집 실패 사유 + 지난 값, Fable 은 따로 카드(한국어 이름), 나머지 추가 창은 키 그대로", () => {
   const now = AS_OF + 30_000;
   const claude = limits({
     source: "auto",
@@ -196,10 +201,13 @@ test("AI USAGE 패널: 행마다 출처(상태줄/자동수집/일감 출력), �
     extraAsOf: AS_OF,
   });
   const out = html(h(dash.UsageDashView, { stats: stats({ limits: claude }), now }));
-  assert.equal(count(out, /class="fx-limit"/g), 4, "Claude 5시간·7일 + 추가 2행");
+  assert.equal(count(out, /class="fx-limit"/g), 4, "Claude 5시간·7일 + opus 1행 + Fable 주간 1행");
   assert.ok(count(out, /12:05 갱신 · 30초 전 · 자동수집/g) >= 4);
-  assert.match(out, /<span class="fx-limit-label">weekly_scoped · Fable<\/span>/);
-  assert.match(out, /aria-label="Claude weekly_scoped · Fable 사용률"[^>]*aria-valuenow="12"/);
+  assert.doesNotMatch(out, /weekly_scoped/, "내부 이름은 화면에 안 보임");
+  assert.match(out, /<h3 class="fx-dash-sub">Fable<\/h3>/);
+  assert.match(out, /<span class="fx-limit-label">Fable 주간 한도<\/span>/);
+  assert.match(out, /aria-label="Claude Fable 주간 한도 사용률"[^>]*aria-valuenow="12"/);
+  assert.match(out, /Fable 주 12%/, "좁은 화면 요약 줄에도 Fable");
   assert.match(out, /남은 88% · 초기화까지 1일 6시간/);
   assert.match(out, /<span class="fx-limit-label">seven_day_opus<\/span>/);
   assert.match(out, /<span>남은 97%<\/span>/, "초기화 시각이 없으면 남은 %만");
@@ -257,7 +265,7 @@ const top = loadTs("components/admin/ui/AdminTopBar.tsx", {
   "@/components/admin/ui/meters": m,
   "@/config/site": site,
 });
-const bar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": m });
+const bar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": m, "@/lib/claude-status/fable": fable });
 
 test("관리자 상단바: 메뉴 순서·지금 위치 강조·사이트로·시각·로그아웃", () => {
   assert.deepEqual(
@@ -294,15 +302,15 @@ test("관리자 하단 상태줄: 연결·일감·응답·빌드·AI 요약, 값
     codex: limits({ fiveHour: { usedPct: 0, resetsAt: AS_OF + HOUR, reset: false }, sevenDay: { usedPct: 17, resetsAt: AS_OF + HOUR, reset: false } }),
   };
   const texts = bar.statusBarParts(data, now).map((p) => p.text);
-  assert.deepEqual(texts, ["감독 연결됨", "진행 1 · 대기 2", "응답 12:05 (3분 전)", "빌드 83793a9", "Claude 5h 23% · 7d 41% | Codex 5h 0% · 주 17%"]);
+  assert.deepEqual(texts, ["감독 연결됨", "진행 1 · 대기 2", "응답 12:05 (3분 전)", "빌드 83793a9", "Claude 5h 23% · 7d 41% · Fable 주 - | Codex 5h 0% · 주 17%"]);
   assert.equal(bar.statusBarParts(data, now)[0].tone, "ok");
 
   const off = bar.statusBarParts({ ...data, supervisor: { ...data.supervisor, online: false } }, now);
   assert.equal(off[0].text, "감독 끊김");
   assert.equal(off[0].tone, "bad");
 
-  assert.deepEqual(bar.statusBarParts(null, now).map((p) => p.text), ["감독 -", "진행 - · 대기 -", "응답 -", "빌드 -", "Claude 5h - · 7d - | Codex 5h - · 주 -"]);
-  assert.equal(bar.aiSummary(limits({ fiveHour: { usedPct: 9, resetsAt: 0, reset: true } }), null), "Claude 5h - · 7d 92% | Codex 5h - · 주 -", "초기화된 창은 -");
+  assert.deepEqual(bar.statusBarParts(null, now).map((p) => p.text), ["감독 -", "진행 - · 대기 -", "응답 -", "빌드 -", "Claude 5h - · 7d - · Fable 주 - | Codex 5h - · 주 -"]);
+  assert.equal(bar.aiSummary(limits({ fiveHour: { usedPct: 9, resetsAt: 0, reset: true } }), null), "Claude 5h - · 7d 92% · Fable 주 - | Codex 5h - · 주 -", "초기화된 창은 -");
   assert.equal(bar.statusBarParts(null, now, "상태 갱신 실패").at(-1).text, "상태 갱신 실패");
 
   const out = html(h(bar.AdminStatusBarView, { data, now }));

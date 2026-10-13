@@ -23,6 +23,7 @@
     "test:toolbox": "node tests/toolbox.test.mjs",
     "test:device-stats": "node tests/device-stats.test.mjs",
     "test:claude-model": "node tests/claude-model.test.mjs",
+    "test:fable-usage": "node tests/fable-usage.test.mjs",
     "preview:admin-ui":"node tests/admin-ui-preview.mjs",
     "lint": "eslint --fix --color"
   },
