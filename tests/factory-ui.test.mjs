@@ -207,4 +207,4 @@ export function Button({ children, isDisabled, onPress, color, size, variant, ..
   rmSync(dir, { recursive: true, force: true });
 }
 
-console.log("factory-ui: 탭 5개·탭 전환·상태 색·진행 막대·단계 표시·프로젝트 연결 칸·빈 상태·탭 구성·옛 주소·다크 범위 시험 통과");
+console.log("factory-ui: 탭 6개·탭 전환·상태 색·진행 막대·단계 표시·프로젝트 연결 칸·빈 상태·탭 구성·옛 주소·다크 범위 시험 통과");
