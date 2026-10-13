@@ -4,7 +4,7 @@
 // 앞 지시가 실패하면 대기열이 멈추고 [계속 진행]·[재시도]·[대기열 비우기]. 배포는 대기열이 다 끝난 뒤 한 번([지금 배포]는 확인 뒤 언제든).
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Button, Chip } from "@heroui/react";
 import AiEngineSelect from "./AiEngineSelect";
 import ClaudeModelSelect, { ModelTag } from "./ClaudeModelSelect";
@@ -16,6 +16,7 @@ interface Msg {
   aiEngine?: AiEngine;
   aiModel?: string | null; // 지시: 고른 모델, 결과: 실행한 모델(없으면 기본 설정)
   id: string;
+  turnId?: string | null; // 로그(log): 이 로그를 남긴 지시 id(예전 로그는 없음)
   role: "user" | "assistant" | "log" | "system";
   text: string;
   status: string | null;
@@ -98,6 +99,32 @@ function deployState(t: Thread): string | null {
   return null;
 }
 
+/** 지시 하나의 진행 로그. 진행 중이면 펼쳐서 아래로 따라가고, 끝난 지시는 접어 두었다가 눌러서 다시 열어 본다. */
+export function TurnLogs({ logs, running }: { logs: Msg[]; running: boolean }) {
+  const end = useRef<HTMLDivElement>(null);
+  const last = logs[logs.length - 1]?.id;
+
+  useEffect(() => {
+    if (running) end.current?.scrollIntoView({ block: "nearest" });
+  }, [last, running]);
+
+  if (logs.length === 0) return running ? <p className="ml-6 text-xs text-default-500">아직 로그가 없어요.</p> : null;
+
+  return (
+    <details className="ml-6 text-xs" open={running}>
+      <summary className="cursor-pointer text-default-500">진행 로그 {logs.length}줄{running ? " (실시간)" : ""}</summary>
+      <div className="mt-1 max-h-72 overflow-y-auto break-words rounded-lg border border-default-200 bg-background p-3 font-mono text-xs leading-relaxed">
+        {logs.map((l) => (
+          <div key={l.id}>
+            <span className="text-default-400">{new Date(l.createdAt).toLocaleTimeString("ko-KR", { hour12: false })}</span> {l.text}
+          </div>
+        ))}
+        <div ref={end} />
+      </div>
+    </details>
+  );
+}
+
 export default function MaintenancePanel() {
   const [data, setData] = useState<Data | null>(null);
   const [sel, setSel] = useState<string>("new");
@@ -165,7 +192,14 @@ export default function MaintenancePanel() {
   const canSend = sel === "new" || (thread && thread.status === "open");
   const queue = data?.queue;
   const bundle = data?.deploy;
-  const visible = thread?.messages.filter((m) => showLogs || m.role !== "log") ?? [];
+  // 지시에 묶인 로그는 그 지시 밑에 보이고, 지시 없는 예전 로그만 [로그 보기]로 섞어 본다
+  const logsByTurn = new Map<string, Msg[]>();
+
+  for (const m of thread?.messages ?? []) {
+    if (m.role === "log" && m.turnId) logsByTurn.set(m.turnId, [...(logsByTurn.get(m.turnId) ?? []), m]);
+  }
+  const legacyLogs = thread?.messages.some((m) => m.role === "log" && !m.turnId) ?? false;
+  const visible = thread?.messages.filter((m) => (m.role !== "log" || (!m.turnId && showLogs))) ?? [];
 
   return (
     <div className="space-y-2">
@@ -351,9 +385,11 @@ export default function MaintenancePanel() {
         </select>
         {thread && (
           <div className="flex gap-2">
-            <Button className="min-h-11 flex-1 sm:min-h-0 sm:flex-none" size="sm" variant="light" onPress={() => setShowLogs((v) => !v)}>
-              {showLogs ? "로그 숨기기" : "로그 보기"}
-            </Button>
+            {legacyLogs && (
+              <Button className="min-h-11 flex-1 sm:min-h-0 sm:flex-none" size="sm" variant="light" onPress={() => setShowLogs((v) => !v)}>
+                {showLogs ? "이전 로그 숨기기" : "이전 로그 보기"}
+              </Button>
+            )}
             {thread.status === "open" && (
               <Button
                 className="min-h-11 flex-1 sm:min-h-0 sm:flex-none"
@@ -377,8 +413,8 @@ export default function MaintenancePanel() {
                 {m.text}
               </div>
             ) : (
+              <Fragment key={m.id}>
               <div
-                key={m.id}
                 className={`rounded-lg p-2 text-sm ${m.role === "user" ? "ml-6 bg-primary-50 dark:bg-primary-50/10" : m.role === "system" ? "bg-warning-50 text-xs dark:bg-warning-50/10" : "mr-6 bg-default-100"}`}
               >
                 <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-default-500">
@@ -424,6 +460,8 @@ export default function MaintenancePanel() {
                   </Button>
                 )}
               </div>
+              {m.role === "user" && <TurnLogs logs={logsByTurn.get(m.id) ?? []} running={m.status === "running"} />}
+              </Fragment>
             ),
           )}
           <div ref={bottom} />

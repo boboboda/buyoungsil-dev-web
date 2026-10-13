@@ -16,6 +16,7 @@ import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isAiEngine, readModelChoice, type AiEngine, type ClaudeModel } from "@/lib/factory/ai";
 import { maskSecrets } from "@/lib/factory/mask";
+import { MAX_LOGS_PER_JOB, MAX_LOG_MESSAGE } from "@/lib/factory/jobs";
 import { cleanHandoff } from "@/lib/factory/handoff";
 import { notifyDeployReady, notifyMaintenance, notifyText } from "@/lib/factory/telegram";
 import { getDefaultAiEngine, getDefaultClaudeModel, getSettingValue, isAutoDeployEnabled, setSettingValue } from "@/lib/factory/settings";
@@ -23,7 +24,8 @@ import { getDefaultAiEngine, getDefaultClaudeModel, getSettingValue, isAutoDeplo
 export const TURN_ACTIVE = ["queued", "running"] as const;
 const QUEUE_STATES = ["awaiting_approval", "queued", "running"];
 const MAX_TEXT = 8000;
-const MAX_LOGS_PER_TURN = 400;
+const MAX_LOGS_PER_TURN = MAX_LOGS_PER_JOB; // 앱 일감 로그와 같은 상한(지시마다 500줄·한 줄 2000자)
+const TURN_LOGS_SHOWN = 200; // 화면에 내려보내는 지시당 최근 로그 수(일감 상세와 같음)
 const STALE_MS = 20 * 60 * 1000; // 감독 프로그램 보고가 이만큼 없으면 멈춘 것으로 본다
 const COMMIT_RE = /^[0-9a-f]{7,40}$/;
 const HALT_KEY = "maintenanceQueueHalt"; // { turnId, threadId, at } 실패해서 멈춘 대기열
@@ -577,10 +579,10 @@ export async function reportTurn(body: TurnReport): Promise<Result> {
   const logs = Array.isArray(body.logs) ? body.logs.filter((l): l is string => typeof l === "string").slice(0, 50) : [];
 
   if (logs.length) {
-    const have = await prisma.factoryMaintenanceMessage.count({ where: { maintenanceId: turn.maintenanceId, role: "log", createdAt: { gte: turn.startedAt ?? turn.createdAt } } });
+    const have = await prisma.factoryMaintenanceMessage.count({ where: { turnId, role: "log" } });
     const room = Math.max(0, MAX_LOGS_PER_TURN - have);
 
-    if (room) await prisma.factoryMaintenanceMessage.createMany({ data: logs.slice(0, room).map((t) => ({ maintenanceId: turn.maintenanceId, role: "log", text: clean(t, 1500) || "-" })) });
+    if (room) await prisma.factoryMaintenanceMessage.createMany({ data: logs.slice(0, room).map((t) => ({ maintenanceId: turn.maintenanceId, role: "log", turnId, text: maskSecrets(clean(t, MAX_LOG_MESSAGE)) || "-" })) });
   }
 
   const d = body.done as Record<string, unknown> | undefined;
@@ -736,9 +738,14 @@ export async function maintenanceOverview(opts: { threadId?: string; limit?: num
           result: t.deployResult,
         },
         updatedAt: t.updatedAt,
-        messages: [...t.messages.filter((m) => m.role !== "log"), ...logs.slice(-60)]
+        // 지시에 묶인 로그는 지시마다 최근 TURN_LOGS_SHOWN 줄, 예전(지시 없는) 로그는 대화 전체 최근 60줄
+        messages: [
+          ...t.messages.filter((m) => m.role !== "log"),
+          ...logs.filter((m) => !m.turnId).slice(-60),
+          ...turns.flatMap((u) => logs.filter((m) => m.turnId === u.id).slice(-TURN_LOGS_SHOWN)),
+        ]
           .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-          .map((m) => ({ id: m.id, role: m.role, text: m.text, status: m.status, aiEngine: m.aiEngine, aiModel: m.aiModel, source: m.source, createdAt: m.createdAt, pushedCommit: m.pushedCommit, deployedAt: m.deployedAt, handoff: m.role === "assistant" ? m.handoff : null })),
+          .map((m) => ({ id: m.id, role: m.role, turnId: m.turnId, text: maskSecrets(m.text), status: m.status, aiEngine: m.aiEngine, aiModel: m.aiModel, source: m.source, createdAt: m.createdAt, pushedCommit: m.pushedCommit, deployedAt: m.deployedAt, handoff: m.role === "assistant" ? m.handoff : null })),
       };
     }),
   };

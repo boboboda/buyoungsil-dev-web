@@ -831,6 +831,7 @@ model FactoryMaintenanceMessage {
   pushedCommit  String? // user 지시: 이 지시가 GitHub 에 올린 커밋
   needsDeploy   Boolean            @default(false) // user 지시: 서버 코드가 바뀌었는지
   deployedAt    DateTime? // user 지시: 이 지시의 커밋이 포함된 배포가 끝난 시각
+  turnId        String? // log: 이 로그를 남긴 지시(user 메시지) id. 예전 로그는 NULL
   handoff       Json? // assistant 결과: 이 지시가 끝날 때 남긴 인계 기록 항목(읽기 전용 표시용, lib/factory/handoff.ts)
   maintenance   FactoryMaintenance @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
 

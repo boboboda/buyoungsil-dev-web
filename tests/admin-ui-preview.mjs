@@ -62,6 +62,7 @@ const modelSelect = loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "
 const memoryReportLib = loadTs("lib/factory/memory-report.ts");
 const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx", { "@/lib/factory/memory-report": memoryReportLib }).default;
 const MemoryStatus = loadTs("components/admin/factory/MemoryStatus.tsx", { "@/lib/factory/memory-report": memoryReportLib }).default;
+const { TurnLogs } = loadTs("components/admin/factory/MaintenancePanel.tsx", { "./AiEngineSelect": () => null, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib, "./HandoffBox": { __esModule: true, default: () => null }, "@heroui/react": heroui });
 const slotsCard = loadTs("components/admin/factory/AppSlotsSettings.tsx");
 const { HistoryPanelView, ActiveStrip } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
 const { default: DefaultAiSettings } = loadTs("components/admin/factory/DefaultAiSettings.tsx", {
@@ -138,6 +139,7 @@ STATES.devices = { ...STATES.live, title: "장비 상태", devices: true, bar: {
 // 인계 기록 칸(일감 상세·정비 대화의 접이식, 읽기 전용): AI 블록이 있는 정비 항목 / 블록이 없고 실패한 앱 일감 항목 (하니스에서만 펼쳐서 찍는다)
 STATES["status-mix"] = { ...STATES.live, title: "[현황] 상태 체계", statusMix: true };
 STATES["app-slots"] = { ...STATES.live, title: "[설정] 동시에 만들 앱 수", appSlots: true };
+STATES.maintLog = { ...STATES.live, title: "정비 지시별 진행 로그", maintLog: true };
 STATES.handoff = { ...STATES.live, title: "인계 기록 칸", handoff: true };
 const handoffSample = {
   v: 1, kind: "maintenance", taskId: "turn1", title: "통제실 [현황] 이력에 앱 일감 추가", engine: "claude", model: "opus", at: "2026-10-13T09:10:18.000Z", status: "done",
@@ -236,6 +238,21 @@ const appSlotsPage = () => {
     ),
   );
 };
+const turnLog = (i, text) => ({ id: "l" + i, role: "log", turnId: "t", text, status: null, source: null, createdAt: new Date(now - (30 - i) * 1000).toISOString() });
+const maintLogPage = () =>
+  h("div", { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" }, h("div", { className: "fx-split-main space-y-2" },
+    h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+    h(FactoryTabs, { active: "maintenance" }),
+    h("div", { className: "ml-6 rounded-lg bg-primary-50 p-2 text-sm" }, "👤 지시 · 통제실 · 진행 중 — 정비 진행 로그 상세 보기"),
+    h(TurnLogs, { running: true, logs: [
+      turnLog(1, "정비 폴더 준비: selfdev (main ba65b77)"), turnLog(2, "모델: 기본 설정(--model 없음)"),
+      turnLog(3, "앱 일감이 진행 로그를 저장하는 방식을 먼저 찾아볼게요."), turnLog(4, "$ grep -rn FactoryJobLog lib app"),
+      turnLog(5, "Edit: lib/factory/maintenance.ts"), turnLog(6, "Edit: components/admin/factory/MaintenancePanel.tsx"),
+      turnLog(7, "검사: 감독 프로그램 문법, 타입 검사(tsc)…"),
+    ] }),
+    h("div", { className: "ml-6 mt-4 rounded-lg bg-primary-50 p-2 text-sm" }, "👤 지시 · 통제실 · 완료 — 이전 지시(끝난 뒤 로그를 다시 연 모습)"),
+    h(TurnLogs, { running: false, logs: [turnLog(11, "정비 폴더 준비: selfdev (main 6ec8917)"), turnLog(12, "$ npm run test:factory-status"), turnLog(13, "검사 통과 · 커밋 ba65b77")] }),
+  ));
 const handoffPage = () =>
   h("div", { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" }, h("div", { className: "fx-split-main space-y-4" },
     h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
@@ -493,6 +510,7 @@ function page(state) {
 
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
   if (st.model) return h(AdminLayout, null, modelApprove());
+  if (st.maintLog) return h(AdminLayout, null, maintLogPage());
   if (st.handoff) return h(AdminLayout, null, handoffPage());
   if (st.statusMix) return h(AdminLayout, null, statusMixPage());
   if (st.appSlots) return h(AdminLayout, null, appSlotsPage());
@@ -617,6 +635,7 @@ fs.mkdirSync(out, { recursive: true });
 const bodies = Object.fromEntries(Object.keys(STATES).map((k) => [k, renderToStaticMarkup(page(k))]));
 // 인계 기록 견본은 앞의 두 칸만 펼쳐서 찍는다(세 번째는 접힌 기본 모습)
 bodies.handoff = bodies.handoff.replace(/<details /g, (m, i, all) => (all.slice(0, i).split("<details ").length <= 2 ? "<details open=\"\" " : m));
+bodies.maintLog = bodies.maintLog.replace(/<details /g, "<details open=\"\" ");
 const scan = path.join(out, "admin-ui-scan.html");
 fs.writeFileSync(scan, Object.values(bodies).join("\n")); // Tailwind 가 쓰인 클래스를 찾을 수 있게 먼저 쓴다
 const postcss = require("postcss");
