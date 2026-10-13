@@ -22,6 +22,7 @@
     "test:factory-status": "node tests/factory-status.test.mjs",
     "test:home-stats": "node tests/home-stats.test.mjs",
     "test:admin-users": "node tests/admin-users.test.mjs",
+    "test:studio-projects": "node tests/studio-projects.test.mjs",
     "test:toolbox": "node tests/toolbox.test.mjs",
     "test:toolkit-tools": "node tests/toolkit-tools.test.mjs && node tools/factory-supervisor/tests/toolkitinfo.test.mjs",
     "test:device-stats": "node tests/device-stats.test.mjs",

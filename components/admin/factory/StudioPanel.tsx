@@ -1,0 +1,34 @@
+// components/admin/factory/StudioPanel.tsx
+// 통제실 [스튜디오] 탭: 홈페이지가 아는 앱(일감의 appSlug)을 [게임 스튜디오]·[앱 스튜디오]로 나눠 보이고, 도구 연결·스튜디오 주소를 저장한다.
+// 자료: 앱 목록 = factory_jobs(앱마다 가장 최근 일감, 완료된 앱 먼저), 도구 = 도구함이 보고받은 tools.json(ToolkitToolsPanel 과 같은 자료), 종류·연결 = factory_settings.studioProjects.
+// 읽기에 실패해도 통제실은 뜬다.
+import prisma from "@/lib/prisma";
+import { readToolkitView } from "@/lib/factory/toolkit";
+import { buildStudioApps, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
+
+import StudioWorkbench, { type StudioToolRow } from "./StudioWorkbench";
+
+export default async function StudioPanel() {
+  try {
+    const [jobs, setting, view] = await Promise.all([
+      prisma.factoryJob.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 500,
+        select: { appSlug: true, title: true, stack: true, status: true, finishedAt: true, kind: true },
+      }),
+      prisma.factorySetting.findUnique({ where: { key: STUDIO_PROJECTS_KEY } }),
+      readToolkitView(prisma),
+    ]);
+    const tools: StudioToolRow[] = view.rows.map((r) => ({ id: r.id, desc: r.desc, purpose: r.purpose, purposeSource: r.purposeSource, enabled: r.enabled }));
+
+    return <StudioWorkbench apps={buildStudioApps(jobs)} initial={readStudioProjects(setting?.value)} tools={tools} toolsReported={!!view.info && view.info.state === "ok"} />;
+  } catch (error) {
+    console.error("[studio] 스튜디오 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
+
+    return (
+      <p className="text-sm fx-muted" role="status">
+        ○ 확인 못 함 — 스튜디오 자료를 읽지 못했어요. 다른 탭은 그대로 쓸 수 있어요.
+      </p>
+    );
+  }
+}

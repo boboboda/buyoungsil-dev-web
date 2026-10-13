@@ -6,7 +6,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/factory/admin";
 import { isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
 import { cleanAppSlots, MAX_APP_SLOTS, MIN_APP_SLOTS, setAppSlots, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
-import { isPurpose, isToolId, PURPOSE_LABELS, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
+import { isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
+import { applyStudioPatch, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
 import prisma from "@/lib/prisma";
 import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS, toolBrokerLimitLabel } from "@/lib/factory/toolBroker";
 import { supervisorLog } from "@/lib/factory/supervisorLog";
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
     defaultClaudeModel?: unknown;
     toolBroker?: unknown;
     toolPurpose?: unknown;
+    studioProject?: unknown;
     enabled?: unknown;
     autoUpdate?: unknown;
     autoDeploy?: unknown;
@@ -106,6 +108,25 @@ export async function POST(req: NextRequest) {
     await setToolPurpose(prisma, tp.id, purpose);
 
     return NextResponse.json({ message: purpose ? `${tp.id} 의 용도를 '${PURPOSE_LABELS[purpose]}'로 저장했어요.` : `${tp.id} 의 용도를 자동 추정으로 되돌렸어요.`, id: tp.id, purpose });
+  }
+
+  // 스튜디오 프로젝트 설정: { studioProject: { appSlug, kind?: game|app, tools?: [도구 id], studioUrl?: https 주소 | null } }. 저장은 factory_settings 의 studioProjects 한 칸
+  if (body && Object.hasOwn(body, "studioProject")) {
+    const patch = body.studioProject as { appSlug?: unknown } | null;
+    const slug = typeof patch?.appSlug === "string" ? patch.appSlug.trim() : "";
+    const [row, known, view] = await Promise.all([
+      prisma.factorySetting.findUnique({ where: { key: STUDIO_PROJECTS_KEY } }),
+      slug ? prisma.factoryJob.findFirst({ where: { appSlug: slug }, select: { id: true } }) : null,
+      readToolkitView(prisma),
+    ]);
+    const res = applyStudioPatch(readStudioProjects(row?.value), body.studioProject, new Set(known ? [slug] : []), new Set(view.rows.map((r) => r.id)));
+
+    if (!res.ok) return NextResponse.json({ message: res.message }, { status: 400 });
+    const value = JSON.stringify(res.projects);
+
+    await prisma.factorySetting.upsert({ where: { key: STUDIO_PROJECTS_KEY }, create: { key: STUDIO_PROJECTS_KEY, value }, update: { value } });
+
+    return NextResponse.json({ message: res.message, studioProjects: res.projects });
   }
 
   // 도구 요청 중계: { toolBroker: { mode: off|report|allow, maxRequests?, toolTimeoutSec? } }

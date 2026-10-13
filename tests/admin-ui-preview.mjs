@@ -5,6 +5,7 @@
 //       · users(가입자 명단, 가짜 30명) · users-empty(가입자 0명)
 //       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
 //       · toolkit(통제실 [설정] 도구함 맨 위 '도구 목록'(사용 횟수 포함): 도구 5개, 용도 추정·저장 표시, 앞 두 개 펼침)
+//       · studio(통제실 [스튜디오] 탭: 게임 스튜디오, 프로젝트 선택·도구 체크·스튜디오 주소 링크, 미분류 1개)
 //       · history-merged(이력 [작업 진행] 탭: 상태별 묶음 보드) · history-jobs(이력 [앱 일감] 탭: 일감 20개 + 긴 결과 접힘)
 //       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
 //       · fable-usage(AI USAGE 의 Fable 주간 한도 카드 + 오늘 모델별 비율 + 상태바 Fable) · fable-missing(Fable 값 못 받음)
@@ -78,6 +79,8 @@ const toolboxLib = loadTs("lib/factory/toolbox.ts", { "@/lib/factory/toolBroker"
 const devicesLib = loadTs("lib/factory/devices.ts", { "@/lib/prisma": { __esModule: true, default: null } });
 const { DevicePanelView } = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters });
 const toolkitLib = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
+const studioLib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkitLib });
+const { default: StudioWorkbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/studioProjects": studioLib });
 const { ToolkitToolsView } = loadTs("components/admin/factory/ToolkitToolsPanel.tsx", {
   "@/lib/prisma": { __esModule: true, default: null },
   "@/lib/factory/toolkit": toolkitLib,
@@ -130,6 +133,7 @@ STATES["users-empty"] = { ...STATES.live, title: "가입자 명단 · 0명", use
 // 도구함 한눈에 보기(통제실 [설정] 맨 위): 중계 '허용' + 최근 기록 / 읽기 실패
 STATES.toolbox = { ...STATES.live, title: "도구함 · 중계 허용", toolbox: "live" };
 STATES.toolkit = { ...STATES.live, title: "도구함 · 툴킷 도구 상세", toolkit: true };
+STATES.studio = { ...STATES.live, title: "스튜디오 · 게임 스튜디오", studio: true };
 STATES["toolbox-failed"] = { ...STATES.live, title: "도구함 · 읽기 실패", toolbox: "failed" };
 // 장비 상태(통제실 [사용량] 맨 위): 서버1 CPU 위험·RAM 주의 + 컨테이너 5개, 서버2 40분 끊김(GPU 없음), 메인PC 12분 오래된 값(GPU 있음)
 const devRow = (device, ago, data) => ({ device, data, measuredAt: new Date(now - ago), receivedAt: new Date(now - ago) });
@@ -568,6 +572,36 @@ function page(state) {
         ),
       ),
     );
+  if (st.studio) {
+    const studioTools = toolkitView.rows.map((r) => ({ id: r.id, desc: r.desc, purpose: r.purpose, purposeSource: r.purposeSource, enabled: r.enabled })).concat([{ id: "setup-runtime", desc: "작업 PC 런타임 설치(사람이 직접 실행)", purpose: "common", purposeSource: "guess", enabled: true }]);
+    const studioApps = [
+      { appSlug: "saessak-hub", title: "새싹 허브", stack: "flutter", status: "done", finishedAt: "2026-10-12T01:02:03.000Z", done: true },
+      { appSlug: "memo-app", title: "메모", stack: "flutter", status: "running", finishedAt: null, done: false },
+      { appSlug: "timer-app", title: "타이머", stack: "flutter", status: "done", finishedAt: "2026-10-11T08:30:00.000Z", done: true },
+    ];
+
+    return h(
+      AdminLayout,
+      null,
+      h(
+        "div",
+        { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+        h(
+          "div",
+          { className: "fx-split-main" },
+          h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+          h(FactoryTabs, { active: "studio" }),
+          h(StudioWorkbench, {
+            apps: studioApps,
+            tools: studioTools,
+            toolsReported: true,
+            initialPicked: "saessak-hub",
+            initial: { "saessak-hub": { kind: "game", tools: ["pixel-generate", "pixel-slice"], studioUrl: "https://hub.example.com/studio/" }, "timer-app": { kind: "app", tools: [] } },
+          }),
+        ),
+      ),
+    );
+  }
   if (st.toolkit)
     return h(
       AdminLayout,

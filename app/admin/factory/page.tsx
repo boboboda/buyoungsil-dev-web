@@ -1,5 +1,5 @@
 // app/admin/factory/page.tsx
-// 앱 공장 통제실: 상단 탭(?tab=status|jobs|maint|supervisor|novels|release|settings|usage)으로 현황·일감·정비·감독·작품·출시·설정·사용량을 나눠 본다.
+// 앱 공장 통제실: 상단 탭(?tab=status|jobs|maint|supervisor|studio|novels|release|settings|usage)으로 현황·일감·정비·감독·스튜디오·작품·출시·설정·사용량을 나눠 본다.
 import { Metadata } from "next";
 
 import FactoryConsole from "@/components/admin/factory/FactoryConsole";

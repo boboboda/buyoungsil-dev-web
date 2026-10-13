@@ -7,6 +7,7 @@ export const FACTORY_TABS = [
   { key: "jobs", label: "일감" },
   { key: "maint", label: "정비" },
   { key: "supervisor", label: "감독" },
+  { key: "studio", label: "스튜디오" },
   { key: "novels", label: "작품" },
   { key: "release", label: "출시" },
   { key: "settings", label: "설정" },
