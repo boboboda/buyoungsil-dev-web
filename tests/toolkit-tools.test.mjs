@@ -162,3 +162,32 @@ test("도구별 사용 기록: 명령 이름별 30일 횟수·미상·기록 없
   assert.match(renderToStaticMarkup(h(ToolkitToolsView, { view, usage: null })), /최근 30일: 확인 못 함/);
   assert.doesNotMatch(renderToStaticMarkup(h(ToolkitToolsView, { view })), /data-tool-usage/, "usage 를 안 주면 칸이 없다");
 });
+
+test("모드: 있으면 읽고(clip→움짤·컷용 표기), 없거나 옛 형식이어도 그대로, 깨진 항목은 건너뛴다", async () => {
+  const modes = [
+    { id: "sprite", p: "game", w: "한 장짜리 소품", lg: "mode 없이 layout=single", io: "설명 → PNG" },
+    { id: "frames", p: "cut", w: "움짤 프레임", lg: "mode 없이 frames>1" },
+  ];
+  const withModes = lib.validateToolkitReport(report([tool("pixel-codex", { m: modes, tags: ["sprite", "gif"] }), tool("env-doctor")]), new Date(0)).info;
+  assert.deepEqual(withModes.tools[0].modes.map((m) => [m.id, m.purpose]), [["sprite", "game"], ["frames", "cut"]]);
+  assert.deepEqual(withModes.tools[1].modes, [], "모드 없는 도구");
+
+  const broken = lib.validateToolkitReport(report([tool("pixel-codex", { m: [null, 5, { id: "Bad Id" }, { id: "sprite", p: "weird", w: 7 }, { id: "sprite" }, "x"] })]), new Date(0)).info;
+  assert.deepEqual(broken.tools[0].modes, [{ id: "sprite", purpose: "unclassified", desc: "", legacy: "", io: "" }], "깨진 항목·중복은 버리고 하나만 남는다");
+  assert.deepEqual(lib.validateToolkitReport(report([tool("a", { m: "문자열" })]), new Date(0)).info.tools[0].modes, [], "m 이 배열이 아니면 모드 없음");
+
+  // 옛 형식으로 저장된 값(modes 칸 없음)도 읽힌다
+  const old = JSON.stringify({ ...withModes, tools: withModes.tools.map(({ modes: _m, ...rest }) => rest) });
+  const db = fakeDb({ toolkitInfo: old });
+  const view = await lib.readToolkitView(db);
+  assert.equal(view.rows.length, 2);
+  assert.deepEqual(view.rows[0].modes, []);
+  assert.doesNotMatch(renderToStaticMarkup(h(ToolkitToolsView, { view })), /data-toolkit-modes/);
+
+  // 화면: 모드 줄·배지·예전 호출, 도구 단위 개수는 모드를 섞지 않는다
+  const html = renderToStaticMarkup(h(ToolkitToolsView, { view: lib.buildToolkitView(withModes, {}) }));
+  assert.match(html, /data-toolkit-mode="sprite"[^>]*>.*게임용<\/b> · 한 장짜리 소품.*예전 호출: mode 없이 layout=single/);
+  assert.match(html, /data-toolkit-mode="frames"[^>]*>.*움짤·컷용<\/b> · 움짤 프레임/);
+  assert.match(html, /게임용 0 · 움짤·컷용 0 · 공용 1 · 미분류 1/, "도구 기준 개수");
+  assert.match(html, /보고된 도구 <b>2개<\/b>/);
+});

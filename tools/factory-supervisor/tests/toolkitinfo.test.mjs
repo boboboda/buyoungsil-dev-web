@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { collectToolkitInfo, fitReport, leadingDoc, scanEntry, startToolkitReport } from "../toolkitinfo.mjs";
+import { collectToolkitInfo, readModes, fitReport, leadingDoc, scanEntry, startToolkitReport } from "../toolkitinfo.mjs";
 
 const SECRET = "SECRET-VALUE-123";
 function makeKit(extraTools = {}) {
@@ -98,4 +98,25 @@ test("startToolkitReport: 같은 내용은 다시 보내지 않고 같은 경로
   assert.equal(calls[0].p, "/api/factory/device-stats");
   assert.equal(calls[0].body.device, "main-pc");
   assert.equal(calls[0].body.toolkit.state, "ok");
+});
+
+test("모드: 있으면 담고(clip→cut), 없으면 칸 자체가 없고, 깨진 항목은 건너뛴다", () => {
+  const modes = [
+    { id: "sprite", purpose: "game", when: "한 장짜리 소품", legacy: "mode 없이 layout=single", io: { in: ["설명"], out: ["PNG", "JSON"] } },
+    { id: "scene", purpose: "clip", when: "장면 한 컷", legacy: "background=keep" },
+    null,
+    "깨짐",
+    { id: "Bad Id", purpose: "game" },
+    { id: "sprite", purpose: "game" },
+  ];
+  const r = collectToolkitInfo(makeKit({ "pixel-codex": { description: "코덱스 도트", entry: "cli.py", args: [], modes }, "bad-modes": { description: "깨진 모드", entry: "cli.py", args: [], modes: "문자열" } }));
+  assert.equal(r.state, "ok");
+  const codex = r.tools.find((t) => t.id === "pixel-codex");
+  assert.deepEqual(codex.m.map((m) => [m.id, m.p]), [["sprite", "game"], ["scene", "cut"]]);
+  assert.equal(codex.m[0].lg, "mode 없이 layout=single");
+  assert.equal(codex.m[0].io, "설명 → PNG, JSON");
+  assert.equal(r.tools.find((t) => t.id === "pixel-anim").m, undefined, "모드 없는 도구는 m 이 없다");
+  assert.equal(r.tools.find((t) => t.id === "bad-modes").m, undefined, "modes 가 배열이 아니면 없는 것으로");
+  assert.deepEqual(readModes(undefined), []);
+  assert.ok(Buffer.byteLength(JSON.stringify(r)) <= 8192);
 });

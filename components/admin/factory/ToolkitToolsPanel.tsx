@@ -16,6 +16,24 @@ function usageLine(usage: Record<string, ToolUsage> | null | undefined, id: stri
   return u && u.total > 0 ? `최근 ${TOOLBOX_USAGE_DAYS}일 ${u.total}회 (성공 ${u.ok} · 거절 ${u.denied} · 실패 ${u.failed})` : "기록 없음";
 }
 
+// 모드별 한 줄(읽기 전용). 용도 배지는 도구 용도와 같은 표기, 색은 ToolkitPurposeSelect 의 강조(b)와 같은 기본 글자색
+function ModeList({ modes }: { modes: ToolkitRow["modes"] }) {
+  if (!modes?.length) return null;
+
+  return (
+    <div data-toolkit-modes>
+      <dt className="fx-label">모드 (읽기 전용)</dt>
+      {modes.map((m) => (
+        <dd className="break-words" data-toolkit-mode={m.id} key={m.id}>
+          <span className="font-mono font-semibold">{m.id}</span> · <b data-mode-purpose={m.purpose}>{PURPOSE_LABELS[m.purpose]}</b> · {m.desc || "설명 없음"}
+          {m.legacy ? <span className="fx-muted"> · 예전 호출: {m.legacy}</span> : null}
+          {m.io ? <span className="fx-muted"> · {m.io}</span> : null}
+        </dd>
+      ))}
+    </div>
+  );
+}
+
 function Row({ row, usage }: { row: ToolkitRow; usage?: Record<string, ToolUsage> | null }) {
   const used = usageLine(usage, row.id);
 
@@ -57,6 +75,7 @@ function Row({ row, usage }: { row: ToolkitRow; usage?: Record<string, ToolUsage
             <dd className="break-words">출력: {row.output}</dd>
             {row.argsMore ? <dd className="fx-muted">(인자 {row.argsMore}개는 크기 때문에 줄였어요)</dd> : null}
           </div>
+          <ModeList modes={row.modes} />
           <div>
             <dt className="fx-label">스크립트</dt>
             <dd className="break-all font-mono">

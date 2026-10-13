@@ -26,6 +26,18 @@ const TAGS = ["sheet", "atlas", "tilemap", "sprite", "gif", "webp", "apng", "cut
 const GAME_TAGS = ["sheet", "atlas", "tilemap", "sprite"];
 const CUT_TAGS = ["gif", "webp", "apng", "cut"];
 
+/** 도구의 모드(예: pixel-codex 의 sprite·sheet·scene·frames). 읽기 전용 표시용 */
+export interface ToolkitMode {
+  id: string;
+  purpose: Purpose;
+  desc: string; // 한 줄 설명(언제 쓰나)
+  legacy: string; // 예전 호출 매핑
+  io: string;
+}
+
+const MAX_MODES = 8;
+const MODE_ID_RE = /^[a-z][a-z0-9_]{0,39}$/;
+
 export interface ToolkitTool {
   id: string;
   desc: string;
@@ -42,7 +54,21 @@ export interface ToolkitTool {
   secrets: string[]; // 이름만
   timeoutSec: number;
   enabled: boolean;
+  modes: ToolkitMode[]; // 없으면 빈 배열(모드 없는 도구·옛 형식)
   modified: string; // YYYY-MM-DD
+}
+
+/** 보고의 m 배열 → 모드 목록. 깨진 항목은 버리고 나머지는 살린다 */
+function readModes(v: unknown): ToolkitMode[] {
+  if (!Array.isArray(v)) return [];
+  const out: ToolkitMode[] = [];
+
+  for (const m of v.slice(0, MAX_MODES)) {
+    if (!isRecord(m) || typeof m.id !== "string" || !MODE_ID_RE.test(m.id) || out.some((x) => x.id === m.id)) continue;
+    out.push({ id: m.id, purpose: isPurpose(m.p) ? m.p : "unclassified", desc: text(m.w, 200), legacy: text(m.lg, 200), io: text(m.io, 120) });
+  }
+
+  return out;
 }
 
 export interface ToolkitInfo {
@@ -102,6 +128,7 @@ export function validateToolkitReport(raw: unknown, now = new Date()): { ok: tru
       secrets: strList(t.sec, SECRET_RE, 8),
       timeoutSec: nonNeg(t.to, 3600),
       enabled: t.en !== false,
+      modes: readModes(t.m),
       modified: date(t.mod),
     });
   }
@@ -208,7 +235,9 @@ export function parseStoredInfo(raw: string | null | undefined): ToolkitInfo | n
 
     if (!isRecord(o) || !Array.isArray(o.tools) || (o.state !== "ok" && o.state !== "missing" && o.state !== "error")) return null;
 
-    return { ...(o as unknown as ToolkitInfo), tools: (o.tools as ToolkitTool[]).filter((t) => isRecord(t) && typeof t.id === "string" && Array.isArray(t.args)) };
+    const tools = (o.tools as ToolkitTool[]).filter((t) => isRecord(t) && typeof t.id === "string" && Array.isArray(t.args)).map((t) => ({ ...t, modes: Array.isArray(t.modes) ? t.modes : [] })); // 모드가 생기기 전에 저장된 값도 읽는다
+
+    return { ...(o as unknown as ToolkitInfo), tools };
   } catch {
     return null;
   }

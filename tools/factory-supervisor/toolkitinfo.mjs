@@ -96,6 +96,30 @@ const TAGS = [
 ];
 export const tagsOf = (text) => TAGS.filter(([, re]) => re.test(text)).map(([k]) => k);
 
+const MODE_PURPOSE = { game: "game", clip: "cut", cut: "cut", common: "common" }; // tools.json 의 clip → 통제실 표기 cut
+const MAX_MODES = 8;
+const ioText = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").join(", ") : "");
+
+/** tools.json 의 modes 배열 → 모드 목록. 모드가 없거나 형식이 깨진 항목은 건너뛴다(도구 자체는 그대로 읽는다) */
+export function readModes(raw) {
+  if (!Array.isArray(raw)) return [];
+  const modes = [];
+  for (const m of raw) {
+    if (!m || typeof m !== "object" || Array.isArray(m) || !ARG_NAME_RE.test(m.id ?? "") || modes.some((x) => x.id === m.id)) continue;
+    const io = m.io && typeof m.io === "object" ? m.io : {};
+    modes.push({
+      id: m.id,
+      purpose: MODE_PURPOSE[m.purpose] ?? "unclassified",
+      when: typeof m.when === "string" ? m.when : "",
+      legacy: typeof m.legacy === "string" ? m.legacy : "",
+      ioIn: ioText(io.in),
+      ioOut: ioText(io.out),
+    });
+    if (modes.length >= MAX_MODES) break;
+  }
+  return modes;
+}
+
 /** tools.json 한 항목(+진입·스크립트 글자) → 보고용 도구 */
 function describeTool(root, id, t, entryScan, entryFile) {
   const args = [];
@@ -125,16 +149,17 @@ function describeTool(root, id, t, entryScan, entryFile) {
     sec: (Array.isArray(t.secrets) ? t.secrets : []).filter((s) => typeof s === "string" && SECRET_NAME_RE.test(s)).slice(0, 8), // 이름만
     to: Number.isInteger(t.timeoutSec) ? t.timeoutSec : 0,
     en: t.enabled !== false,
+    modes: readModes(t.modes),
     mod: scriptFile ? new Date(scriptFile.mtimeMs).toISOString().slice(0, 10) : "",
   };
 }
 
 // 본문이 클 때 줄이는 단계: 앞 단계일수록 정보를 많이 남긴다
 const LEVELS = [
-  { desc: 220, doc: 200, opts: 30, argDesc: 0, args: 30 },
-  { desc: 140, doc: 100, opts: 15, argDesc: 0, args: 20 },
-  { desc: 90, doc: 0, opts: 0, argDesc: 0, args: 12 },
-  { desc: 50, doc: 0, opts: 0, argDesc: 0, args: 6 },
+  { desc: 220, doc: 200, opts: 30, argDesc: 0, args: 30, mWhen: 100, mLegacy: 100, mIo: 60 },
+  { desc: 140, doc: 100, opts: 15, argDesc: 0, args: 20, mWhen: 70, mLegacy: 70, mIo: 40 },
+  { desc: 90, doc: 0, opts: 0, argDesc: 0, args: 12, mWhen: 40, mLegacy: 40, mIo: 0 },
+  { desc: 50, doc: 0, opts: 0, argDesc: 0, args: 6, mWhen: 24, mLegacy: 24, mIo: 0 },
 ];
 
 function shape(tool, lv) {
@@ -154,6 +179,17 @@ function shape(tool, lv) {
     sec: tool.sec,
     to: tool.to,
     en: tool.en,
+    ...(tool.modes?.length
+      ? {
+          m: tool.modes.map((m) => ({
+            id: m.id,
+            p: m.purpose,
+            w: clip(m.when, lv.mWhen),
+            lg: clip(m.legacy, lv.mLegacy),
+            ...(lv.mIo ? { io: clip(`${m.ioIn} → ${m.ioOut}`, lv.mIo) } : {}),
+          })),
+        }
+      : {}),
     mod: tool.mod,
   };
 }
