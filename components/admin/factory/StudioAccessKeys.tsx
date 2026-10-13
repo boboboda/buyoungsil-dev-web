@@ -108,8 +108,8 @@ export default function StudioAccessKeys() {
 
         {pepperReady === false && (
           <p className="rounded-lg border border-warning-300 p-3 text-sm">
-            먼저 비밀값을 등록하세요. 위 &apos;외부 서비스 키&apos;에 이름 <span className="font-mono">STUDIO_KEY_PEPPER</span>, 값은 32자 이상의 아무
-            난수로 등록하면 발급할 수 있어요. 비밀값을 바꾸면 이미 발급한 키는 모두 다시 발급해야 해요.
+            먼저 비밀값을 등록하세요. 서버에 로그인용 시크릿이 없어 키 암호화용 비밀값을 자동으로 만들 수 없어요. 위 &apos;외부 서비스 키&apos;에 이름{" "}
+            <span className="font-mono">STUDIO_KEY_PEPPER</span>, 값은 32자 이상의 아무 난수로 등록하면 발급할 수 있어요.
           </p>
         )}
 

@@ -1,9 +1,11 @@
 // lib/studio/access.ts
 // Studio 접근 키: 통제실에서 앱 이름별로 발급·폐기하고, 서버1 nginx 가 auth_request 로 /api/studio-auth/verify 에 물어본다. docs/studio-access.md
 // - 키 원문은 발급 응답에서 딱 한 번만 나간다. DB 에는 HMAC-SHA256(서버 비밀값, 키) hex 만 둔다.
-// - 서버 비밀값: 환경변수 STUDIO_KEY_PEPPER → 없으면 통제실 '외부 서비스 키'에 등록한 서버 보관 키 STUDIO_KEY_PEPPER. 둘 다 없으면 발급·검증 불가.
-// - 키·해시·Authorization 헤더 값은 로그·오류·응답 본문에 넣지 않는다.
-import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+// - 서버 비밀값: 환경변수 STUDIO_KEY_PEPPER → 없으면 통제실 '외부 서비스 키'에 등록한 서버 보관 키 STUDIO_KEY_PEPPER
+//   → 그것도 없으면 로그인용 시크릿 NEXTAUTH_SECRET(없으면 AUTH_SECRET)에서 HKDF-SHA256(info "studio-access-key-v1")으로 유도한 값.
+//   유도에 쓴 시크릿이 바뀌면 이미 발급한 키는 모두 무효가 된다. 셋 다 없으면 발급·검증 불가.
+// - 키·해시·비밀값·Authorization 헤더 값은 로그·오류·응답 본문에 넣지 않는다.
+import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from "crypto";
 
 import prisma from "@/lib/prisma";
 import { readServerSecret } from "@/lib/factory/secretEntries";
@@ -12,6 +14,8 @@ export const STUDIO_APP_RE = /^[a-z0-9-]{3,40}$/;
 export const STUDIO_KEY_RE = /^stk_[A-Za-z0-9_-]{43}$/; // 32바이트 base64url
 export const PEPPER_NAME = "STUDIO_KEY_PEPPER";
 const MIN_PEPPER = 32;
+const MIN_DERIVE_BASE = 16; // lib/factory/keyPasswords.ts 의 암호화 키와 같은 기준
+const DERIVE_INFO = "studio-access-key-v1";
 const PEPPER_CACHE_MS = 60_000;
 const LAST_USED_EVERY_MS = 60_000;
 const MAX_AUTH_HEADER = 1024;
@@ -20,7 +24,19 @@ const MAX_AUTH_HEADER = 1024;
 
 let pepperCache: { value: string | null; at: number } | null = null;
 
-/** 해시용 서버 비밀값. 없거나 32자보다 짧으면 null. 1분 동안 기억한다. */
+/**
+ * STUDIO_KEY_PEPPER 가 없을 때 쓰는 이 용도 전용 값. 로그인 세션 서명용 NEXTAUTH_SECRET(없으면 middleware 가 쓰는 AUTH_SECRET)을
+ * 그대로 쓰지 않고 HKDF-SHA256 으로 유도한다. 시크릿이 없거나 짧으면 null.
+ */
+function derivedPepper(): string | null {
+  const base = process.env.NEXTAUTH_SECRET?.trim() || process.env.AUTH_SECRET?.trim() || "";
+
+  if (base.length < MIN_DERIVE_BASE) return null;
+
+  return Buffer.from(hkdfSync("sha256", base, "", DERIVE_INFO, 32)).toString("hex");
+}
+
+/** 해시용 서버 비밀값(STUDIO_KEY_PEPPER → 서버 보관 키 → 유도 값). 없으면 null. 1분 동안 기억한다. */
 export async function getPepper(): Promise<string | null> {
   const now = Date.now();
 
@@ -33,6 +49,7 @@ export async function getPepper(): Promise<string | null> {
 
     value = stored && stored.length >= MIN_PEPPER ? stored : null;
   }
+  if (!value) value = derivedPepper();
   pepperCache = { value, at: now };
 
   return value;
@@ -166,7 +183,7 @@ type Fail = { ok: false; status: number; message: string };
 const NO_PEPPER: Fail = {
   ok: false,
   status: 409,
-  message: `먼저 비밀값을 등록하세요. [설정] 탭 '외부 서비스 키'에 ${PEPPER_NAME}(32자 이상)를 등록하면 발급할 수 있어요.`,
+  message: `먼저 비밀값을 등록하세요. 서버에 로그인용 시크릿이 없어 자동으로 만들 수 없어요. [설정] 탭 '외부 서비스 키'에 ${PEPPER_NAME}(32자 이상)를 등록하면 발급할 수 있어요.`,
 };
 
 export function checkStudioApp(v: unknown): { ok: true; app: string } | Fail {

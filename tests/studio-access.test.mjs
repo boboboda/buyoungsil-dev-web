@@ -61,10 +61,15 @@ function fakeDb() {
   return { prisma, rows };
 }
 
-function setup({ pepper = PEPPER, session = { user: { role: "admin", email: "admin@example.test", id: "u1" } } } = {}) {
-  if (pepper) process.env.STUDIO_KEY_PEPPER = pepper;
-  else delete process.env.STUDIO_KEY_PEPPER;
-  const { prisma, rows } = fakeDb();
+const setEnv = (name, value) => (value ? (process.env[name] = value) : delete process.env[name]);
+
+// authSecret/authEnv: 유도에 쓰는 로그인용 시크릿. 기본은 없음(시험마다 따로 정한다). db 를 넘기면 같은 가짜 DB 를 이어 쓴다.
+function setup({ pepper = PEPPER, authSecret = null, authEnv = "NEXTAUTH_SECRET", db, session = { user: { role: "admin", email: "admin@example.test", id: "u1" } } } = {}) {
+  setEnv("STUDIO_KEY_PEPPER", pepper);
+  setEnv("NEXTAUTH_SECRET", null);
+  setEnv("AUTH_SECRET", null);
+  setEnv(authEnv, authSecret);
+  const { prisma, rows } = db ?? fakeDb();
   const access = loadTs("lib/studio/access.ts", {
     "@/lib/prisma": { __esModule: true, default: prisma },
     "@/lib/factory/secretEntries": { readServerSecret: async () => null },
@@ -76,7 +81,7 @@ function setup({ pepper = PEPPER, session = { user: { role: "admin", email: "adm
     "@/lib/studio/access": access,
   });
   const verify = loadTs("app/api/studio-auth/verify/route.ts", { "@/lib/studio/access": access });
-  return { access, admin, verify, rows, state };
+  return { access, admin, verify, rows, state, db: { prisma, rows } };
 }
 
 const SAME = { "sec-fetch-site": "same-origin", "content-type": "application/json" };
@@ -117,8 +122,8 @@ test("키 모양: stk_ + 32바이트 base64url, 해시는 HMAC hex", () => {
   assert.equal(access.checkStudioApp("sprout-hub").ok, true);
 });
 
-test("비밀값이 없으면 발급을 막고 안내한다", async () => {
-  const { admin, rows } = setup({ pepper: null });
+test("STUDIO_KEY_PEPPER 도 로그인용 시크릿도 없으면 발급을 막고 안내한다", async () => {
+  const { admin, rows } = setup({ pepper: null, authSecret: null });
   const res = await admin.POST(adminReq("POST", "sprout-hub"));
   const body = await res.json();
   assert.equal(res.status, 409);
@@ -127,6 +132,59 @@ test("비밀값이 없으면 발급을 막고 안내한다", async () => {
   assert.equal(rows.length, 0);
   const list = await (await admin.GET()).json();
   assert.equal(list.pepperReady, false);
+});
+
+test("STUDIO_KEY_PEPPER 가 없어도 로그인용 시크릿에서 유도한 값으로 발급→204, 응답·목록·로그에 비밀값 없음", async () => {
+  for (const authEnv of ["NEXTAUTH_SECRET", "AUTH_SECRET"]) {
+    const authSecret = randomBytes(24).toString("base64url");
+    const { admin, verify, access, rows } = setup({ pepper: null, authSecret, authEnv });
+    const before = logs.length;
+    const res = await admin.POST(adminReq("POST", "sprout-hub"));
+    const text = await res.text();
+    assert.equal(res.status, 200, authEnv);
+    const { key } = JSON.parse(text);
+    assert.equal((await verify.GET(verifyReq("sprout-hub", key))).status, 204, authEnv);
+    const listText = await (await admin.GET()).text();
+    assert.equal(JSON.parse(listText).pepperReady, true);
+
+    const derived = await access.getPepper();
+    assert.match(derived, /^[0-9a-f]{64}$/);
+    assert.notEqual(derived, authSecret, "원래 시크릿을 그대로 씀");
+    // 원래 시크릿으로 바로 만든 해시와 다르다(유도 값을 거친다)
+    assert.notEqual(rows[0].keyHash, access.hashStudioKey(authSecret, key));
+    const seen = [text, listText, logs.slice(before).join("\n")].join("\n");
+    for (const secret of [authSecret, derived]) assert.ok(!seen.includes(secret), "응답·로그에 비밀값이 남음");
+  }
+});
+
+test("유도에 쓴 시크릿이 바뀌면 이전 키 401, STUDIO_KEY_PEPPER 가 있으면 그것이 우선", async () => {
+  const authA = randomBytes(24).toString("base64url");
+  const first = setup({ pepper: null, authSecret: authA });
+  const key = await issue(first.admin, "sprout-hub");
+  assert.equal((await first.verify.GET(verifyReq("sprout-hub", key))).status, 204);
+
+  // 같은 DB, 시크릿만 바뀐 서버
+  const changed = setup({ pepper: null, authSecret: randomBytes(24).toString("base64url"), db: first.db });
+  assert.equal((await changed.verify.GET(verifyReq("sprout-hub", key))).status, 401);
+
+  // 시크릿이 같아도 STUDIO_KEY_PEPPER 가 생기면 그것을 쓴다(유도 값으로 만든 키는 401)
+  const withPepper = setup({ pepper: PEPPER, authSecret: authA, db: first.db });
+  assert.equal(await withPepper.access.getPepper(), PEPPER);
+  assert.equal((await withPepper.verify.GET(verifyReq("sprout-hub", key))).status, 401);
+  const key2 = await issue(withPepper.admin, "sprout-hub");
+  assert.equal(withPepper.rows.at(-1).keyHash, withPepper.access.hashStudioKey(PEPPER, key2));
+  assert.equal((await withPepper.verify.GET(verifyReq("sprout-hub", key2))).status, 204);
+});
+
+test("통제실 카드: 비밀값 안내는 pepperReady 가 false 일 때만, 문서에 등록 단계 없음", () => {
+  const card = fs.readFileSync(path.join(repo, "components/admin/factory/StudioAccessKeys.tsx"), "utf8");
+  const i = card.indexOf("먼저 비밀값을 등록하세요");
+  assert.ok(i > 0);
+  assert.ok(card.lastIndexOf("{pepperReady === false && (", i) > card.lastIndexOf(")}", i), "안내가 조건 밖에 있음");
+  const doc = fs.readFileSync(path.join(repo, "docs/studio-access.md"), "utf8");
+  assert.ok(doc.includes("[키 발급]만 누르면 된다"));
+  assert.ok(!doc.includes("비밀값 등록(처음 한 번)"));
+  assert.match(doc, /시크릿이 바뀌면.*무효/);
 });
 
 test("발급 직후 204, 틀린 키·다른 앱·키 없음 401(같은 응답), 응답은 no-store", async () => {
