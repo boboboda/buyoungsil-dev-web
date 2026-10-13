@@ -35,6 +35,7 @@ const STATE_TEXT: Record<State, string> = {
 };
 
 const SERVER_PREFIX = "REVIEW_STATUS_TOKEN_";
+const isServerName = (n: string) => n.startsWith(SERVER_PREFIX) || n === "STUDIO_KEY_PEPPER";
 
 const NAME_RE = /^[A-Z][A-Z0-9_]{2,63}$/;
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
@@ -98,7 +99,7 @@ export default function SecretEntries() {
   };
 
   const remove = async (n: string) => {
-    const confirmText = n.startsWith(SERVER_PREFIX)
+    const confirmText = isServerName(n)
       ? `${n} 을(를) 홈페이지 서버에서 지울까요?\n되돌릴 수 없어요.`
       : `${n} 을(를) 작업 PC 의 secrets.env 에서 지울까요?\n그 줄만 지우고 다른 키는 그대로 둬요. 되돌릴 수 없어요.`;
 
@@ -121,7 +122,7 @@ export default function SecretEntries() {
         <p className="text-xs text-default-500">
           PIXELLAB_TOKEN 같은 키 값을 여기서 넣으면 서버가 암호화해 잠깐 보관하고, 작업 PC 감독 프로그램이 가져가 secrets.env 에 그 줄만
           저장한 뒤 서버에서 지워요. 값은 다시 볼 수 없으니 원본은 비밀번호 관리자에 따로 두세요. 서명 키 비밀번호는 키 보관함·출시 화면에서만
-          다뤄요. 단, 출시 카드의 검수 상태 토큰(REVIEW_STATUS_TOKEN_앱이름)은 PC 로 보내지 않고 홈페이지 서버가 암호화해 보관해요.
+          다뤄요. 단, 출시 카드의 검수 상태 토큰(REVIEW_STATUS_TOKEN_앱이름)과 Studio 접근 키용 비밀값(STUDIO_KEY_PEPPER)은 PC 로 보내지 않고 홈페이지 서버가 암호화해 보관해요.
         </p>
       </CardHeader>
       <CardBody className="space-y-4">
