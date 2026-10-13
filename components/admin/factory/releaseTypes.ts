@@ -187,6 +187,8 @@ export interface ReleaseApp {
   customKeystorePath: string | null;
   customKeyAlias: string | null;
   promoVideoUrl: string | null;
+  reviewUrl: string | null; // 검수 페이지 주소(https). 없으면 링크·개수 표시 안 함
+  reviewTokenName: string; // 검수 상태 토큰 키 이름(REVIEW_STATUS_TOKEN_<앱>). 값은 오지 않는다
   storeAssets: StoreAssets | null;
   playMissing: string[]; // Play 업로드에 모자란 것(비면 가능)
   keyId: string | null; // 이 앱이 고른 보관함 키(없으면 계정 기본 키)
@@ -209,6 +211,19 @@ export interface ReleaseApp {
   keyScanRequest: { requestedAt: string; takenAt: string | null } | null; // [키 조회] 진행 중
   lastReleaseJob: ReleaseJobInfo | null;
   testApk: TestApkState; // 시험용 APK(출시 일감과 따로 표시)
+}
+
+// '검수 대기 N장'(GET /api/admin/factory/review-status). 서버 lib/factory/reviewStatus.ts 와 같다
+export type ReviewStatus =
+  | { state: "ok"; review: number; held: number; pending: number; updatedAt: string | null; checkedAt: string }
+  | { state: "no_token" }
+  | { state: "blocked" }
+  | { state: "error"; reason: string; checkedAt: string };
+export interface ReviewStatusRow {
+  appSlug: string;
+  url: string;
+  tokenName: string;
+  status: ReviewStatus;
 }
 
 // 출시 패키지 '시험용 APK': 최근 요청 일감과 내려받을 수 있는 APK(최신순 최대 5개). 서버 lib/factory/testApk.ts

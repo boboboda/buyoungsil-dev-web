@@ -18,6 +18,7 @@ import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import { uploadTestState } from "@/lib/factory/uploadTest";
 import { APP_NAME_SOURCE_LABELS, cleanAppName, pickAppName, storeTitleOf } from "@/lib/factory/appName";
 import { isStoreTarget, storeTargetBlockReason } from "@/lib/factory/storeTarget";
+import { checkReviewUrl, reviewTokenName } from "@/lib/factory/reviewStatus";
 import { TEST_APK_ABI, TEST_APK_MAX, apkReadiness, apkStackSupported, listTestApks } from "@/lib/factory/testApk";
 
 // 출시 일감 종류. 종류마다 서버가 만드는 지시문과 허용 동작(outbox 파일·키 준비)이 다르다.
@@ -846,6 +847,9 @@ export async function releaseOverview() {
       customKeystorePath: app?.customKeystorePath ?? null,
       customKeyAlias: app?.customKeyAlias ?? null,
       promoVideoUrl: app?.promoVideoUrl ?? null,
+      // 검수 페이지 주소(없으면 null)와 그 토큰 키 이름(값 없음). '검수 대기 N장'은 /api/admin/factory/review-status 가 따로 알려 준다
+      reviewUrl: app?.reviewUrl ?? null,
+      reviewTokenName: reviewTokenName(j.appSlug),
       storeAssets: app?.storeAssets ?? null,
       // Play 업로드(스토어 자료·업데이트 AAB)에 모자란 것. 비면 업로드 가능
       playMissing: playUploadMissing(app ?? null, account, pcStatus?.items),
@@ -987,6 +991,7 @@ export interface AppReleaseInput {
   customKeyAlias?: unknown;
   keyId?: unknown; // 이 앱이 쓸 키(키 보관함 항목 id). 빈 값이면 배포 계정 기본 키
   appName?: unknown; // 사람이 정한 앱 이름(30자). 빈 값이면 자동
+  reviewUrl?: unknown; // 검수 페이지 주소(https 만). 빈 값이면 지움(카드에 표시 안 함)
 }
 
 const PACKAGE_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
@@ -1025,6 +1030,13 @@ export async function updateAppRelease(appSlug: string, input: AppReleaseInput):
 
   if ("message" in nameIn) return { ok: false, status: 400, message: nameIn.message };
   if (nameIn.value !== undefined) data.appName = nameIn.value;
+  // 검수 페이지 주소(https 만, 사설망 주소 거부)
+  if (input.reviewUrl !== undefined) {
+    const ru = checkReviewUrl(input.reviewUrl);
+
+    if ("message" in ru) return { ok: false, status: 400, message: ru.message };
+    data.reviewUrl = ru.value;
+  }
   // 키 보관함에서 고른 키. 예전 '다른 키' 열은 호환용 사본으로 맞춘다(비우면 같이 비움 → 계정 기본 키)
   if (input.keyId !== undefined) {
     const id = typeof input.keyId === "string" && input.keyId ? input.keyId : null;

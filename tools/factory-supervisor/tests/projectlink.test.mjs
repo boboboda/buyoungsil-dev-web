@@ -133,6 +133,7 @@ function loadRelease(prisma) {
     "@/lib/factory/appName": appName,
     "@/lib/factory/storeTarget": storeTarget,
     "@/lib/factory/testApk": testApk,
+    "@/lib/factory/reviewStatus": loadTs("lib/factory/reviewStatus.ts", { "@/lib/prisma": prisma, "@/lib/factory/secretEntries": { readServerSecret: async () => null } }),
   });
 }
 

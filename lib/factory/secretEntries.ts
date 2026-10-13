@@ -4,6 +4,7 @@
 // - 값은 등록 응답·목록·로그·텔레그램 어디에도 다시 나오지 않는다. 감독 프로그램용 GET(/api/factory/secrets) 응답에만 있다.
 // - 삭제도 같은 길: 삭제 대기 → PC 가 secrets.env 에서 그 줄만 지우고 확인하면 항목을 지운다(이름 카탈로그는 남는다).
 // - PC 는 secrets.env 에 있는 "이름만" 알려 준다(pcSecretNames). 값은 오지 않는다.
+// - 예외: 서버 보관 키(REVIEW_STATUS_TOKEN_…)는 PC 로 보내지 않고 암호문을 서버에 둔다(홈페이지 서버가 직접 씀, readServerSecret).
 import prisma from "@/lib/prisma";
 import { seal, unseal } from "@/lib/factory/keyPasswords";
 import { getSettingValue, setSettingValue } from "@/lib/factory/settings";
@@ -25,6 +26,23 @@ const RESERVED_NAMES = new Set([
 ]);
 
 export const isReservedSecretName = (name: string) => RESERVED_NAMES.has(name) || RESERVED_PREFIXES.some((p) => name.startsWith(p));
+
+// 서버 보관 키: 홈페이지 서버가 직접 쓰는 키(예: 검수 상태 토큰 REVIEW_STATUS_TOKEN_<앱>). PC 로 보내지 않고 암호문을 서버에 남긴다.
+// 값은 readServerSecret 으로 서버 안에서만 풀고, 목록·응답·로그에는 나오지 않는다. 앱 일감용 이름 목록(knownSecretNames)에서도 뺀다.
+const SERVER_SECRET_PREFIXES = ["REVIEW_STATUS_TOKEN_"];
+
+export const isServerSecretName = (name: string) => SERVER_SECRET_PREFIXES.some((p) => name.startsWith(p));
+
+/** 서버 보관 키의 값(서버 안에서만 쓴다). 없거나 풀 수 없으면 null. */
+export async function readServerSecret(name: string): Promise<string | null> {
+  if (!isServerSecretName(name) || !SECRET_ENTRY_NAME_RE.test(name)) return null;
+  const row = await prisma.factorySecretEntry.findUnique({ where: { name }, select: { sealed: true, status: true } });
+
+  if (!row?.sealed || row.status !== "stored") return null;
+  const value = unseal(row.sealed);
+
+  return value !== null && checkSecretValue(value).ok ? value : null;
+}
 
 export function checkSecretName(v: unknown): { ok: true; value: string } | { ok: false; message: string } {
   const name = typeof v === "string" ? v.trim() : "";
@@ -70,6 +88,29 @@ export async function registerSecretEntry(nameRaw: unknown, descriptionRaw: unkn
   const sealed = seal(v.value);
 
   if (!sealed) return { ok: false, status: 500, message: "서버 암호화 키가 없어 보관할 수 없어요(FACTORY_SECRET_KEY 또는 NEXTAUTH_SECRET 필요)." };
+  // 서버 보관 키: 바로 '저장됨'(PC 가 가져가지 않음), 암호문은 남긴다. 앱 일감용 이름 카탈로그에는 넣지 않는다
+  if (isServerSecretName(name)) {
+    const serverUpsert = () =>
+      prisma.factorySecretEntry.upsert({
+        where: { name },
+        create: { name, description, sealed, status: "stored", version: 1, storedAt: new Date() },
+        update: { sealed, status: "stored", version: { increment: 1 }, storedAt: new Date(), ...(description ? { description } : {}) },
+      });
+
+    try {
+      await serverUpsert();
+    } catch (e) {
+      if (!isUniqueRace(e)) throw e;
+      await serverUpsert();
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      replaced: !!before,
+      message: `${name} 를 ${before ? "교체" : "등록"}했어요. 홈페이지 서버에 암호화해 보관하고 서버만 써요(작업 PC 로 보내지 않아요).`,
+    };
+  }
   const pc = await pcSecretNames();
   const replaced = before?.status === "stored" || !!pc?.names.includes(name);
   const upsert = () =>
@@ -104,6 +145,13 @@ export async function requestSecretDelete(nameRaw: unknown): Promise<Result> {
 
   if ("message" in n) return { ok: false, status: 400, message: n.message };
   const name = n.value;
+
+  // 서버 보관 키는 PC 를 거치지 않고 바로 지운다
+  if (isServerSecretName(name)) {
+    const del = await prisma.factorySecretEntry.deleteMany({ where: { name } });
+
+    return del.count ? { ok: true, status: 200, message: `${name} 를 서버에서 지웠어요.` } : { ok: false, status: 404, message: "모르는 이름이에요." };
+  }
   const [entry, catalog, pc] = await Promise.all([
     prisma.factorySecretEntry.findUnique({ where: { name }, select: { name: true } }),
     prisma.factorySecretName.findUnique({ where: { name }, select: { description: true } }),
@@ -145,7 +193,7 @@ export async function pendingSecretEntries(): Promise<PendingSecretItem[]> {
   const out: PendingSecretItem[] = [];
 
   for (const r of rows) {
-    if (isReservedSecretName(r.name) || !SECRET_ENTRY_NAME_RE.test(r.name)) continue;
+    if (isReservedSecretName(r.name) || isServerSecretName(r.name) || !SECRET_ENTRY_NAME_RE.test(r.name)) continue;
     if (r.status === "delete_pending") {
       out.push({ name: r.name, version: r.version, delete: true });
       continue;
@@ -166,7 +214,7 @@ export async function ackSecretEntries(items: unknown): Promise<number> {
   for (const it of items.slice(0, 50)) {
     const r = it as { name?: unknown; version?: unknown; action?: unknown };
 
-    if (typeof r?.name !== "string" || !SECRET_ENTRY_NAME_RE.test(r.name) || !Number.isInteger(r.version)) continue;
+    if (typeof r?.name !== "string" || !SECRET_ENTRY_NAME_RE.test(r.name) || isServerSecretName(r.name) || !Number.isInteger(r.version)) continue;
     const version = r.version as number;
 
     if (r.action === "store") {
@@ -215,7 +263,7 @@ export async function savePcSecretNames(names: unknown): Promise<number> {
 
 // ───────── 화면·커넥터용(값 없음) ─────────
 
-export type SecretEntryState = "pending" | "stored" | "delete_pending" | "missing";
+export type SecretEntryState = "pending" | "stored" | "delete_pending" | "missing" | "server"; // server = 서버 보관 키(PC 로 안 감)
 
 export interface SecretEntryView {
   name: string;
@@ -228,7 +276,7 @@ export interface SecretEntryView {
 /** 통제실 목록: 등록 항목 + 이름 카탈로그 + PC 보고 이름을 합친다(서명 키·예약 이름은 뺀다). */
 export async function secretEntryStatuses(): Promise<{ items: SecretEntryView[]; pcReportedAt: string | null }> {
   const [entries, catalog, pc] = await Promise.all([
-    prisma.factorySecretEntry.findMany({ select: { name: true, description: true, status: true, storedAt: true, updatedAt: true } }),
+    prisma.factorySecretEntry.findMany({ select: { name: true, description: true, status: true, storedAt: true, updatedAt: true, sealed: true } }),
     prisma.factorySecretName.findMany({ select: { name: true, description: true, createdAt: true } }),
     pcSecretNames(),
   ]);
@@ -247,6 +295,10 @@ export async function secretEntryStatuses(): Promise<{ items: SecretEntryView[];
   }
   for (const e of entries) {
     if (isReservedSecretName(e.name)) continue;
+    if (isServerSecretName(e.name)) {
+      map.set(e.name, { name: e.name, description: e.description, state: e.sealed ? "server" : "missing", onPc: null, updatedAt: e.updatedAt.toISOString() });
+      continue;
+    }
     const onPc = pcSet ? pcSet.has(e.name) : null;
     let state: SecretEntryState = e.status === "pending" ? "pending" : e.status === "delete_pending" ? "delete_pending" : "stored";
 
@@ -271,9 +323,9 @@ export async function knownSecretNames(): Promise<{ name: string; description: s
   const entryDesc = new Map(entries.map((e) => [e.name, e.description]));
   const map = new Map<string, string>();
 
-  for (const c of catalog) if (!deleting.has(c.name)) map.set(c.name, c.description || entryDesc.get(c.name) || "");
+  for (const c of catalog) if (!deleting.has(c.name) && !isServerSecretName(c.name)) map.set(c.name, c.description || entryDesc.get(c.name) || "");
   for (const n of pc?.names ?? []) {
-    if (!map.has(n) && !deleting.has(n) && !isReservedSecretName(n)) map.set(n, entryDesc.get(n) || "작업 PC 에 있는 키(설명 없음)");
+    if (!map.has(n) && !deleting.has(n) && !isReservedSecretName(n) && !isServerSecretName(n)) map.set(n, entryDesc.get(n) || "작업 PC 에 있는 키(설명 없음)");
   }
 
   return [...map.entries()].map(([name, description]) => ({ name, description })).sort((a, b) => a.name.localeCompare(b.name));

@@ -1,6 +1,7 @@
 // components/admin/factory/SecretEntries.tsx
 // 외부 서비스 키(환경변수) 입력·교체·삭제와 상태. 값은 보내기만 하고 다시 보이지 않는다(보낸 뒤 입력 칸을 바로 비운다).
 // 서버가 암호화해 잠깐 보관 → 작업 PC 가 secrets.env 의 그 줄만 저장 → 서버 값 삭제. 서명 키 비밀번호는 키 보관함·출시 화면에서만.
+// 예외: REVIEW_STATUS_TOKEN_… (검수 상태 토큰)은 PC 로 보내지 않고 홈페이지 서버가 암호화해 보관·직접 쓴다(값은 역시 다시 보이지 않음).
 // 아래에 AI 도구 상태(설치·버전·로그인 여부, 읽기 전용)를 한 줄씩 보여 준다.
 "use client";
 
@@ -9,7 +10,7 @@ import { Button, Card, CardBody, CardHeader } from "@heroui/react";
 
 import Field from "./Field";
 
-type State = "pending" | "stored" | "delete_pending" | "missing";
+type State = "pending" | "stored" | "delete_pending" | "missing" | "server";
 
 interface Item {
   name: string;
@@ -30,7 +31,10 @@ const STATE_TEXT: Record<State, string> = {
   stored: "🔒 PC 저장 완료",
   delete_pending: "🗑️ 삭제 대기(PC가 곧 지워요)",
   missing: "⬜ PC 에 없음(이름만 알려진 것)",
+  server: "🔒 서버 보관(홈페이지 서버만 써요, PC 로 안 보냄)",
 };
+
+const SERVER_PREFIX = "REVIEW_STATUS_TOKEN_";
 
 const NAME_RE = /^[A-Z][A-Z0-9_]{2,63}$/;
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
@@ -65,7 +69,7 @@ export default function SecretEntries() {
 
   const trimmed = name.trim().toUpperCase();
   const existing = data?.items.find((i) => i.name === trimmed);
-  const replacing = existing ? existing.state === "stored" || existing.state === "pending" : false;
+  const replacing = existing ? existing.state === "stored" || existing.state === "pending" || existing.state === "server" : false;
   const valueOk = value.length >= 8 && value.length <= 4096;
 
   const submit = async () => {
@@ -94,7 +98,11 @@ export default function SecretEntries() {
   };
 
   const remove = async (n: string) => {
-    if (!window.confirm(`${n} 을(를) 작업 PC 의 secrets.env 에서 지울까요?\n그 줄만 지우고 다른 키는 그대로 둬요. 되돌릴 수 없어요.`)) return;
+    const confirmText = n.startsWith(SERVER_PREFIX)
+      ? `${n} 을(를) 홈페이지 서버에서 지울까요?\n되돌릴 수 없어요.`
+      : `${n} 을(를) 작업 PC 의 secrets.env 에서 지울까요?\n그 줄만 지우고 다른 키는 그대로 둬요. 되돌릴 수 없어요.`;
+
+    if (!window.confirm(confirmText)) return;
     const res = await fetch("/api/admin/factory/secrets", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
@@ -113,7 +121,7 @@ export default function SecretEntries() {
         <p className="text-xs text-default-500">
           PIXELLAB_TOKEN 같은 키 값을 여기서 넣으면 서버가 암호화해 잠깐 보관하고, 작업 PC 감독 프로그램이 가져가 secrets.env 에 그 줄만
           저장한 뒤 서버에서 지워요. 값은 다시 볼 수 없으니 원본은 비밀번호 관리자에 따로 두세요. 서명 키 비밀번호는 키 보관함·출시 화면에서만
-          다뤄요.
+          다뤄요. 단, 출시 카드의 검수 상태 토큰(REVIEW_STATUS_TOKEN_앱이름)은 PC 로 보내지 않고 홈페이지 서버가 암호화해 보관해요.
         </p>
       </CardHeader>
       <CardBody className="space-y-4">

@@ -676,6 +676,7 @@ model FactoryApp {
   storeAssets        Json? // 스토어 자료(.factory/store/) 단계별 결과·파일 정보(경로·크기·길이)·올린 이미지 URL·Play 업로드 결과
   appName            String? // 사람이 출시 카드에서 정한 앱 이름(스토어·홈페이지에 보일 이름, 30자). 비우면 스토어 문구 제목 → 홈페이지 프로젝트 제목 → 작업 이름
   keyId              String? // 이 앱이 쓸 키(키 보관함). 없으면 배포 계정 기본 키. customKeystorePath·customKeyAlias 는 예전 값(호환용 사본)
+  reviewUrl          String? // 검수 페이지 주소(https 만). 카드에 [검수 페이지 열기]·'검수 대기 N장'(그 호스트의 /api/review-status)
   releaseAccount   FactoryReleaseAccount? @relation(fields: [releaseAccountId], references: [id], onDelete: SetNull)
   key              FactoryKey?            @relation(fields: [keyId], references: [id], onDelete: SetNull)
 

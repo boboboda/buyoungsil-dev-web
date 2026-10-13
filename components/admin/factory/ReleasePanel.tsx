@@ -12,6 +12,7 @@
 // '이 앱이 쓸 키'는 키 보관함에서 고른다(기본: 계정 기본 키). 고른 키를 [조회]하면 작업 PC 가 그 파일을 직접 확인한다.
 // 보조: '이 앱 폴더에서 키 파일 후보 찾기'(확장자 없는 JKS 도 찾음) → 보관함 [기존 키 등록]으로 넘긴다.
 // 홈페이지 프로젝트: 카드에서 연결 표시·바꾸기, [홈페이지만 반영](Play 없이 저장된 출시 자료로 덮어씀). 출시 패키지에 추가할 때 기존 프로젝트/새로 만들기/나중에 중 고른다.
+// 검수 페이지: 앱별 주소(https)·[🔍 검수 페이지 열기]·'검수 대기 N장'(서버가 대신 확인). 1장 이상이면 카드 위와 목록 위 요약에 보인다.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -24,6 +25,7 @@ import AppKeyLookup from "./AppKeyLookup";
 import { KeyCheckView, KeyError, UntrackView } from "./KeyVault";
 import StoreAssetsView from "./StoreAssetsView";
 import TestApkBox from "./TestApkBox";
+import ReviewBox, { ReviewBadge } from "./ReviewBox";
 import UploadTestBox from "./UploadTestBox";
 import { BuildResultView, FirstVideoPanel, LinkWaitPanel, ListingCopy, ReviewPanel, isYoutubeUrl } from "./ReleaseReview";
 import {
@@ -39,6 +41,7 @@ import {
   type ReleaseApp,
   type ReleaseJobInfo,
   type ReleaseOverview,
+  type ReviewStatusRow,
 } from "./releaseTypes";
 
 const input = "w-full rounded-lg border border-default-200 bg-transparent px-3 py-2 text-base sm:text-sm";
@@ -457,12 +460,16 @@ function AppRow({
   selected,
   onSelect,
   onSaved,
+  review,
+  reviewLoading,
 }: {
   app: ReleaseApp;
   data: ReleaseOverview;
   selected: boolean;
   onSelect: (v: boolean) => void;
   onSaved: (d: Partial<ReleaseOverview>) => void;
+  review?: ReviewStatusRow;
+  reviewLoading: boolean;
 }) {
   const [appName, setAppName] = useState(app.appName ?? "");
   const [acc, setAcc] = useState(app.releaseAccountId ?? "");
@@ -573,9 +580,12 @@ function AppRow({
             {app.title !== app.displayName && <div className="truncate text-xs text-default-400">작업: {app.title}</div>}
           </div>
         </div>
-        <Chip color={app.releaseStatus === "released" ? "success" : app.releaseStatus === "testing" ? "warning" : "default"} size="sm" variant="flat">
-          {label}
-        </Chip>
+        <div className="flex flex-wrap items-center gap-2">
+          <ReviewBadge row={review} />
+          <Chip color={app.releaseStatus === "released" ? "success" : app.releaseStatus === "testing" ? "warning" : "default"} size="sm" variant="flat">
+            {label}
+          </Chip>
+        </div>
       </CardHeader>
       <CardBody className="space-y-3">
         {/* ── 공통 설정 ── */}
@@ -593,6 +603,7 @@ function AppRow({
             이름 저장
           </Button>
         </div>
+        <ReviewBox app={app} busy={busy} call={call} loading={reviewLoading} row={review} />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Field help="설정 → 배포 계정에서 만든 계정 중 하나." label="배포 계정">
             <select className={input} value={acc} onChange={(e) => setAcc(e.target.value)}>
@@ -855,6 +866,8 @@ export default function ReleasePanel() {
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // '검수 대기 N장'(앱별, 서버가 대신 확인). 목록과 따로 읽어서 느려도 카드는 먼저 보인다
+  const [review, setReview] = useState<ReviewStatusRow[] | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -869,6 +882,25 @@ export default function ReleasePanel() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // 검수 페이지 주소가 바뀌면(저장·삭제) 다시 확인. 서버가 60초 캐시한다
+  const reviewKey = (data?.apps ?? []).map((a) => `${a.appSlug}=${a.reviewUrl ?? ""}`).join("|");
+  const hasReviewUrl = !!data?.apps.some((a) => a.reviewUrl);
+
+  useEffect(() => {
+    if (!hasReviewUrl) return;
+    let stop = false;
+
+    setReview(null);
+    fetch("/api/admin/factory/review-status", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { apps: [] }))
+      .then((d: { apps?: ReviewStatusRow[] }) => !stop && setReview(Array.isArray(d.apps) ? d.apps : []))
+      .catch(() => !stop && setReview([]));
+
+    return () => {
+      stop = true;
+    };
+  }, [reviewKey, hasReviewUrl]);
 
   // 진행 중이거나 대기 중인 출시 일감이 있으면 15초마다 단계를 새로 읽는다
   // [키 조회] 결과를 기다리는 앱이 있어도 새로 읽는다
@@ -891,6 +923,13 @@ export default function ReleasePanel() {
   if (!data) return <p className="text-sm text-default-500">읽는 중…</p>;
 
   const apps = data.apps.filter((a) => a.done);
+  const reviewOf = (slug: string) => review?.find((r) => r.appSlug === slug);
+  // 목록 위 한 줄 요약: 검수 대기가 있는 앱(이름 + 장수)
+  const waiting = apps.flatMap((a) => {
+    const s = reviewOf(a.appSlug)?.status;
+
+    return a.reviewUrl && s?.state === "ok" && s.review > 0 ? [`${a.displayName} ${s.review}장`] : [];
+  });
   const picked = apps.filter((a) => selected.includes(a.appSlug) && !a.active).map((a) => a.appSlug);
   const onSaved = (d: Partial<ReleaseOverview>) => {
     if (d.apps && d.accounts) {
@@ -920,6 +959,11 @@ export default function ReleasePanel() {
 
   return (
     <div className="space-y-4">
+      {waiting.length > 0 && (
+        <div className="rounded-lg border border-warning-300 bg-warning-50 px-3 py-2 text-sm font-medium text-warning-800 dark:bg-warning-50/10">
+          🔍 검수 대기가 있는 앱: {waiting.join(" · ")}
+        </div>
+      )}
       <UploadTestBox data={data} onReload={load} onSaved={onSaved} />
       {apps.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
@@ -945,6 +989,8 @@ export default function ReleasePanel() {
             key={a.appSlug}
             app={a}
             data={data}
+            review={reviewOf(a.appSlug)}
+            reviewLoading={!!a.reviewUrl && review === null}
             selected={selected.includes(a.appSlug)}
             onSaved={onSaved}
             onSelect={(v) => setSelected((s) => (v ? [...s, a.appSlug] : s.filter((x) => x !== a.appSlug)))}
