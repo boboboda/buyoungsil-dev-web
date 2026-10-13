@@ -26,7 +26,7 @@ export function parseFactoryTab(
 }
 
 // 주소의 ?history=(현황 이력 탭)·?job=(일감 상세). 모르는 값이면 무시한다
-const HISTORY_TAB_KEYS = ["all", "deploys", "updates", "threads", "jobs"] as const;
+const HISTORY_TAB_KEYS = ["progress", "deploys", "updates", "threads", "jobs"] as const;
 export type HistoryTabKey = (typeof HISTORY_TAB_KEYS)[number];
 
 export function parseHistoryTab(raw: string | string[] | undefined | null): HistoryTabKey | undefined {

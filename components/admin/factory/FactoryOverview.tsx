@@ -15,6 +15,7 @@ import {
   jobStatusInfo,
   KindChip,
   StatusChip,
+  STATUS_KINDS,
   StatusDot,
   turnStatusInfo,
   type StatusKind,
@@ -159,41 +160,12 @@ export function mergeHistory(prev: HistoryItem[], next: HistoryItem[]) {
   return [...prev, ...next.filter((i) => !seen.has(String(i.id)))];
 }
 
-// [전체 히스토리] 탭: 세 종류를 최신순으로 합친 목록. 종류 필터가 '전체'면 kind=all, 아니면 그 종류만 읽는다
-export type HistoryTab = HistoryKind | "all";
-export type HistoryFilter = HistoryKind | "all";
-export interface MixedItem {
-  type: HistoryKind;
-  item: HistoryItem;
-}
-export interface MergedHistory {
-  filter: HistoryFilter;
-  items: MixedItem[];
-  nextCursor: string | null;
-  total: number;
-  loading: boolean;
-  error: string | null;
-}
-
-export function mergeMixed(prev: MixedItem[], next: MixedItem[]) {
-  const key = (m: MixedItem) => `${m.type}:${m.item.id}`;
-  const seen = new Set(prev.map(key));
-
-  return [...prev, ...next.filter((m) => !seen.has(key(m)))];
-}
+// [작업 진행] 탭: 상태별 묶음 보드. 나머지는 종류별 이력 탭
+export type HistoryTab = HistoryKind | "progress";
 
 // 종류별 개수(예전 서버는 최근 목록 길이, 앱 일감은 개수를 모르면 0)
 export const countOf = (data: HistoryData | null, k: HistoryKind) =>
   data?.totals?.[k] ?? (k === "jobs" ? 0 : (data?.[k].length ?? 0));
-
-// 전체 히스토리 탭 이름 옆 배지: 네 종류 전체 개수 합
-export const totalOf = (data: HistoryData | null) =>
-  data
-    ? (["deploys", "updates", "threads", "jobs"] as const).reduce(
-        (n, k) => n + countOf(data, k),
-        0,
-      )
-    : undefined;
 
 // 줄을 누르면 [일감] 탭의 그 일감 상세가 열린다
 export const jobHref = (id: string) =>
@@ -265,77 +237,24 @@ export default function FactoryOverview({
   const [data, setData] = useState<Overview | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<HistoryTab>(initialTab ?? "deploys");
+  const [tab, setTab] = useState<HistoryTab>(initialTab ?? "progress");
   // 업데이트·배포 이력은 길어서 기본으로 접어 둔다. 펼침 여부는 이 브라우저에 기억
   const [historyOpen, setHistoryOpen] = useState(false);
   // [전체 보기]로 연 탭의 전체 목록(20개씩 [더 보기]). null 이면 overview 의 최근 목록
   const [full, setFull] = useState<FullHistory | null>(null);
-  // [전체 히스토리] 탭의 합친 목록(20개씩 [더 보기])
-  const [merged, setMerged] = useState<MergedHistory | null>(null);
+  // [작업 진행] 보드가 쓰는 최근 앱 일감(history API kind=jobs)
+  const [boardJobs, setBoardJobs] = useState<JobHistoryItem[] | null>(null);
 
-  const loadMerged = async (filter: HistoryFilter, prev?: MergedHistory) => {
-    const base: MergedHistory = prev ?? {
-      filter,
-      items: [],
-      nextCursor: null,
-      total:
-        filter === "all"
-          ? (totalOf(data) ?? 0)
-          : (data?.totals?.[filter] ?? 0),
-      loading: true,
-      error: null,
-    };
-
-    setMerged({ ...base, loading: true, error: null });
-    const qs = new URLSearchParams({ kind: filter, limit: String(HISTORY_PAGE) });
-
-    if (prev?.nextCursor) qs.set("cursor", prev.nextCursor);
+  const loadBoardJobs = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/factory/history?${qs}`, {
-        cache: "no-store",
-      });
-      const d = (await res.json().catch(() => ({}))) as {
-        items?: unknown[];
-        nextCursor?: string | null;
-        total?: number;
-        message?: string;
-      };
+      const res = await fetch(`/api/admin/factory/history?kind=jobs&limit=${BOARD_JOBS}`, { cache: "no-store" });
+      const d = (await res.json().catch(() => ({}))) as { items?: JobHistoryItem[] };
 
-      if (!res.ok || !d.items) throw new Error(d.message ?? "읽지 못했어요.");
-      // kind=all 은 { type, item }, 한 종류만 읽으면 항목 그대로라 종류를 붙인다
-      const items =
-        filter === "all"
-          ? (d.items as MixedItem[])
-          : (d.items as HistoryItem[]).map((item) => ({ type: filter, item }));
-
-      setMerged((cur) =>
-        // 그 사이 필터를 바꿨으면 버린다
-        cur?.filter !== filter
-          ? cur
-          : {
-              filter,
-              items: mergeMixed(base.items, items),
-              nextCursor: d.nextCursor ?? null,
-              total: d.total ?? base.total,
-              loading: false,
-              error: null,
-            },
-      );
-    } catch (e) {
-      setMerged((cur) =>
-        cur?.filter !== filter
-          ? cur
-          : {
-              ...base,
-              loading: false,
-              error:
-                e instanceof Error && e.message !== "Failed to fetch"
-                  ? e.message
-                  : "서버에 연결하지 못했어요.",
-            },
-      );
+      if (res.ok && d.items) setBoardJobs(d.items);
+    } catch {
+      /* 그대로 둔다 */
     }
-  };
+  }, []);
 
   const loadAll = async (kind: HistoryKind, prev?: FullHistory) => {
     const base: FullHistory = prev ?? {
@@ -399,8 +318,7 @@ export default function FactoryOverview({
     // 주소로 이력 탭을 지정했으면 펼쳐서 그 탭의 목록을 읽는다
     if (initialTab) {
       setHistoryOpen(true);
-      if (initialTab === "all") loadMerged("all");
-      else loadAll(initialTab);
+      if (initialTab !== "progress") loadAll(initialTab);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -430,6 +348,15 @@ export default function FactoryOverview({
 
     return () => clearInterval(t);
   }, [load]);
+
+  // [작업 진행] 보드가 보이는 동안 일감 이력도 같은 주기로 다시 읽는다
+  useEffect(() => {
+    if (tab !== "progress" || !historyOpen) return;
+    loadBoardJobs();
+    const t = setInterval(loadBoardJobs, 7000);
+
+    return () => clearInterval(t);
+  }, [tab, historyOpen, loadBoardJobs]);
 
   // 승인 줄마다 고른 모델(없으면 '기본 설정 사용')
   const [models, setModels] = useState<Record<string, TaskModel>>({});
@@ -665,23 +592,17 @@ export default function FactoryOverview({
       <HistoryPanelView
         data={data}
         full={full}
-        merged={merged}
+        board={{ active: data?.active, inbox: data?.inbox, jobs: boardJobs, threads: data?.threads }}
         open={historyOpen}
         tab={tab}
-        onFilter={(f) => loadMerged(f)}
         onMore={() => full && full.nextCursor && loadAll(full.kind, full)}
-        onMoreMerged={() =>
-          merged && merged.nextCursor && loadMerged(merged.filter, merged)
-        }
-        onShowAll={() => tab !== "all" && loadAll(tab)}
+        onShowAll={() => tab !== "progress" && loadAll(tab)}
         onShowRecent={() => setFull(null)}
         onTab={(k) => {
           // 접혀 있을 때 탭을 누르면 펼친다
           if (!historyOpen) setOpen(true);
           setTab(k);
           setFull(null);
-          // 전체 히스토리는 누를 때마다 첫 쪽부터 새로 읽는다(필터는 유지)
-          if (k === "all") loadMerged(merged?.filter ?? "all");
           // 앱 일감은 개수가 많아서 처음부터 20개씩 [더 보기]로 보여 준다
           if (k === "jobs") loadAll("jobs");
         }}
@@ -692,6 +613,7 @@ export default function FactoryOverview({
 }
 
 const HISTORY_TABS = [
+  ["progress", "작업 진행"],
   ["deploys", "서버 배포"],
   ["updates", "감독 프로그램 업데이트"],
   ["threads", "정비 대화"],
@@ -704,56 +626,39 @@ const EMPTY: Record<HistoryKind, string> = {
   jobs: "앱 일감 기록이 없어요.",
 };
 
-// 전체 히스토리에서 줄마다 붙는 종류 표시와 필터 이름
-const KIND_BADGE: Record<HistoryKind, { label: string }> = {
-  deploys: { label: "🚀 배포" },
-  updates: { label: "🔄 감독" },
-  threads: { label: "🛠 정비" },
-  jobs: { label: "📦 일감" },
-};
-const FILTERS = [
-  ["all", "전체"],
-  ["deploys", "배포"],
-  ["updates", "감독"],
-  ["threads", "정비"],
-  ["jobs", "일감"],
-] as const;
-
 // 업데이트·배포 이력 패널(보기 전용: 상태·읽기는 FactoryOverview 가 한다. 미리보기·시험도 이걸 그린다)
-// 탭 줄 맨 앞 [전체 히스토리 · N]은 접혀 있어도 늘 보인다 → 세 종류를 최신순으로 합쳐 20개씩 [더 보기], 종류 필터
+// 탭 줄 맨 앞 [작업 진행]은 접혀 있어도 늘 보인다 → 진행 중·승인 필요·대기·최근 완료/실패 보드
 // 나머지 탭은 최근 목록 아래 [전체 보기] → 같은 패널 안에서 그 종류 전체 목록(시간 역순)을 20개씩 [더 보기]
 export function HistoryPanelView({
   data,
   open,
   tab,
   full,
-  merged = null,
+  board,
+  now,
   onToggle,
   onTab,
   onShowAll,
   onMore,
   onShowRecent,
-  onFilter = () => {},
-  onMoreMerged = () => {},
   initialLiveOnly = false,
 }: {
   data: HistoryData | null;
   open: boolean;
   tab: HistoryTab;
   full: FullHistory | null;
-  merged?: MergedHistory | null;
+  board?: BoardInput; // [작업 진행] 보드 재료(overview 의 active·inbox·threads + 일감 이력)
+  now?: number; // 보드 경과 시간 기준(시험·미리보기)
   onToggle: () => void;
   onTab: (k: HistoryTab) => void;
   onShowAll: () => void;
   onMore: () => void;
   onShowRecent: () => void;
-  onFilter?: (f: HistoryFilter) => void;
-  onMoreMerged?: () => void;
   initialLiveOnly?: boolean; // '진행 중만 보기' 처음 값(시험·미리보기용)
 }) {
   const [liveOnly, setLiveOnly] = useState(initialLiveOnly);
   const toggleLive = () => setLiveOnly((v) => !v);
-  const kindTab = tab === "all" ? null : tab;
+  const kindTab = tab === "progress" ? null : tab;
   const all = full && full.kind === tab ? full : null;
   // 앱 일감은 최근 목록이 없고(overview 에는 개수만) 탭을 누르면 바로 전체 목록을 읽는다
   const list: HistoryItem[] = all
@@ -763,7 +668,6 @@ export function HistoryPanelView({
       : [];
   const total = all ? all.total : kindTab ? data?.totals?.[kindTab] : undefined;
   const count = (k: HistoryKind) => countOf(data, k);
-  const grand = totalOf(data);
 
   return (
     <Card className="mb-6" data-title="history · 업데이트·배포">
@@ -784,28 +688,8 @@ export function HistoryPanelView({
               </span>
             )}
           </button>
-          {/* 탭 줄은 접혀 있어도 늘 보인다. 맨 앞 [전체 히스토리]는 눈에 띄게(테두리·배지) */}
+          {/* 탭 줄은 접혀 있어도 늘 보인다. 맨 앞 [작업 진행] */}
           <div className="flex flex-wrap gap-1" data-history-tabs role="tablist">
-            <Button
-              aria-selected={open && tab === "all"}
-              className="font-semibold"
-              color="secondary"
-              data-tab="all"
-              role="tab"
-              size="sm"
-              variant={open && tab === "all" ? "solid" : "bordered"}
-              onPress={() => onTab("all")}
-            >
-              🗂 전체 히스토리
-              {grand !== undefined && (
-                <span
-                  className="rounded-full bg-secondary-100 px-1.5 font-mono text-[11px] text-secondary-700"
-                  data-history-total
-                >
-                  총 {grand}개
-                </span>
-              )}
-            </Button>
             {HISTORY_TABS.map(([k, label]) => (
               <Button
                 key={k}
@@ -845,15 +729,7 @@ export function HistoryPanelView({
 
         {open && !data && <p className="text-sm text-default-500">읽는 중…</p>}
 
-        {open && data && tab === "all" && (
-          <MergedList
-            liveOnly={liveOnly}
-            merged={merged}
-            onFilter={onFilter}
-            onLive={toggleLive}
-            onMore={onMoreMerged}
-          />
-        )}
+        {open && data && tab === "progress" && <ProgressBoard board={board} now={now} />}
 
         {open && data && kindTab && (
           <div className="space-y-2" data-history={all ? "all" : "recent"}>
@@ -972,102 +848,187 @@ export function HistoryPanelView({
   );
 }
 
-// [전체 히스토리] 탭 내용: 종류 필터 + 합친 목록(줄마다 종류 표시) + [더 보기]
-function MergedList({
-  merged,
-  onFilter,
-  onMore,
-  liveOnly,
-  onLive,
-}: {
-  merged: MergedHistory | null;
-  onFilter: (f: HistoryFilter) => void;
-  onMore: () => void;
-  liveOnly: boolean;
-  onLive: () => void;
-}) {
-  const filter = merged?.filter ?? "all";
-  const items = merged?.items ?? [];
-  const shown = liveOnly ? items.filter((m) => isLiveItem(m.type, m.item)) : items;
+// ── [작업 진행] 탭: 상태별 묶음 보드 ──
+// 재료는 새로 만들지 않고 이미 읽는 것만 쓴다: overview 의 active(진행 중)·inbox(승인 필요)·threads(정비 대화) + history API kind=jobs
+export const BOARD_JOBS = 30; // 보드가 읽는 최근 일감 수
+export const BOARD_RECENT = 10; // '최근 완료·실패' 개수
+
+export interface BoardInput {
+  active?: ActiveNow;
+  inbox?: Overview["inbox"];
+  jobs: JobHistoryItem[] | null;
+  threads?: HistoryData["threads"];
+}
+export type BoardSectionKey = "run" | "approval" | "wait" | "recent";
+export interface BoardRow {
+  key: string;
+  type: "job" | "maintenance";
+  title: string;
+  kindLabel: string;
+  status: StatusInfo;
+  at: string | null; // 진행 중이면 시작, 대기·승인이면 요청, 최근이면 끝난 시각
+  engine?: string | null;
+  model?: string | null;
+  app?: string | null; // 앱 이름(진행 단계 값은 지금 API 에 없다)
+  href: string;
+}
+
+const MAINT_HREF = "/admin/factory?tab=jobs";
+
+// 보드 네 묶음. 같은 일이 두 곳에서 오면(진행 중 + 이력) 앞선 묶음 한 곳에만 둔다
+export function boardSections(b: BoardInput): Record<BoardSectionKey, BoardRow[]> {
+  const out: Record<BoardSectionKey, BoardRow[]> = { run: [], approval: [], wait: [], recent: [] };
+  const seen = new Set<string>();
+  const add = (sec: BoardSectionKey, row: BoardRow, id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    out[sec].push(row);
+  };
+
+  for (const it of b.active?.running ?? []) {
+    if (it.type === "deploy") continue;
+    add("run", {
+      key: `${it.type}-${it.id}`, type: it.type, title: it.title, kindLabel: it.type === "job" ? "일감" : "정비",
+      status: { kind: "run", label: "진행 중" }, at: it.startedAt, engine: it.aiEngine, model: it.aiModel, app: it.sub,
+      href: it.type === "job" ? jobHref(it.id) : MAINT_HREF,
+    }, it.id);
+  }
+  for (const t of b.inbox?.turns ?? []) {
+    add("approval", {
+      key: `turn-${t.id}`, type: "maintenance", title: t.threadTitle, kindLabel: "정비",
+      status: { kind: "approval", label: "승인 필요" }, at: t.createdAt, engine: t.aiEngine, href: MAINT_HREF,
+    }, t.id);
+  }
+  for (const j of b.inbox?.jobs ?? []) {
+    add("approval", {
+      key: `job-${j.id}`, type: "job", title: j.title, kindLabel: "일감",
+      status: { kind: "approval", label: "승인 필요" }, at: j.createdAt, engine: j.aiEngine, href: jobHref(j.id),
+    }, j.id);
+  }
+
+  const recent: (BoardRow & { ts: number })[] = [];
+
+  for (const j of b.jobs ?? []) {
+    const st = jobStatusInfo(j.status);
+    const row: BoardRow = {
+      key: `job-${j.id}`, type: "job", title: j.title, kindLabel: "일감", status: st,
+      at: st.kind === "run" ? j.startedAt : st.kind === "done" || st.kind === "fail" ? (j.finishedAt ?? j.createdAt) : j.createdAt,
+      engine: j.aiEngine, model: j.aiModel, app: j.appSlug, href: jobHref(j.id),
+    };
+
+    if (st.kind === "run" || st.kind === "approval" || st.kind === "wait") add(st.kind, row, j.id);
+    else if (st.kind === "done" || st.kind === "fail") recent.push({ ...row, ts: Date.parse(row.at ?? "") || 0 });
+  }
+  // 정비 대화는 마지막 지시의 상태로 본다(진행 중·승인 필요는 위에서 이미 왔다)
+  for (const t of b.threads ?? []) {
+    const st = t.deployInProgress || !t.lastTurnStatus ? null : turnStatusInfo(t.lastTurnStatus);
+
+    if (!st || seen.has(t.id)) continue;
+    const row: BoardRow = { key: `thread-${t.id}`, type: "maintenance", title: t.title, kindLabel: "정비", status: st, at: t.updatedAt, href: MAINT_HREF };
+
+    if (st.kind === "wait") add("wait", row, t.id);
+    else if (st.kind === "done" || st.kind === "fail") recent.push({ ...row, ts: Date.parse(t.updatedAt) || 0 });
+  }
+  out.recent = recent.sort((a, c) => c.ts - a.ts).slice(0, BOARD_RECENT);
+
+  return out;
+}
+
+const BOARD_SECTIONS: { key: BoardSectionKey; kind: StatusKind; title: string }[] = [
+  { key: "run", kind: "run", title: "진행 중" },
+  { key: "approval", kind: "approval", title: "승인 필요" },
+  { key: "wait", kind: "wait", title: "대기" },
+  { key: "recent", kind: "done", title: "최근 완료·실패" },
+];
+
+function ProgressBoard({ board, now }: { board?: BoardInput; now?: number }) {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (now !== undefined) return;
+    const t = setInterval(() => setTick((n) => n + 1), 10000);
+
+    return () => clearInterval(t);
+  }, [now]);
+  void tick;
+  const at = now ?? Date.now();
+
+  if (!board || !board.active || !board.inbox) return <p className="text-sm text-default-500">읽는 중…</p>;
+  const secs = boardSections(board);
 
   return (
-    <div className="space-y-2" data-history="merged">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-default-200 pb-2 text-xs">
-        <span className="font-semibold">
-          전체 히스토리 · 최신순{" "}
-          {merged && (
-            <span className="font-mono text-default-500">
-              {items.length} / {merged.total}
+    <div className="space-y-3" data-history="progress">
+      {BOARD_SECTIONS.map((sec) => {
+        const rows = secs[sec.key];
+        const head = (
+          <span className="flex items-center gap-2 font-semibold">
+            <span aria-hidden>{STATUS_KINDS[sec.kind].icon}</span>
+            {sec.key === "recent" ? sec.title : STATUS_KINDS[sec.kind].word}
+            <span className="font-mono text-xs text-default-500" data-board-count>
+              {rows.length}
             </span>
-          )}
-        </span>
-        <div aria-label="종류 필터" className="flex flex-wrap gap-1" role="group">
-          {FILTERS.map(([f, label]) => (
-            <Button
-              key={f}
-              aria-pressed={filter === f}
-              className="min-h-11 sm:min-h-0"
-              color={filter === f ? "secondary" : "default"}
-              data-filter={f}
-              size="sm"
-              variant={filter === f ? "solid" : "flat"}
-              onPress={() => onFilter(f)}
-            >
-              {label}
-            </Button>
-          ))}
-          <LiveToggle liveOnly={liveOnly} onLive={onLive} />
-        </div>
-      </div>
-      {liveOnly && items.length > 0 && (
-        <p className="text-xs text-default-500" data-live-note>
-          불러온 {items.length}개 중 진행 중·승인 필요 {shown.length}개만 보여요{merged?.nextCursor ? " (더 보기를 누르면 더 찾아요)" : ""}.
-        </p>
-      )}
-      {liveOnly && items.length > 0 && shown.length === 0 && (
-        <p className="text-sm text-default-500">진행 중이거나 승인이 필요한 줄이 없어요.</p>
-      )}
-      {items.length === 0 && merged && !merged.loading && !merged.error && (
-        <p className="text-sm text-default-500">
-          {filter === "all" ? "기록이 없어요." : EMPTY[filter]}
-        </p>
-      )}
-      {shown.map((m) => {
-        const badge = <KindChip kind={m.type} label={KIND_BADGE[m.type].label} />;
+          </span>
+        );
 
-        return m.type === "deploys" ? (
-          <DeployRow key={`d-${m.item.id}`} badge={badge} d={m.item as HistoryData["deploys"][number]} />
-        ) : m.type === "updates" ? (
-          <UpdateRow key={`u-${m.item.id}`} badge={badge} u={m.item as HistoryData["updates"][number]} />
-        ) : m.type === "jobs" ? (
-          <JobRow key={`j-${m.item.id}`} badge={badge} j={m.item as JobHistoryItem} />
-        ) : (
-          <ThreadRow key={`t-${m.item.id}`} badge={badge} t={m.item as HistoryData["threads"][number]} />
+        return (
+          <section key={sec.key} aria-label={sec.title} className="space-y-1" data-board={sec.key}>
+            {rows.length === 0 ? (
+              <p className="flex flex-wrap items-center gap-2 text-sm text-default-500" data-board-empty>
+                {head} <span>없음</span>
+              </p>
+            ) : (
+              <>
+                {head}
+                {rows.map((r) => (
+                  <BoardRowView key={r.key} at={at} r={r} section={sec.key} />
+                ))}
+              </>
+            )}
+          </section>
         );
       })}
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        {merged?.nextCursor && (
-          <Button
-            className="min-h-11 sm:min-h-0"
-            isDisabled={merged.loading}
-            size="sm"
-            variant="flat"
-            onPress={onMore}
-          >
-            더 보기 (
-            {Math.min(HISTORY_PAGE, merged.total - items.length) || HISTORY_PAGE}
-            개)
-          </Button>
+    </div>
+  );
+}
+
+function BoardRowView({ r, section, at }: { r: BoardRow; section: BoardSectionKey; at: number }) {
+  const t = Date.parse(r.at ?? "");
+  const engine = r.engine && isAiEngine(r.engine) ? r.engine : null;
+  const elapsed = Number.isNaN(t)
+    ? null
+    : section === "run"
+      ? `경과 ${formatElapsed(at - t)}`
+      : section === "recent"
+        ? when(r.at)
+        : `요청 후 ${formatElapsed(at - t)}`;
+
+  return (
+    <div className="fx-row rounded-lg border border-default-200 p-2 text-sm" data-board-row={r.key} data-st={r.status.kind}>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusChip kind={r.status.kind} label={r.status.label} />
+        <KindChip kind={r.type} label={r.kindLabel} />
+        <a className="min-w-0 break-words font-medium underline decoration-default-300 underline-offset-2" href={r.href}>
+          {r.title}
+        </a>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-default-500">
+        {elapsed && (
+          <span className="font-mono" data-elapsed>
+            {elapsed}
+          </span>
         )}
-        {(!merged || merged.loading) && (
-          <span className="text-xs text-default-500">읽는 중…</span>
+        {engine && (
+          <span>
+            {AI_LABELS[engine]}
+            {r.model && (
+              <>
+                {" · "}
+                <ModelTag engine={engine} model={r.model} />
+              </>
+            )}
+          </span>
         )}
-        {merged && !merged.loading && !merged.nextCursor && !merged.error && items.length > 0 && (
-          <span className="text-xs text-default-500">끝까지 다 봤어요.</span>
-        )}
-        {merged?.error && (
-          <span className="text-xs text-danger-500">{merged.error}</span>
-        )}
+        {r.app && <span className="font-mono">{r.app}</span>}
       </div>
     </div>
   );

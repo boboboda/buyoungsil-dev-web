@@ -180,7 +180,7 @@ test("배포·감독 업데이트 줄의 상태 종류", () => {
   assert.deepEqual([...up.matchAll(/data-st="([a-z]+)"/g)].map((m) => m[1]), ["run", "fail", "cancel", "info"]);
 });
 
-test("진행 중만 보기: 전체 히스토리·앱 일감 탭에서 진행 중·승인 필요 줄만 남는다", () => {
+test("진행 중만 보기: 앱 일감 탭에서 진행 중·승인 필요 줄만 남는다", () => {
   const live = [J(1, "running"), J(2, "pending")];
   const other = [J(3, "done"), J(4, "failed"), J(5, "approved"), J(6, "cancelled")];
   const items = [...live, ...other];
@@ -197,27 +197,8 @@ test("진행 중만 보기: 전체 히스토리·앱 일감 탭에서 진행 중
   assert.match(on, /불러온 6개 중 진행 중·승인 필요만 보여요/);
   assert.equal(rows(panel({ tab: "jobs", initialLiveOnly: true, full: { ...full, items: other } })), 0);
   assert.match(panel({ tab: "jobs", initialLiveOnly: true, full: { ...full, items: other } }), /진행 중이거나 승인이 필요한 일감이 없어요/);
-  // 전체 히스토리 탭(네 종류)
-  const mixed = [
-    { type: "jobs", item: J(1, "running") },
-    { type: "jobs", item: J(2, "done") },
-    { type: "deploys", item: D(1, null, ago(1)) },
-    { type: "deploys", item: D(2, true, ago(1)) },
-    { type: "threads", item: T({ lastTurnStatus: "awaiting_approval" }) },
-    { type: "threads", item: T({ id: "cthr2", lastTurnStatus: "done" }) },
-    { type: "updates", item: { id: 1, at: ago(1), fromCommit: null, commit: "abc", subject: null, note: "자동 업데이트 시작: x", thread: null } },
-    { type: "updates", item: { id: 2, at: ago(1), fromCommit: null, commit: "abc", subject: null, note: "자동 업데이트 실패: x", thread: null } },
-  ];
-  const merged = { filter: "all", items: mixed, nextCursor: null, total: 8, loading: false, error: null };
-  const all = panel({ tab: "all", merged });
-  const some = panel({ tab: "all", merged, initialLiveOnly: true });
-  assert.equal(count(all, /data-kind="/g), 8);
-  assert.equal(count(some, /data-kind="/g), 4);
-  assert.match(some, /불러온 8개 중 진행 중·승인 필요 4개만 보여요/);
-  assert.doesNotMatch(some, /fx-st-fail|fx-st-done/);
   // 다른 탭(서버 배포)에는 토글이 없다
   assert.doesNotMatch(panel({ tab: "deploys" }), /data-live-toggle/);
-  assert.match(all, /data-live-toggle/);
   assert.equal(view.isLiveItem("jobs", J(1, "linkwait")), true);
   assert.equal(view.isLiveItem("jobs", J(1, "approved")), false);
 });

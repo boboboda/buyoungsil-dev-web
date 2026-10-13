@@ -4,10 +4,10 @@
 // 상태: live(값 있음) · waiting(수신 대기) · failed(수집 실패 + 오래된 값 + 감독 끊김 + 갱신 실패) · history(이력 전체 보기)
 //       · users(가입자 명단, 가짜 30명) · users-empty(가입자 0명)
 //       · toolbox(통제실 [설정] 도구함 한눈에 보기, 중계 '허용') · toolbox-failed(도구 상태 읽기 실패)
-//       · history-merged(이력 [전체 히스토리] 탭: 배포·감독·정비·일감을 합친 최신순 20개 + 긴 빌드 로그 접힘) · history-jobs(이력 [앱 일감] 탭: 일감 20개 + 긴 결과 접힘)
+//       · history-merged(이력 [작업 진행] 탭: 상태별 묶음 보드) · history-jobs(이력 [앱 일감] 탭: 일감 20개 + 긴 결과 접힘)
 //       · devices(통제실 [사용량] 장비 상태: 서버1 위험·주의 값, 서버2 끊김·GPU 없음, 메인PC GPU 있음 + 상태바 장비 칸)
 //       · fable-usage(AI USAGE 의 Fable 주간 한도 카드 + 오늘 모델별 비율 + 상태바 Fable) · fable-missing(Fable 값 못 받음)
-//       · status-mix(통제실 [현황] 상태 체계: '지금 진행 중' 띠 + 진행 중 1·승인 필요 1·대기 3·완료·실패 섞인 목록 + '진행 중만 보기' 켠 목록)
+//       · status-mix(통제실 [현황] 상태 체계: '지금 진행 중' 띠 + [작업 진행] 보드: 진행 중 1·승인 필요 2·대기 3·최근 완료·실패)
 //       · app-slots(통제실 [설정] '동시에 만들 앱 수' 카드: 기본 3 · 지금 진행 중 2 / 최대 3, 값을 줄여 넘칠 때, + [현황] 띠에 3개 동시에)
 //       · model-approve(승인할 때 Claude Code 모델 고르기: [현황] 승인 줄의 모델 선택(Codex 일감은 숨김) + 이력 '모델: ○○' + [설정] 기본 모델)
 // 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
@@ -114,7 +114,7 @@ const STATES = {
 // 이력 전체 보기: 서버 배포 탭에서 [전체 보기]를 누른 모양(95개 중 첫 20개 + [더 보기]). 다른 상태는 최근 목록(5개만)
 STATES.history = { ...STATES.live, title: "이력 전체 보기", history: "all" };
 STATES["history-jobs"] = { ...STATES.live, title: "이력 · 앱 일감 탭", history: "jobs" };
-STATES["history-merged"] = { ...STATES.live, title: "이력 · 전체 히스토리 탭", history: "merged" };
+STATES["history-merged"] = { ...STATES.live, title: "이력 · 작업 진행 탭", history: "merged" };
 // 가입자 명단(/admin/users): 가짜 30명(이름·이메일은 만든 값) 첫 쪽 25명 / 0명
 STATES.users = { ...STATES.live, title: "가입자 명단 · 30명", users: "many" };
 STATES["users-empty"] = { ...STATES.live, title: "가입자 명단 · 0명", users: "empty" };
@@ -162,22 +162,22 @@ const handoffFailed = {
 const statusMixPage = () => {
   const run = { type: "job", id: "cjob000117", title: "물 마시기 알림 수정", sub: "water-log", kindLabel: "수정", startedAt: iso(now - 192_000), aiEngine: "claude", aiModel: "opus" };
   const mkJob = (n, status, extra = {}) => ({ ...jobRow(n), ...extra, status, id: `cjob${String(900 - n).padStart(6, "0")}` });
-  const items = [
-    { type: "jobs", item: mkJob(0, "running", { title: "물 마시기 알림 수정", startedAt: iso(now - 192_000), result: null }) },
-    { type: "threads", item: { ...threadRow(0), title: "통제실 [현황] 색 정리", status: "open", lastTurnStatus: "awaiting_approval" } },
-    { type: "jobs", item: mkJob(1, "approved", { title: "걸음 수 기록 수정", result: null }) },
-    { type: "jobs", item: mkJob(2, "approved", { title: "메모장 수정", result: null }) },
-    { type: "jobs", item: mkJob(3, "approved", { title: "타이머 새 앱", result: null }) },
-    { type: "deploys", item: { ...historyData.deploys[0], ok: true, startedAt: iso(now - 7 * HOUR), finishedAt: iso(now - 6.9 * HOUR) } },
-    { type: "jobs", item: mkJob(4, "done", { result: "앱 완성: 화면 5개, 빌드·시험 통과" }) },
-    { type: "jobs", item: mkJob(5, "failed", { result: "필수 검증 실패: flutter analyze 오류 3개 — lib/main.dart:41 …" }) },
-    { type: "updates", item: { ...updateRow(0), note: "자동 업데이트 완료 → 재시작" } },
-    { type: "threads", item: { ...threadRow(1), status: "closed", lastTurnStatus: "done" } },
-    { type: "jobs", item: mkJob(6, "cancelled", { result: null }) },
-  ];
-  const merged = { filter: "all", items, nextCursor: "next", total: 408, loading: false, error: null };
-  const view = (liveOnly) =>
-    h(HistoryPanelView, { data: historyData, open: true, tab: "all", full: null, merged, initialLiveOnly: liveOnly, onToggle: noop2, onTab: noop2, onShowAll: noop2, onMore: noop2, onShowRecent: noop2 });
+  const board = {
+    active: { running: [run], queued: 3, next: { type: "job", title: "걸음 수 기록 수정" } },
+    inbox: { jobs: [{ id: "cjob000200", appSlug: "timer-app", title: "타이머 새 앱", kind: "new", kindLabel: "새 앱", stack: "flutter", aiEngine: "claude", source: "통제실", createdAt: iso(now - 25 * MIN) }], turns: [{ id: "cturn1", threadId: "cthr0", threadTitle: "통제실 [현황] 색 정리", text: "x", aiEngine: "claude", source: "통제실", createdAt: iso(now - 9 * MIN) }], deploys: [] },
+    jobs: [
+      { ...mkJob(0, "running", { title: "물 마시기 알림 수정", startedAt: iso(now - 192_000), result: null }), id: "cjob000117" },
+      mkJob(1, "approved", { title: "걸음 수 기록 수정", result: null }),
+      mkJob(2, "approved", { title: "메모장 수정", result: null }),
+      mkJob(3, "approved", { title: "타이머 새 앱", result: null }),
+      mkJob(4, "done", { result: "앱 완성: 화면 5개, 빌드·시험 통과" }),
+      mkJob(5, "failed", { result: "필수 검증 실패: flutter analyze 오류 3개" }),
+      mkJob(6, "cancelled", { result: null }),
+    ],
+    threads: [{ ...threadRow(1), status: "closed", lastTurnStatus: "done" }],
+  };
+  const view = () =>
+    h(HistoryPanelView, { data: historyData, open: true, tab: "progress", full: null, board, now, onToggle: noop2, onTab: noop2, onShowAll: noop2, onMore: noop2, onShowRecent: noop2 });
   const todo = h(
     Card,
     { className: "mb-6", "data-title": "todo · 승인·배포" },
@@ -207,10 +207,8 @@ const statusMixPage = () => {
       h(FactoryTabs, { active: "status" }),
       h(ActiveStrip, { now, active: { running: [run], queued: 3, next: { type: "job", title: "걸음 수 기록 수정" } } }),
       todo,
-      h("h2", { className: "fx-label" }, "── 전체 히스토리 (진행 중 1 · 승인 필요 1 · 대기 3 · 완료 · 실패 · 취소) ──"),
-      view(false),
-      h("h2", { className: "fx-label mt-6" }, "── '진행 중만 보기' 켠 모습 ──"),
-      view(true),
+      h("h2", { className: "fx-label" }, "── 작업 진행 (진행 중 1 · 승인 필요 2 · 대기 3 · 최근 완료·실패) ──"),
+      view(),
       h("h2", { className: "fx-label mt-6" }, "── 띠: 진행 중 없음 / 4개 이상 ──"),
       h(ActiveStrip, { now, active: { running: [], queued: 3, next: { type: "job", title: "걸음 수 기록 수정" } } }),
       h(ActiveStrip, { now, active: { running: [1, 2, 3, 4, 5].map((n) => ({ ...run, id: `cjob${n}`, title: `앱 일감 ${n}`, startedAt: iso(now - n * 61_000) })), queued: 0, next: null } }),
@@ -330,23 +328,15 @@ const threadRow = (i) => ({
   deployResult: null,
   updatedAt: iso(now - (i * 5 + 0.5) * HOUR),
 });
-const longLog = ["빌드 실패: next build 종료 코드 1", ...Array.from({ length: 24 }, (_, i) => `  ./components/admin/factory/FactoryOverview.tsx:${100 + i}:5 Type error: 로그 줄 ${i + 1}`)].join("\n");
-const mergedItems = [
-  ...historyData.deploys.slice(0, 12).map((d, i) => ({ type: "deploys", at: d.requestedAt, item: i === 4 ? { ...d, ok: false, result: longLog } : d })),
-  ...Array.from({ length: 8 }, (_, i) => updateRow(i)).map((u) => ({ type: "updates", at: u.at, item: u })),
-  ...Array.from({ length: 4 }, (_, i) => threadRow(i)).map((t) => ({ type: "threads", at: t.updatedAt, item: t })),
-  ...Array.from({ length: 6 }, (_, i) => jobRow(i)).map((j) => ({ type: "jobs", at: j.createdAt, item: j })),
-]
-  .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
-  .slice(0, 20);
 const noop2 = () => {};
 const historyPanel = (state) =>
   h(HistoryPanelView, {
     data: STATES[state].history === "all" ? historyData : { ...historyData, deploys: historyData.deploys.slice(0, 5) },
     open: true,
-    tab: STATES[state].history === "merged" ? "all" : STATES[state].history === "jobs" ? "jobs" : "deploys",
+    tab: STATES[state].history === "merged" ? "progress" : STATES[state].history === "jobs" ? "jobs" : "deploys",
     full: STATES[state].history === "jobs" ? { kind: "jobs", items: Array.from({ length: 20 }, (_, i) => jobRow(i)), nextCursor: "cjob000981", total: 138, loading: false, error: null } : STATES[state].history === "all" ? { kind: "deploys", items: historyData.deploys.slice(0, 20), nextCursor: "cdep19", total: 95, loading: false, error: null } : null,
-    merged: STATES[state].history === "merged" ? { filter: "all", items: mergedItems, nextCursor: "d:cdep11.u:123.t:cthr3.j:cjob000995", total: 408, loading: false, error: null } : null,
+    board: STATES[state].history === "merged" ? { active: { running: [], queued: 0, next: null }, inbox: { jobs: [], turns: [], deploys: [] }, jobs: Array.from({ length: 12 }, (_, i) => jobRow(i)), threads: [] } : undefined,
+    now,
     onToggle: noop2,
     onTab: noop2,
     onShowAll: noop2,

@@ -367,52 +367,49 @@ test("API kind=all: 관리자만, no-store, 쪽 이어 읽기, 잘못된 cursor 
 
 const mixed = (pages) => json(pages.flatMap((p) => p.items));
 
-test("탭 줄 맨 앞 [전체 히스토리 · 총 N개]는 접힘·펼침·탭 상관없이 늘 보인다", () => {
-  for (const props of [{ open: false }, { open: true }, { tab: "updates" }, { tab: "threads" }, { tab: "all" }, { data: null, open: false }]) {
+test("탭 줄 맨 앞 [작업 진행]은 접힘·펼침·탭 상관없이 늘 보이고 순서는 작업 진행 · 서버 배포 · 감독 · 정비 · 앱 일감", () => {
+  for (const props of [{ open: false }, { open: true }, { tab: "updates" }, { tab: "threads" }, { tab: "progress" }, { data: null, open: false }]) {
     const html = render(props);
     const tabs = html.match(/data-history-tabs[^]*?<\/div>/)[0];
-    assert.match(tabs, /^data-history-tabs[^>]*>\s*<button[^>]*data-tab="all"/, "탭 줄 맨 앞");
-    assert.match(tabs, /전체 히스토리/);
-    assert.match(tabs, /서버 배포[^]*감독 프로그램 업데이트[^]*정비 대화/);
-    if (props.data !== null) assert.match(tabs, /총 390개/);
+    assert.match(tabs, /^data-history-tabs[^>]*>s*<button[^>]*data-tab="progress"/, "탭 줄 맨 앞");
+    assert.doesNotMatch(tabs, /전체 히스토리/);
+    assert.match(tabs, /작업 진행[^]*서버 배포[^]*감독 프로그램 업데이트[^]*정비 대화[^]*앱 일감/);
   }
-  // 예전 서버(totals 없음)는 최근 목록 길이 합
-  assert.match(render({ data: { ...recent, totals: undefined } }), /총 110개/);
-  // 기존 세 탭은 그대로(기본 [서버 배포] 최근 목록 + [전체 보기])
-  assert.match(render({}), /전체 보기 · 총 95개/);
+  // 기존 탭은 그대로(서버 배포 최근 목록 + [전체 보기])
+  assert.match(render({ tab: "deploys" }), /전체 보기 · 총 95개/);
 });
 
-test("전체 히스토리 탭: 줄마다 종류 표시, 더 보기 → 끝까지, 종류 필터, 읽는 중·실패", async () => {
-  const pages = await readMerged();
-  const first = mixed(pages.slice(0, 1));
-  const one = render({ tab: "all", merged: { filter: "all", items: first, nextCursor: pages[0].nextCursor, total: 390, loading: false, error: null } });
-  assert.match(one, /data-history="merged"/);
-  assert.match(one, /전체 히스토리 · 최신순/);
-  assert.match(one, /20 \/ 390/);
-  assert.match(one, /더 보기 \(20개\)/);
-  assert.equal(rows(one), 20);
-  assert.equal((one.match(/data-kind="/g) ?? []).length, 20);
-  assert.match(one, /🔄 감독/);
-  for (const f of ["all", "deploys", "updates", "threads", "jobs"]) assert.match(one, new RegExp(`data-filter="${f}"`));
-  assert.match(one, /data-filter="all" aria-pressed="true"/);
-
-  const done = render({ tab: "all", merged: { filter: "all", items: view.mergeMixed(mixed(pages), first), nextCursor: null, total: 390, loading: false, error: null } });
-  assert.equal(rows(done), 390);
-  for (const label of ["🚀 배포", "🔄 감독", "🛠 정비", "📦 일감"]) assert.match(done, new RegExp(label));
-  assert.doesNotMatch(done, /더 보기/);
-  assert.match(done, /끝까지 다 봤어요/);
-
-  // 필터 '배포': 그 종류만(종류 표시는 배포만)
-  const dep = (await readAll("deploys")).flatMap((p) => p.items.map((item) => ({ type: "deploys", item })));
-  const only = render({ tab: "all", merged: { filter: "deploys", items: json(dep), nextCursor: null, total: 95, loading: false, error: null } });
-  assert.equal(rows(only), 95);
-  assert.deepEqual([...new Set(only.match(/data-kind="[a-z]+"/g))], ['data-kind="deploys"']);
-  assert.match(only, /data-filter="deploys" aria-pressed="true"/);
-
-  assert.match(render({ tab: "all", merged: null }), /읽는 중…/);
-  const failed = render({ tab: "all", merged: { filter: "all", items: [], nextCursor: null, total: 390, loading: false, error: "서버에 연결하지 못했어요." } });
-  assert.match(failed, /서버에 연결하지 못했어요/);
-  assert.doesNotMatch(failed, /기록이 없어요/);
+test("작업 진행 탭: 진행 중 · 승인 필요 · 대기 · 최근 완료·실패 묶음, 개수, 빈 묶음은 한 줄 '없음'", () => {
+  const NOW = Date.UTC(2026, 9, 13, 12, 0, 0);
+  const ago = (ms) => new Date(NOW - ms).toISOString();
+  const J = (n, status, extra) => ({ id: `cj${n}`, appSlug: `app-${n}`, title: `일감 ${n}`, kind: "revision", kindLabel: "수정", status, aiEngine: "claude", aiModel: "opus", result: null, createdAt: ago(n * 60000), startedAt: null, finishedAt: ago(n * 1000), ...extra });
+  const jobs = [J(1, "approved"), J(2, "done"), J(3, "failed"), ...Array.from({ length: 12 }, (_, i) => J(10 + i, "done"))];
+  const board = {
+    active: { running: [{ type: "job", id: "cj9", title: "돌아가는 일감", sub: "timer", kindLabel: "수정", startedAt: ago(125000), aiEngine: "claude", aiModel: "opus" }], queued: 1, next: null },
+    inbox: { jobs: [], turns: [{ id: "ct1", threadId: "th1", threadTitle: "정비 승인 대기", text: "x", aiEngine: "claude", source: null, createdAt: ago(60000) }], deploys: [] },
+    jobs: json(jobs),
+    threads: [],
+  };
+  const out = render({ tab: "progress", board, now: NOW });
+  const sec = (k) => out.match(new RegExp(`data-board="${k}"[^]*?</section>`))[0];
+  assert.match(sec("run"), /data-board-count[^>]*>1</);
+  assert.match(sec("run"), /돌아가는 일감/);
+  assert.match(sec("run"), /경과 2분 5초/); // 시작 후 경과
+  assert.match(sec("run"), /data-kind="job"[^>]*>일감</);
+  assert.match(sec("run"), /opus/);
+  assert.match(sec("approval"), /정비 승인 대기/);
+  assert.match(sec("approval"), /data-kind="maintenance"[^>]*>정비</);
+  assert.match(sec("wait"), /요청 후 1분 0초/); // 요청 후 경과
+  assert.match(sec("recent"), /data-board-count[^>]*>10</); // 최근 10개
+  assert.equal((sec("recent").match(/data-board-row=/g) ?? []).length, 10);
+  assert.match(sec("recent"), /fx-st-fail/);
+  assert.doesNotMatch(out, /data-filter=|data-live-toggle|전체 히스토리/);
+  // 비어 있는 묶음은 한 줄
+  const empty = render({ tab: "progress", board: { ...board, active: { running: [], queued: 0, next: null }, inbox: { jobs: [], turns: [], deploys: [] }, jobs: [] }, now: NOW });
+  assert.equal((empty.match(/data-board-empty/g) ?? []).length, 4);
+  assert.equal((empty.match(/>없음</g) ?? []).length, 4);
+  // 아직 못 읽었으면 읽는 중
+  assert.match(render({ tab: "progress", board: undefined }), /읽는 중…/);
 });
 
 test("긴 로그(빌드 로그 끝부분)는 3줄까지만 보이고 [펼치기], 짧은 결과는 그대로", () => {
@@ -544,20 +541,6 @@ test("앱 일감 탭: 줄마다 이름(앱)·종류·상태·요청/시작/완�
   assert.match(render({ tab: "jobs", full: { kind: "jobs", items, nextCursor: "n", total: 120, loading: false, error: "서버에 연결하지 못했어요." } }), /서버에 연결하지 못했어요/);
 });
 
-test("전체 히스토리 탭에 📦 일감이 섞이고, 종류 필터에 '일감'이 있다", async () => {
-  const pages = await readMerged(100);
-  const first = mixed(pages.slice(0, 1));
-  const html = render({ tab: "all", merged: { filter: "all", items: first, nextCursor: pages[0].nextCursor, total: 390, loading: false, error: null } });
-  assert.match(html, /data-filter="jobs"[^>]*>일감</);
-  assert.ok((html.match(/data-kind="jobs"/g) ?? []).length > 0);
-  assert.match(html, /📦 일감/);
-  const jobsOnly = (await readJobs(100)).flatMap((p) => p.items.map((item) => ({ type: "jobs", item })));
-  const only = render({ tab: "all", merged: { filter: "jobs", items: json(jobsOnly), nextCursor: null, total: 120, loading: false, error: null } });
-  assert.equal(rows(only), 120);
-  assert.deepEqual([...new Set(only.match(/data-kind="[a-z]+"/g))], ['data-kind="jobs"']);
-  assert.match(only, /data-filter="jobs" aria-pressed="true"/);
-});
-
 test("[일감] 탭 목록 제한 안내·주소 연결·인덱스", () => {
   const control = fs.readFileSync(path.join(repo, "components/admin/factory/FactoryControl.tsx"), "utf8");
   const jobsRoute = fs.readFileSync(path.join(repo, "app/api/admin/factory/jobs/route.ts"), "utf8");
@@ -570,7 +553,7 @@ test("[일감] 탭 목록 제한 안내·주소 연결·인덱스", () => {
   // 주소 해석: 모르는 값은 무시
   assert.equal(consoleTabs.parseHistoryTab("jobs"), "jobs");
   assert.equal(consoleTabs.parseHistoryTab("zzz"), undefined);
-  assert.equal(consoleTabs.parseHistoryTab(["all", "x"]), "all");
+  assert.equal(consoleTabs.parseHistoryTab(["progress", "x"]), "progress");
   assert.equal(consoleTabs.parseJobId("cjob000001"), "cjob000001");
   assert.equal(consoleTabs.parseJobId("../etc"), null);
   assert.equal(consoleTabs.parseJobId("a".repeat(41)), null);
