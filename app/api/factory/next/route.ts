@@ -75,6 +75,13 @@ export async function GET(req: NextRequest) {
     ? { claudeTool: param("claudeTool", 120) || "확인 안 함", codexTool: param("codexTool", 120) || "확인 안 함", aiToolsAt: aiToolsAtRaw }
     : {};
 
+  // 작업 메모리 상태(폴더|시각|KB|푸시|정리필요 ; ...). 모양이 맞는 줄만 받는다
+  const memoryRows = param("memory", 600)
+    .split(";")
+    .filter((row) => /^[A-Za-z0-9_.-]{1,40}\|\d{4}-\d{2}-\d{2}T[\d:.]+Z\|\d{1,6}\|(?:ok|failed|none|blocked)\|[01]$/.test(row))
+    .slice(0, 12);
+  const memory = memoryRows.length ? memoryRows.join(";") : "";
+
   try {
     if (commit) await saveSupervisorInfo(commit, noteRaw, subject).catch(() => undefined);
 
@@ -89,6 +96,7 @@ export async function GET(req: NextRequest) {
           ffmpeg: param("ffmpeg", 300) || undefined,
           ffprobe: param("ffprobe", 300) || undefined,
           ...aiTools,
+          ...(memory ? { memory } : {}),
           restartWait: hold || undefined,
           restartFail: param("restartFail", 300) || undefined,
         },

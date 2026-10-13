@@ -23,7 +23,7 @@ function loadTs(relative, dependencies = {}) {
 
 const mask = loadTs("lib/factory/mask.ts");
 const handoffLib = loadTs("lib/factory/handoff.ts", { "@/lib/factory/mask": mask });
-const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx", { "@/lib/factory/handoff": handoffLib }).default;
+const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx", { "@/lib/factory/handoff": handoffLib, "@/lib/factory/memory-report": loadTs("lib/factory/memory-report.ts") }).default;
 
 const entry = {
   v: 1, kind: "maintenance", taskId: "turn1", threadId: "th1", title: "로그인 수정", engine: "codex", model: "기본", at: "2026-10-13T09:00:00.000Z", status: "done",

@@ -46,6 +46,7 @@ import { createAssetUploader } from "./assetupload.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { startDeviceStats } from "./devicestats.mjs";
 import { DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake } from "./slots.mjs";
+import { DEFAULT_MEMORY_REMOTE, memoryReport, setMemoryConfig } from "./memory.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -73,6 +74,7 @@ const DEFAULTS = {
   allowedTools: "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
   model: "",
   selfdevDir: "~/dev/factory/selfdev", // 공장 정비 전용 체크아웃
+  memoryRemote: DEFAULT_MEMORY_REMOTE, // 작업 메모리(.factory/memory/) 푸시 주소. 서버2 전용(github.com 은 거부). {folder} 를 쓰면 폴더마다 저장소, 없으면 저장소 하나에 폴더 이름 브랜치. ""이면 로컬에만
   deployRemote: "serverpc:git-server/repo/developWeb.git", // 정비 [배포] 때 push 할 서버 배포 저장소(고정)
   toolkitDir: "", // 게임 툴킷(파이썬 도구) 폴더. 비우면 <workDir>/game-toolkit (도구 요청 중계의 toolkit.run)
   pythonCmd: IS_WIN ? "python" : "python3",
@@ -1316,6 +1318,16 @@ const HOUR_MS = 60 * 60_000;
 let secretNamesReportedAt = 0; // PC 키 이름 보고(값 없음): 시작 때와 1시간마다, 반영 직후
 let aiTools = null; // AI 도구 상태(읽기 전용): 1시간마다 확인해 홈페이지가 받을 때까지 /next 에 붙인다
 let aiToolsCheckedAt = 0;
+let memoryLine = ""; // 작업 메모리 상태(폴더별 시각·크기·푸시 결과, 본문 없음): 바뀌었거나 1시간이 지나면 /next 에 붙인다
+let memorySentAt = 0;
+function memoryQuery() {
+  try {
+    const dirs = new Set([path.resolve(expand(cfg.selfdevDir || "~/dev/factory/selfdev"))]);
+    for (const e of fs.readdirSync(cfg.workDir, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith(".")) dirs.add(path.join(cfg.workDir, e.name));
+    const line = memoryReport([...dirs]);
+    return line && (line !== memoryLine || Date.now() - memorySentAt > HOUR_MS) ? { memory: line } : {};
+  } catch { return {}; }
+}
 
 async function loop() {
   let delay = cfg.pollSec * 1000;
@@ -1332,8 +1344,9 @@ async function loop() {
       { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
-        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), ...(aiTools ?? {}) });
+        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), ...(aiTools ?? {}), ...memoryQuery() });
         const sentTools = aiTools;
+        const sentMemory = extra.get("memory");
         // 정비 지시나 정비 배포가 도는 동안에는 새 앱 일감을 받지 않는다(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌)
         const take = planTake({ limit: appLimit(), running: running.size, maintenanceBusy: maintenanceBusy() });
         const r = await api(
@@ -1344,6 +1357,7 @@ async function loop() {
         if (r.status === 200) {
           delay = cfg.pollSec * 1000;
           if (aiTools === sentTools) aiTools = null; // 받았으니 다음 확인(1시간 뒤)까지 보내지 않는다
+          if (sentMemory) { memoryLine = sentMemory; memorySentAt = Date.now(); }
           if (Date.now() - aiToolsCheckedAt > HOUR_MS) {
             // 폴링이 된 뒤에만, 기다리지 않고 확인한다. 결과는 다음 /next 에 붙는다
             aiToolsCheckedAt = Date.now();
@@ -1443,6 +1457,7 @@ if (command === "init") {
   await init();
 } else {
   cfg = loadConfig();
+  setMemoryConfig({ remote: cfg.memoryRemote });
   if (command === "check") await check();
   else {
     process.on("SIGINT", shutdown);

@@ -14,6 +14,16 @@ export interface HandoffFiles {
   more: number;
 }
 
+/** 작업 메모리(.factory/memory/) 상태: current.md 본문(6KB 상한)과 크기·시각·서버2 푸시 결과만. project.md 본문은 오지 않는다 */
+export interface HandoffMemory {
+  current: string;
+  updatedAt: string;
+  projectBytes: number;
+  push: "ok" | "failed" | "none" | "blocked";
+  needsCompact: boolean;
+  error?: string;
+}
+
 export interface HandoffEntry {
   v: 1;
   kind: "maintenance" | "job" | "terminal";
@@ -35,9 +45,28 @@ export interface HandoffEntry {
   files: { committed: HandoffFiles | null; uncommitted: HandoffFiles | null };
   checks: HandoffCheck[];
   git: { head: string | null; branch: string | null; dirty: boolean };
+  memory?: HandoffMemory;
 }
 
-const MAX_BYTES = 6000;
+const MAX_BYTES = 12000; // 인계 항목(4KB 안팎) + 현재 일감 요약(6KB 상한)
+const MEMORY_CURRENT_MAX = 6000;
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/;
+
+function memory(v: unknown): HandoffMemory | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const r = v as Record<string, unknown>;
+  const updatedAt = typeof r.updatedAt === "string" && ISO_RE.test(r.updatedAt) ? r.updatedAt : null;
+  const push = r.push === "ok" || r.push === "failed" || r.push === "none" || r.push === "blocked" ? r.push : null;
+
+  if (!updatedAt || !push) return undefined;
+  const bytes = typeof r.projectBytes === "number" && Number.isFinite(r.projectBytes) ? Math.min(10_000_000, Math.max(0, Math.floor(r.projectBytes))) : 0;
+  const error = text(r.error, 160);
+
+  const lines = (typeof r.current === "string" ? r.current : "").split(/\r?\n/).slice(0, 60);
+  const current = lines.map((l) => text(l, 400)).join("\n").trim().slice(0, MEMORY_CURRENT_MAX);
+
+  return { current, updatedAt, projectBytes: bytes, push, needsCompact: r.needsCompact === true, ...(error ? { error } : {}) };
+}
 
 // 줄바꿈·제어 문자를 공백으로, PC 사용자 경로는 ~ 로, 비밀값 모양은 가린다
 const text = (v: unknown, max: number): string =>
@@ -103,6 +132,7 @@ export function cleanHandoff(v: unknown): HandoffEntry | null {
     files: { committed: files(files2.committed), uncommitted: files(files2.uncommitted) },
     checks,
     git: { head: hex(git.head), branch: text(git.branch, 60) || null, dirty: git.dirty === true },
+    ...(memory(r.memory) ? { memory: memory(r.memory) } : {}),
   };
 
   return Buffer.byteLength(JSON.stringify(out)) <= MAX_BYTES ? out : null;

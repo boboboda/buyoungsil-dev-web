@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, Card, CardBody, CardHeader } from "@heroui/react";
 
 import Field from "./Field";
+import MemoryStatus from "./MemoryStatus";
 
 type State = "pending" | "stored" | "delete_pending" | "missing" | "server";
 
@@ -24,6 +25,7 @@ interface Data {
   items: Item[];
   pcReportedAt: string | null;
   aiTools: { claude: string | null; codex: string | null; at: string | null };
+  memory?: string;
 }
 
 const STATE_TEXT: Record<State, string> = {
@@ -190,6 +192,7 @@ export default function SecretEntries() {
           <h3 className="font-semibold">🤖 AI 도구 상태(작업 PC, 읽기 전용)</h3>
           <div className="break-words">Claude Code: {data?.aiTools.claude ?? "확인 안 함"}</div>
           <div className="break-words">Codex: {data?.aiTools.codex ?? "확인 안 함"}</div>
+          <MemoryStatus report={data?.memory} />
           <p className="text-xs text-default-500">
             {data?.aiTools.at ? `확인 ${when(data.aiTools.at)} · ` : ""}감독 프로그램이 1시간마다 --version 과 공식 로그인 상태 명령 결과만 알려요.
             로그인은 PC 에서 직접 하세요.

@@ -23,7 +23,7 @@ export async function GET() {
   const [list, rt] = await Promise.all([secretEntryStatuses(), getSupervisorRuntime().catch(() => ({}) as SupervisorRuntime)]);
 
   return NextResponse.json(
-    { ...list, aiTools: { claude: rt.claudeTool ?? null, codex: rt.codexTool ?? null, at: rt.aiToolsAt ?? null } },
+    { ...list, aiTools: { claude: rt.claudeTool ?? null, codex: rt.codexTool ?? null, at: rt.aiToolsAt ?? null }, memory: rt.memory ?? "" },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

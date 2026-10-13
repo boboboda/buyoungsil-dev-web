@@ -59,7 +59,9 @@ const topBar = loadTs("components/admin/ui/AdminTopBar.tsx", {
 const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters, "@/lib/claude-status/fable": fableLib });
 const aiLib = loadTs("lib/factory/ai.ts");
 const modelSelect = loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib });
-const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx").default;
+const memoryReportLib = loadTs("lib/factory/memory-report.ts");
+const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx", { "@/lib/factory/memory-report": memoryReportLib }).default;
+const MemoryStatus = loadTs("components/admin/factory/MemoryStatus.tsx", { "@/lib/factory/memory-report": memoryReportLib }).default;
 const slotsCard = loadTs("components/admin/factory/AppSlotsSettings.tsx");
 const { HistoryPanelView, ActiveStrip } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
 const { default: DefaultAiSettings } = loadTs("components/admin/factory/DefaultAiSettings.tsx", {
@@ -144,6 +146,10 @@ const handoffSample = {
   files: { committed: { list: ["lib/factory/approvals.ts", "components/admin/factory/FactoryOverview.tsx", "tests/factory-history.test.mjs"], more: 8 }, uncommitted: { list: [], more: 0 } },
   checks: [{ name: "감독 문법·타입 검사", result: "통과" }, { name: "prisma validate", result: "통과" }, { name: "앱 빌드", result: "건너뜀", detail: "Mac 필요" }],
   git: { head: "a6bed92b6f2a4f1f3c2f5f9f6e6d2e8c1a1b2c3d", branch: "main", dirty: false },
+  memory: {
+    current: "# 현재 일감 요약\n- 일감: 통제실 [현황] 이력에 앱 일감 추가 (정비 · Claude Code · 2026-10-13 09:10)\n- 상태: 완료 · 검사 감독 문법·타입 검사 통과; prisma validate 통과\n- 요청: [현황] 히스토리에 '앱 일감' 기록도 전부 보이게\n- 바꾼 파일: lib/factory/approvals.ts, components/admin/factory/FactoryOverview.tsx 외 8개\n- 한 일·결정: jobs 이력 API·탭·전체 히스토리 합치기, factory_jobs 인덱스 마이그레이션\n- 남은 일: 배포 후 실제 화면에서 줄 클릭 확인\n- 주의: 일감 목록 탭의 최근 50개 제한은 그대로\n- Git: main@a6bed92\n- 전체 요약: 갱신 반영",
+    updatedAt: "2026-10-13T09:10:20.000Z", projectBytes: 6144, push: "ok", needsCompact: false,
+  },
 };
 const handoffFailed = {
   ...handoffSample, kind: "job", taskId: "cjob000118", appSlug: "memo-pad", title: "메모장 수정", engine: "codex", model: "기본", at: "2026-10-13T08:30:00.000Z", status: "failed", hasAiBlock: false,
@@ -242,6 +248,8 @@ const handoffPage = () =>
     h("div", { "data-open-details": true }, h(HandoffBox, { entry: handoffFailed })),
     h("h2", { className: "fx-label mt-6" }, "── 접힌 모습(기본) ──"),
     h(HandoffBox, { entry: handoffSample }),
+    h("h2", { className: "fx-label mt-6" }, "── [설정] 🤖 AI 도구 상태 칸 안의 '작업 메모리' 폴더별 한 줄 ──"),
+    h("div", { className: "space-y-1 rounded-lg border border-default-200 p-3 text-sm" }, h(MemoryStatus, { report: "selfdev|2026-10-13T09:10:20.000Z|6|ok|0;memo-pad|2026-10-13T08:31:02.000Z|3|failed|0;timer-app|2026-10-12T21:00:00.000Z|22|none|1" })),
   ));
 // 승인할 때 모델 고르기: 앱 일감(opus 고름)·정비 지시(기본 설정 사용)·Codex 출시 일감(모델 칸 없음) + 일감 이력 + 설정 탭 기본 모델
 STATES["model-approve"] = { ...STATES.live, title: "승인 · 모델 고르기", model: true };

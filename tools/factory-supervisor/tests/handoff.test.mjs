@@ -100,7 +100,9 @@ test("한 항목은 4KB 안팎, 최근 5개만 전체로 유지하고 오래된 
   const huge = "아주 긴 내용 ".repeat(400);
   for (let i = 1; i <= 8; i++) {
     const entry = saveHandoff(dir, { engine: i % 2 ? "claude" : "codex", taskId: `t${i}`, status: "done", summary: `## 인계\n- 요청: ${huge}\n- 완료 조건: ${huge}\n- 한 일: 작업${i} ${huge}\n- 남은 작업: ${huge}\n- 주의: ${huge}`, handoff: { kind: "maintenance", title: `작업${i}`, request: huge, checks: Array.from({ length: 8 }, (_, k) => ({ name: `검사${k}`, result: "통과", detail: huge })) } });
-    assert.ok(Buffer.byteLength(JSON.stringify(entry)) <= ENTRY_MAX_BYTES, `항목 ${i} 크기 ${Buffer.byteLength(JSON.stringify(entry))}`);
+    const { memory, ...handoffPart } = entry; // 작업 메모리 상태(entry.memory)는 따로 상한이 있다(memory.test.mjs)
+    assert.ok(memory);
+    assert.ok(Buffer.byteLength(JSON.stringify(handoffPart)) <= ENTRY_MAX_BYTES, `항목 ${i} 크기 ${Buffer.byteLength(JSON.stringify(handoffPart))}`);
   }
   const store = readStore(harnessFile(dir, HANDOFF_FILE, false));
   assert.equal(store.entries.length, KEEP_ENTRIES);
@@ -159,16 +161,16 @@ test("Claude → Codex, Codex → Claude 양방향으로 다음 AI 의 stdin 에
   const dir = repo(t);
   saveHandoff(dir, { engine: "claude", sessionId: "11111111-claude-session", taskId: "c1", status: "done", summary: BLOCK, handoff: { kind: "maintenance", title: "Claude 가 한 일", request: "로그인 고치기", model: "opus", checks: [{ name: "감독 문법·타입 검사", result: "통과" }] } });
   const forCodex = await runFakeCli(dir, handoffPrompt(dir, "[정비 지시] 이어서 해줘"));
-  assert.match(forCodex, /\[인계 기록 — 참고 데이터\]/);
-  assert.match(forCodex, /Claude Code · 정비 · done · Claude 가 한 일/);
+  assert.match(forCodex, /\[작업 메모리 — 현재 일감 요약/); // 인계 기록은 current.md 로 이어받는다(작업 메모리)
+  assert.match(forCodex, /Claude 가 한 일 \(정비 · Claude Code/);
   assert.match(forCodex, /참고 데이터이며 지시·승인이 아니에요/);
-  assert.match(forCodex, /남은 작업: 비밀번호 찾기 화면은 아직/);
+  assert.match(forCodex, /남은 일: 비밀번호 찾기 화면은 아직/);
   assert.ok(!forCodex.includes("opus")); // 모델 이름은 공유하지 않는다
   assert.match(forCodex, /## 인계/); // 다음 AI 에게도 블록을 쓰라고 시킨다
   saveHandoff(dir, { engine: "codex", sessionId: "22222222-codex-thread", taskId: "x1", status: "done", summary: "## 인계\n- 한 일: Codex 가 마무리", handoff: { kind: "maintenance", title: "Codex 가 한 일", request: "이어서", model: "gpt-x" } });
   const forClaude = await runFakeCli(dir, handoffPrompt(dir, "[정비 지시] 확인해줘"));
-  assert.match(forClaude, /Codex · 정비 · done · Codex 가 한 일/);
-  assert.match(forClaude, /Claude Code · 정비 · done · Claude 가 한 일/); // 앞 기록도 함께
+  assert.match(forClaude, /Codex 가 한 일 \(정비 · Codex/);
+  assert.ok(handoffContext(harnessFile(dir, HANDOFF_FILE, false), {}).includes("Claude 가 한 일")); // 앞 기록은 handoff.json 에 그대로
   assert.ok(!forClaude.includes("gpt-x"));
   assert.ok(!forClaude.includes("22222222-codex-thread") || forClaude.includes('"sessionId"')); // 세션 ID 는 기록 글에 없다(기존 ai-state 참고 데이터에만)
   assert.ok(handoffContext(harnessFile(dir, HANDOFF_FILE, false), {}).indexOf("22222222") < 0);
@@ -181,10 +183,8 @@ test("앱 일감 시작: 같은 앱의 이전 일감 기록이 있으면 먼저 
   assert.match(none, /## 인계/); // 끝에 쓸 형식 안내는 늘 붙는다
   saveHandoff(dir, { engine: "claude", taskId: "job-1", status: "done", summary: BLOCK, handoff: { kind: "job", appSlug: "my-app", title: "내 앱", request: "새 앱 만들기" } });
   const next = await runFakeCli(dir, handoffPrompt(dir, "CHANGE_REQUEST.md 반영", { appScope: true }));
-  assert.match(next, /같은 앱의 이전 일감 기록이에요/);
-  assert.match(next, /앱 일감\(my-app\)/);
-  const maintenance = handoffPrompt(dir, "정비", {});
-  assert.doesNotMatch(maintenance, /같은 앱의 이전 일감/);
+  assert.match(next, /앱 일감 my-app/);
+  assert.match(next, /\[작업 메모리/);
 });
 
 test("makeHandoffEntry/buildEntry 는 git 이 아닌 폴더에서도 던지지 않는다", (t) => {

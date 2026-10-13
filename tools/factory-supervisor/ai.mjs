@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // Single local terminal interface. It never commits, pushes, deploys, or changes provider auth.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { acquireWorkspace, engineOf, ENGINE_LABELS, eventDecoder, excludeHarnessState, gitSnapshot, handoffPrompt, harnessFile, lockPath, recordLifecycle, recoverWorkspace, redactAiText, saveHandoff, startAi, stopAi, verifyWorkspace } from "./ai-runner.mjs";
 import { keyFilesToCommit } from "./keyguard.mjs";
 import { checksFromVerification, headOf } from "./handoff.mjs";
+import { loadMemoryRemote, setMemoryConfig } from "./memory.mjs";
 
 const usage = `사용법:
   node tools/factory-supervisor/ai.mjs run claude|codex --project <폴더> [--prompt <지시>] [--stack <종류>]
@@ -28,6 +30,8 @@ async function main() {
     options[flag.slice(2)] = argv.shift();
   }
   const dir = path.resolve(options.project || process.cwd());
+  // 작업 메모리 푸시 주소는 감독 프로그램 설정 파일의 memoryRemote(파일이 없으면 로컬에만 커밋)
+  setMemoryConfig({ remote: loadMemoryRemote(process.env.FACTORY_CONFIG || path.join(os.homedir(), "dev", "factory", "supervisor.config.json")) });
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new Error("프로젝트 폴더가 없습니다.");
   if (action === "status") {
     const lockFile = lockPath(dir);

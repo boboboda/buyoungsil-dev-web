@@ -4,6 +4,7 @@
 import { Chip } from "@heroui/react";
 
 import type { HandoffEntry, HandoffFiles } from "@/lib/factory/handoff";
+import { MEMORY_PUSH_LABEL } from "@/lib/factory/memory-report";
 
 const STATUS: Record<string, { label: string; color: "success" | "danger" | "warning" }> = {
   done: { label: "완료", color: "success" },
@@ -48,6 +49,17 @@ export default function HandoffBox({ entry }: { entry: HandoffEntry | null | und
           <p className="rounded bg-warning-50 p-2 text-xs text-warning-700 dark:bg-warning-50/10" data-handoff-missing>
             인계 요약 없음 — AI가 &apos;## 인계&apos; 블록을 쓰지 않아 감독 프로그램이 기록한 사실만 남았어요.
           </p>
+        )}
+        {entry.memory?.current && (
+          <div className="rounded bg-default-100 p-2 text-xs" data-memory-current>
+            <div className="mb-1 font-semibold">🧠 현재 일감 요약 (다음 AI가 먼저 읽는 current.md)</div>
+            <pre className="whitespace-pre-wrap break-words font-sans">{entry.memory.current}</pre>
+            <div className="mt-1 text-default-500">
+              project.md {Math.ceil(entry.memory.projectBytes / 1024)}KB · {MEMORY_PUSH_LABEL[entry.memory.push]}
+              {entry.memory.error ? ` (${entry.memory.error})` : ""}
+              {entry.memory.needsCompact ? " · ⚠ 요약 정리 필요(20KB 초과) — 정비 지시로 오래된 섹션을 줄이게 하세요" : ""}
+            </div>
+          </div>
         )}
         <Row label="요청">{entry.request || "-"}</Row>
         {entry.doneWhen && <Row label="완료 조건">{entry.doneWhen}</Row>}
