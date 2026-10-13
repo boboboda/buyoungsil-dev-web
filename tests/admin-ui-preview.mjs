@@ -192,6 +192,7 @@ function page(state) {
   const { default: AdminLayout } = loadTs("app/admin/layout.tsx", {
     "./admin-ui.css": {},
     "@/config/fonts": { fontMono: { variable: "" } },
+    "@/components/admin/ui/AdminDocumentTheme": { __esModule: true, default: () => null },
     "@/components/admin/ui/AdminTopBar": { __esModule: true, default: () => h(topBar.AdminTopBarView, { pathname: "/admin/factory", clock: "12:42", account: "부영실" }) },
     "@/components/admin/ui/AdminStatusBar": { __esModule: true, default: () => h(statusBar.AdminStatusBarView, { data: st.bar, now, error: st.barError ?? null }) },
   });

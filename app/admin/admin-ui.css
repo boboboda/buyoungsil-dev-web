@@ -6,6 +6,7 @@
  *   본문 글자 ≥ 7:1, 보조 글자 ≥ 4.5:1(목표 7:1), 흐린 글자(placeholder·비활성) ≥ 3:1, 테두리·구분선 ≥ 3:1.
  *   본문 15px·줄간격 1.55, 보조 13px, 대문자 모노 라벨만 12px.
  * 모든 규칙은 .factory-ui 아래에서만 걸린다(공개 사이트·HeroUI·Tailwind 전역 설정은 건드리지 않음).
+ * 예외는 '관리자 화면 뒤' 규칙 하나: 관리자 화면이 떠 있을 때만(html:has(body .factory-ui) / html[data-admin]) html·body 를 어둡게 한다.
  * 순서: 색 토큰 → 공통 요소(글자·표·패널·탭·버튼·입력) → 관리자 틀(상단바·상태줄) → 옛 회색 유틸리티를 토큰으로 → HUD 부품 → 통제실 분할·AI USAGE 패널.
  * HeroUI 색은 .factory-ui 안에서 --heroui-* 변수(HSL "h s% l%")만 덮어써서 같은 컴포넌트가 이 색을 쓰게 한다.
  */
@@ -144,6 +145,7 @@
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-height: 100dvh; /* 모바일 주소창 높이만큼 남는 틈 없이 */
   min-width: 0;
   background: var(--fx-bg);
   color: var(--fx-text);
@@ -433,6 +435,41 @@
 .factory-ui ::placeholder {
   color: var(--fx-dim);
   opacity: 1;
+}
+
+/* ── 관리자 화면 뒤(html·body·루트 래퍼): 공개 사이트의 흰 바탕이 비치지 않게 ──
+ * 루트 레이아웃(app/layout.tsx)의 html 바탕은 HeroUI 라이트 테마(흰색)이고, globals.css 의 html·body {height:100%; overflow-x:hidden} 때문에
+ * body 가 따로 스크롤되는 상자가 되어, 당기거나(overscroll) 스크롤바·틈 사이로 html 의 흰색이 보였다.
+ * 관리자에서만 걸리게 html:has(.factory-ui)(서버 HTML 첫 화면부터) + html[data-admin](AdminDocumentTheme 가 달고 떼는 속성, :has 미지원 브라우저용).
+ * 공개 사이트로 나가면 둘 다 맞지 않아 원래 배경으로 돌아간다. 색은 위 --fx-bg 와 같은 값(html 에는 토큰이 없어 값으로 씀).
+ */
+html:has(body .factory-ui),
+html[data-admin] {
+  height: auto;
+  min-height: 100dvh;
+  overflow-x: clip; /* hidden 은 스크롤 상자를 만든다. clip 은 넘친 것만 자르고 문서 스크롤은 html 이 한다 */
+  background: #0a0c10;
+  color-scheme: dark; /* 스크롤바·당김 배경·기본 폼 컨트롤 어둡게 */
+  overscroll-behavior: none; /* 당겨도 문서 밖 바탕이 드러나지 않게 */
+}
+html:has(body .factory-ui) body,
+html[data-admin] body {
+  height: auto;
+  min-height: 100dvh;
+  overflow-x: clip;
+  background: #0a0c10;
+  color-scheme: dark;
+  overscroll-behavior: none;
+}
+/* globals.css 의 모바일 좌우 여백(body > *)과 main 의 min-h-screen(100vh) 은 관리자에서 끈다: 상단바·상태줄이 화면 끝까지, 주소창 틈 없이 */
+html:has(body .factory-ui) body > *,
+html[data-admin] body > * {
+  padding-left: 0;
+  padding-right: 0;
+}
+html:has(body .factory-ui) main:has(> .factory-ui),
+html[data-admin] main:has(> .factory-ui) {
+  min-height: 0;
 }
 
 /* ── 관리자 틀: 상단바(위에 붙음) · 본문 · 하단 상태줄(아래에 붙음) ───── */
@@ -773,6 +810,7 @@
     position: sticky;
     top: calc(var(--fx-topbar-h) + 0.5rem);
     max-height: calc(100vh - var(--fx-topbar-h) - var(--fx-statusbar-h) - 1rem);
+    max-height: calc(100dvh - var(--fx-topbar-h) - var(--fx-statusbar-h) - 1rem);
     overflow-y: auto;
     padding-top: 0.75rem; /* 테두리에 걸린 제목이 잘리지 않게 */
     margin-top: -0.75rem;

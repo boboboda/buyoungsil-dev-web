@@ -195,7 +195,8 @@ export function Button({ children, isDisabled, onPress, color, size, variant, ..
   const selectors = [...css.matchAll(/(^|})\s*([^{}@]+)\{/g)].map((m) => m[2].trim()).filter((s) => !/^((\d+%|from|to)\s*,?\s*)+$/.test(s));
   assert.ok(selectors.length > 10);
   for (const sel of selectors) {
-    for (const part of sel.split(",")) assert.match(part.trim(), /^\.factory-ui\b/, `범위 밖 선택자: ${part.trim()}`);
+    // 화면 뒤(html·body) 규칙만 예외: 관리자 화면이 있을 때(html:has(body .factory-ui)) 또는 data-admin 속성이 달렸을 때만 걸린다
+    for (const part of sel.split(",")) assert.match(part.trim(), /^(\.factory-ui\b|html:has\(body \.factory-ui\)|html\[data-admin\])/, `범위 밖 선택자: ${part.trim()}`);
   }
   assert.match(css, /prefers-reduced-motion: reduce/);
   for (const v of ["#0a0c10", "#0e1116", "#5f6b7a", "#e8edf3", "#aab5c1", "#22d3ee", "#4ade80", "#fbbf24", "#f87171"]) {

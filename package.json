@@ -16,7 +16,8 @@
     "test:ai-limits": "node tests/ai-limits.test.mjs",
     "test:admin-meters": "node tests/admin-meters.test.mjs",
     "test:admin-contrast": "node tests/admin-contrast.test.mjs",
-    "preview:admin-ui": "node tests/admin-ui-preview.mjs",
+    "test:admin-backdrop": "node tests/admin-backdrop.test.mjs",
+    "preview:admin-ui":"node tests/admin-ui-preview.mjs",
     "lint": "eslint --fix --color"
   },
   "dependencies": {
