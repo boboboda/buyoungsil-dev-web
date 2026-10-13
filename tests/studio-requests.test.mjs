@@ -403,3 +403,53 @@ test("통제실 일감 목록은 등록 경로(source)를 이미 보여 준다, 
   assert.match(sql, /CREATE TABLE "studio_request_logs"/);
   assert.doesNotMatch(sql, /DROP|DELETE|ALTER TABLE|UPDATE/i);
 });
+
+const placement = (extra = {}) => ({
+  schema: 1,
+  templateId: "room-v1",
+  templateVersion: 2,
+  gameId: "saessak-hub",
+  items: [{ id: "i1", imageId: "shelf_2", x: 3, y: 2, flip: false, layer: "props", z: 1, tool: "pixel-slice", extra: "무시" }],
+  ...extra,
+});
+
+test("확장 필드: 옛 형식은 그대로, 새 필드는 지시문에 반영되고 모르는 필드는 무시", async () => {
+  const { ctx, key } = await ready();
+  const res = await ctx.route.POST(
+    post(layout({ layout: placement(), gameId: "saessak-hub", templateId: "room-v1", templateVersion: 2, tool: { name: "pixel-slice", mode: "grid" }, paths: { layoutFile: "data/placement.json" }, unknown: { a: 1 } }), { key }),
+  );
+  assert.equal(res.status, 201);
+  const plan = (await jobOf(ctx, res)).planMarkdown;
+  assert.match(plan, /placement\.json 을 `data\/placement\.json`에 저장/);
+  assert.match(plan, /templateId\/templateVersion/);
+  assert.match(plan, /다음 도구\/모드로 다시 만들 것: `pixel-slice` \(`grid`\)/);
+  assert.match(plan, /tools\.json/);
+  assert.doesNotMatch(plan, /무시/);
+  assert.doesNotMatch(plan, /hub_layout\.json/);
+  const r2 = await ready();
+  const p2 = (await jobOf(r2.ctx, await r2.ctx.route.POST(post(regen({ engine: "pixellab", paths: { manifestFile: "tools/x/manifest.json" } }), { key: r2.key })))).planMarkdown;
+  assert.match(p2, /`tools\/x\/manifest\.json` 에 새 항목/);
+});
+
+test("확장 필드: 잘못된 경로·도구 이름·placement 는 400", async () => {
+  const { ctx, key } = await ready();
+  const bad = [
+    ["경로 ..", regen({ paths: { layoutFile: "a/../b.json" } })],
+    ["경로 절대", regen({ paths: { manifestFile: "/etc/x" } })],
+    ["경로 드라이브", regen({ paths: { layoutFile: "C:/x.json" } })],
+    ["경로 201자", regen({ paths: { layoutFile: "a".repeat(201) } })],
+    ["도구 이름 형식", regen({ tool: { name: "rm -rf /" } })],
+    ["도구 모드 형식", regen({ tool: { name: "pixel-slice", mode: "a`b" } })],
+    ["templateVersion 100", regen({ templateVersion: 100 })],
+    ["gameId 형식", regen({ gameId: "Bad_Id" })],
+    ["placement 501개", layout({ layout: placement({ items: Array.from({ length: 501 }, (_, i) => ({ id: `i${i}`, imageId: "a" })) }) })],
+    ["placement 40KB 초과", layout({ layout: placement({ items: Array.from({ length: 200 }, (_, i) => ({ id: `i${i}`, imageId: "a".repeat(80), layer: "b".repeat(40), tool: "c".repeat(40) })) }) })],
+    ["placement 문자열 길이", layout({ layout: placement({ items: [{ id: "x".repeat(81), imageId: "a" }] }) })],
+  ];
+  for (const [name, body] of bad) {
+    ctx.audit.length = 0;
+    const res = await ctx.route.POST(post(body, { key }));
+    assert.equal(res.status, 400, name);
+  }
+  assert.equal(ctx.jobs.filter((j) => j.source === "Studio 요청").length, 0);
+});

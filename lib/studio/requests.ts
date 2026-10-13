@@ -17,21 +17,41 @@ export const RATE_PER_MINUTE = 10; // 키당 분당 요청 수
 export const MAX_PENDING_PER_APP = 5; // 같은 앱에 승인 대기 Studio 일감 상한
 const MAX_LAYOUT_DEPTH = 12;
 const PROP_RE = /^[A-Za-z0-9_-]{1,80}$/;
+const TOOL_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/i; // tools.json 도구 id 형식
+const MODE_RE = /^[A-Za-z0-9_.-]{1,30}$/;
+const PATH_RE = /^[A-Za-z0-9_][A-Za-z0-9_./-]{0,199}$/;
+const MAX_PLACEMENT_ITEMS = 500;
+const MAX_ID = 80;
+export const DEFAULT_LAYOUT_FILE = "assets/layout/hub_layout.json";
+export const DEFAULT_MANIFEST_FILE = "tools/pixellab/manifest.json";
+
+export type StudioTool = { name: string; mode?: string; engine?: "codex" | "pixellab" };
+export type StudioPaths = { layoutFile?: string; manifestFile?: string };
+/** 모두 선택 필드: 옛 요청 형식은 이것 없이도 그대로 동작한다. */
+export type StudioExtras = {
+  gameId?: string;
+  templateId?: string;
+  templateVersion?: number;
+  tool?: StudioTool;
+  paths?: StudioPaths;
+};
 
 export type StudioRequest =
-  | {
+  | ({
       kind: "regen";
       appSlug: string;
       engine: "codex" | "pixellab";
       propName: string;
       note: string;
-    }
-  | {
+    } & StudioExtras)
+  | ({
       kind: "layout";
       appSlug: string;
       layout: Record<string, unknown>;
+      /** layout 이 schema 1 placement 형식이면 true */
+      placement?: boolean;
       note: string;
-    };
+    } & StudioExtras);
 
 type Invalid = { ok: false; error: string };
 
@@ -75,6 +95,9 @@ export function parseStudioRequest(
       .replace(/\s+/g, " ")
       .trim();
   }
+  const extras = parseExtras(raw);
+
+  if ("error" in extras) return { ok: false, error: extras.error };
   if (kind === "regen") {
     const engine = raw.engine;
     const propName = typeof raw.propName === "string" ? raw.propName : "";
@@ -84,7 +107,10 @@ export function parseStudioRequest(
     if (!PROP_RE.test(propName))
       return { ok: false, error: "propName 은 영문·숫자·_·- 80자 이하예요." };
 
-    return { ok: true, value: { kind, appSlug, engine, propName, note } };
+    return {
+      ok: true,
+      value: { kind, appSlug, engine, propName, note, ...extras.value },
+    };
   }
   if (!isPlainObject(raw.layout))
     return { ok: false, error: "layout 은 객체여야 해요." };
@@ -94,8 +120,156 @@ export function parseStudioRequest(
 
   if (Buffer.byteLength(text, "utf8") > MAX_LAYOUT_BYTES)
     return { ok: false, error: "layout 이 너무 커요(40KB 이하)." };
+  if (raw.layout.schema === 1) {
+    const p = parsePlacement(raw.layout);
 
-  return { ok: true, value: { kind, appSlug, layout: raw.layout, note } };
+    if ("error" in p) return { ok: false, error: p.error };
+    if (Buffer.byteLength(JSON.stringify(p.value), "utf8") > MAX_LAYOUT_BYTES)
+      return { ok: false, error: "placement 가 너무 커요(40KB 이하)." };
+
+    return {
+      ok: true,
+      value: {
+        kind,
+        appSlug,
+        layout: p.value,
+        placement: true,
+        note,
+        ...extras.value,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    value: { kind, appSlug, layout: raw.layout, note, ...extras.value },
+  };
+}
+
+const bad = (error: string) => ({ error });
+
+const str = (v: unknown, max: number, re?: RegExp): v is string =>
+  typeof v === "string" && v.length >= 1 && v.length <= max && (!re || re.test(v));
+
+/** 선택 필드(gameId·templateId·templateVersion·tool·paths)를 검사한다. 모르는 필드는 무시. */
+function parseExtras(
+  raw: Record<string, unknown>,
+): { value: StudioExtras } | { error: string } {
+  const out: StudioExtras = {};
+  const given = (v: unknown) => v !== undefined && v !== null;
+
+  if (given(raw.gameId)) {
+    if (typeof raw.gameId !== "string" || !APP_SLUG_RE.test(raw.gameId.trim()))
+      return bad("gameId 는 영문 소문자·숫자·하이픈 3~40자예요.");
+    out.gameId = raw.gameId.trim();
+  }
+  if (given(raw.templateId)) {
+    if (!str(raw.templateId, 40, PROP_RE))
+      return bad("templateId 는 영문·숫자·_·- 40자 이하예요.");
+    out.templateId = raw.templateId;
+  }
+  if (given(raw.templateVersion)) {
+    const n = raw.templateVersion;
+
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 99)
+      return bad("templateVersion 은 1~99 정수예요.");
+    out.templateVersion = n;
+  }
+  if (given(raw.tool)) {
+    const t = raw.tool;
+
+    if (!isPlainObject(t)) return bad("tool 은 객체여야 해요.");
+    if (!str(t.name, 40, TOOL_RE))
+      return bad("tool.name 은 영문·숫자·_·- 40자 이하(도구 id)예요.");
+    const tool: StudioTool = { name: t.name };
+
+    if (given(t.mode)) {
+      if (!str(t.mode, 30, MODE_RE))
+        return bad("tool.mode 는 영문·숫자·_·-· 30자 이하예요.");
+      tool.mode = t.mode;
+    }
+    if (given(t.engine)) {
+      if (t.engine !== "codex" && t.engine !== "pixellab")
+        return bad("tool.engine 은 codex 또는 pixellab 이에요.");
+      tool.engine = t.engine;
+    }
+    out.tool = tool;
+  }
+  if (given(raw.paths)) {
+    const p = raw.paths;
+
+    if (!isPlainObject(p)) return bad("paths 는 객체여야 해요.");
+    const paths: StudioPaths = {};
+
+    for (const key of ["layoutFile", "manifestFile"] as const) {
+      if (!given(p[key])) continue;
+      const v = p[key];
+
+      if (!str(v, 200, PATH_RE) || v.split("/").some((s) => s === ".." || s === ""))
+        return bad(`paths.${key} 는 안전한 상대 경로여야 해요(.. · 절대 경로 · 드라이브 문자 금지).`);
+      paths[key] = v;
+    }
+    out.paths = paths;
+  }
+
+  return { value: out };
+}
+
+/** schema 1 placement 를 검사하고, 알려진 필드만 남긴 사본을 돌려준다. */
+function parsePlacement(
+  l: Record<string, unknown>,
+): { value: Record<string, unknown> } | { error: string } {
+  const out: Record<string, unknown> = { schema: 1 };
+
+  for (const key of ["templateId", "gameId"] as const) {
+    if (l[key] === undefined || l[key] === null) continue;
+    if (!str(l[key], 40, PROP_RE))
+      return bad(`placement.${key} 는 영문·숫자·_·- 40자 이하예요.`);
+    out[key] = l[key];
+  }
+  if (l.templateVersion !== undefined && l.templateVersion !== null) {
+    const n = l.templateVersion;
+
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 99)
+      return bad("placement.templateVersion 은 1~99 정수예요.");
+    out.templateVersion = n;
+  }
+  if (!Array.isArray(l.items)) return bad("placement.items 는 배열이어야 해요.");
+  if (l.items.length > MAX_PLACEMENT_ITEMS)
+    return bad(`placement.items 는 ${MAX_PLACEMENT_ITEMS}개 이하예요.`);
+  const items: Record<string, unknown>[] = [];
+
+  for (const it of l.items) {
+    if (!isPlainObject(it)) return bad("placement.items 의 항목은 객체여야 해요.");
+    const o: Record<string, unknown> = {};
+
+    for (const key of ["id", "imageId"] as const) {
+      if (!str(it[key], MAX_ID)) return bad(`items.${key} 는 ${MAX_ID}자 이하 글자예요.`);
+      o[key] = it[key];
+    }
+    for (const key of ["x", "y", "z"] as const) {
+      if (it[key] === undefined || it[key] === null) continue;
+      if (typeof it[key] !== "number" || !Number.isFinite(it[key]))
+        return bad(`items.${key} 는 숫자예요.`);
+      o[key] = it[key];
+    }
+    if (it.flip !== undefined && it.flip !== null) {
+      if (typeof it.flip !== "boolean") return bad("items.flip 은 true/false 예요.");
+      o.flip = it.flip;
+    }
+    if (it.layer !== undefined && it.layer !== null) {
+      if (!str(it.layer, 40)) return bad("items.layer 는 40자 이하 글자예요.");
+      o.layer = it.layer;
+    }
+    if (it.tool !== undefined && it.tool !== null) {
+      if (!str(it.tool, 40, TOOL_RE)) return bad("items.tool 은 도구 id 형식이어야 해요.");
+      o.tool = it.tool;
+    }
+    items.push(o);
+  }
+  out.items = items;
+
+  return { value: out };
 }
 
 /** 값 안에 ``` 가 있어도 닫히지 않도록 안쪽보다 긴 울타리로 감싼다. */
@@ -121,10 +295,29 @@ export function buildStudioPlan(v: StudioRequest, appTitle: string): string {
     `# ${appTitle} — Studio 요청 (${v.kind === "regen" ? "소품 다시 요청" : "배치 적용"})\n\n` +
     `이 지시는 Studio(소품 도구)가 보낸 요청으로 서버가 만들었어요. 승인한 사람이 통제실에서 확인했어요. 범위는 아래 내용으로만 한정해요.\n`;
 
+  const layoutFile = v.paths?.layoutFile ?? DEFAULT_LAYOUT_FILE;
+  const manifestFile = v.paths?.manifestFile ?? DEFAULT_MANIFEST_FILE;
+  // 값은 모두 정규식으로 거른 뒤라 인라인 코드로만 넣는다.
+  const toolLine = v.tool
+    ? `\n다음 도구/모드로 다시 만들 것: \`${v.tool.name}\`${v.tool.mode ? ` (\`${v.tool.mode}\`)` : ""}\n` +
+      `이 도구는 작업 PC 의 game-toolkit tools.json 에 있는 이름이어야 해요. 없으면 실행하지 말고 결과에 적으세요. 임의 명령 실행이 아니며, 키·토큰·URL 을 인자로 쓰지 마세요.\n`
+    : "";
+  const templateLine =
+    v.templateId || v.gameId
+      ? `\n템플릿: ${[v.templateId && `templateId \`${v.templateId}\``, v.templateVersion && `version ${v.templateVersion}`, v.gameId && `gameId \`${v.gameId}\``].filter(Boolean).join(", ")}\n`
+      : "";
+
   if (v.kind === "layout") {
+    const saveLine = v.placement
+      ? `아래 placement.json 을 \`${layoutFile}\`에 저장하고, 게임이 같은 템플릿 좌표(templateId/templateVersion)로 읽어 배치를 반영하게 하세요.\n`
+      : `아래 layout JSON 을 \`${layoutFile}\`(게임이 읽는 배치 파일)으로 저장하고, 게임이 이 파일을 읽어 배치를 반영하게 하세요.\n`;
+
     return (
       `${head}\n## 할 일: 소품·책상 배치 적용\n` +
-      `아래 layout JSON 을 \`assets/layout/hub_layout.json\`(게임이 읽는 배치 파일)으로 저장하고, 게임이 이 파일을 읽어 배치를 반영하게 하세요.\n\n` +
+      saveLine +
+      templateLine +
+      toolLine +
+      `\n` +
       `- 저장 전에 JSON 이 올바른지 확인하고, 소품끼리 겹치는 곳과 바닥 밖 좌표가 없는지 검사하세요. 문제가 있으면 임의로 고치지 말고 결과에 적으세요.\n` +
       `- 파일이 없거나 읽지 못하면 지금의 코드 배치로 되돌아가는 폴백을 그대로 둡니다. 폴백을 지우지 마세요.\n` +
       `- 소품 이미지·다른 에셋은 바꾸지 마세요. 배치 파일과 그것을 읽는 코드만 고칩니다.\n` +
@@ -136,7 +329,10 @@ export function buildStudioPlan(v: StudioRequest, appTitle: string): string {
   if (v.engine === "codex") {
     return (
       `${head}\n## 할 일: 소품 \`${v.propName}\` 그림 다시 만들기 (Codex)\n` +
-      `소품 \`${v.propName}\` 의 그림을 Codex 이미지 생성으로 다시 만들어 후보 풀(\`assets/raw/...\`)에 넣으세요.\n\n` +
+      `소품 \`${v.propName}\` 의 그림을 Codex 이미지 생성으로 다시 만들어 후보 풀(\`assets/raw/...\`)에 넣으세요.\n` +
+      templateLine +
+      toolLine +
+      `\n` +
       `- **기존 소품 이미지를 교체하지 마세요.** 새 그림은 후보로만 올려서 사람이 고르게 합니다.\n` +
       `- 기존 후보 파일 이름과 겹치지 않게 새 이름으로 저장하세요(덮어쓰기 금지).\n` +
       `- 기존 소품과 같은 화풍·크기·투명 배경을 유지하세요. 메모에 문제점이 있으면 그것을 고친 모양으로 만드세요.\n` +
@@ -147,8 +343,11 @@ export function buildStudioPlan(v: StudioRequest, appTitle: string): string {
 
   return (
     `${head}\n## 할 일: 소품 \`${v.propName}\` 그림 다시 만들기 (PixelLab)\n` +
-    `PixelLab 은 공장 PC 에서 호출할 수 있는지 확인되지 않았어요. **PixelLab 을 직접 호출하지 말고**, 사용자가 Mac 에서 실행할 준비만 하세요.\n\n` +
-    `1. \`tools/pixellab/manifest.json\` 에 새 항목을 추가하세요. 이름은 \`${v.propName}2\` 처럼 manifest 에 아직 없는 새 이름이에요(이미 있으면 숫자를 올려 겹치지 않게). 기존 항목은 고치지 마세요.\n` +
+    `PixelLab 은 공장 PC 에서 호출할 수 있는지 확인되지 않았어요. **PixelLab 을 직접 호출하지 말고**, 사용자가 Mac 에서 실행할 준비만 하세요.\n` +
+    templateLine +
+    toolLine +
+    `\n` +
+    `1. \`${manifestFile}\` 에 새 항목을 추가하세요. 이름은 \`${v.propName}2\` 처럼 manifest 에 아직 없는 새 이름이에요(이미 있으면 숫자를 올려 겹치지 않게). 기존 항목은 고치지 마세요.\n` +
     `2. 새 항목은 \`${v.propName}\` 항목을 참고하되 메모의 문제점을 고치는 설명으로 쓰세요.\n` +
     `3. 결과에 사용자가 Mac 에서 실행할 정확한 명령을 적으세요(<이름> 은 방금 추가한 새 이름):\n\n` +
     `${fenced("python3 tools/pixellab/pixellab_gen.py run <이름> --push", "sh")}\n\n` +
