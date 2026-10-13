@@ -34,8 +34,8 @@ export const siteConfig = {
     { key: "adminProjects", label: "💼 프로젝트", href: "/admin/projects" },
     { key: "adminStories", label: "😅 이야기", href: "/admin/stories" },
     { key: "adminFactory", label: "🏭 앱 공장", href: "/admin/factory" },
-    { key: "adminWorks", label: "💻 외주·문의함", href: "/admin/works" },
-    { key: "adminBoards", label: "💬 게시판·공지", href: "/admin/boards" },
+    { key: "adminWorks", label: "💻 외주 신청", href: "/admin/works" },
+    { key: "adminBoards", label: "💬 앱별 공지/문의 게시판", href: "/admin/boards" },
     { key: "adminAnalytics", label: "📈 분석", href: "/admin/analytics" },
   ],
   links: {

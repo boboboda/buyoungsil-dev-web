@@ -49,7 +49,7 @@ export default async function AdminProjectBoardPage({
         {/* 브레드크럼 */}
         <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 mb-4">
           <Link href="/admin/boards" className="hover:text-blue-600">
-            게시판 관리
+            앱별 공지/문의 게시판
           </Link>
           <span>/</span>
           <span>{project.title}</span>

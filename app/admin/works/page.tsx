@@ -7,7 +7,7 @@ import WorkRequestTable from "@/components/admin/works/WorkRequestTable";
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: "외주 신청 관리 | 관리자",
+  title: "외주 신청 | 관리자",
 };
 
 export default async function AdminWorksPage() {
@@ -22,7 +22,7 @@ export default async function AdminWorksPage() {
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         <div className="mb-8">
           <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            📋 외주 신청 관리
+            📋 외주 신청
           </h1>
           <p className="text-lg text-gray-600 dark:text-gray-400">
             접수된 프로젝트 의뢰를 확인하고 관리합니다

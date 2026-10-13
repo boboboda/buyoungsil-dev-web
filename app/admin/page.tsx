@@ -1,7 +1,9 @@
 import { Metadata } from "next";
 import Link from "next/link";
-import prisma from "@/lib/prisma";
-import DashboardStats from "@/components/admin/dashboard/DashboardStats";
+import {
+  getDashboardCounts,
+  type DashboardCounts,
+} from "@/lib/admin/dashboardCounts";
 
 export const dynamic = 'force-dynamic';
 
@@ -9,59 +11,74 @@ export const metadata: Metadata = {
   title: "관리자 대시보드",
 };
 
-async function getStats() {
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+// DB 가 없거나(주소 없음·접속 실패) 쿼리가 실패해도 대시보드는 빈 값으로 뜬다.
+async function getStats(): Promise<DashboardCounts> {
+  try {
+    const { default: prisma } = await import("@/lib/prisma");
 
-  const [
-    totalProjects,
-    totalNotes,
-    totalStories,
-    totalUsers,
-    publishedNotes,
-    publishedStories,
-    recentProjects,
-    totalWorkRequests,
-    pendingWorkRequests,
-    pendingDrafts,
-    eduUnanswered,
-  ] = await Promise.all([
-    prisma.project.count(),
-    prisma.developNote.count(),
-    prisma.story.count(),
-    prisma.user.count(),
-    prisma.developNote.count({ where: { isPublished: true } }),
-    prisma.story.count({ where: { isPublished: true } }),
-    prisma.project.count({
-      where: {
-        createdAt: { gte: sevenDaysAgo }
-      }
-    }),
-    prisma.workRequest.count(),
-    prisma.workRequest.count({ where: { status: 'pending' } }),
-    prisma.draft.count({ where: { status: 'pending' } }).catch(() => 0), // 초안함 테이블을 만들기 전에도 대시보드가 깨지지 않게
-    prisma.eduPost.count({ where: { replies: { none: {} } } }).catch(() => 0), // edu 게시판: 답변 없는 글
-  ]);
+    return await getDashboardCounts(prisma);
+  } catch (error) {
+    console.error("관리자 대시보드 집계 실패:", error);
 
-  return {
-    totalProjects,
-    totalNotes,
-    totalStories,
-    totalUsers,
-    publishedNotes,
-    publishedStories,
-    recentProjects,
-    totalWorkRequests,
-    pendingWorkRequests,
-    pendingDrafts,
-    eduUnanswered,
-  };
+    return {
+      pendingWorkRequests: null,
+      unansweredBoardPosts: null,
+      unansweredEduPosts: null,
+      pendingDrafts: null,
+      totalProjects: null,
+      totalNotes: null,
+      totalStories: null,
+      totalWorkRequests: null,
+    };
+  }
+}
+
+// 처리 대기 카드: 0 이면 '없음'으로 조용하게, 1 이상이면 눈에 띄게, 못 세면 '-'
+function PendingCard({
+  icon,
+  label,
+  value,
+  href,
+}: {
+  icon: string;
+  label: string;
+  value: number | null;
+  href: string;
+}) {
+  const waiting = value !== null && value > 0;
+
+  return (
+    <Link href={href}>
+      <div
+        className={`h-full rounded-xl p-5 border-2 transition-all hover:shadow-lg ${
+          waiting
+            ? "bg-yellow-50 dark:bg-yellow-900/20 border-yellow-500"
+            : "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700"
+        }`}
+      >
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+          {icon} {label}
+        </p>
+        {value === null ? (
+          <p className="text-lg text-gray-400" title="숫자를 읽지 못했어요">
+            -
+          </p>
+        ) : waiting ? (
+          <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300">
+            {value}건
+          </p>
+        ) : (
+          <p className="text-lg text-gray-400">없음</p>
+        )}
+      </div>
+    </Link>
+  );
 }
 
 interface StatCardProps {
   icon: string;
   label: string;
-  value: number;
+  value: number | null;
   gradient: string;
   href?: string;
   highlight?: boolean;
@@ -78,7 +95,7 @@ function StatCard({ icon, label, value, gradient, href, highlight }: StatCardPro
             {icon}
           </div>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{label}</p>
-          <p className="text-2xl font-bold">{value}</p>
+          <p className="text-2xl font-bold">{value ?? "-"}</p>
         </div>
       </div>
     </div>
@@ -103,8 +120,39 @@ export default async function AdminDashboard() {
         </p>
       </div>
 
+      {/* 처리 대기 */}
+      <div className="mb-8">
+        <h2 className="text-xl font-bold mb-4">🔔 처리 대기</h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <PendingCard
+            href="/admin/works"
+            icon="💻"
+            label="외주 신청 대기"
+            value={stats.pendingWorkRequests}
+          />
+          <PendingCard
+            href="/admin/boards"
+            icon="💬"
+            label="앱별 게시판 문의 답변 대기"
+            value={stats.unansweredBoardPosts}
+          />
+          <PendingCard
+            href="/admin/edu"
+            icon="🧰"
+            label="특수교육 도구함 요청 답변 대기"
+            value={stats.unansweredEduPosts}
+          />
+          <PendingCard
+            href="/admin/drafts"
+            icon="📥"
+            label="초안함 대기"
+            value={stats.pendingDrafts}
+          />
+        </div>
+      </div>
+
       {/* 통계 카드 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <StatCard
           icon="💼"
           label="프로젝트"
@@ -133,14 +181,6 @@ export default async function AdminDashboard() {
           gradient="from-purple-500 to-pink-500"
           href="/admin/works"
         />
-        <StatCard
-          icon="🔔"
-          label="대기 중 외주"
-          value={stats.pendingWorkRequests}
-          gradient="from-yellow-500 to-orange-500"
-          href="/admin/works"
-          highlight={stats.pendingWorkRequests > 0}
-        />
       </div>
 
       {/* 빠른 작업 */}
@@ -159,12 +199,12 @@ export default async function AdminDashboard() {
           </Link>
           <Link href="/admin/drafts">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 text-white font-medium hover:shadow-lg transition-shadow">
-              📥 초안함{stats.pendingDrafts > 0 ? ` (${stats.pendingDrafts})` : ""}
+              📥 초안함
             </button>
           </Link>
           <Link href="/admin/edu">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white font-medium hover:shadow-lg transition-shadow">
-              🧰 도구함 게시판{stats.eduUnanswered > 0 ? ` (${stats.eduUnanswered})` : ""}
+              🧰 특수교육 도구함 요청 게시판
             </button>
           </Link>
           <Link href="/admin/claude">
@@ -189,7 +229,7 @@ export default async function AdminDashboard() {
           </Link>
           <Link href="/admin/boards">
             <button className="w-full p-4 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium hover:shadow-lg transition-shadow">
-              💬 게시판 관리
+              💬 앱별 공지/문의 게시판
             </button>
           </Link>
           <Link href="/admin/categories">
@@ -200,23 +240,6 @@ export default async function AdminDashboard() {
         </div>
       </div>
 
-      {/* 대기 중인 외주 신청 알림 */}
-      {stats.pendingWorkRequests > 0 && (
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 border-2 border-yellow-500 rounded-xl p-6">
-          <div className="flex items-center gap-3 mb-3">
-            <span className="text-2xl">⚠️</span>
-            <h2 className="text-xl font-bold">대기 중인 외주 신청이 있습니다!</h2>
-          </div>
-          <p className="text-gray-700 dark:text-gray-300 mb-4">
-            {stats.pendingWorkRequests}건의 새로운 프로젝트 의뢰를 확인해주세요.
-          </p>
-          <Link href="/admin/works">
-            <button className="px-6 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors font-medium">
-              외주 신청 확인하기 →
-            </button>
-          </Link>
-        </div>
-      )}
     </div>
   );
 }

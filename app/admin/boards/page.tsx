@@ -6,7 +6,7 @@ import { fetchPostsCount } from "@/serverActions/posts";
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: "게시판 관리 | 관리자",
+  title: "앱·프로젝트별 공지/문의 게시판 관리 | 관리자",
 };
 
 export default async function AdminBoardsPage() {
@@ -15,7 +15,7 @@ export default async function AdminBoardsPage() {
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">💬 게시판 관리</h1>
+        <h1 className="text-3xl font-bold mb-2">💬 앱·프로젝트별 공지/문의 게시판 관리</h1>
         <p className="text-gray-600 dark:text-gray-400">
           프로젝트별 공지사항과 문의게시판을 관리합니다
         </p>

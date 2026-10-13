@@ -19,6 +19,7 @@ import Link from "next/link";
 import { GradientButton } from "@/components/common/GradientButton";
 import { toggleNotePublish } from "@/serverActions/editorServerAction";
 import { Pencil, Trash2 } from "lucide-react";
+import { useNoteStore } from "@/components/providers/editor-provider";
 
 // 🔥 subCategory는 DB에 { id, name } 형태의 JSON으로 저장됨 (types/index.ts의 SubCategory)
 interface NoteSubCategory {
@@ -59,6 +60,9 @@ export default function NoteManageTable({ notes, categories }: NoteManageTablePr
   const router = useRouter();
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
   const [selectedCategory, setSelectedCategory] = useState<string>(ALL_FILTER);
+  const [searchText, setSearchText] = useState("");
+  // 삭제는 예전 /admin/list 와 같은 경로: DELETE /api/notes/[noteId] (서버에서 관리자 확인)
+  const { deleteToServer } = useNoteStore((state) => state);
 
   // 레벨별 뱃지 색상
   const getLevelColor = (level?: string | null) => {
@@ -102,6 +106,30 @@ export default function NoteManageTable({ notes, categories }: NoteManageTablePr
     } catch (error) {
       console.error("Toggle error:", error);
       toast.error("상태 변경에 실패했습니다.");
+    } finally {
+      setLoadingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(noteId);
+        return newSet;
+      });
+    }
+  };
+
+  // 노트 삭제 (확인창 → 서버 삭제 → 목록 새로고침)
+  const handleDelete = async (noteId: number, title: string) => {
+    if (!confirm(`'${title}' 노트를 삭제할까요? 되돌릴 수 없어요.`)) return;
+
+    setLoadingIds(prev => new Set(prev).add(noteId));
+
+    try {
+      const ok = await deleteToServer(String(noteId));
+
+      if (ok) {
+        toast.success("성공적으로 삭제되었습니다.");
+        router.refresh();
+      } else {
+        toast.error("삭제가 실패되었습니다.");
+      }
     } finally {
       setLoadingIds(prev => {
         const newSet = new Set(prev);
@@ -158,11 +186,17 @@ export default function NoteManageTable({ notes, categories }: NoteManageTablePr
   );
 
   const visibleNotes = useMemo(() => {
-    if (selectedCategory === ALL_FILTER) {
-      return notes;
-    }
-    return notes.filter((note) => note.mainCategory === selectedCategory);
-  }, [notes, selectedCategory]);
+    const byCategory =
+      selectedCategory === ALL_FILTER
+        ? notes
+        : notes.filter((note) => note.mainCategory === selectedCategory);
+    // 제목 검색 (예전 /admin/list 에 있던 기능)
+    const keyword = searchText.trim().toLowerCase();
+    if (!keyword) return byCategory;
+    return byCategory.filter((note) =>
+      (note.title || "").toLowerCase().includes(keyword),
+    );
+  }, [notes, selectedCategory, searchText]);
 
   return (
     <div className="w-full">
@@ -255,6 +289,18 @@ export default function NoteManageTable({ notes, categories }: NoteManageTablePr
         ))}
       </div>
 
+      {/* 제목 검색 */}
+      <div className="mb-4">
+        <input
+          aria-label="제목 검색"
+          className="w-full sm:max-w-sm px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm"
+          placeholder="제목 검색"
+          type="search"
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+        />
+      </div>
+
       {/* 테이블 */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
         <Table
@@ -342,12 +388,8 @@ export default function NoteManageTable({ notes, categories }: NoteManageTablePr
                         size="sm"
                         variant="flat"
                         color="danger"
-                        onPress={() => {
-                          if (confirm('정말 삭제하시겠습니까?')) {
-                            // 삭제 로직 추가 필요
-                            toast.info('삭제 기능은 아직 구현되지 않았습니다.');
-                          }
-                        }}
+                        isDisabled={loadingIds.has(note.noteId)}
+                        onPress={() => handleDelete(note.noteId, note.title)}
                       >
                         <Trash2 size={16} />
                       </Button>

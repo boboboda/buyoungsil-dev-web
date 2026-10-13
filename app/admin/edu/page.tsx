@@ -6,7 +6,7 @@ import EduBoardAdmin from "@/components/admin/edu/EduBoardAdmin";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "특수교육 도구함 게시판 | 관리자",
+  title: "특수교육 도구함 요청 게시판 | 관리자",
 };
 
 export default async function AdminEduPage() {
@@ -19,7 +19,7 @@ export default async function AdminEduPage() {
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">🧰 특수교육 도구함 게시판</h1>
+        <h1 className="text-3xl font-bold mb-2">🧰 특수교육 도구함 사이트의 요청 게시판</h1>
         <p className="text-gray-600 dark:text-gray-400">
           edu 사이트에서 들어온 앱·도구 요청이에요. (문의는 프로젝트 게시판
           관리에서 봐요.) 답변을 달면 작성자가 글을 열었을 때 글 아래에 보여요.
