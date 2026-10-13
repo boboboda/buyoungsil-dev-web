@@ -30,8 +30,10 @@ export const isReservedSecretName = (name: string) => RESERVED_NAMES.has(name) |
 // 서버 보관 키: 홈페이지 서버가 직접 쓰는 키(예: 검수 상태 토큰 REVIEW_STATUS_TOKEN_<앱>). PC 로 보내지 않고 암호문을 서버에 남긴다.
 // 값은 readServerSecret 으로 서버 안에서만 풀고, 목록·응답·로그에는 나오지 않는다. 앱 일감용 이름 목록(knownSecretNames)에서도 뺀다.
 const SERVER_SECRET_PREFIXES = ["REVIEW_STATUS_TOKEN_"];
+// 이름 그대로 서버 보관: STUDIO_KEY_PEPPER = Studio 접근 키 해시용 서버 비밀값(lib/studio/access.ts)
+const SERVER_SECRET_NAMES = new Set(["STUDIO_KEY_PEPPER"]);
 
-export const isServerSecretName = (name: string) => SERVER_SECRET_PREFIXES.some((p) => name.startsWith(p));
+export const isServerSecretName = (name: string) => SERVER_SECRET_NAMES.has(name) || SERVER_SECRET_PREFIXES.some((p) => name.startsWith(p));
 
 /** 서버 보관 키의 값(서버 안에서만 쓴다). 없거나 풀 수 없으면 null. */
 export async function readServerSecret(name: string): Promise<string | null> {
