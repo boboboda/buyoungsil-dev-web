@@ -153,7 +153,7 @@ export function Button({ children, isDisabled, onPress, color, size, variant, ..
   // (7) 탭 구성: 기존 화면이 각 탭에 들어가 있는지(기능 컴포넌트를 그대로 씀)
   const consoleSrc = read("components/admin/factory/FactoryConsole.tsx");
   const tabBlock = (key) => {
-    const m = consoleSrc.match(new RegExp(`\\{tab === "${key}" && ([\\s\\S]*?)\\n      \\)\\}|\\{tab === "${key}" && (<[^\\n]*)`));
+    const m = consoleSrc.match(new RegExp(`\\{tab === "${key}" && ([\\s\\S]*?)\\n\\s*\\)\\}|\\{tab === "${key}" && (<[^\\n]*)`));
     assert.ok(m, `${key} 탭 블록이 없음`);
     return m[1] ?? m[2];
   };
@@ -188,10 +188,11 @@ export function Button({ children, isDisabled, onPress, color, size, variant, ..
   assert.ok(!existsSync(new URL("app/admin/claude/page.tsx", root)));
   assert.ok(!read("app/admin/page.tsx").includes('href="/admin/claude"'), "대시보드에 클로드 항목이 남아 있음");
 
-  // (9) 다크 범위: 통제실 레이아웃만 .factory-ui dark, CSS 규칙은 모두 .factory-ui 아래(또는 keyframes·media)
-  assert.match(read("app/admin/factory/layout.tsx"), /className=\{`factory-ui dark \$\{fontMono\.variable\}/);
-  const css = read("app/admin/factory/factory.css").replace(/\/\*[\s\S]*?\*\//g, "");
-  const selectors = [...css.matchAll(/(^|})\s*([^{}@]+)\{/g)].map((m) => m[2].trim()).filter((s) => !/^(\d+%|from|to)$/.test(s));
+  // (9) 다크 범위: 관리자 공통 레이아웃(/admin/*)만 .factory-ui dark, CSS 규칙은 모두 .factory-ui 아래(또는 keyframes·media)
+  assert.match(read("app/admin/layout.tsx"), /className=\{`factory-ui dark \$\{fontMono\.variable\}/);
+  assert.ok(!existsSync(new URL("app/admin/factory/layout.tsx", root)), "통제실 이중 래퍼가 남아 있음");
+  const css = read("app/admin/admin-ui.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  const selectors = [...css.matchAll(/(^|})\s*([^{}@]+)\{/g)].map((m) => m[2].trim()).filter((s) => !/^((\d+%|from|to)\s*,?\s*)+$/.test(s));
   assert.ok(selectors.length > 10);
   for (const sel of selectors) {
     for (const part of sel.split(",")) assert.match(part.trim(), /^\.factory-ui\b/, `범위 밖 선택자: ${part.trim()}`);

@@ -14,6 +14,8 @@
     "test:factory-ui": "node tests/factory-ui.test.mjs",
     "test:studio-access": "node tests/studio-access.test.mjs",
     "test:ai-limits": "node tests/ai-limits.test.mjs",
+    "test:admin-meters": "node tests/admin-meters.test.mjs",
+    "preview:admin-ui": "node tests/admin-ui-preview.mjs",
     "lint": "eslint --fix --color"
   },
   "dependencies": {
