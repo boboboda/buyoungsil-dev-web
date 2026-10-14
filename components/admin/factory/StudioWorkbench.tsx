@@ -181,6 +181,23 @@ const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((
 const KIND_BUTTONS: StudioKind[] = ["game", "app", "none"];
 const BTN = "rounded border border-default-300 px-2 py-1";
 
+/** 입력칸에 적힌 현재 값(저장 전 편집 중이어도) 기준 [열기]. https 가 아니면 눌리지 않는 버튼으로 보인다 */
+function OpenButton({ url, label }: { url: string; label: string }) {
+  const u = url.trim();
+  if (!u.toLowerCase().startsWith("https://")) {
+    return (
+      <button aria-label={label} className={`${BTN} opacity-50`} data-open-link disabled type="button">
+        [열기 ↗]
+      </button>
+    );
+  }
+  return (
+    <a aria-label={label} className={BTN} data-open-link href={u} rel="noopener noreferrer" target="_blank">
+      [열기 ↗]
+    </a>
+  );
+}
+
 /** 바로가기 편집 칸 → 저장할 목록. 둘 다 빈 줄은 버리고, 이름이나 주소가 틀렸거나 같은 주소가 겹치면 bad */
 function readDraftLinks(rows: StudioLink[]): { links: StudioLink[]; bad: boolean } {
   const filled = rows.filter((r) => r.name.trim() !== "" || r.url.trim() !== "");
@@ -432,15 +449,18 @@ export default function StudioWorkbench({
                 <label className="fx-label" htmlFor={`studio-url-${app.appSlug}`}>
                   스튜디오 주소 (https 만, 비워 두면 없음)
                 </label>
-                <input
-                  className="mt-1 w-full min-w-0 rounded border border-default-300 bg-transparent px-2 py-1 font-mono text-sm"
-                  id={`studio-url-${app.appSlug}`}
-                  inputMode="url"
-                  maxLength={200}
-                  placeholder="https://"
-                  value={draftUrl}
-                  onChange={(e) => setDraftUrl(e.target.value)}
-                />
+                <div className="mt-1 flex min-w-0 items-center gap-2">
+                  <input
+                    className="min-w-0 flex-1 rounded border border-default-300 bg-transparent px-2 py-1 font-mono text-sm"
+                    id={`studio-url-${app.appSlug}`}
+                    inputMode="url"
+                    maxLength={200}
+                    placeholder="https://"
+                    value={draftUrl}
+                    onChange={(e) => setDraftUrl(e.target.value)}
+                  />
+                  <OpenButton label="스튜디오 주소 열기" url={draftUrl} />
+                </div>
                 {urlBad ? <p className="mt-1 text-sm fx-bad">https:// 로 시작하는 200자 이하 주소만 쓸 수 있어요.</p> : null}
                 <div className="fx-label">바로가기 (이름 + 주소, 최대 {MAX_STUDIO_LINKS}개)</div>
                 <ul className="grid gap-2" data-studio-links-edit>
@@ -451,6 +471,7 @@ export default function StudioWorkbench({
                       <button className={BTN} data-link-remove={i} type="button" onClick={() => setDraftLinks((cur) => cur.filter((_, j) => j !== i))}>
                         [삭제]
                       </button>
+                      <OpenButton label={`바로가기 ${i + 1} 열기`} url={l.url} />
                     </li>
                   ))}
                 </ul>
