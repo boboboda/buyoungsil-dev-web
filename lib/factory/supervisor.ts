@@ -123,6 +123,7 @@ export async function supervisorSnapshot() {
     pausedNote: online ? pausedNote(rt.pausedJobs ?? 0) : null, // "업데이트로 일시 중지 N개"
     bundleLeftMin: online && rt.bundleLeft ? rt.bundleLeft : null, // 새 커밋을 모으는 중이면 남은 분
     bundleNote: online ? bundleNote(rt.bundleLeft) : null, // "업데이트 대기(묶는 중, 남은 n분)"
+    staleCopies: online && rt.staleCopies ? rt.staleCopies.split(",").filter(Boolean) : [], // 오래된 사본(정리 필요) 폴더 이름. 지우는 건 사람이 한다
     online,
     lastSeenAt: lastSeen,
     workerName: last?.name ?? null,
@@ -161,7 +162,7 @@ async function restartStatus(rt: SupervisorRuntime, requestedAt: string | null, 
 /** /next 에서 부른다. 감독 프로그램이 알려 준 실행 정보를 저장하고, 재시작이 끝났거나 실패했으면 텔레그램으로 알린다.
  *  tookRestart: 이번 응답으로 재시작 요청을 넘겨줬는지. */
 export async function noteSupervisorRuntime(
-  pc: Pick<SupervisorRuntime, "startedAt" | "boot" | "ffmpeg" | "ffprobe" | "claudeTool" | "codexTool" | "aiToolsAt" | "memory" | "restartWait" | "restartFail" | "drain" | "drainJobs" | "outbox" | "deployingPc" | "pausedJobs" | "bundleLeft">,
+  pc: Pick<SupervisorRuntime, "startedAt" | "boot" | "ffmpeg" | "ffprobe" | "claudeTool" | "codexTool" | "aiToolsAt" | "memory" | "restartWait" | "restartFail" | "drain" | "drainJobs" | "outbox" | "deployingPc" | "pausedJobs" | "bundleLeft" | "staleCopies">,
   tookRestart: boolean,
 ): Promise<void> {
   const cur = await getSupervisorRuntime();

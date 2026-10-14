@@ -32,6 +32,7 @@ interface State {
   drainNote?: string | null;
   deployNote?: string | null; // "배포 중 · 재전송 대기 N개". 예전 서버에는 없다
   pausedNote?: string | null; // "업데이트로 일시 중지 N개". 예전 서버에는 없다
+  staleCopies?: string[]; // 오래된 사본(정리 필요) 폴더 이름. 예전 서버에는 없다
   bundleNote?: string | null; // "업데이트 대기(묶는 중, 남은 n분)". 예전 서버에는 없다
   online: boolean;
   lastSeenAt: string | null;
@@ -317,6 +318,11 @@ export default function SupervisorControl() {
         {s?.deployNote && <p className="text-xs text-warning-600">🚀 {s.deployNote}</p>}
         {s?.pausedNote && <p className="text-xs text-warning-600" data-update-paused="">⏸ {s.pausedNote}</p>}
         {s?.bundleNote && <p className="text-xs text-default-500" data-update-bundle="">⏳ {s.bundleNote}</p>}
+        {!!s?.staleCopies?.length && (
+          <p className="text-xs text-warning-600" data-stale-copies="">
+            🗂 오래된 사본(정리 필요): {s.staleCopies.join(", ")} — 감독과 일감이 쓰지 않아요. 지우는 건 사람이 해요.
+          </p>
+        )}
         {s && s.restartState !== undefined && (
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span>

@@ -103,6 +103,8 @@ export async function GET(req: NextRequest) {
   const pausedJobs = Number.isFinite(pausedRaw) && pausedRaw > 0 ? Math.min(99, pausedRaw) : undefined;
   const bundleRaw = Math.floor(Number(param("bundleLeft", 5)));
   const bundleLeft = Number.isFinite(bundleRaw) && bundleRaw > 0 ? Math.min(180, bundleRaw) : undefined;
+  // 오래된 사본 폴더 이름(쉼표로 이음, 표시용). 모양이 맞는 이름만 받는다
+  const staleCopies = param("staleCopies", 200).split(",").filter((n) => /^[A-Za-z0-9][A-Za-z0-9_.-]{0,59}$/.test(n)).slice(0, 5).join(",") || undefined;
   // AI 도구 상태(읽기 전용). PC 가 확인한 때만 온다
   const aiToolsAtRaw = param("aiToolsAt", 40);
   const aiTools = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(aiToolsAtRaw)
@@ -138,6 +140,7 @@ export async function GET(req: NextRequest) {
           deployingPc,
           pausedJobs,
           bundleLeft,
+          staleCopies,
           restartFail: param("restartFail", 300) || undefined,
         },
         restart,

@@ -92,7 +92,7 @@ test("정비 결과 보고(reportTurn): 결과 메시지에 인계 항목을 저
     },
     "@/lib/factory/ai": loadTs("lib/factory/ai.ts"),
     "@/lib/factory/mask": mask,
-    "@/lib/factory/handoff": handoffLib,
+    "@/lib/factory/jobs": { MAX_LOGS_PER_JOB: 500, MAX_LOG_MESSAGE: 2000 }, "@/lib/factory/supervisorDrain": loadTs("lib/factory/supervisorDrain.ts"), "@/lib/factory/handoff": handoffLib,
     "@/lib/factory/telegram": { notifyDeployReady: async () => {}, notifyMaintenance: async () => {}, notifyText: async () => {} },
     "@/lib/factory/settings": { getDefaultAiEngine: async () => "claude", getDefaultClaudeModel: async () => null, getSettingValue: async () => null, isAutoDeployEnabled: async () => false, setSettingValue: async () => {} },
   });

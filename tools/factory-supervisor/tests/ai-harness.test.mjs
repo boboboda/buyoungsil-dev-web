@@ -22,7 +22,7 @@ function loadTs(relative, dependencies = {}) {
   const source = fs.readFileSync(path.join(repo, relative), "utf8");
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const module = { exports: {} };
-  new Function("require", "module", "exports", output)((name) => Object.hasOwn(dependencies, name) ? dependencies[name] : require(name), module, module.exports);
+  new Function("require", "module", "exports", output)((name) => Object.hasOwn(dependencies, name) ? dependencies[name] : name === "./useFactoryControl" ? loadTs("components/admin/factory/useFactoryControl.ts") : require(name), module, module.exports);
   return module.exports;
 }
 const ai = loadTs("lib/factory/ai.ts");
@@ -57,6 +57,8 @@ function maintenanceModule(prisma) {
     "@/lib/factory/mask": { maskSecrets: (v) => v },
     "@/lib/factory/telegram": { notifyDeployReady: async () => {}, notifyMaintenance: async () => {}, notifyText: async () => {} },
     "@/lib/factory/settings": { getDefaultAiEngine: async () => "codex", getDefaultClaudeModel: async () => null, getSettingValue: async () => null, isAutoDeployEnabled: async () => false, setSettingValue: async () => {} },
+    "@/lib/factory/jobs": { MAX_LOGS_PER_JOB: 500, MAX_LOG_MESSAGE: 2000 },
+    "@/lib/factory/supervisorDrain": loadTs("lib/factory/supervisorDrain.ts"),
     "@/lib/factory/handoff": { cleanHandoff: () => null },
   });
 }

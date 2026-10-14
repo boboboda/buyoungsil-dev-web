@@ -448,6 +448,7 @@ export interface SupervisorRuntime {
   outbox?: number; // 감독 프로그램의 재전송 대기열에 남은 보고 수(배포 중 홈페이지가 응답하지 않는 동안 쌓임). 없으면 0
   deployingPc?: boolean; // 감독 프로그램이 서버 배포(git push)를 하는 중
   pausedJobs?: number; // 감독 프로그램 업데이트 때문에 일시 중지된 AI 일감·정비 턴 수(업데이트 후 이어 줌). 없으면 0
+  staleCopies?: string; // 감독 프로그램이 발견한 오래된 사본 폴더 이름(쉼표로 이음, 읽기 전용 표시). 없으면 없음
   bundleLeft?: number; // 새 감독 프로그램 커밋을 모으는 중(묶기)일 때 남은 분. 없으면 모으는 중이 아님
   restartTakenAt?: string; // 감독 프로그램이 재시작 요청을 받아 간 시각(새로 켜지면 지운다)
   restartedAt?: string; // 마지막으로 재시작이 끝난 시각

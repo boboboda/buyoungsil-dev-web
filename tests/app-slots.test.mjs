@@ -68,6 +68,15 @@ const requireAdmin = async () => (admin ? null : NextResponse.json({ message: "�
 const snapshot = async () => ({ running: 1, appSlots: (await settings.getAppSlots()).value, appSlotsDefault: (await settings.getAppSlots()).isDefault });
 const controlRoute = loadTs("app/api/admin/factory/control/route.ts", {
   "@/lib/factory/admin": { requireAdmin },
+  "@/lib/prisma": { __esModule: true, default: prisma },
+  "@/lib/factory/appChecks": {},
+  "@/lib/factory/conductor": {},
+  "@/lib/factory/toolkit": {},
+  "@/lib/factory/appRoles": {},
+  "@/lib/factory/studioProjects": {},
+  "@/lib/factory/arts": {},
+  "@/lib/studio/requests": {},
+  "@/lib/factory/supervisorLog": {},
   "@/lib/factory/ai": { isAiEngine: () => false, AI_LABELS: {}, readModelChoice: () => ({ ok: false, message: "" }) },
   "@/lib/factory/settings": settings,
   "@/lib/factory/toolBroker": { isToolBrokerMode: () => false, TOOL_BROKER_MODE_LABELS: {}, toolBrokerLimitLabel: () => "" },
@@ -104,9 +113,9 @@ test("관리자 API: 비관리자는 막히고 저장 안 됨, 관리자는 1~4 
 test("관리자 API: GET 은 관리자 전용·캐시 안 함(force-dynamic), 값에 appSlots 포함", async () => {
   assert.equal(controlRoute.dynamic, "force-dynamic");
   admin = false;
-  assert.equal((await controlRoute.GET()).status, 403);
+  assert.equal((await controlRoute.GET(new NextRequest("http://x/api/admin/factory/control"))).status, 403);
   admin = true;
-  const body = await (await controlRoute.GET()).json();
+  const body = await (await controlRoute.GET(new NextRequest("http://x/api/admin/factory/control"))).json();
   assert.equal(body.appSlots, 3);
   assert.equal(body.appSlotsDefault, true);
 });
@@ -122,11 +131,18 @@ const jobsStub = {
   claimJobs: async (worker, n, engines) => (claimCalls.push({ worker, n, engines }), Array.from({ length: n }, (_, i) => ({ id: `j${i}`, appSlug: `app-${i}`, priority: 0 }))),
 };
 const nextRoute = loadTs("app/api/factory/next/route.ts", {
+  "@/lib/prisma": { __esModule: true, default: {} },
   "@/lib/factory/jobs": jobsStub,
   "@/lib/factory/http": { fail: (status, message) => NextResponse.json({ message }, { status }), guardWorker: async () => null },
   "@/lib/factory/release": { consumeKeyScan: async () => false, notifyTestingDue: async () => {}, pcPathsToCheck: async () => [], releaseJobExtras: async () => new Map() },
   "@/lib/factory/keyPasswords": { keyPasswordsPending: async () => false },
   "@/lib/factory/secretEntries": { secretEntriesPending: async () => false },
+  "@/lib/factory/appChecks": { getAppChecks: async () => ({}) },
+  "@/lib/factory/arts": { approvedForNext: async () => new Map(), pickedForJobs: async () => new Map() },
+  "@/lib/factory/keyProvision": { provisionPending: async () => false },
+  "@/lib/factory/conductor": { appsToHold: async () => new Set(), appsWaitingForApproval: async () => new Map(), conductorTaskForNext: async () => null, isAutoGroupEnabled: async () => false },
+  "@/lib/factory/lab": { labCleanupForNext: async () => [], LAB_KIND: "lab" },
+  "@/lib/factory/projectToolSettingsDb": { projectSettingsForNext: async () => new Map() },
   "@/lib/factory/keyVault": { keyTasksForNext: async () => [] },
   "@/lib/factory/reviewVideo": { sweepReviewVideos: async () => {} },
   "@/lib/factory/uploadTest": { consumeUploadTest: async () => null },
@@ -141,6 +157,10 @@ const nextRoute = loadTs("app/api/factory/next/route.ts", {
     isCompactAfterJobEnabled: async () => true,
     isSupervisorEnabled: async () => true,
     saveSupervisorInfo: async () => {},
+    getParallelPerApp: async () => ({ value: 2, isDefault: true }),
+    getApprovalWaitSec: async () => ({ value: 0, isDefault: false }),
+    getUpdateBundleMin: async () => ({ value: 0, isDefault: true }),
+    getLoopGuard: async () => ({}),
     getAppSlots: async () => {
       if (appSlotsFail) throw new Error("읽기 실패");
       return settings.getAppSlots();
@@ -305,12 +325,12 @@ test("감독 프로그램 연결: 서버 값 적용·꽉 차도 확인·같은 �
   const src = read("tools/factory-supervisor/supervisor.mjs");
   assert.match(src, /import \{ DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake \} from "\.\/slots\.mjs"/);
   assert.match(src, /effectiveSlots\(\{ server: r\.data\?\.appSlots, serverIsDefault: r\.data\?\.appSlotsDefault === true, pc: cfg\.pcSlots \}\)/);
-  assert.match(src, /planTake\(\{ limit: appLimit\(\), running: running\.size, draining: !!drain \}\)/);
+  assert.match(src, /planTake\(\{ limit: appLimit\(\), running: running\.size \+ pendingApps\(\), draining: !!drain \}\)/);
   assert.doesNotMatch(src, /if \(free > 0\) \{/, "꽉 차면 확인을 건너뛰던 예전 코드가 남아 있지 않음");
   assert.doesNotMatch(src, /cfg\.slots - running\.size/);
   assert.match(src, /slots=\$\{take\}/);
   assert.match(src, /offered\.slice\(0, Math\.max\(0, free\)\)/, "서버가 자리보다 많이 줘도 자리만큼만 시작");
-  assert.match(src, /some\(\(s\) => s\.job\.appSlug === job\.appSlug\)/, "같은 앱 이름이 이미 돌면 시작하지 않음");
+  assert.match(src, /filter\(\(s\) => s\.job\.appSlug === job\.appSlug\)/, "같은 앱 이름이 이미 돌면 시작하지 않음(병행 작업 사본끼리만 예외)");
   assert.match(src, /acquireWorkspace\(dir/, "앱 폴더 잠금");
 });
 
@@ -328,7 +348,7 @@ test("설정 카드: 1~4 선택·저장·주의 한 줄·[사용량] 링크·감
   assert.match(html, /<a [^>]*data-slots-usage-link[^>]*href="\/admin\/factory\?tab=usage"/);
   assert.match(html, /한도 게이지와 장비 상태\(RAM\)/);
   assert.match(html, /같은 앱의 일감은 개수가 남아도 하나씩만/);
-  assert.match(html, /정비가 대기·진행 중이면 새 앱 일감은 멈춰요/);
+  assert.match(html, /공장 정비가 대기·진행 중이어도 앱 일감은 계속 돌아요/);
 });
 
 test("설정 카드 문구: 지금 진행 중 N / 최대 M, 값을 줄여 넘칠 때 안내, 예전 서버", () => {

@@ -22,7 +22,7 @@ function loadTs(relative, dependencies = {}) {
   const source = fs.readFileSync(path.join(repo, relative), "utf8");
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const module = { exports: {} };
-  new Function("require", "module", "exports", output)((name) => (Object.hasOwn(dependencies, name) ? dependencies[name] : require(name)), module, module.exports);
+  new Function("require", "module", "exports", output)((name) => (Object.hasOwn(dependencies, name) ? dependencies[name] : name === "./useFactoryControl" ? loadTs("components/admin/factory/useFactoryControl.ts") : require(name)), module, module.exports);
   return module.exports;
 }
 
@@ -239,7 +239,7 @@ function maintWith(turns, { defaultModel = null, defaultEngine = "claude" } = {}
     "@/lib/factory/mask": mask,
     "@/lib/factory/telegram": { notifyDeployReady: async () => {}, notifyMaintenance: async () => {}, notifyText: async () => {} },
     "@/lib/factory/settings": { getDefaultAiEngine: async () => defaultEngine, getDefaultClaudeModel: async () => defaultModel, getSettingValue: async () => null, isAutoDeployEnabled: async () => false, setSettingValue: async () => {} },
-    "@/lib/factory/handoff": { cleanHandoff: () => null },
+    "@/lib/factory/jobs": { MAX_LOGS_PER_JOB: 500, MAX_LOG_MESSAGE: 2000 }, "@/lib/factory/supervisorDrain": loadTs("lib/factory/supervisorDrain.ts"), "@/lib/factory/handoff": { cleanHandoff: () => null },
   });
   return { maint, created };
 }
@@ -317,6 +317,7 @@ const overviewRoute = loadTs("app/api/admin/factory/overview/route.ts", {
 const jobRoute = loadTs("app/api/admin/factory/jobs/[id]/route.ts", {
   "@/lib/prisma": { __esModule: true, default: {} },
   "@/lib/factory/admin": { requireAdmin },
+  "@/lib/factory/lab": { LAB_KIND: "lab", labResultView: () => null },
   "@/lib/factory/jobs": { ID_RE, adminAction: async () => ({ ok: true, status: 200, message: "" }), claudeUsageFor: async () => null },
   "@/lib/factory/approvals": approvals,
   "@/lib/factory/ai": ai,
@@ -328,6 +329,15 @@ const maintRoute = loadTs("app/api/admin/factory/maintenance/route.ts", {
   "@/lib/factory/maintenance": { maintenanceOverview: async () => ({}), sendMaintenance: async (i) => (approvalCalls.push(["send", i]), { ok: true, status: 200, message: "" }), setTurnEngine: async () => ({}), cancelTurn: async () => ({}), closeThread: async () => ({}), queueAction: async () => ({}) },
 });
 const controlRoute = loadTs("app/api/admin/factory/control/route.ts", {
+  "@/lib/prisma": {},
+  "@/lib/factory/appChecks": {},
+  "@/lib/factory/conductor": {},
+  "@/lib/factory/toolkit": {},
+  "@/lib/factory/appRoles": {},
+  "@/lib/factory/studioProjects": {},
+  "@/lib/factory/arts": {},
+  "@/lib/studio/requests": {},
+  "@/lib/factory/supervisorLog": {},
   "@/lib/factory/admin": { requireAdmin },
   "@/lib/factory/ai": ai,
   "@/lib/factory/settings": { setDefaultClaudeModel: async (m) => savedDefault.push(m), setDefaultAiEngine: async () => {}, setCompactAfterJobEnabled: async () => {}, setToolBrokerSettings: async () => ({}) },

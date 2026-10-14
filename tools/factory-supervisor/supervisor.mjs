@@ -2022,6 +2022,18 @@ const HOUR_MS = 60 * 60_000;
 let secretNamesReportedAt = 0; // PC 키 이름 보고(값 없음): 시작 때와 1시간마다, 반영 직후
 let aiTools = null; // AI 도구 상태(읽기 전용): 1시간마다 확인해 홈페이지가 받을 때까지 /next 에 붙인다
 let aiToolsCheckedAt = 0;
+// 오래된 사본 폴더(예전에 개발용으로 쓰던 홈페이지 사본). 있으면 이름만 통제실에 알린다. 지우는 건 사람이 한다
+const STALE_COPY_DIRS = ["buyoungsil-dev-web"];
+function staleCopyQuery() {
+  try {
+    const self = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const found = STALE_COPY_DIRS.filter((n) => {
+      const dir = path.join(cfg.workDir, n);
+      return path.resolve(dir) !== self && fs.existsSync(path.join(dir, ".git"));
+    });
+    return found.length ? { staleCopies: found.join(",") } : {};
+  } catch { return {}; }
+}
 let memoryLine = ""; // 작업 메모리 상태(폴더별 시각·크기·푸시 결과, 본문 없음): 바뀌었거나 1시간이 지나면 /next 에 붙인다
 let memorySentAt = 0;
 function memoryQuery() {
@@ -2107,7 +2119,7 @@ async function loop() {
       { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
-        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery(), ...(outbox.size() > 0 ? { outbox: String(outbox.size()) } : {}), ...(deployRunning() ? { deploying: "1" } : {}), ...updateExtra() });
+        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery(), ...staleCopyQuery(), ...(outbox.size() > 0 ? { outbox: String(outbox.size()) } : {}), ...(deployRunning() ? { deploying: "1" } : {}), ...updateExtra() });
         const sentTools = aiTools;
         const sentMemory = extra.get("memory");
         // 정비가 진행 중이어도 앱·실험 일감은 계속 받는다. 새 일감을 멈추는 건 위험한 순간을 앞둔 드레인뿐이다:

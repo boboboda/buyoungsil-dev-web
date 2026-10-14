@@ -373,3 +373,7 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
 - 정비·지휘자·앱 일감·실험이 AI 에게 넘기는 환경변수는 공통 함수 `safeEnv` 로 TOKEN·PASSWORD·SECRET·API_KEY·PRIVATE_KEY 모양 이름을 뺀다. 감독이 정한 FACTORY_* 허용 목록과 앱 일감 requiredSecrets 키만 더한다.
 - 앱 일감 권한 설정에 `Read(~/.ssh/**)`·`Read(~/.aws/**)` 금지가 있다(ssh 명령 자체는 서버 접근 훅 규칙대로).
 - Codex 는 ssh-guard 훅이 없어서 `startAi` 가 PATH 앞에 안내 스크립트(ssh·scp·rsync·sftp 등)를 둔다. 서버 작업은 "Claude Code 로 다시 보내세요"로 실패한다. 시험: `tests/envfilter.test.mjs`.
+
+## 오래된 사본 표시 (1-5)
+- 작업 폴더 아래 `buyoungsil-dev-web`(예전 개발용 사본, `.git` 있음)이 있으면 `/next` 에 `staleCopies=<이름>` 만 붙인다(1회 `existsSync` 한 번, 지우지 않음). 서버가 이름 모양을 걸러 상태(`staleCopies`)에 싣고 통제실 감독 카드에 "오래된 사본(정리 필요)"로 보인다. 감독·일감은 이 폴더를 쓰지 않는다(실행은 `supervisor-src`, 정비는 `selfdev`).
+- 전체 시험은 `npm test`(`scripts/run-all-tests.mjs`: 시험 파일을 모두 찾아 돌리고 표로 요약, `--jobs=4` 로 동시에, 이름 일부를 주면 그것만). 개별 `test:*` 스크립트는 그대로 있다.

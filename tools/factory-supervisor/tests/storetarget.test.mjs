@@ -47,7 +47,7 @@ function fakeDb({ apps = [], jobs = [] } = {}) {
   });
   const jobRow = (j) => ({ kind: "new", stack: "flutter", status: "done", createdAt: d("2026-01-01"), reviewRequired: false, reviewApprovedAt: null, ...j });
   const whereOk = (row, where = {}) =>
-    Object.entries(where).every(([k, v]) => (v && typeof v === "object" && "in" in v ? v.in.includes(row[k]) : row[k] === v));
+    Object.entries(where).every(([k, v]) => (v && typeof v === "object" && "in" in v ? v.in.includes(row[k]) : v && typeof v === "object" && "not" in v ? row[k] !== v.not : row[k] === v));
   const prisma = {
     state,
     factoryReleaseAccount: { findMany: async () => [], findUnique: async () => null },
@@ -109,6 +109,9 @@ function loadRelease(prisma) {
 
 function loadMcp(prisma, release) {
   return loadTs("lib/factory/mcp.ts", {
+    "@/lib/factory/queue": { appQueue: async () => ({}), allAppQueues: async () => ({}), numberQueue: () => "" },
+    "@/lib/factory/parallel": { MAX_GROUP_SIZE: 4, newGroupId: () => "g", PARALLEL_KIND: "parallel", SOURCE_MANUAL: "manual" },
+    "@/lib/factory/lab": { LAB_KIND: "lab", LAB_SLUG: "lab", labResultView: async () => null },
     "@/lib/prisma": prisma,
     "@/lib/factory/ai": { isAiEngine: (v) => v === "claude" || v === "codex" },
     "@/lib/factory/settings": { getDefaultAiEngine: async () => "claude" },
@@ -123,6 +126,7 @@ function loadMcp(prisma, release) {
       ACTIVE_STATUSES: ["pending", "approved", "running"],
       APP_SLUG_RE: /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/,
       ID_RE: /^[A-Za-z0-9_-]{1,40}$/,
+      JOB_KINDS: ["new", "revision", "release", "lab"],
       JOB_STATUSES: ["pending", "approved", "running", "done", "failed", "cancelled"],
       MAX_PENDING_JOBS: 20,
       MAX_PLAN: 60000,
