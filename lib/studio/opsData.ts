@@ -163,7 +163,7 @@ export async function readOpsData(appSlug: string, deps: { readReviewCount?: boo
 // ───────── 서비스 운영 ─────────
 
 /** 서비스 주소: 출시 카드의 검수 페이지 주소(https) 호스트 → 없으면 프로젝트 연결의 도메인 */
-async function serviceBase(appSlug: string, domain: string | null): Promise<string | null> {
+export async function serviceBase(appSlug: string, domain: string | null): Promise<string | null> {
   const app = await prisma.factoryApp.findUnique({ where: { appSlug }, select: { reviewUrl: true } }).catch(() => null);
 
   if (app?.reviewUrl) {

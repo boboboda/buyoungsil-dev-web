@@ -297,7 +297,7 @@ test("페이지 연결: [제작] 탭이 MakeTab 을 쓰고, 자료는 제작 탭
 
   assert.match(page, /import MakeTab from "@\/components\/studio\/MakeTab"/);
   assert.match(page, /if \(tab === "make"\)[\s\S]*readMakeData\(app\)/);
-  assert.match(page, /<MakeTab canEdit=\{viewer\.kind === "admin"\} data=\{make\} showBatch=\{flags\.studioBatch\} sub=\{sub\}/);
+  assert.match(page, /<MakeTab canEdit=\{viewer\.kind === "admin"\} data=\{make\} layout=\{layout\} showBatch=\{flags\.studioBatch\} sub=\{sub\}/);
   assert.equal(/data-studio-pending="make"/.test(page), false);
 });
 

@@ -5,6 +5,8 @@
 // - 앱 폴더 이름 = 공장 앱 이름(appSlug). 받은 값은 모양을 검사하고 자격 증명(user:pass@)은 버린다. 비밀값은 받지도 저장하지도 않는다.
 // 이 파일은 순수 함수·상수만 둔다(통제실 화면도 가져다 쓰므로 prisma 를 넣지 않는다). DB 를 부르는 함수는 projectLinksDb.ts.
 
+import { cleanLayoutConfig, type LayoutConfig } from "@/lib/studio/layout";
+
 export const PROJECT_LINKS_REPORT_KEY = "projectLinksReport";
 export const PROJECT_LINKS_SCAN_KEY = "projectLinksScanRequest";
 export const REPORT_STALE_MS = 36 * 60 * 60 * 1000; // 하루 1회 보고라서 36시간이 지나면 낡은 값으로 본다
@@ -169,6 +171,7 @@ export interface ConnectionRow {
   exportPath: string | null; // exportKind=folder 일 때 앱 폴더 안 상대 경로
   studioBatch: boolean; // 스튜디오 기능: 배치
   studioService: boolean; // 스튜디오 기능: 서비스 운영
+  layoutConfig: LayoutConfig | null; // 배치 설정(3-4)
 }
 
 export interface ConnectionPatch {
@@ -184,6 +187,7 @@ export interface ConnectionPatch {
   exportPath?: string | null;
   studioBatch?: boolean;
   studioService?: boolean;
+  layoutConfig?: LayoutConfig | null;
 }
 
 const clean = (v: unknown, max: number): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
@@ -253,6 +257,16 @@ export function validatePatch(raw: unknown): { ok: true; patch: ConnectionPatch 
     }
   }
 
+  if (has("layoutConfig")) {
+    if (o.layoutConfig === null) patch.layoutConfig = null;
+    else {
+      const r = cleanLayoutConfig(o.layoutConfig);
+
+      if (r.ok === false) return { ok: false, reason: r.reason };
+      patch.layoutConfig = r.config;
+    }
+  }
+
   return { ok: true, patch };
 }
 
@@ -285,6 +299,7 @@ export interface LinkRow {
   exportPath: string | null;
   studioBatch: boolean;
   studioService: boolean;
+  layoutConfig: LayoutConfig | null;
   warnings: { kind: WarningKind; text: string }[];
 }
 
@@ -341,6 +356,7 @@ export function buildLinksView(input: { appSlugs: string[]; connections: Connect
       exportPath: c?.exportPath ?? null,
       studioBatch: c?.studioBatch ?? false,
       studioService: c?.studioService ?? false,
+      layoutConfig: c?.layoutConfig ?? null,
       warnings,
     };
   });

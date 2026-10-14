@@ -1,5 +1,5 @@
 // components/studio/MakeTab.tsx
-// /studio/<앱> 의 [제작] 탭: 카드 골라 생성 · 진행 상태(5초마다 새로 고침) · 결과 미리보기(정수배 확대, 라이트박스) · [배치] 하위 탭 자리.
+// /studio/<앱> 의 [제작] 탭: 카드 골라 생성 · 진행 상태(5초마다 새로 고침) · 결과 미리보기(정수배 확대, 라이트박스) · [배치] 하위 탭(공용 배치 편집기, 3-4).
 // 자료는 서버가 props 로 준다(lib/studio/makeData.ts). [생성]은 /api/studio/make(관리자만)로 도구 일감을 등록한다. 관리자가 아니면(접근 키) 읽기 전용: 입력칸이 없다.
 // 비용 한도를 넘으면 서버가 409 로 확인을 요구하고, 확인하면 같은 요청을 confirmed 로 다시 보낸다. 키 값은 이 화면에 오지 않는다.
 "use client";
@@ -10,6 +10,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { applySuggestion, countByGroup, estimateCost, isActiveStatus, MAKE_LIMITS, MAKE_REFRESH_MS, makeInputError, parseSubjects, pixelScale, subjectSuggestions, type MakeArt, type MakeJob } from "@/lib/studio/make";
 import type { MakeData } from "@/lib/studio/makeData";
+import type { LayoutData } from "@/lib/studio/layoutData";
+import LayoutEditor from "@/components/studio/LayoutEditor";
 
 const FIELD = "mt-1 w-full min-w-0 rounded border border-default-300 bg-transparent px-2 py-1 text-sm";
 const PIXELATED = { imageRendering: "pixelated" } as const;
@@ -133,7 +135,7 @@ function JobItem({ job, appSlug, onOpen }: { job: MakeJob; appSlug: string; onOp
   );
 }
 
-export default function MakeTab({ data, canEdit, showBatch, sub }: { data: MakeData; canEdit: boolean; showBatch: boolean; sub?: string }) {
+export default function MakeTab({ data, canEdit, showBatch, sub, layout }: { data: MakeData; canEdit: boolean; showBatch: boolean; sub?: string; layout?: LayoutData | null }) {
   const router = useRouter();
   const [cardId, setCardId] = useState(data.cards[0]?.id ?? "");
   const [subjectText, setSubjectText] = useState("");
@@ -221,10 +223,14 @@ export default function MakeTab({ data, canEdit, showBatch, sub }: { data: MakeD
       ) : null}
 
       {batchOn ? (
-        <section className="fx-panel space-y-1 p-4" data-make-batch-slot>
-          <h2 className="fx-label">배치</h2>
-          <p className="text-sm fx-muted">배치 편집기가 들어올 자리예요. 준비 중이에요.</p>
-        </section>
+        layout ? (
+          <LayoutEditor canEdit={canEdit} data={layout} />
+        ) : (
+          <section className="fx-panel space-y-1 p-4" data-make-batch-slot>
+            <h2 className="fx-label">배치</h2>
+            <p className="text-sm fx-muted" data-layout-failed>○ 확인 못 함 — 배치 자료를 읽지 못했어요. 잠시 뒤 다시 열어 주세요.</p>
+          </section>
+        )
       ) : (
         <>
           <section className="fx-panel min-w-0 space-y-3 p-3 sm:p-4" data-make-form>

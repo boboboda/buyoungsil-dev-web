@@ -133,10 +133,16 @@ export async function callService(profile: ServiceProfile, key: CapabilityKey, b
   const cap = profile.capabilities.find((c) => c.key === key);
 
   if (!cap?.api) return { state: "no-api" };
+
+  return callServiceApi({ appSlug: profile.appSlug, auth: cap.api.auth, method: cap.api.method, path: cap.api.path }, base, deps, body);
+}
+
+/** 서비스 경로 하나를 직접 부른다(배치 편집기처럼 서비스 표에 없는, 연결 설정에 적힌 경로). 안전 검사·키 읽기·응답 제한은 callService 와 같다 */
+export async function callServiceApi(api: { appSlug: string; auth: CapabilityAuth; method: "GET" | "POST" | "PUT"; path: string }, base: string | null | undefined, deps: ServiceCallDeps = {}, body?: unknown, maxBody: number = SERVICE_MAX_BODY): Promise<ServiceResult> {
   const origin = serviceOrigin(base);
 
   if (origin.ok === false) return { state: "blocked", reason: origin.reason };
-  const name = tokenName(cap, profile.appSlug);
+  const name = api.auth === "review" ? `REVIEW_STATUS_TOKEN_${api.appSlug.toUpperCase().replace(/[^A-Z0-9]/g, "_")}` : serviceAdminKeyName(api.appSlug);
   const token = await (deps.readSecret ?? defaultReadSecret)(name).catch(() => null);
 
   if (!token) return { state: "need-key", keyName: name };
@@ -152,8 +158,8 @@ export async function callService(profile: ServiceProfile, key: CapabilityKey, b
       if (!addrs.length) return { state: "error", reason: "주소를 찾지 못함" };
       if (addrs.some(isPrivateHost)) return { state: "blocked", reason: "사설망 주소로 풀려서 부르지 않아요." };
     }
-    const res = await (deps.fetchImpl ?? fetch)(`${origin.origin}${cap.api.path}`, {
-      method: cap.api.method,
+    const res = await (deps.fetchImpl ?? fetch)(`${origin.origin}${api.path}`, {
+      method: api.method,
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: "manual",
@@ -163,10 +169,11 @@ export async function callService(profile: ServiceProfile, key: CapabilityKey, b
 
     if (res.status === 401 || res.status === 403) return { state: "error", reason: "인증 실패(키 확인)" };
     if (res.status === 404) return { state: "no-api" };
+    if (res.status === 409) return { state: "error", reason: "서비스 쪽 배치가 그 사이에 바뀌었어요(409)" };
     if (res.status < 200 || res.status >= 300) return { state: "error", reason: `응답 ${res.status}` };
     const text = await res.text();
 
-    if (text.length > SERVICE_MAX_BODY) return { state: "error", reason: "응답이 너무 큼" };
+    if (text.length > maxBody) return { state: "error", reason: "응답이 너무 큼" };
 
     try {
       return { state: "ok", status: res.status, data: JSON.parse(text) };

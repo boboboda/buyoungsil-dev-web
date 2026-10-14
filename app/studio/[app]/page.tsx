@@ -7,6 +7,7 @@ import { readStudioProject, type StudioProjectData } from "@/lib/studio/data";
 import { parseStudioTab, STUDIO_TABS, visibleOpsMenu } from "@/lib/studio/dashboard";
 import { resolveViewer } from "@/lib/studio/pageAccess";
 import { readMakeData, type MakeData } from "@/lib/studio/makeData";
+import { readLayoutData, type LayoutData } from "@/lib/studio/layoutData";
 import { readOpsData, tickSchedules, type OpsData } from "@/lib/studio/opsData";
 import ConfigTab from "@/components/studio/ConfigTab";
 import MakeTab from "@/components/studio/MakeTab";
@@ -60,6 +61,15 @@ export default async function StudioProjectPage({ params, searchParams }: { para
       console.error("[studio] 제작 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
     }
   }
+  let layout: LayoutData | null = null;
+
+  if (tab === "make" && flags.studioBatch && sub === "batch") {
+    try {
+      layout = await readLayoutData(app);
+    } catch (error) {
+      console.error("[studio] 배치 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
+    }
+  }
   const opsNow = ops.find((o) => o.key === sub) ?? ops[0];
   const art = Array.isArray(search.art) ? search.art[0] : search.art;
   let opsData: OpsData | null = null;
@@ -104,7 +114,7 @@ export default async function StudioProjectPage({ params, searchParams }: { para
       {tab === "config" ? <ConfigTab canEdit={viewer.kind === "admin"} data={data} /> : null}
       {tab === "make" ? (
         make ? (
-          <MakeTab canEdit={viewer.kind === "admin"} data={make} showBatch={flags.studioBatch} sub={sub} />
+          <MakeTab canEdit={viewer.kind === "admin"} data={make} layout={layout} showBatch={flags.studioBatch} sub={sub} />
         ) : (
           <p className="fx-panel p-3 text-sm fx-muted" data-make-failed role="status">
             ○ 확인 못 함 — 제작 자료를 읽지 못했어요. 잠시 뒤 다시 열어 주세요.

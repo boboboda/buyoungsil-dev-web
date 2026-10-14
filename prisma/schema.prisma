@@ -1169,6 +1169,7 @@ model FactoryAppConnection {
   exportPath    String? // exportKind=folder 일 때 앱 폴더 안 상대 경로
   studioBatch   Boolean  @default(false) // 스튜디오 기능: 배치
   studioService Boolean  @default(false) // 스튜디오 기능: 서비스 운영
+  layoutConfig  Json? // 배치 설정(3-4): 칸 크기·맵 형태·층·그림 종류·내보내기 형식과 곳. null 이면 정하지 않음
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -1251,4 +1252,26 @@ model FactoryGenSchedule {
 
   @@unique([appSlug, cardId])
   @@map("factory_gen_schedules")
+}
+
+// 스튜디오 배치(3-4): 프로젝트마다 저장할 때마다 한 줄씩 쌓는 판 이력. version 은 프로젝트 안의 판 번호(1부터). board 는 JSON 글자.
+// source = editor(편집기 저장) | import(서비스·파일에서 불러옴) | restore(옛 판으로 되돌림). export* = 이 판을 내보낸 기록(요청·결과).
+model FactoryLayoutBoard {
+  id           String    @id
+  appSlug      String
+  version      Int
+  board        String
+  itemCount    Int       @default(0)
+  source       String    @default("editor")
+  note         String    @default("")
+  who          String    @default("")
+  exportStatus String    @default("") // requested | done | failed | unsupported | 빈 글자(안 보냄)
+  exportJobId  String? // 앱 수정 일감 id (앱 폴더로 보낼 때)
+  exportDest   String    @default("")
+  exportNote   String    @default("")
+  exportedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([appSlug, version])
+  @@map("factory_layout_boards")
 }

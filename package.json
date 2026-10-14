@@ -53,6 +53,7 @@
     "test:studio-hub": "node tests/studio-hub.test.mjs",
     "test:studio-make": "node tests/studio-make.test.mjs",
     "test:studio-ops": "node tests/studio-ops.test.mjs",
+    "test:studio-layout": "node tests/studio-layout.test.mjs",
     "test:tool-jobs": "node tests/tool-jobs.test.mjs && node tools/factory-supervisor/tests/tooljob.test.mjs"
   },
   "dependencies": {

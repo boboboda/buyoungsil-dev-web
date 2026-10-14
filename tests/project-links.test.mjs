@@ -22,7 +22,8 @@ function loadTs(relative, dependencies = {}) {
   return module.exports;
 }
 
-const lib = loadTs("lib/factory/projectLinks.ts");
+const layoutLib = loadTs("lib/studio/layout.ts");
+const lib = loadTs("lib/factory/projectLinks.ts", { "@/lib/studio/layout": layoutLib });
 
 // 가짜 DB: factoryAppConnection · factoryJob · factorySetting
 function fakeDb(conns = [], jobs = []) {
@@ -47,7 +48,7 @@ function fakeDb(conns = [], jobs = []) {
     },
   };
 }
-const loadDb = (db) => loadTs("lib/factory/projectLinksDb.ts", { "@/lib/prisma": { __esModule: true, default: db }, "@/lib/factory/projectLinks": lib });
+const loadDb = (db) => loadTs("lib/factory/projectLinksDb.ts", { "@/lib/prisma": { __esModule: true, default: db }, "@/lib/factory/projectLinks": lib, "@/lib/studio/layout": layoutLib });
 
 test("원격 주소: 호스트·경로만 뽑고 자격 증명은 버린다. 용도는 이름·경로로 짐작한다", () => {
   assert.deepEqual(lib.parseRemoteUrl("serverpc2:git-server/claude-work/a.git"), { host: "serverpc2", path: "git-server/claude-work/a.git" });

@@ -343,7 +343,7 @@ test("카드 편집 화면 틀: 이름·도구·방법·참고 규칙 입력과 
 });
 
 test("프로젝트 화면: 로그인·키 없음이면 거부 화면, 있으면 탭 [구성] [제작] [운영]", async () => {
-  const denied = { "@/lib/studio/opsData": { readOpsData: async () => ({ appSlug: "saessak-hub" }), tickSchedules: async () => {} }, "@/components/studio/OpsTab": { __esModule: true, default: ({ sub }) => h("div", { "data-fake-ops": sub }) }, "@/lib/studio/makeData": { readMakeData: async () => ({ appSlug: "saessak-hub" }) }, "@/components/studio/MakeTab": { __esModule: true, default: () => h("div", { "data-fake-make": "" }) }, "@/lib/studio/pageAccess": { resolveViewer: async () => null }, "@/lib/studio/data": { readStudioProject: async () => projectData() }, "@/components/studio/ConfigTab": { __esModule: true, default: () => h("div", { "data-fake-config": "" }) } };
+  const denied = { "@/lib/studio/layoutData": { readLayoutData: async () => null }, "@/lib/studio/opsData": { readOpsData: async () => ({ appSlug: "saessak-hub" }), tickSchedules: async () => {} }, "@/components/studio/OpsTab": { __esModule: true, default: ({ sub }) => h("div", { "data-fake-ops": sub }) }, "@/lib/studio/makeData": { readMakeData: async () => ({ appSlug: "saessak-hub" }) }, "@/components/studio/MakeTab": { __esModule: true, default: () => h("div", { "data-fake-make": "" }) }, "@/lib/studio/pageAccess": { resolveViewer: async () => null }, "@/lib/studio/data": { readStudioProject: async () => projectData() }, "@/components/studio/ConfigTab": { __esModule: true, default: () => h("div", { "data-fake-config": "" }) } };
   const { default: PageDenied } = load("app/studio/[app]/page.tsx", { ...nav, ...denied });
   const deniedHtml = renderToStaticMarkup(await PageDenied({ params: Promise.resolve({ app: "saessak-hub" }), searchParams: Promise.resolve({}) }));
   assert.match(deniedHtml, /data-studio-denied/);
@@ -374,7 +374,7 @@ test("프로젝트 화면: 로그인·키 없음이면 거부 화면, 있으면 
 });
 
 test("프로젝트 화면: 접근 키로 열면 목록 링크 없이 읽기 전용 표시", async () => {
-  const mocks = { "@/lib/studio/opsData": { readOpsData: async () => ({ appSlug: "saessak-hub" }), tickSchedules: async () => {} }, "@/components/studio/OpsTab": { __esModule: true, default: ({ sub }) => h("div", { "data-fake-ops": sub }) }, "@/lib/studio/makeData": { readMakeData: async () => ({ appSlug: "saessak-hub" }) }, "@/components/studio/MakeTab": { __esModule: true, default: () => h("div", { "data-fake-make": "" }) }, "@/lib/studio/pageAccess": { resolveViewer: async () => ({ kind: "key", app: "saessak-hub" }) }, "@/lib/studio/data": { readStudioProject: async () => projectData() }, "@/components/studio/ConfigTab": { __esModule: true, default: () => null } };
+  const mocks = { "@/lib/studio/layoutData": { readLayoutData: async () => null }, "@/lib/studio/opsData": { readOpsData: async () => ({ appSlug: "saessak-hub" }), tickSchedules: async () => {} }, "@/components/studio/OpsTab": { __esModule: true, default: ({ sub }) => h("div", { "data-fake-ops": sub }) }, "@/lib/studio/makeData": { readMakeData: async () => ({ appSlug: "saessak-hub" }) }, "@/components/studio/MakeTab": { __esModule: true, default: () => h("div", { "data-fake-make": "" }) }, "@/lib/studio/pageAccess": { resolveViewer: async () => ({ kind: "key", app: "saessak-hub" }) }, "@/lib/studio/data": { readStudioProject: async () => projectData() }, "@/components/studio/ConfigTab": { __esModule: true, default: () => null } };
   const { default: Page } = load("app/studio/[app]/page.tsx", { ...nav, ...mocks });
   const html = renderToStaticMarkup(await Page({ params: Promise.resolve({ app: "saessak-hub" }), searchParams: Promise.resolve({}) }));
   assert.match(html, /읽기 전용/);
@@ -397,7 +397,7 @@ test("통제실 스튜디오 탭에 '공용 스튜디오로 이동'이 있고 �
   const src = read("components/admin/factory/StudioPanel.tsx");
   assert.match(src, /공용 스튜디오로 이동/);
   assert.match(src, /href="\/studio"/);
-  assert.match(src, /<StudioWorkbench /, "기존 기능은 지우지 않음(정리는 3-4)");
+  assert.match(src, /<StudioWorkbench /, "예전 편집은 지우지 않고 접어서 남김(3-4)");
 });
 
 test("공개 사이트 네비바·채팅 버튼은 /studio 에서 숨김", () => {

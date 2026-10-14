@@ -1,6 +1,9 @@
 // lib/factory/projectLinksDb.ts
 // 앱별 연결 정보의 DB 읽기·쓰기(순수 부분은 projectLinks.ts). 표 = factory_app_connections + factory_settings 의 감독 보고·새로 읽기 요청.
+import { Prisma } from "@prisma/client";
+
 import prisma from "@/lib/prisma";
+import { readLayoutConfig } from "@/lib/studio/layout";
 import {
   buildLinksView,
   classifyRemote,
@@ -18,7 +21,7 @@ import {
 
 // ───────── DB ─────────
 
-type DbRow = { appSlug: string; folder: string | null; stack: string | null; defaultBranch: string | null; remotes: unknown; deployServer: string | null; deployMethod: string | null; domain: string | null; containerName: string | null; services: unknown; notes: string | null; exportKind?: string | null; exportPath?: string | null; studioBatch?: boolean; studioService?: boolean };
+type DbRow = { appSlug: string; folder: string | null; stack: string | null; defaultBranch: string | null; remotes: unknown; deployServer: string | null; deployMethod: string | null; domain: string | null; containerName: string | null; services: unknown; notes: string | null; exportKind?: string | null; exportPath?: string | null; studioBatch?: boolean; studioService?: boolean; layoutConfig?: unknown };
 
 function toConnection(r: DbRow): ConnectionRow {
   const remotes = Array.isArray(r.remotes)
@@ -46,6 +49,7 @@ function toConnection(r: DbRow): ConnectionRow {
     exportPath: r.exportPath ?? null,
     studioBatch: r.studioBatch === true,
     studioService: r.studioService === true,
+    layoutConfig: readLayoutConfig(r.layoutConfig),
   };
 }
 
@@ -70,7 +74,10 @@ export async function saveReport(report: ProjectLinksReport): Promise<void> {
 }
 
 export async function updateConnection(appSlug: string, patch: ConnectionPatch): Promise<void> {
-  await prisma.factoryAppConnection.upsert({ where: { appSlug }, create: { appSlug, ...patch }, update: patch });
+  const { layoutConfig, ...rest } = patch;
+  const data = { ...rest, ...(layoutConfig === undefined ? {} : { layoutConfig: layoutConfig === null ? Prisma.DbNull : (layoutConfig as unknown as Prisma.InputJsonValue) }) };
+
+  await prisma.factoryAppConnection.upsert({ where: { appSlug }, create: { appSlug, ...data }, update: data });
 }
 
 /** 통제실 [새로 읽기]: 다음 /next 응답 한 번에 projectLinksScan: true 를 붙인다 */

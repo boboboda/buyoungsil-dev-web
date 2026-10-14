@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CardHistoryItem, CardView } from "@/lib/factory/cardsDb";
 import type { CardField, CardOptions, RefRules } from "@/lib/factory/cards";
 import type { LinkRow } from "@/lib/factory/projectLinks";
+import LayoutConfigForm from "@/components/admin/factory/LayoutConfigForm";
 import ToolJobsPanel from "@/components/admin/factory/ToolJobsPanel";
 
 interface ToolChoice {
@@ -420,6 +421,7 @@ export default function CardsPanel({ appSlug }: { appSlug: string }) {
               스튜디오 기능: 서비스 운영
             </label>
           </div>
+          {link.studioBatch ? <LayoutConfigForm key={JSON.stringify(link.layoutConfig ?? null)} busy={busy} config={link.layoutConfig ?? null} onSave={(layoutConfig) => void saveLink({ layoutConfig })} /> : null}
         </fieldset>
       ) : null}
       <ToolJobsPanel appSlug={appSlug} cards={snap?.cards ?? []} />
