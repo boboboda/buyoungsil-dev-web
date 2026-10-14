@@ -328,13 +328,14 @@ test("공개 사이트 크롬: /admin·/app 에서만 숨기고 공개 화면은
   const Only = loadTs("components/main/PublicChromeOnly.tsx", {
     "next/navigation": { usePathname: () => current },
     "@/lib/utils/appPath": appPath,
+    "@/lib/studio/gate": loadTs("lib/studio/gate.ts"),
   }).default;
   const render = (p) => {
     current = p;
     return html(h(Only, null, h("nav", null, "공개 네비바")));
   };
-  for (const p of ["/", "/note", "/project", "/contact", "/stories/x", "/administrator"]) assert.equal(render(p), "<nav>공개 네비바</nav>", `공개 화면 ${p}`);
-  for (const p of ["/admin", "/admin/factory", "/app", "/app/x"]) assert.equal(render(p), "", `숨김 ${p}`);
+  for (const p of ["/", "/note", "/project", "/contact", "/stories/x", "/administrator", "/studios"]) assert.equal(render(p), "<nav>공개 네비바</nav>", `공개 화면 ${p}`);
+  for (const p of ["/admin", "/admin/factory", "/app", "/app/x", "/studio", "/studio/saessak-hub"]) assert.equal(render(p), "", `숨김 ${p}`);
 
   const root = read("app/layout.tsx");
   assert.match(root, /<PublicChromeOnly>\s*<div className="flex flex-col w-full justify-center items-center">\s*<NavbarVisibilityWrapper>/);

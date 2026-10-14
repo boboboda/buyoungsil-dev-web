@@ -2,6 +2,8 @@
 // 통제실 [스튜디오] 탭: 홈페이지가 아는 앱(일감의 appSlug)을 [게임 스튜디오]·[앱 스튜디오]로 나눠 보이고, 도구 연결·스튜디오 주소를 저장한다.
 // 자료: 앱 목록 = factory_jobs(앱마다 가장 최근 일감, 완료된 앱 먼저), 도구 = 도구함이 보고받은 tools.json(ToolkitToolsPanel 과 같은 자료), 분류·연결·바로가기 = factory_settings.studioProjects(바로가기가 비어 있으면 코드에서 확인한 기본 주소를 얹어 보여 준다).
 // 읽기에 실패해도 통제실은 뜬다.
+import Link from "next/link";
+
 import prisma from "@/lib/prisma";
 import { readToolkitView } from "@/lib/factory/toolkit";
 import { APP_ROLES_KEY, readAppRoles } from "@/lib/factory/appRoles";
@@ -10,6 +12,18 @@ import { buildStudioApps, splitStudioApps, readStudioProjects, withDefaultShortc
 import { STUDIO_REQUEST_SOURCE } from "@/lib/studio/requests";
 
 import StudioWorkbench, { type StudioSentJob, type StudioToolRow } from "./StudioWorkbench";
+
+/** 공용 스튜디오(/studio) 안내: 새 스튜디오는 거기서 관리한다. 아래 기존 기능은 3-4 에서 정리할 때까지 그대로 둔다 */
+function StudioHubLink() {
+  return (
+    <p className="mb-3 flex flex-wrap items-center gap-2 text-sm" data-studio-hub-link>
+      <Link className="fx-btn fx-btn-sm" href="/studio">
+        공용 스튜디오로 이동 →
+      </Link>
+      <span className="fx-muted">프로젝트별 구성(카드·도구 블록·키 상태)은 공용 스튜디오에서 봐요. 아래 기존 기능은 그대로 쓸 수 있어요.</span>
+    </p>
+  );
+}
 
 export default async function StudioPanel() {
   try {
@@ -36,14 +50,22 @@ export default async function StudioPanel() {
 
     const { products, toolApps } = splitStudioApps(buildStudioApps(jobs), readAppRoles(rolesRow?.value));
 
-    return <StudioWorkbench apps={products} toolApps={toolApps} initial={withDefaultShortcuts(readStudioProjects(setting?.value), products.map((a) => a.appSlug))} tools={tools} recent={recent} toolsReported={!!view.info && view.info.state === "ok"} />;
+    return (
+      <>
+        <StudioHubLink />
+        <StudioWorkbench apps={products} toolApps={toolApps} initial={withDefaultShortcuts(readStudioProjects(setting?.value), products.map((a) => a.appSlug))} tools={tools} recent={recent} toolsReported={!!view.info && view.info.state === "ok"} />
+      </>
+    );
   } catch (error) {
     console.error("[studio] 스튜디오 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
 
     return (
-      <p className="text-sm fx-muted" role="status">
-        ○ 확인 못 함 — 스튜디오 자료를 읽지 못했어요. 다른 탭은 그대로 쓸 수 있어요.
-      </p>
+      <>
+        <StudioHubLink />
+        <p className="text-sm fx-muted" role="status">
+          ○ 확인 못 함 — 스튜디오 자료를 읽지 못했어요. 다른 탭은 그대로 쓸 수 있어요.
+        </p>
+      </>
     );
   }
 }
