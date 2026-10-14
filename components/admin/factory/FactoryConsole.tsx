@@ -35,6 +35,7 @@ import UsageDash from "./UsageDash";
 import ToolBrokerSettings from "./ToolBrokerSettings";
 import ToolboxPanel from "./ToolboxPanel";
 import ToolkitToolsPanel from "./ToolkitToolsPanel";
+import ToolManifestPanel from "./ToolManifestPanel";
 import WorkerTokens from "./WorkerTokens";
 import WorkRules from "./WorkRules";
 
@@ -153,6 +154,7 @@ export default async function FactoryConsole({
               </SettingsGroup>
               <SettingsGroup hint="도구 목록·접근 설정·요청 중계" id="settings-tools" title="도구">
                 <ToolkitToolsPanel />
+                <ToolManifestPanel />
                 <ToolboxPanel />
                 <ToolBrokerSettings />
               </SettingsGroup>

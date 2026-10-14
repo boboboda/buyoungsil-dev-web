@@ -13,7 +13,7 @@ export const ALLOWED_TOOLS = ["echo", "toolkit.run"] as const;
 // Claude 채팅 커넥터(/api/mcp) 도구 이름(코드에 고정). 묶음별
 export const CONNECTOR_TOOLS = {
   drafts: ["list_categories", "list_existing_titles", "create_sub_category", "save_draft"],
-  factory: ["list_factory_jobs", "get_factory_job", "list_secret_names", "enqueue_app_job", "get_release_status", "enqueue_release_job", "supervisor_control"],
+  factory: ["list_factory_jobs", "get_factory_job", "list_secret_names", "enqueue_app_job", "get_release_status", "enqueue_release_job", "supervisor_control", "get_project_links", "list_tools", "get_tool_manifest"],
   maintenance: ["maintenance_list", "maintenance_get", "maintenance_send"],
 } as const;
 

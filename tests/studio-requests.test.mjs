@@ -100,6 +100,7 @@ function setup() {
     "@/lib/factory/ai": { isAiEngine: (v) => v === "claude" || v === "codex" },
     "@/lib/factory/settings": { getDefaultAiEngine: async () => "claude" },
     "@/lib/factory/secretEntries": { knownSecretNames: async () => [] },
+    "@/lib/factory/toolManifest": {}, "@/lib/factory/toolManifestDb": { inspectPlan: async () => ({ violations: [], autoSecrets: [] }) },
     "@/lib/factory/telegram": { notifyJobEvent: async (id, what) => notified.push([id, what]) },
     "@/lib/factory/supervisor": { runSupervisorAction: async () => ({}), SUPERVISOR_ACTIONS: [] },
     "@/lib/factory/lab": { LAB_KIND: "lab", LAB_SLUG: "factory-lab", labResultView: async () => null },

@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { maskText } from "./release.mjs";
+import { loadManifestIndex, manifestMethod, manifestSecretNames, secretsForMethod } from "./toolmanifest.mjs";
 
 const IS_WIN = process.platform === "win32";
 
@@ -299,9 +300,6 @@ function readStudioDefaults(raw) {
   return out;
 }
 
-// 선택 키(optionalSecrets)는 그 호출이 이 방식일 때만 필요하다. 여기에 없는 선택 키는 어떤 호출에도 넘기지 않는다
-const OPTIONAL_SECRET_METHODS = Object.freeze({ PIXELLAB_TOKEN: "pixellab" });
-
 /** 프로젝트 설정의 결과 종류별 방식: methods.<kind>.default, 없으면 allowed 의 첫 방식. 없으면 "" */
 export function projectDefaultMethod(settings, kind) {
   const m = settings?.methods && typeof settings.methods === "object" ? settings.methods[kind] : null;
@@ -310,14 +308,19 @@ export function projectDefaultMethod(settings, kind) {
   return Array.isArray(m.allowed) && typeof m.allowed[0] === "string" ? m.allowed[0] : "";
 }
 
+/** 이 호출의 방법: 요청의 method 인자 > 프로젝트 설정(자동으로 붙는 settings 파일의 기본 방식) > 툴킷이 알려 준 결과 종류의 기본 방식. 없으면 "" */
+export function callMethod(command, given, studioDefaults = {}, projectSettings = null) {
+  return typeof given.method === "string" && given.method ? given.method : (projectDefaultMethod(projectSettings, given.kind) || (studioDefaults[command]?.[given.kind] ?? ""));
+}
+
 /**
- * 이 호출에서 실제로 필요한 선택 키 이름. 우선순위는 요청의 method 인자 > 프로젝트 설정(자동으로 붙는 settings 파일의 기본 방식) > 툴킷이 알려 준 결과 종류의 기본 방식.
+ * 이 호출에서 실제로 필요한 선택 키 이름 — 설명서(tools/manifests)의 '방법 → 키'와 tools.json 의 optionalSecrets 를 합쳐 한 곳(toolmanifest.mjs secretsForMethod)에서 정한다.
  * projectSettings 는 settings 인자가 자동으로 붙는 호출에서만 넘긴다(AI 가 다른 settings 파일을 주면 툴킷이 판단하므로 읽지 않는다)
  */
-export function neededOptionalSecrets(command, tool, given, studioDefaults = {}, projectSettings = null) {
-  if (!tool.optionalSecrets?.length) return [];
-  const method = typeof given.method === "string" && given.method ? given.method : (projectDefaultMethod(projectSettings, given.kind) || (studioDefaults[command]?.[given.kind] ?? ""));
-  return tool.optionalSecrets.filter((n) => OPTIONAL_SECRET_METHODS[n] === method);
+export function neededOptionalSecrets(command, tool, given, studioDefaults = {}, projectSettings = null, manifest = null) {
+  if (!tool.optionalSecrets?.length && !manifest) return [];
+  const method = callMethod(command, given, studioDefaults, projectSettings);
+  return method ? secretsForMethod(tool, method, manifest) : [];
 }
 
 /** 툴킷 목록에 선언된 비밀값 이름(중계가 켜져 있으면 AI 환경에서 빼고 도구에만 준다) */
@@ -328,7 +331,8 @@ export function jobUsableTools(tools) {
 
 export function toolkitSecretNames(toolkitDir) {
   const m = loadToolkitManifest(toolkitDir);
-  return m.ok ? [...new Set(Object.values(m.tools).flatMap((t) => [...t.secrets, ...t.optionalSecrets]))] : [];
+  const fromTools = m.ok ? Object.values(m.tools).flatMap((t) => [...t.secrets, ...t.optionalSecrets]) : [];
+  return [...new Set([...fromTools, ...manifestSecretNames(toolkitDir)])]; // 설명서에만 적힌 키도 도구 전용
 }
 
 // ───────── 도구 어댑터 ─────────
@@ -398,12 +402,16 @@ const toolkitAdapter = {
     }
     // 네트워크·비밀값이 필요한 도구는 '허용' 모드이면서 이 일감의 requiredSecrets 에 이름이 있을 때만
     // 선택 키(optionalSecrets)는 이 호출에 실제로 필요할 때(pixel-art 의 method=pixellab)만 필수 키처럼 검사하고 넘긴다
-    const optional = neededOptionalSecrets(args.command, tool, given, manifest.studioTools, autoSettings?.settings ?? null);
+    const toolManifest = loadManifestIndex(ctx.toolkitDir)[args.command] ?? null;
+    const optional = neededOptionalSecrets(args.command, tool, given, manifest.studioTools, autoSettings?.settings ?? null, toolManifest);
     const need = [...tool.secrets, ...optional];
     if (tool.network || need.length) {
       if (ctx.mode !== "allow") return { ok: false, reason: "네트워크·키가 필요한 도구는 '허용' 모드에서만 실행해요." };
       const missing = need.filter((n) => !ctx.requiredSecrets.includes(n));
-      if (missing.length) return { ok: false, reason: `이 일감에 허용되지 않은 키가 필요해요: ${missing.join(", ")} (일감의 필요한 키에 넣어야 해요)` };
+      if (missing.length) {
+        const m = toolManifest ? manifestMethod(toolManifest, callMethod(args.command, given, manifest.studioTools, autoSettings?.settings ?? null)) : null;
+        return { ok: false, reason: `이 일감에 허용되지 않은 키가 필요해요: ${missing.join(", ")} (일감의 필요한 키에 넣어야 해요${m ? ` — 도구 설명서: ${m.id} 방법에 필요한 키` : ""})` };
+      }
       const absent = need.filter((n) => !ctx.hasSecret(n));
       if (absent.length) return { ok: false, status: "failed", reason: `이 PC 의 키 파일에 없는 키: ${absent.join(", ")}` };
     }

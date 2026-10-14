@@ -11,6 +11,7 @@ import { auth } from "@/lib/auth/get-sesstion";
 import { schemaWarning } from "@/lib/factory/projectToolSettings";
 import { getProjectToolSettings, getProjectToolSettingsHistory, revertProjectToolSettings, saveProjectToolSettings, schemaHash, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
 import { readToolkitView } from "@/lib/factory/toolkit";
+import { settingsLimitViolations } from "@/lib/factory/toolManifestDb";
 import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -55,7 +56,7 @@ export async function PUT(req: NextRequest) {
 
   if (!SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 형식이 올바르지 않아요." }, { status: 400 });
   if (!(await knownApp(appSlug))) return NextResponse.json({ message: "홈페이지가 모르는 앱이에요." }, { status: 400 });
-  const res = await saveProjectToolSettings(db, appSlug, body?.settings, await adminName());
+  const res = await saveProjectToolSettings(db, appSlug, body?.settings, await adminName(), "저장", settingsLimitViolations);
 
   if (res.ok === false) return NextResponse.json({ message: `설정을 저장하지 못했어요: ${res.errors.slice(0, 5).join(" / ")}`, errors: res.errors }, { status: res.status });
 
@@ -70,7 +71,7 @@ export async function POST(req: NextRequest) {
   const appSlug = typeof body?.appSlug === "string" ? body.appSlug.trim() : "";
 
   if (!SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 형식이 올바르지 않아요." }, { status: 400 });
-  const res = await revertProjectToolSettings(db, appSlug, body?.revert, await adminName());
+  const res = await revertProjectToolSettings(db, appSlug, body?.revert, await adminName(), settingsLimitViolations);
 
   if (res.ok === false) return NextResponse.json({ message: res.errors[0], errors: res.errors }, { status: res.status });
 

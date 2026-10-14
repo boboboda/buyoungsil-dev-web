@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { fail, guardWorker } from "@/lib/factory/http";
 import { patchProjectToolSettings, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
+import { settingsLimitViolations } from "@/lib/factory/toolManifestDb";
 import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
   const note = typeof body?.note === "string" && body.note.trim() ? body.note.trim().slice(0, 100) : "일부 수정";
 
   try {
-    const res = await patchProjectToolSettings(db, appSlug, body?.patch, who, note);
+    const res = await patchProjectToolSettings(db, appSlug, body?.patch, who, note, settingsLimitViolations);
 
     if (res.ok === false) return fail(res.status, res.errors.slice(0, 5).join(" / "));
 

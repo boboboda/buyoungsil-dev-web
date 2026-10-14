@@ -55,6 +55,7 @@ import { createArtRegistrar } from "./artregister.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { startDeviceStats } from "./devicestats.mjs";
 import { startToolkitReport } from "./toolkitinfo.mjs";
+import { startManifestReport } from "./toolmanifest.mjs";
 import { startProjectLinksReport } from "./projectlinks.mjs";
 import { DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake } from "./slots.mjs";
 import { DEFAULT_MEMORY_REMOTE, memoryReport, setMemoryConfig } from "./memory.mjs";
@@ -2292,6 +2293,12 @@ if (command === "init") {
       startToolkitReport({ api, log, toolkitDir: () => cfg.toolkitDir });
     } catch (e) {
       log(`툴킷 도구 목록 보내기를 시작하지 못했어요: ${e.message}`);
+    }
+    // 도구 설명서(툴킷 tools/manifests, 읽기 전용): 시작할 때와 툴킷 커밋·설명서가 바뀌었을 때. 설명서 파일이 없는 도구는 도구함 정보로 만든 최소 설명서
+    try {
+      startManifestReport({ api, log, toolkitDir: () => cfg.toolkitDir });
+    } catch (e) {
+      log(`도구 설명서 보내기를 시작하지 못했어요: ${e.message}`);
     }
     // 앱별 배포·저장소 연결(앱 폴더 git 원격·브랜치, 서버 컨테이너 이름. 읽기 전용): 하루 1회와 통제실 [새로 읽기]
     try {

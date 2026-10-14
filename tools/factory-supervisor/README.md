@@ -385,3 +385,9 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
   - 원격 주소의 자격 증명(`user:pass@`)은 보내기 전에 지운다(서버도 한 번 더). git 원격 추가·삭제·이름 변경, 컨테이너 조작, nginx 읽기는 하지 않는다.
 - 서버 쪽: `lib/factory/projectLinks.ts`(순수) · `projectLinksDb.ts`(DB), 표 `factory_app_connections`(도메인·배포 방법·컨테이너·서비스·비고, 현황 조사 초기값), 보고는 `factory_settings.projectLinksReport`.
 - 통제실 설정 > 프로젝트·규칙 > "앱별 배포·저장소 연결", 채팅 커넥터 `get_project_links`(읽기 전용). 시험: `npm run test:project-links`.
+
+## 도구 설명서 보고·키 결정 (2-1b: `toolmanifest.mjs`)
+- 툴킷의 `tools/manifests/<도구>.json`(형식 `schemas/tool-manifest.schema.json`)을 읽어 `POST /api/factory/tool-manifests` 로 보고한다(읽기만, 도구·파이썬은 실행하지 않는다). 시작 12초 뒤 한 번, 그 뒤 1분마다 **툴킷 커밋(`git rev-parse` 읽기 전용)이나 설명서 내용이 바뀌었는지** 보고 바뀌었을 때만(안 바뀌면 6시간마다) 다시 보낸다. 실패하면 30초부터 10분까지 늦춰 다시 시도하고 폴링·일감에는 영향이 없다(옛 서버의 404 포함).
+- 설명서 파일이 없는 도구는 `tools.json`(도구함 정보)으로 최소 설명서를 만들어 같이 보낸다(`source:"fallback"`: 방법은 기본 하나 + `optionalSecrets` 가 가리키는 방법). 본문이 60KB 를 넘으면 최소 설명서부터 뺀다. 구현 안 한 제안 메모(`proposals`)는 보내지 않는다. 키는 이름만 다룬다.
+- **방법 → 필요한 키는 `secretsForMethod` 한 곳**에서 정한다: 설명서 파일의 그 방법 `secrets` + `tools.json` 의 `optionalSecrets` 중 `OPTIONAL_SECRET_METHODS` 가 그 방법으로 가리키는 것(PixelLab). 도구 중계(`toolbroker.mjs`)가 이 함수로 호출마다 필요한 키를 정하고, 설명서에만 적힌 키도 도구 전용 키(AI 환경에서 뺌)로 친다. 일감에 키를 자동으로 넣는 쪽은 서버(`enqueue_app_job` 이 지시문이 부르는 방법의 키를 `requiredSecrets` 에 더함).
+- 사람이 직접 보기: `node tools/factory-supervisor/toolmanifest.mjs once [툴킷폴더]`. 시험: `npm run test:tool-manifests`.

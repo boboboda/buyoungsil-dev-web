@@ -2,6 +2,8 @@
 // Claude 채팅은 여기서 지시를 "등록"만 한다. 승인은 관리자가 통제실에서 한다.
 import { PURPOSE_LABELS } from "@/lib/factory/projectLinks";
 import { readLinksView } from "@/lib/factory/projectLinksDb";
+import { inspectPlan, readManifestsView } from "@/lib/factory/toolManifestDb";
+import { limitLines } from "@/lib/factory/toolManifest";
 import { createHash } from "crypto";
 
 import prisma from "@/lib/prisma";
@@ -80,7 +82,7 @@ export const FACTORY_INSTRUCTIONS =
   + "auto_update_on/off. 사용자가 요청한 경우에만 상태를 바꾸세요. "
   + "출시: get_release_status 로 앱별 출시 상태·배포 계정·패키지(스토어 문구·체크리스트)·AAB 정보·테스트 일정을 보고, "
   + "enqueue_release_job(appSlug, kind) 으로 출시 일감을 등록해요(kind: first=첫 출시, store=스토어 자료 수정, project=프로젝트 업데이트. 지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
-  + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 앱별 git 원격·배포 서버·도메인·컨테이너는 get_project_links 로 읽어요(읽기 전용). 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
+  + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 앱별 git 원격·배포 서버·도메인·컨테이너는 get_project_links 로 읽어요(읽기 전용). 게임 툴킷 도구의 방법·필요한 키·한계는 list_tools 와 get_tool_manifest 로 읽어요(읽기 전용, 지시문이 설명서 한계를 넘으면 등록이 거절되고 필요한 키는 자동으로 들어가요). 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
   + "실험: 도구·방식이 되는지 확인하는 테스트는 앱 수정 일감이 아니라 enqueue_lab_job(title, planMarkdown, aiEngine?, keep?)으로 보내요(앱 이름 없이, 작업 PC 의 실험 폴더에서 무인 실행. 승인은 관리자). "
   + "끝나면 get_factory_job 의 실험_결과에 올라온 이미지·mp4 주소(몇 시간 뒤 만료)와 report.md 본문이 나와요. 이미지 주소를 열어 직접 보고 검수할 수 있어요.";
 
@@ -311,6 +313,27 @@ export const FACTORY_TOOLS = [
     annotations: READ_ONLY,
   },
   {
+    name: "list_tools",
+    description:
+      "작업 PC 의 게임 툴킷 도구 목록과 요약을 읽어요(읽기 전용): 도구 이름·하는 일·방법(엔진) 이름·방법마다 필요한 키가 준비됐는지(키 이름이 등록돼 있는지만, 값은 없음)·설명서 출처(file=툴킷 설명서 / fallback=도구함 정보로 만든 최소 설명서)와 툴킷 판(커밋). " +
+      "자세한 한계·입력 항목은 get_tool_manifest 로 읽어요.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "get_tool_manifest",
+    description:
+      "도구 하나의 설명서를 읽어요(읽기 전용): 방법별 필요한 키 이름과 준비 상태, 네트워크 여부, 한계(크기·프레임·호출 수·제한 시간), 비용 단위, 입력 항목(이름·종류·필수·범위·고를 값), 결과 형식. " +
+      "enqueue_app_job 은 지시문이 이 설명서의 한계를 넘으면(예: 크기 256 > 최대 128) 등록을 거절하고, 지시문이 부르는 방법에 필요한 키는 requiredSecrets 에 자동으로 넣어요. 키 값은 담지 않아요.",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string", description: "도구 이름 (list_tools 의 name). 예: pixel-art" } },
+      required: ["name"],
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+  },
+  {
     name: "enqueue_release_job",
     description:
       "완성된 앱에 출시 일감을 등록합니다(승인 대기, 승인은 관리자). 지시문은 서버가 그 앱의 배포 계정 정보로 종류(kind)별로 만들어요. " +
@@ -417,6 +440,10 @@ export async function callFactoryTool(
       return getReleaseStatus(args);
     case "get_project_links":
       return getProjectLinks(args);
+    case "list_tools":
+      return listTools();
+    case "get_tool_manifest":
+      return getToolManifest(args);
     case "enqueue_release_job":
       return enqueueReleaseJob(args);
     default:
@@ -441,6 +468,55 @@ function storeSummary(v: unknown) {
 }
 
 // 출시 상태. 키 값은 없다(경로·이름·존재 여부만). 패키지는 요약만(전문은 통제실 출시 패키지 화면).
+// 도구 설명서(읽기 전용): 목록 / 하나
+async function listTools(): Promise<ToolResult> {
+  const view = await readManifestsView();
+
+  if (!view.tools.length) return text("아직 작업 PC 가 보낸 도구 설명서가 없어요(감독 프로그램이 시작할 때 보내요).", true);
+
+  return json({
+    툴킷판: view.commit || "(읽지 못함)",
+    받은시각: view.reportedAt,
+    도구: view.tools.map((t) => ({
+      name: t.name,
+      이름: t.label,
+      설명: t.description,
+      출처: t.source,
+      방법: t.methods.map((m) => ({ id: m.id, 이름: m.label, 필요한키: m.secretStates.map((s) => `${s.name}(${s.ready ? "등록됨" : "없음"})`), 준비: m.ready })),
+    })),
+  });
+}
+
+async function getToolManifest(args: Record<string, unknown>): Promise<ToolResult> {
+  const name = typeof args.name === "string" ? args.name.trim() : "";
+  const view = await readManifestsView();
+  const t = view.tools.find((x) => x.name === name);
+
+  if (!t) return text(`${name || "(이름 없음)"} 설명서가 없어요. list_tools 로 이름을 확인하세요.`, true);
+
+  return json({
+    툴킷판: view.commit || "(읽지 못함)",
+    받은시각: view.reportedAt,
+    name: t.name,
+    이름: t.label,
+    설명: t.description,
+    출처: t.source,
+    설명서버전: t.version,
+    방법: t.methods.map((m) => ({
+      id: m.id,
+      이름: m.label,
+      필요한키: m.secretStates.map((s) => ({ name: s.name, 등록됨: s.ready })),
+      네트워크: m.network,
+      한계: limitLines(m),
+      한계원본: m.limits,
+      비용: m.cost ?? null,
+      메모: m.notes ?? null,
+    })),
+    입력: t.inputs,
+    결과: t.outputs,
+  });
+}
+
 // 앱별 배포·저장소 연결 정보(읽기 전용)
 async function getProjectLinks(args: Record<string, unknown>): Promise<ToolResult> {
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
@@ -886,6 +962,27 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
     }
   }
 
+  // 도구 설명서(2-1b): 지시문이 설명서의 한계를 넘으면 바로 거절하고, 지시문이 부르는 방법에 필요한 키는 requiredSecrets 에 자동으로 넣는다(등록된 키 이름만)
+  const autoSecrets: string[] = [];
+
+  if (kind !== "release") {
+    const inspected = await inspectPlan(appSlug, plan).catch(() => null);
+
+    if (inspected?.violations.length) {
+      return text(`도구 설명서의 한계를 넘어서 등록하지 않았어요: ${inspected.violations.slice(0, 5).join(" / ")}. 지시문의 값을 고쳐서 다시 보내세요(get_tool_manifest 로 한계를 볼 수 있어요).`, true);
+    }
+    if (inspected?.autoSecrets.length) {
+      const registered = new Set((await knownSecretNames()).map((k) => k.name));
+
+      for (const a of inspected.autoSecrets) {
+        if (!secrets.includes(a.name) && registered.has(a.name) && secrets.length < 10) {
+          secrets.push(a.name);
+          autoSecrets.push(a.name);
+        }
+      }
+    }
+  }
+
   const planHash = createHash("sha256").update(plan).digest("hex");
 
   // 같은 앱 이름의 동시 등록을 막으려고 앱 이름 단위로 잠근 뒤 검사하고 저장한다.
@@ -1068,6 +1165,7 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
           (waiting.length > 1
             ? `이 앱의 대기 순서는 ${mine?.position}번째예요(앞에 대기 ${ahead}개${running ? " + 지금 실행 중 1개" : ""}, priority ${priority}). 앱마다 한 번에 하나씩 priority 큰 값 → 승인 순 → 등록 순으로 실행해요.`
             : `이 앱의 대기 순서는 1번째예요(앞에 쌓인 지시 없음).`) +
+          (autoSecrets.length ? ` 도구 설명서에 따라 필요한 키를 자동으로 넣었어요: ${autoSecrets.join(", ")}.` : "") +
           (joinGroup ? ` 일감 ${joinGroup.targetId} 와 같은 묶음(${joinGroup.group})으로 넣었어요. 묶음 안 일감이 모두 승인돼야 같이 돌기 시작해요(관리자가 통제실 대기열의 [묶음 승인]으로 한 번에 승인할 수 있어요).` : ""),
       } as EnqueueOk;
     },

@@ -101,7 +101,13 @@ export async function getProjectToolSettingsHistory(db: SettingsDb, appSlug: str
 
 export type SaveResult = { ok: true; record: ProjectSettingsRecord; unchanged: boolean; message: string } | { ok: false; errors: string[]; status: number };
 
-async function writeVersion(db: SettingsDb, appSlug: string, settings: ProjectToolSettings, who: string, note: string): Promise<SaveResult> {
+/** 저장 직전 추가 검사(예: 도구 설명서의 한계). 어긋난 이유 목록을 돌려주고, 비어 있지 않으면 저장하지 않는다 */
+export type SettingsGuard = (settings: ProjectToolSettings) => Promise<string[]> | string[];
+
+async function writeVersion(db: SettingsDb, appSlug: string, settings: ProjectToolSettings, who: string, note: string, guard?: SettingsGuard): Promise<SaveResult> {
+  const violations = guard ? await guard(settings) : [];
+
+  if (violations.length) return { ok: false, errors: violations, status: 400 };
   const cur = await db.factoryProjectToolSetting.findUnique({ where: { appSlug } });
   const curSettings = cur ? readStoredSettings(cur.settings) : null;
 
@@ -127,17 +133,17 @@ async function writeVersion(db: SettingsDb, appSlug: string, settings: ProjectTo
 }
 
 /** 저장: 스키마 검증을 통과해야 한다(통과 못 하면 오류 목록). 같은 값이면 버전을 올리지 않는다 */
-export async function saveProjectToolSettings(db: SettingsDb, appSlug: string, raw: unknown, who: string, note = "저장"): Promise<SaveResult> {
+export async function saveProjectToolSettings(db: SettingsDb, appSlug: string, raw: unknown, who: string, note = "저장", guard?: SettingsGuard): Promise<SaveResult> {
   if (!SLUG_RE.test(appSlug)) return { ok: false, errors: ["appSlug 형식이 올바르지 않아요."], status: 400 };
   const cleaned = cleanProjectSettings(raw);
 
   if (cleaned.ok === false) return { ok: false, errors: cleaned.errors, status: 400 };
 
-  return writeVersion(db, appSlug, cleaned.settings, who, note);
+  return writeVersion(db, appSlug, cleaned.settings, who, note, guard);
 }
 
 /** 일부만 바꾸기: 지금 저장된 설정(없으면 빈 설정)의 묶음별로 patch 의 항목만 덮어쓴다. 나머지 값은 그대로. 이미 저장된 프로젝트만(정비·감독 프로그램용) */
-export async function patchProjectToolSettings(db: SettingsDb, appSlug: string, patch: unknown, who: string, note = "일부 수정"): Promise<SaveResult> {
+export async function patchProjectToolSettings(db: SettingsDb, appSlug: string, patch: unknown, who: string, note = "일부 수정", guard?: SettingsGuard): Promise<SaveResult> {
   if (!SLUG_RE.test(appSlug)) return { ok: false, errors: ["appSlug 형식이 올바르지 않아요."], status: 400 };
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { ok: false, errors: ["patch 는 묶음별 객체여야 해요."], status: 400 };
   const cur = await db.factoryProjectToolSetting.findUnique({ where: { appSlug } });
@@ -155,11 +161,11 @@ export async function patchProjectToolSettings(db: SettingsDb, appSlug: string, 
 
   if (cleaned.ok === false) return { ok: false, errors: cleaned.errors, status: 400 };
 
-  return writeVersion(db, appSlug, cleaned.settings, who, note);
+  return writeVersion(db, appSlug, cleaned.settings, who, note, guard);
 }
 
 /** 되돌리기:이력의 옛 버전 내용을 '새 버전'으로 다시 저장한다(이력은 지우지 않는다) */
-export async function revertProjectToolSettings(db: SettingsDb, appSlug: string, version: unknown, who: string): Promise<SaveResult> {
+export async function revertProjectToolSettings(db: SettingsDb, appSlug: string, version: unknown, who: string, guard?: SettingsGuard): Promise<SaveResult> {
   if (!SLUG_RE.test(appSlug)) return { ok: false, errors: ["appSlug 형식이 올바르지 않아요."], status: 400 };
   if (typeof version !== "number" || !Number.isInteger(version) || version < 1) return { ok: false, errors: ["되돌릴 버전 번호를 확인해 주세요."], status: 400 };
   const row = await db.factoryProjectToolSettingHistory.findFirst({ where: { appSlug, version } });
@@ -167,7 +173,7 @@ export async function revertProjectToolSettings(db: SettingsDb, appSlug: string,
 
   if (!row || !settings) return { ok: false, errors: ["그 버전은 이력에 없어요(오래된 이력은 지워져요)."], status: 404 };
 
-  return writeVersion(db, appSlug, settings, who, `되돌리기: 버전 ${version}`);
+  return writeVersion(db, appSlug, settings, who, `되돌리기: 버전 ${version}`, guard);
 }
 
 /** 감독 프로그램에 같이 내려 줄 설정: appSlug → { version, settings }. 비어 있거나 없는 프로젝트는 넣지 않는다 */
