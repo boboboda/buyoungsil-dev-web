@@ -16,6 +16,7 @@ import { acquireWorkspace, engineOf, ENGINE_LABELS, eventDecoder, excludeHarness
 import { keyFilesToCommit } from "./keyguard.mjs";
 import { compactSession } from "./compact.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
+import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
 
 const IS_WIN = process.platform === "win32";
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -35,24 +36,31 @@ const RULES = `# 공장 정비 규칙 (감독 프로그램이 자동으로 쓰�
 - 끝내기 전에 검사: \`npx tsc --noEmit -p .\` 오류 0개, \`node --check tools/factory-supervisor/*.mjs\`, 바꾼 부분은 가능하면 시험(가짜 서버·사본 등). 통과 못 하면 고쳐서 다시.
 - DB 를 바꾸면 prisma/migrations 에 마이그레이션을 추가한다(컨테이너 시작 때 자동 적용). 기존 데이터를 지우는 마이그레이션 금지.
 - 감독 프로그램(tools/factory-supervisor)을 바꾸면, 이 PC 의 감독 프로그램이 GitHub 에서 자동 업데이트로 받는다. 업데이트가 홈페이지 대기열 확인에 실패하면 되돌려지니, 폴링·보고 경로를 깨지 않게 조심한다.
-- 서버 설정(nginx, 서버 .env.local, 재빌드)은 오직 \`node "{{SERVERCTL}}" <서브커맨드>\` 로만 한다. ssh·docker·sudo·nginx 직접 호출과 .env 직접 접근은 금지(막혀 있음). 값은 어디에도 출력하지 마라.
+- 서버 설정(nginx, 서버 .env.local, 재빌드)은 오직 \`node "{{SERVERCTL}}" <서브커맨드>\` 로만 한다. 이 PC 에서 docker·sudo·nginx·systemctl 직접 호출은 금지(막혀 있음). 서버 접속(ssh·scp·git)은 아래 「서버 접근 규칙」을 따른다. 값은 어디에도 출력하지 마라.
   - 서브커맨드: env-keys | env-set KEY(값은 SERVERCTL_VALUE 환경변수나 stdin 으로만) | env-unset KEY | nginx-show | nginx-set-directive NAME VALUE [LOCATION] | nginx-apply FILE | rebuild | restore TIMESTAMP | backups
   - 바꾸기 전 백업, 검증(nginx -t·reload·헬스체크 / 재빌드·헬스체크), 실패 시 자동 되돌림은 도구가 한다. .env 를 바꿨으면 마지막에 rebuild 를 한 번 해야 반영된다.
   - 이 도구는 감독 프로그램 실행 폴더에 있는 신뢰된 사본이다. 정비 폴더의 tools/factory-supervisor/serverctl.mjs 를 실행하지 말고, 위 경로만 써라.
 - 하지 말 것: 키·토큰 값 출력, ~/dev/factory 의 다른 폴더(앱 폴더, supervisor-src, 설정·키 파일) 수정, 작업 스케줄러·PC 설정 변경, 백그라운드 프로세스 남기기.
 - 마지막 응답은 한국어로 짧게: 바꾼 것, 커밋, 검사 결과, 서버 배포가 필요한지(서버 코드가 바뀌었는지), 사람이 할 일.
+
+${SERVER_ACCESS_RULES}
 `;
 
 // 서버 설정 도구는 감독 프로그램이 돌고 있는 이 폴더(실행 전용 체크아웃)의 사본만 쓴다. 정비 폴더 사본은 Claude 가 고칠 수 있어서 쓰지 않는다.
 const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const SERVERCTL = path.join(HERE, "serverctl.mjs").replace(/\\/g, "/");
 
-// 정비 Claude 권한: 서버 설정은 serverctl 로만. ssh·docker·sudo·nginx 직접 호출, ~/.ssh 읽기, 감독 프로그램 실행 폴더 수정은 막는다.
+// 정비 Claude 권한: 서버 설정은 serverctl 로만. 이 PC 의 docker·sudo·nginx·systemctl 직접 호출, sftp·rsync, ~/.ssh 읽기, 감독 프로그램 실행 폴더 수정은 막는다.
+// ssh·scp 는 우리 서버 두 대로만: 권한 규칙(prefix)으로는 호스트를 가릴 수 없어서 PreToolUse 훅(ssh-guard.mjs)이 판정한다.
+export function maintenanceSettings(serverctl = SERVERCTL, guard) {
+  const deny = ["sftp", "rsync", "docker", "docker-compose", "sudo", "nginx", "systemctl"].map((c) => `Bash(${c}:*)`);
+  deny.push("Read(~/.ssh/**)", "Edit(~/dev/factory/supervisor-src/**)", "Write(~/dev/factory/supervisor-src/**)", "Edit(~/dev/factory/*.json)", "Write(~/dev/factory/*.json)");
+  return { permissions: { allow: [`Bash(node ${serverctl}:*)`, `Bash(node "${serverctl}":*)`], deny }, hooks: guardHookSettings(guard) };
+}
+
 function permissionSettings() {
   const file = path.join(os.homedir(), "dev", "factory", "maintenance-claude-settings.json");
-  const deny = ["ssh", "scp", "sftp", "rsync", "docker", "docker-compose", "sudo", "nginx", "systemctl"].map((c) => `Bash(${c}:*)`);
-  deny.push("Read(~/.ssh/**)", "Edit(~/dev/factory/supervisor-src/**)", "Write(~/dev/factory/supervisor-src/**)", "Edit(~/dev/factory/*.json)", "Write(~/dev/factory/*.json)");
-  fs.writeFileSync(file, JSON.stringify({ permissions: { allow: [`Bash(node ${SERVERCTL}:*)`, `Bash(node "${SERVERCTL}":*)`], deny } }, null, 2));
+  fs.writeFileSync(file, JSON.stringify(maintenanceSettings(), null, 2));
   return file.replace(/\\/g, "/");
 }
 
@@ -313,7 +321,7 @@ async function runTurnUnlocked(m, ctx, lock) {
           lastText = b.text;
           addLog(b.text);
         } else if (b.type === "tool_use") {
-          if (b.name === "Bash") addLog(`$ ${String(b.input?.command ?? "").slice(0, 200)}`);
+          if (b.name === "Bash") addLog(`$ ${commandForLog(b.input?.command, 200)}`); // 서버 접속 명령은 줄이지 않고 남긴다
           else if (b.name === "Write" || b.name === "Edit") addLog(`${b.name}: ${String(b.input?.file_path ?? "").slice(0, 120)}`);
         }
       }

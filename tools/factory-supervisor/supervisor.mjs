@@ -42,6 +42,7 @@ import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDeco
 import { checksFromVerification, headOf } from "./handoff.mjs";
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames } from "./toolbroker.mjs";
 import { findBash, reportProvisionNames, syncProvisions } from "./keyprovision.mjs";
+import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
 import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
 import { createAssetUploader } from "./assetupload.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
@@ -307,7 +308,8 @@ function appPermissionSettings() {
     const root = abs(cfg.workDir);
     deny.push(`Edit(//${root}/*.json)`, `Edit(//${root}/*.sh)`, `Edit(//${root}/secrets.env)`);
     deny.push(`Read(//${root}/supervisor.config.json)`, `Read(//${root}/secrets.env)`);
-    fs.writeFileSync(file, JSON.stringify({ permissions: { deny } }, null, 2));
+    // 서버 접근 규칙: ssh·scp 는 우리 서버 두 대로만, 지우기·강제 push·서비스 중단·설정 수정은 훅이 막는다
+    fs.writeFileSync(file, JSON.stringify({ permissions: { deny }, hooks: guardHookSettings() }, null, 2));
     return file.replace(/\\/g, "/");
   } catch {
     return null;
@@ -427,6 +429,8 @@ function prepareDir(job) {
   // 도구 요청 중계가 켜져 있을 때만 사용법을 붙인다(꺼짐이면 예전 규칙 그대로)
   const toolNote = brokerRules(toolBroker.mode, cfg.toolkitDir);
   if (toolNote) block = block.replace(RULES_END, `${toolNote}${RULES_END}`);
+  // 서버 접근 규칙은 홈페이지 작업 규칙과 상관없이 늘 붙인다(훅이 막는 목록과 같은 문서)
+  block = block.replace(RULES_END, `\n${SERVER_ACCESS_RULES}\n${RULES_END}`);
   job.rulesSource = fromServer ? "홈페이지" : "기본값(감독 프로그램 코드)";
   let text = fs.existsSync(claudeMd) ? fs.readFileSync(claudeMd, "utf8") : "";
   const b = text.indexOf(RULES_BEGIN);
@@ -820,7 +824,7 @@ async function runLabUnlocked(job, lock, { dir, shared }) {
           st.lastText = b.text;
           addLog(st, "info", b.text);
         } else if (b.type === "tool_use") {
-          if (b.name === "Bash") addLog(st, "info", `$ ${brief(b.input?.command)}`);
+          if (b.name === "Bash") addLog(st, "info", `$ ${commandForLog(b.input?.command)}`); // 서버 접속 명령은 줄이지 않고 남긴다
           else if (b.name === "Write" || b.name === "Edit") addLog(st, "info", `${b.name}: ${brief(b.input?.file_path, 100)}`);
         }
       }
@@ -1042,7 +1046,7 @@ async function runJobUnlocked(job, lock) {
           st.lastText = b.text;
           addLog(st, "info", b.text);
         } else if (b.type === "tool_use") {
-          if (b.name === "Bash") addLog(st, "info", `$ ${brief(b.input?.command)}`);
+          if (b.name === "Bash") addLog(st, "info", `$ ${commandForLog(b.input?.command)}`); // 서버 접속 명령은 줄이지 않고 남긴다
           else if (b.name === "Write" || b.name === "Edit") addLog(st, "info", `${b.name}: ${brief(b.input?.file_path, 100)}`);
         }
       }

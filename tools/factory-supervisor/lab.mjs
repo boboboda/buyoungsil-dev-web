@@ -9,6 +9,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
 
 export const LAB_SLUG = "lab";
 export const LAB_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
@@ -70,6 +71,8 @@ export function labPrompt({ job, dir, shared, workDir }) {
     "- git commit / push / add / reset / checkout 같은 저장소를 바꾸는 명령 (git status·log·diff 같은 읽기는 괜찮아요).",
     "- 끝나면 감독 프로그램이 공장 안 저장소들의 변경 여부를 검사해요. 하나라도 바뀌었으면 이 실험은 실패로 표시돼요.",
     "",
+    SERVER_ACCESS_RULES,
+    "",
     "## 결과물 (사람이 폰으로 봐요)",
     `- 보여줄 이미지(png·webp·gif)와 영상(mp4)은 ${path.join(dir, "outputs")} 에 저장하세요. 그 밖에 이 지시문에서 경로를 직접 지정한 이미지·영상도 올라가요.`,
     `- 요약은 ${path.join(dir, "report.md")} 에 쓰세요: 한 일, 결과(되는지 안 되는지), 막힌 점, 다음에 해 볼 것.`,
@@ -114,6 +117,7 @@ export function writeLabClaudeSettings({ workDir, dir, shared, jobId, extraProte
       deny: [...new Set(deny)],
       additionalDirectories: [slash(shared)],
     },
+    hooks: guardHookSettings(), // 서버 접근 규칙: ssh·scp 는 우리 서버 두 대로만, 지우기·서비스 중단 등은 막는다
   };
   fs.writeFileSync(file, JSON.stringify(settings, null, 2));
   return slash(file);

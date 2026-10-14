@@ -12,4 +12,11 @@
 - 변경 검증: `node node_modules/typescript/bin/tsc --noEmit --incremental false -p .`, `npm run test:ai-harness`, 변경한 `.mjs`별 `node --check`.
 - 실제 DB 마이그레이션 적용·서버 배포·운영 감독 프로그램 업데이트는 코드 검토 후 별도 승인 대상으로 남긴다.
 
+## 서버 접근 규칙
+
+- 접속해도 되는 곳은 `~/.ssh/config`의 우리 서버 두 대(`serverpc` 서버1, `serverpc2` 서버2)뿐이다. ssh·scp·git(ssh 원격 포함)으로만 접속하고, 다른 호스트·sftp·rsync는 쓰지 않는다.
+- 하지 않는다: 서버에서 `rm -rf`·`git-server` 아래 저장소 삭제/이름 변경, 강제 push(`--force`·`-f`)·원격 브랜치 삭제·서버 저장소 `git reset --hard`, 배포 저장소(`git-server/repo/`)로 push, `docker compose down`·`docker rm`·`docker system prune`·`systemctl stop/disable`·`reboot`·`shutdown`, nginx 설정·`.env`·인증서·`~/.ssh`·crontab 수정.
+- 위 일이 꼭 필요하면 직접 하지 말고, 실행할 명령과 이유를 결과에 적고 멈춘다(사람이 실행한다).
+- 공장 AI 세션에서는 감독 프로그램 훅(`tools/factory-supervisor/ssh-guard.mjs`)이 같은 목록을 막고, 실행한 ssh·scp 명령은 일감 로그에 그대로 남는다.
+
 구현·운영·제약은 `docs/ai-harness.md`, Claude Code 인계문은 `docs/CLAUDE_CODE_HANDOFF.md`를 읽는다.

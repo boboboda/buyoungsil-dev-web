@@ -171,7 +171,15 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - 끄기: 통제실 감독 프로그램 카드의 "작업 후 컨텍스트 정리"(FactorySetting `compactAfterJob`, 기본 켜짐) 또는 PC 환경변수 `FACTORY_COMPACT_AFTER_JOB=0`.
 
 ## 서버 설정 도구 (`serverctl.mjs`, 공장 정비 전용)
-- 정비 Claude 는 서버 설정(nginx, 서버 `.env.local`, 재빌드)을 이 도구로만 바꿔요. ssh·scp·docker·sudo·nginx·systemctl 직접 호출, `~/.ssh` 읽기, 실행 폴더 수정은 `--settings` 권한 규칙으로 막혀 있어요.
+- 정비 Claude 는 서버 설정(nginx, 서버 `.env.local`, 재빌드)을 이 도구로만 바꿔요. 이 PC 의 docker·sudo·nginx·systemctl 직접 호출, sftp·rsync, `~/.ssh` 읽기, 실행 폴더 수정은 `--settings` 권한 규칙으로 막혀 있어요. 서버 접속(ssh·scp·git)은 아래 「서버 접근 규칙」을 따라요.
+
+## 서버 접근 규칙 (`serveraccess.mjs`, `ssh-guard.mjs`)
+- 공장 AI 세션(정비·앱 new/revision·출시·실험)은 `~/.ssh/config` 의 우리 서버 두 대(`serverpc` 서버1, `serverpc2` 서버2)로만 ssh·scp·git 접속을 할 수 있어요. 다른 호스트, `-J`·`-F`·`ProxyCommand`·터널 옵션, sftp·rsync 는 막혀요.
+- 계속 막는 것: 서버에서 `rm -rf`·`git-server` 아래 저장소 삭제/이름 변경, 강제 push(`--force`·`-f`·`--force-with-lease`·`+`refspec)·원격 브랜치 삭제·서버 저장소 `git reset --hard`, 배포 저장소(`git-server/repo/`)로 push, `docker compose down`·`docker rm`·prune·`systemctl stop/disable`·`reboot`·`shutdown`, nginx 설정 수정·`.env`·인증서/키·`~/.ssh`·crontab 수정. 표준입력으로 보낸 스크립트·eval·base64 디코드처럼 검사할 수 없는 원격 명령도 막아요.
+- Claude Code 는 권한 규칙(prefix)으로 호스트를 가릴 수 없어서, 감독 프로그램이 일감마다 만드는 `--settings` 에 PreToolUse 훅(`node "<실행 폴더>/tools/factory-supervisor/ssh-guard.mjs"`)을 넣어 Bash 명령을 실행 전에 판정해요. 훅은 실행 전용 체크아웃(`supervisor-src`)의 사본이라 AI 가 고칠 수 없어요.
+- 이 훅은 명령 문자열을 읽는 안전장치예요. 스크립트 파일이나 다른 언어 안에서 ssh 를 띄우는 우회까지 막는 격리 장치는 아니에요.
+- Codex 는 정비·앱·출시에서 샌드박스 네트워크가 꺼져 있어 ssh 가 되지 않아요(실험만 네트워크 켜짐, 훅 없음 — 규칙 문서로만 안내).
+- 실행한 ssh·scp 명령은 일감·정비 로그에 줄이지 않고 남아요(최대 2000자). 막아야 할 일이 꼭 필요하면 AI 는 명령과 이유를 결과에 적고 멈춰요(사람이 실행).
 - 정비 Claude 는 실행 폴더(`supervisor-src`)의 사본만 써요(정비 폴더 사본은 Claude 가 고칠 수 있어서).
 - 서브커맨드: `env-keys`, `env-set KEY`(값은 `SERVERCTL_VALUE` 나 stdin 으로만), `env-unset KEY`, `nginx-show`, `nginx-set-directive NAME VALUE [LOCATION]`(허용 지시어만), `nginx-apply FILE`, `rebuild`, `restore TIMESTAMP`, `backups`.
 - 바꾸기 전 백업(`~/env-backups/developWeb`, `~/nginx-backups`, 600/700, 최근 20개, 작업 폴더 밖) → nginx 는 `nginx -t` 통과 시에만 reload, 헬스체크 실패 시 자동 복원 / `.env` 는 rebuild 전 이미지 `rollback-<시각>` 태그, 실패 시 `.env` 백업·이미지로 되돌림.
