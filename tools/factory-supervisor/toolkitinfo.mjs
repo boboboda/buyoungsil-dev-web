@@ -120,6 +120,46 @@ export function readModes(raw) {
   return modes;
 }
 
+const MAX_STUDIO = 4;
+const MAX_KINDS = 8;
+const MAX_METHODS = 6;
+const LAYERS = ["internal", "studio"];
+
+/** tools.json 최상위 studioTools → 스튜디오 도구 목록(사람이 쓰는 도구). 없거나 깨졌으면 [] (옛 tools.json 은 지금처럼 동작). 항목이 깨져도 나머지는 살린다 */
+export function readStudioTools(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const out = [];
+  for (const [id, t] of Object.entries(raw)) {
+    if (!ID_RE.test(id) || !t || typeof t !== "object" || Array.isArray(t)) continue;
+    const kinds = [];
+    for (const [kid, k] of Object.entries(t.kinds && typeof t.kinds === "object" && !Array.isArray(t.kinds) ? t.kinds : {})) {
+      if (!ID_RE.test(kid) || !k || typeof k !== "object" || Array.isArray(k)) continue;
+      const methods = (Array.isArray(k.methods) ? k.methods : []).filter((m) => typeof m === "string" && ARG_NAME_RE.test(m)).slice(0, MAX_METHODS);
+      kinds.push({
+        id: kid,
+        label: typeof k.label === "string" ? k.label : "",
+        output: typeof k.output === "string" ? k.output : "",
+        background: typeof k.background === "string" ? k.background : "",
+        defaultMethod: typeof k.defaultMethod === "string" && ARG_NAME_RE.test(k.defaultMethod) ? k.defaultMethod : "",
+        methods,
+      });
+      if (kinds.length >= MAX_KINDS) break;
+    }
+    const names = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && /^[A-Za-z0-9가-힣①②③④_-]{1,24}$/.test(x)).slice(0, 8) : []);
+    out.push({
+      id,
+      title: typeof t.title === "string" ? t.title : id,
+      desc: typeof t.description === "string" ? t.description : "",
+      methodOrder: names(t.methodOrder),
+      refOrder: names(t.refOrder),
+      refsMax: Number.isInteger(t.refsMax) && t.refsMax > 0 && t.refsMax <= 20 ? t.refsMax : 0,
+      kinds,
+    });
+    if (out.length >= MAX_STUDIO) break;
+  }
+  return out;
+}
+
 /** tools.json 한 항목(+진입·스크립트 글자) → 보고용 도구 */
 function describeTool(root, id, t, entryScan, entryFile) {
   const args = [];
@@ -147,6 +187,8 @@ function describeTool(root, id, t, entryScan, entryFile) {
     tags: tagsOf(full),
     net: t.network === true,
     sec: (Array.isArray(t.secrets) ? t.secrets : []).filter((s) => typeof s === "string" && SECRET_NAME_RE.test(s)).slice(0, 8), // 이름만
+    optSec: (Array.isArray(t.optionalSecrets) ? t.optionalSecrets : []).filter((s) => typeof s === "string" && SECRET_NAME_RE.test(s)).slice(0, 8), // 선택 키(이름만)
+    layer: LAYERS.includes(t.layer) ? t.layer : "",
     to: Number.isInteger(t.timeoutSec) ? t.timeoutSec : 0,
     en: t.enabled !== false,
     modes: readModes(t.modes),
@@ -156,10 +198,10 @@ function describeTool(root, id, t, entryScan, entryFile) {
 
 // 본문이 클 때 줄이는 단계: 앞 단계일수록 정보를 많이 남긴다
 const LEVELS = [
-  { desc: 220, doc: 200, opts: 30, argDesc: 0, args: 30, mWhen: 100, mLegacy: 100, mIo: 60 },
-  { desc: 140, doc: 100, opts: 15, argDesc: 0, args: 20, mWhen: 70, mLegacy: 70, mIo: 40 },
-  { desc: 90, doc: 0, opts: 0, argDesc: 0, args: 12, mWhen: 40, mLegacy: 40, mIo: 0 },
-  { desc: 50, doc: 0, opts: 0, argDesc: 0, args: 6, mWhen: 24, mLegacy: 24, mIo: 0 },
+  { desc: 220, doc: 200, opts: 30, argDesc: 0, args: 30, mWhen: 100, mLegacy: 100, mIo: 60, stDesc: 160 },
+  { desc: 140, doc: 100, opts: 15, argDesc: 0, args: 20, mWhen: 70, mLegacy: 70, mIo: 40, stDesc: 100 },
+  { desc: 90, doc: 0, opts: 0, argDesc: 0, args: 12, mWhen: 40, mLegacy: 40, mIo: 0, stDesc: 60 },
+  { desc: 50, doc: 0, opts: 0, argDesc: 0, args: 6, mWhen: 24, mLegacy: 24, mIo: 0, stDesc: 0 },
 ];
 
 function shape(tool, lv) {
@@ -177,6 +219,8 @@ function shape(tool, lv) {
     tags: tool.tags,
     net: tool.net,
     sec: tool.sec,
+    ...(tool.optSec?.length ? { osec: tool.optSec } : {}),
+    ...(tool.layer ? { ly: tool.layer } : {}),
     to: tool.to,
     en: tool.en,
     ...(tool.modes?.length
@@ -196,17 +240,31 @@ function shape(tool, lv) {
 
 const bytes = (o) => Buffer.byteLength(JSON.stringify(o), "utf8");
 
+/** 스튜디오 도구 → 보고용(짧은 키). 결과 종류별 배경·방식 목록·기본 방식 */
+function shapeStudio(list, lv) {
+  return list.map((s) => ({
+    id: s.id,
+    title: clip(s.title, 40),
+    ...(lv.stDesc ? { desc: clip(s.desc, lv.stDesc) } : {}),
+    mo: s.methodOrder,
+    ro: s.refOrder,
+    rm: s.refsMax,
+    k: s.kinds.map((k) => ({ id: k.id, l: clip(k.label, 30), ...(lv.stDesc ? { o: clip(k.output, 40) } : {}), bg: clip(k.background, 20), def: k.defaultMethod, m: k.methods })),
+  }));
+}
+
 /** 도구 목록 → 8KB 이하 보고서. 단계별로 줄이고, 그래도 크면 뒤쪽 도구를 자른다(omitted) */
-export function fitReport(tools, base, limit = TOOLKIT_BODY_BYTES) {
+export function fitReport(tools, base, limit = TOOLKIT_BODY_BYTES, studio = []) {
+  const head = (lv) => ({ ...base, ...(studio.length ? { studio: shapeStudio(studio, lv) } : {}) });
   for (const lv of LEVELS) {
-    const report = { ...base, count: tools.length, tools: tools.map((t) => shape(t, lv)) };
+    const report = { ...head(lv), count: tools.length, tools: tools.map((t) => shape(t, lv)) };
     if (bytes(report) <= limit) return report;
   }
   const lv = LEVELS[LEVELS.length - 1];
   let shown = tools.map((t) => shape(t, lv));
-  while (shown.length > 0 && bytes({ ...base, count: tools.length, omitted: tools.length - shown.length, tools: shown }) > limit) shown = shown.slice(0, -1);
+  while (shown.length > 0 && bytes({ ...head(lv), count: tools.length, omitted: tools.length - shown.length, tools: shown }) > limit) shown = shown.slice(0, -1);
 
-  return { ...base, count: tools.length, omitted: tools.length - shown.length, tools: shown };
+  return { ...head(lv), count: tools.length, omitted: tools.length - shown.length, tools: shown };
 }
 
 /** 툴킷 폴더 → 보고서. { state: ok|missing|error, ... }. 던지지 않는다 */
@@ -232,7 +290,7 @@ export function collectToolkitInfo(toolkitDir) {
       return describeTool(toolkitDir, id, t, scan, entryFile);
     });
 
-    return fitReport(tools, { state: "ok", manifestMod: new Date(st.mtimeMs).toISOString().slice(0, 10) });
+    return fitReport(tools, { state: "ok", manifestMod: new Date(st.mtimeMs).toISOString().slice(0, 10) }, TOOLKIT_BODY_BYTES, readStudioTools(manifest.studioTools));
   } catch (e) {
     return { state: "error", reason: clip(e?.message ?? "읽지 못했어요.", 120), count: 0, tools: [] };
   }

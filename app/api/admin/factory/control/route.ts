@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/factory/admin";
 import { isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
 import { cleanAppSlots, MAX_APP_SLOTS, MIN_APP_SLOTS, setAppSlots, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
-import { isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
+import { allowedStudioToolIds, isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
 import { APP_ROLES_KEY, applyAppRolePatch, readAppRoles } from "@/lib/factory/appRoles";
 import { applyStudioPatch, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
 import prisma from "@/lib/prisma";
@@ -123,7 +123,8 @@ export async function POST(req: NextRequest) {
       slug ? prisma.factoryJob.findFirst({ where: { appSlug: slug }, select: { id: true } }) : null,
       readToolkitView(prisma),
     ]);
-    const res = applyStudioPatch(readStudioProjects(row?.value), body.studioProject, new Set(known ? [slug] : []), new Set(view.rows.map((r) => r.id)));
+    const cur = readStudioProjects(row?.value);
+    const res = applyStudioPatch(cur, body.studioProject, new Set(known ? [slug] : []), allowedStudioToolIds(view.rows, cur[slug]?.tools)); // pixel-art 기준, 예전에 연결한 내부 도구 이름은 그대로 저장 가능
 
     if (!res.ok) return NextResponse.json({ message: res.message }, { status: 400 });
     const value = JSON.stringify(res.projects);
@@ -158,7 +159,8 @@ export async function POST(req: NextRequest) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return NextResponse.json({ message: "일감 내용이 올바르지 않아요." }, { status: 400 });
     const slug = typeof input.appSlug === "string" ? input.appSlug.trim() : "";
     const [row, view] = await Promise.all([prisma.factorySetting.findUnique({ where: { key: STUDIO_PROJECTS_KEY } }), readToolkitView(prisma)]);
-    const r = await createAdminStudioJob(input, readStudioProjects(row?.value)[slug], new Set(view.rows.map((t) => t.id)));
+    const project = readStudioProjects(row?.value)[slug];
+    const r = await createAdminStudioJob(input, project, allowedStudioToolIds(view.rows, project?.tools));
 
     if (r.ok === false) return NextResponse.json({ message: r.message }, { status: r.status });
     const recent = await prisma.factoryJob.findMany({ where: { appSlug: slug, source: STUDIO_REQUEST_SOURCE }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, title: true, status: true, createdAt: true } });

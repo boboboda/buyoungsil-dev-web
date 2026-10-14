@@ -646,6 +646,19 @@ function JobDetailView({
                     {t.status}
                   </Chip>
                   {t.message && t.status !== "ok" && <span className="text-xs text-default-500">{t.message}</span>}
+                  {t.art && (
+                    <span className="w-full text-xs text-default-600" data-pixel-art-result={t.art.needsConfirmation ? "confirm" : "ok"}>
+                      {t.art.needsConfirmation ? (
+                        <b>PixelLab 비용 한도 초과 — 승인 필요</b>
+                      ) : (
+                        <>
+                          대상 {t.art.subject || "?"} · 결과 종류 {t.art.kind || "?"} · 방식 {t.art.method || "?"} · 참고 그림 {t.art.refs ?? 0}장
+                          {t.art.refReasons?.length ? ` (${t.art.refReasons.join(" ")})` : ""}
+                          {t.art.refsFallback ? ` · ${t.art.refsFallback}` : ""} · 비용 {t.art.cost ?? 0}회
+                        </>
+                      )}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

@@ -38,6 +38,29 @@ export interface ToolkitMode {
 const MAX_MODES = 8;
 const MODE_ID_RE = /^[a-z][a-z0-9_]{0,39}$/;
 
+export type ToolLayer = "internal" | "studio" | "";
+
+/** 스튜디오 도구의 결과 종류 하나(예: pixel-art 의 image-prop). 읽기 전용 표시용 */
+export interface StudioKind {
+  id: string;
+  label: string;
+  output: string;
+  background: string;
+  defaultMethod: string;
+  methods: string[];
+}
+
+/** tools.json 최상위 studioTools 의 도구 하나(예: pixel-art). 없으면 빈 목록 */
+export interface StudioToolInfo {
+  id: string;
+  title: string;
+  desc: string;
+  methodOrder: string[];
+  refOrder: string[];
+  refsMax: number;
+  kinds: StudioKind[];
+}
+
 export interface ToolkitTool {
   id: string;
   desc: string;
@@ -52,6 +75,8 @@ export interface ToolkitTool {
   tags: string[];
   net: boolean;
   secrets: string[]; // 이름만
+  optionalSecrets: string[]; // 그 호출에 실제로 필요할 때만 쓰는 선택 키(이름만). 옛 보고는 빈 배열
+  layer: ToolLayer; // studio = 사람이 스튜디오에서 쓰는 도구, internal = 내부 단계, "" = 옛 tools.json(구분 없음)
   timeoutSec: number;
   enabled: boolean;
   modes: ToolkitMode[]; // 없으면 빈 배열(모드 없는 도구·옛 형식)
@@ -72,6 +97,7 @@ function readModes(v: unknown): ToolkitMode[] {
 }
 
 export interface ToolkitInfo {
+  studioTools: StudioToolInfo[]; // 옛 보고(저장값 포함)는 빈 배열
   state: "ok" | "missing" | "error";
   reason: string;
   count: number;
@@ -79,6 +105,35 @@ export interface ToolkitInfo {
   manifestModified: string;
   receivedAt: string; // 서버가 받은 시각(ISO)
   tools: ToolkitTool[];
+}
+
+const METHOD_RE = /^[a-z][a-z0-9_]{0,39}$/;
+const LABEL_RE = /^[A-Za-z0-9가-힣①②③④_-]{1,24}$/;
+
+/** 보고의 studio 배열 → 스튜디오 도구 목록. 깨진 항목은 버리고 나머지는 살린다 */
+function readStudioTools(v: unknown): StudioToolInfo[] {
+  if (!Array.isArray(v)) return [];
+  const out: StudioToolInfo[] = [];
+
+  for (const s of v.slice(0, 4)) {
+    if (!isRecord(s) || typeof s.id !== "string" || !ID_RE.test(s.id) || out.some((x) => x.id === s.id)) continue;
+    const kinds: StudioKind[] = [];
+
+    for (const k of Array.isArray(s.k) ? s.k.slice(0, 8) : []) {
+      if (!isRecord(k) || typeof k.id !== "string" || !ID_RE.test(k.id) || kinds.some((x) => x.id === k.id)) continue;
+      kinds.push({
+        id: k.id,
+        label: text(k.l, 60),
+        output: text(k.o, 80),
+        background: text(k.bg, 20),
+        defaultMethod: typeof k.def === "string" && METHOD_RE.test(k.def) ? k.def : "",
+        methods: strList(k.m, METHOD_RE, 6),
+      });
+    }
+    out.push({ id: s.id, title: text(s.title, 80) || s.id, desc: text(s.desc, 300), methodOrder: strList(s.mo, LABEL_RE, 8), refOrder: strList(s.ro, LABEL_RE, 8), refsMax: nonNeg(s.rm, 20), kinds });
+  }
+
+  return out;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -126,6 +181,8 @@ export function validateToolkitReport(raw: unknown, now = new Date()): { ok: tru
       tags: strList(t.tags, /^[a-z]+$/, 8).filter((x) => (TAGS as readonly string[]).includes(x)),
       net: t.net === true,
       secrets: strList(t.sec, SECRET_RE, 8),
+      optionalSecrets: strList(t.osec, SECRET_RE, 8),
+      layer: t.ly === "studio" || t.ly === "internal" ? t.ly : "",
       timeoutSec: nonNeg(t.to, 3600),
       enabled: t.en !== false,
       modes: readModes(t.m),
@@ -136,6 +193,7 @@ export function validateToolkitReport(raw: unknown, now = new Date()): { ok: tru
   return {
     ok: true,
     info: {
+      studioTools: readStudioTools(raw.studio),
       state,
       reason: text(raw.reason, 200),
       count: Math.max(tools.length, nonNeg(raw.count, 1000)),
@@ -210,6 +268,27 @@ export interface ToolkitRow extends ToolkitTool {
   purposeSource: "saved" | "guess";
 }
 
+/** 스튜디오에서 사람이 고르는 도구. layer 구분이 있는 툴킷이면 studio 만, 옛 툴킷(구분 없음)이면 전부 */
+export function studioToolRows<T extends { layer: ToolLayer }>(rows: readonly T[]): T[] {
+  return rows.some((r) => r.layer !== "") ? rows.filter((r) => r.layer === "studio") : [...rows];
+}
+
+/**
+ * 스튜디오에 연결·[일감 보내기]로 쓸 수 있는 도구 id: 스튜디오 도구(pixel-art) + 이미 연결돼 있던 내부 도구 이름(읽기 호환, 새로 고를 수는 없다).
+ * connected = 그 프로젝트에 지금 저장된 연결 목록
+ */
+export function allowedStudioToolIds(rows: readonly { id: string; layer: ToolLayer }[], connected: readonly string[] = []): Set<string> {
+  const studio = studioToolRows(rows).map((r) => r.id);
+  const legacy = internalToolRows(rows).filter((r) => connected.includes(r.id)).map((r) => r.id);
+
+  return new Set([...studio, ...legacy]);
+}
+
+/** 내부 단계 도구(layer=internal). 옛 툴킷이면 빈 목록 */
+export function internalToolRows<T extends { layer: ToolLayer }>(rows: readonly T[]): T[] {
+  return rows.some((r) => r.layer !== "") ? rows.filter((r) => r.layer === "internal") : [];
+}
+
 export interface ToolkitView {
   info: ToolkitInfo | null; // null = 아직 한 번도 못 받음(또는 읽기 실패)
   rows: ToolkitRow[];
@@ -235,9 +314,9 @@ export function parseStoredInfo(raw: string | null | undefined): ToolkitInfo | n
 
     if (!isRecord(o) || !Array.isArray(o.tools) || (o.state !== "ok" && o.state !== "missing" && o.state !== "error")) return null;
 
-    const tools = (o.tools as ToolkitTool[]).filter((t) => isRecord(t) && typeof t.id === "string" && Array.isArray(t.args)).map((t) => ({ ...t, modes: Array.isArray(t.modes) ? t.modes : [] })); // 모드가 생기기 전에 저장된 값도 읽는다
+    const tools = (o.tools as ToolkitTool[]).filter((t) => isRecord(t) && typeof t.id === "string" && Array.isArray(t.args)).map((t) => ({ ...t, modes: Array.isArray(t.modes) ? t.modes : [], optionalSecrets: Array.isArray(t.optionalSecrets) ? t.optionalSecrets : [], layer: (t.layer === "studio" || t.layer === "internal" ? t.layer : "") as ToolLayer })); // 모드·layer 가 생기기 전에 저장된 값도 읽는다
 
-    return { ...(o as unknown as ToolkitInfo), tools };
+    return { ...(o as unknown as ToolkitInfo), studioTools: Array.isArray(o.studioTools) ? (o.studioTools as StudioToolInfo[]) : [], tools };
   } catch {
     return null;
   }

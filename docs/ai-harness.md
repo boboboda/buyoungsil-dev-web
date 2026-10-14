@@ -127,6 +127,8 @@ Codex의 샌드박스·네트워크·승인 정책은 그대로 두고, 외부 �
 
 하위 명령은 영문 소문자·숫자·`_-` 40자, `entry`는 툴킷 폴더 안의 `.py` 상대 경로, 인자 이름은 영문 소문자·숫자·`_`. `string`은 줄바꿈 없는 500자, `int`는 정수, `path`는 위 경로 규칙. 선언되지 않은 인자·필수 인자 누락은 거부한다. `network: true`이거나 `secrets`가 있는 도구는 모드가 **허용**이고 그 이름이 일감의 `requiredSecrets`에 모두 있을 때만 실행한다(이 PC 키 파일에 값이 없으면 `failed`). `network: false`는 선언일 뿐 OS 수준 차단은 아니다. 툴킷 코드는 신뢰된 코드로 취급한다.
 
+**선택 키(`optionalSecrets`)**: 그 호출에 실제로 필요할 때만 필수 키처럼 검사하고 넘긴다. `PIXELLAB_TOKEN`은 `command=pixel-art`의 `method=pixellab`일 때(인자가 없으면 `studioTools`가 알려 준 결과 종류의 기본 방식이 pixellab일 때)만 필요하고, 그때 일감의 `requiredSecrets`에 없으면 "이 일감에 허용되지 않은 키가 필요해요"로 거절한다. 다른 방식에는 키를 넘기지 않고, 모르는 선택 키는 어떤 호출에도 넘기지 않는다. `layer: studio`인 도구(pixel-art)는 끝난 뒤 `output_dir/result.json`에서 대상·결과 종류·방식·참고 그림 수·비용만 뽑아 도구 요청 기록의 `art`로 보고한다(프롬프트·경로·키는 없음). 실패 출력에 `needs_confirmation: true`가 있으면 `art.needsConfirmation`으로 보고하고 통제실 일감 상세에 "PixelLab 비용 한도 초과 — 승인 필요"로 보인다.
+
 **어댑터 인터페이스**: `{ name, cost(args) → 비용 단위, validate(args, ctx) → { ok, value } | { ok: false, reason, status? }, run(value, ctx) → { status, message, files?, output?, result? } }`. 키는 `ctx.secretsFor(이름들)`로만 받는다. **PixelLab은 API 형식을 확인한 뒤 다음 단계에 이 인터페이스로 추가한다**(이번 단계에는 없고, 외부 호출도 하지 않는다).
 
 **AI 쪽 도우미** (`tools/factory-supervisor/toolreq.mjs`, 외부 의존 없음, 앱 폴더에서 실행):

@@ -9,7 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { brokerRules, brokerSettings, createBroker, imageToolRules, jobUsableTools, loadToolkitManifest, readRequest, safeAppPath, TOOLREQ_PATH, validateRequest } from "../toolbroker.mjs";
+import { brokerRules, brokerSettings, createBroker, imageToolRules, jobUsableTools, loadToolkitManifest, neededOptionalSecrets, readRequest, safeAppPath, TOOLREQ_PATH, toolkitSecretNames, validateRequest } from "../toolbroker.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -516,4 +516,158 @@ test("report parsing carries the cleaned tool list and ignores it when absent", 
   const withTools = jobs.parseReport({ jobId: "job1", toolRequests: [{ id: "r1", tool: "echo", status: "ok", at, ms: 1 }] });
   assert.equal(withTools.value.toolRequests.length, 1);
   assert.equal(jobs.parseReport({ jobId: "job1" }).value.toolRequests, null);
+});
+
+// ───────── 스튜디오 도구(pixel-art) · 선택 키 · 결과 요약 ─────────
+const ART_CLI = `
+const fs = require("node:fs"), path = require("node:path");
+const [cmd, ...args] = process.argv.slice(2);
+const get = (k) => args.find((a) => a.startsWith("--" + k + "="))?.slice(k.length + 3);
+console.log("cmd=" + cmd + " method=" + get("method") + " token=" + process.env.PIXELLAB_TOKEN);
+if (get("subject") === "over-limit") {
+  console.error(JSON.stringify({ error: "pixellab cost limit", needs_confirmation: true }));
+  process.exit(3);
+}
+const out = get("output_dir");
+fs.mkdirSync(out, { recursive: true });
+fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({
+  project: "p", subject: get("subject"), kind: get("kind"), method: get("method") || "codex", steps: [{ tool: "pixel-codex", argv: ["--description=SECRET-PROMPT"] }],
+  refs: [{ path: "/abs/ref1.png", reason: "①picked" }, { path: "/abs/ref2.png", reason: "②subject" }], refs_fallback: "", settings_source: "request", cost: get("method") === "pixellab" ? 2 : 0, outputs: ["a.png"], created_at: "2026-10-14T00:00:00Z",
+}));
+`;
+const ART_TOOLS = {
+  "pixel-art": {
+    entry: "cli.py",
+    layer: "studio",
+    args: [{ name: "kind", type: "string", required: true }, { name: "subject", type: "string", required: true }, { name: "method", type: "string" }, { name: "output_dir", type: "path", required: true }],
+    network: true,
+    secrets: [],
+    optionalSecrets: ["PIXELLAB_TOKEN"],
+    timeoutSec: 30,
+  },
+};
+function artToolkit(f, studioTools) {
+  toolkit(f, ART_TOOLS, ART_CLI);
+  const file = path.join(f.toolkit, "tools.json");
+  fs.writeFileSync(file, JSON.stringify({ version: 1, tools: ART_TOOLS, ...(studioTools ? { studioTools } : {}) }));
+}
+const ART_STUDIO = {
+  "pixel-art": { kinds: { "image-prop": { defaultMethod: "codex" }, "motion-game": { defaultMethod: "claude" }, "image-pix": { defaultMethod: "pixellab" } } },
+};
+
+test("선택 키: 읽고 필수 키와 따로 둔다 (잘못된 이름은 거부, 없으면 빈 배열)", (t) => {
+  const f = fixture(t);
+  artToolkit(f, ART_STUDIO);
+  const m = loadToolkitManifest(f.toolkit);
+  assert.equal(m.ok, true);
+  assert.deepEqual(m.tools["pixel-art"].optionalSecrets, ["PIXELLAB_TOKEN"]);
+  assert.deepEqual(m.tools["pixel-art"].secrets, []);
+  assert.equal(m.tools["pixel-art"].layer, "studio");
+  assert.equal(m.studioTools["pixel-art"]["motion-game"], "claude");
+  assert.deepEqual(toolkitSecretNames(f.toolkit), ["PIXELLAB_TOKEN"], "선택 키도 AI 환경에서는 뺀다");
+  fs.writeFileSync(path.join(f.toolkit, "tools.json"), JSON.stringify({ version: 1, tools: { x: { entry: "cli.py", optionalSecrets: ["lower"] } } }));
+  assert.match(loadToolkitManifest(f.toolkit).reason, /optionalSecrets/);
+  fs.writeFileSync(path.join(f.toolkit, "tools.json"), JSON.stringify({ version: 1, tools: { x: { entry: "cli.py" } } }));
+  const old = loadToolkitManifest(f.toolkit);
+  assert.deepEqual(old.tools.x.optionalSecrets, [], "옛 tools.json 은 지금처럼");
+  assert.deepEqual(old.studioTools, {});
+});
+
+test("neededOptionalSecrets: method=pixellab 이거나 결과 종류 기본이 pixellab 일 때만", () => {
+  const tool = { optionalSecrets: ["PIXELLAB_TOKEN"] };
+  assert.deepEqual(neededOptionalSecrets("pixel-art", tool, { method: "pixellab" }), ["PIXELLAB_TOKEN"]);
+  for (const method of ["codex", "claude", "manual"]) assert.deepEqual(neededOptionalSecrets("pixel-art", tool, { method, kind: "image-pix" }), [], method);
+  assert.deepEqual(neededOptionalSecrets("pixel-art", tool, { kind: "image-pix" }, { "pixel-art": { "image-pix": "pixellab" } }), ["PIXELLAB_TOKEN"]);
+  assert.deepEqual(neededOptionalSecrets("pixel-art", tool, { kind: "image-prop" }, { "pixel-art": { "image-prop": "codex" } }), []);
+  assert.deepEqual(neededOptionalSecrets("pixel-art", tool, { kind: "image-prop" }), [], "툴킷 정보가 없으면 넘기지 않는다");
+  assert.deepEqual(neededOptionalSecrets("x", { optionalSecrets: ["OTHER_KEY"] }, { method: "pixellab" }), [], "모르는 선택 키는 어떤 호출에도 넘기지 않는다");
+  assert.deepEqual(neededOptionalSecrets("x", { optionalSecrets: [] }, { method: "pixellab" }), []);
+});
+
+test("pixel-art: method=pixellab 일 때만 키를 넘기고, 다른 방식에는 넘기지 않으며, 어디에도 값이 남지 않는다", { skip: !canSpawn && "자식 프로세스를 띄울 수 없는 환경" }, async (t) => {
+  const f = fixture(t);
+  artToolkit(f, ART_STUDIO);
+  const a = (kind, subject, method) => ({ command: "pixel-art", args: { kind, subject, ...(method ? { method } : {}), output_dir: `.factory/assets/${subject}` } });
+  request(f.app, "a1", "toolkit.run", a("image-prop", "싹이", "pixellab"));
+  request(f.app, "a2", "toolkit.run", a("image-prop", "싹이2", "codex"));
+  request(f.app, "a3", "toolkit.run", a("image-prop", "싹이3"));
+  request(f.app, "a4", "toolkit.run", a("image-pix", "싹이4"));
+  const { b, logs } = broker(f, { mode: "allow" }, { requiredSecrets: ["PIXELLAB_TOKEN"], secrets: { PIXELLAB_TOKEN: SECRET } });
+  await b.tick();
+  assert.equal(response(f.app, "a1").status, "ok", JSON.stringify(response(f.app, "a1")));
+  assert.match(response(f.app, "a1").output, /method=pixellab token=\*\*\*/, "pixellab: 키가 도구에 간다(출력에선 가려짐)");
+  assert.match(response(f.app, "a2").output, /token=undefined/, "codex: 키를 넘기지 않는다");
+  assert.match(response(f.app, "a3").output, /token=undefined/, "방식 없음+기본 codex: 넘기지 않는다");
+  assert.match(response(f.app, "a4").output, /token=\*\*\*/, "방식 없음+결과 종류 기본이 pixellab: 넘긴다");
+  const everything = [
+    ...["a1", "a2", "a3", "a4"].map((id) => fs.readFileSync(path.join(f.app, ".factory", "responses", `${id}.json`), "utf8")),
+    fs.readFileSync(path.join(f.app, ".factory", "ai-events.jsonl"), "utf8"),
+    JSON.stringify(b.list()),
+    logs.join("\n"),
+  ].join("\n");
+  assert.equal(everything.includes(SECRET), false);
+});
+
+test("pixel-art: pixellab 인데 일감의 필요한 키에 없으면 명확한 이유로 거절, 다른 방식은 키 없이도 돈다", { skip: !canSpawn && "자식 프로세스를 띄울 수 없는 환경" }, async (t) => {
+  const f = fixture(t);
+  artToolkit(f, ART_STUDIO);
+  const a = (subject, method) => ({ command: "pixel-art", args: { kind: "image-prop", subject, method, output_dir: `.factory/assets/${subject}` } });
+  request(f.app, "n1", "toolkit.run", a("x1", "pixellab"));
+  request(f.app, "n2", "toolkit.run", a("x2", "claude"));
+  const noKey = broker(f, { mode: "allow" }, { requiredSecrets: [], secrets: { PIXELLAB_TOKEN: SECRET } });
+  await noKey.b.tick();
+  assert.equal(response(f.app, "n1").status, "denied");
+  assert.match(response(f.app, "n1").message, /이 일감에 허용되지 않은 키가 필요해요: PIXELLAB_TOKEN/);
+  assert.equal(response(f.app, "n2").status, "ok", "다른 방식은 키가 없어도 실행");
+  request(f.app, "n3", "toolkit.run", a("x3", "pixellab"));
+  const noFile = broker(f, { mode: "allow" }, { requiredSecrets: ["PIXELLAB_TOKEN"], secrets: {} });
+  await noFile.b.tick();
+  assert.equal(response(f.app, "n3").status, "failed");
+  assert.match(response(f.app, "n3").message, /이 PC 의 키 파일에 없는 키: PIXELLAB_TOKEN/);
+});
+
+test("pixel-art 결과 요약: result.json 의 대상·종류·방식·참고 그림·비용만 기록에 담고, 프롬프트·경로는 담지 않는다. 비용 한도 초과는 승인 필요로 표시", { skip: !canSpawn && "자식 프로세스를 띄울 수 없는 환경" }, async (t) => {
+  const f = fixture(t);
+  artToolkit(f, ART_STUDIO);
+  request(f.app, "s1", "toolkit.run", { command: "pixel-art", args: { kind: "image-prop", subject: "싹이", method: "pixellab", output_dir: ".factory/assets/s1" } });
+  request(f.app, "s2", "toolkit.run", { command: "pixel-art", args: { kind: "image-prop", subject: "over-limit", method: "pixellab", output_dir: ".factory/assets/s2" } });
+  const { b } = broker(f, { mode: "allow" }, { requiredSecrets: ["PIXELLAB_TOKEN"], secrets: { PIXELLAB_TOKEN: SECRET } });
+  await b.tick();
+  const ok = response(f.app, "s1");
+  assert.deepEqual(ok.art, { subject: "싹이", kind: "image-prop", method: "pixellab", refs: 2, refReasons: ["①picked", "②subject"], refsFallback: "", cost: 2 });
+  const over = response(f.app, "s2");
+  assert.equal(over.status, "failed");
+  assert.deepEqual(over.art, { needsConfirmation: true });
+  assert.match(over.message, /PixelLab 비용 한도 초과 — 승인 필요/);
+  const list = b.list();
+  assert.deepEqual(list.find((r) => r.id === "s1").art, ok.art);
+  assert.doesNotMatch(JSON.stringify(list), /SECRET-PROMPT|abs\/ref1/);
+
+  // 서버 쪽 정리: art 를 걸러서 담고, 모양이 틀리면 버린다
+  const at = new Date().toISOString();
+  const cleaned = serverBroker.cleanToolRequests([
+    ...list.map((r) => ({ ...r, at })),
+    { id: "z1", tool: "toolkit.run", command: "pixel-art", status: "ok", at, ms: 1, message: "", art: { subject: "x".repeat(200), kind: "Bad Kind!", method: "codex", refs: 99999, cost: -1, refReasons: ["①picked", "<script>"] } },
+    { id: "z2", tool: "toolkit.run", status: "ok", at, ms: 1, message: "", art: "문자열" },
+  ]);
+  assert.deepEqual(cleaned.find((r) => r.id === "s1").art, ok.art);
+  assert.deepEqual(cleaned.find((r) => r.id === "s2").art, { needsConfirmation: true });
+  const z1 = cleaned.find((r) => r.id === "z1").art;
+  assert.equal(z1.subject.length, 60);
+  assert.equal(z1.kind, "");
+  assert.equal(z1.refs, 20);
+  assert.equal(z1.cost, 0);
+  assert.deepEqual(z1.refReasons, ["①picked"]);
+  assert.equal("art" in cleaned.find((r) => r.id === "z2"), false);
+});
+
+test("옛 tools.json(layer·optionalSecrets·studioTools 없음)의 필수 키 도구는 지금처럼 동작한다", { skip: !canSpawn && "자식 프로세스를 띄울 수 없는 환경" }, async (t) => {
+  const f = fixture(t);
+  toolkit(f, { pixel: { entry: "cli.py", args: [{ name: "size", type: "int", required: true }], network: true, secrets: ["PIXEL_TOKEN"], timeoutSec: 30 } }, FAKE_CLI);
+  request(f.app, "o1", "toolkit.run", { command: "pixel", args: { size: 8 } });
+  const { b } = broker(f, { mode: "allow" }, { requiredSecrets: [], secrets: { PIXEL_TOKEN: SECRET } });
+  await b.tick();
+  assert.equal(response(f.app, "o1").status, "denied");
+  assert.match(response(f.app, "o1").message, /PIXEL_TOKEN/);
+  assert.equal("art" in response(f.app, "o1"), false);
 });

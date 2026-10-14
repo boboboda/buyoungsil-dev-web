@@ -56,10 +56,23 @@ export function toolBrokerLimitLabel(n: number, unit: string): string {
   return n > 0 ? `${n}${unit}` : "제한 없음";
 }
 
+/** 스튜디오 도구(pixel-art) 실행 결과 요약(result.json 에서 뽑은 값만. 프롬프트·경로·키는 없음). needsConfirmation = PixelLab 비용 한도 초과(승인 필요) */
+export interface StudioResultSummary {
+  needsConfirmation?: boolean;
+  subject?: string;
+  kind?: string;
+  method?: string;
+  refs?: number;
+  refReasons?: string[];
+  refsFallback?: string;
+  cost?: number;
+}
+
 export interface ToolRequestRecord {
   id: string;
   tool: string;
   command?: string | null; // toolkit.run 이 실행한 하위 명령 이름만(인자·프롬프트·키 값은 저장하지 않음). 예전 기록은 없음
+  art?: StudioResultSummary | null; // pixel-art 실행 결과 요약. 없으면 없음
   status: "ok" | "denied" | "failed" | "timeout";
   at: string;
   ms: number | null;
@@ -67,6 +80,23 @@ export interface ToolRequestRecord {
 }
 
 const MAX_TOOL_RECORDS = 100;
+
+const ART_NAME_RE = /^[a-z][a-z0-9_-]{0,39}$/;
+
+/** 보고의 art → 정리된 요약(모양이 틀리면 null). 글은 비밀번호 모양을 가리고 길이를 줄인다 */
+function cleanArt(v: unknown): StudioResultSummary | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const a = v as Record<string, unknown>;
+  const str = (x: unknown, n: number) => (typeof x === "string" ? maskSecrets(x.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, n)) : "");
+  const num = (x: unknown, max: number) => (typeof x === "number" && Number.isFinite(x) && x >= 0 ? Math.min(max, Math.round(x)) : 0);
+
+  if (a.needsConfirmation === true) return { needsConfirmation: true };
+  const kind = typeof a.kind === "string" && ART_NAME_RE.test(a.kind) ? a.kind : "";
+  const method = typeof a.method === "string" && ART_NAME_RE.test(a.method) ? a.method : "";
+  const reasons = Array.isArray(a.refReasons) ? a.refReasons.filter((x): x is string => typeof x === "string" && /^[①②③④A-Za-z0-9_-]{1,24}$/.test(x)).slice(0, 4) : [];
+
+  return { subject: str(a.subject, 60), kind, method, refs: num(a.refs, 20), refReasons: reasons, refsFallback: str(a.refsFallback, 100), cost: num(a.cost, 100000) };
+}
 
 /** 감독 프로그램이 보고한 도구 요청 목록(도구 이름·상태·시간·짧은 메시지만). 형식이 틀린 항목은 버린다. 배열이 아니면 null(바꾸지 않음) */
 export function cleanToolRequests(v: unknown): ToolRequestRecord[] | null {
@@ -87,7 +117,9 @@ export function cleanToolRequests(v: unknown): ToolRequestRecord[] | null {
 
     const command = typeof r.command === "string" && /^[a-z][a-z0-9_-]{0,39}$/.test(r.command) ? r.command : null;
 
-    out.push({ id, tool, ...(command ? { command } : {}), status, at, ms, message });
+    const art = cleanArt(r.art);
+
+    out.push({ id, tool, ...(command ? { command } : {}), ...(art ? { art } : {}), status, at, ms, message });
   }
 
   return out;

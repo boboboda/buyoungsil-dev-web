@@ -157,9 +157,35 @@ export function validateManifest(m, toolkitDir) {
     if (!Array.isArray(secrets) || secrets.some((s) => typeof s !== "string" || !SECRET_NAME_RE.test(s))) return bad("secrets 는 키 이름(대문자·숫자·_) 배열이에요.");
     const timeoutSec = t.timeoutSec === undefined ? 120 : t.timeoutSec;
     if (!Number.isInteger(timeoutSec) || timeoutSec < 1 || timeoutSec > LIMITS.toolTimeoutCapSec) return bad(`timeoutSec 는 1~${LIMITS.toolTimeoutCapSec} 정수예요.`);
-    tools[name] = { entry: t.entry, entryFull, args, timeoutSec, network: t.network === true, enabled: t.enabled !== false, manual: t.manual === true, secrets: [...new Set(secrets)] };
+    const optional = t.optionalSecrets ?? [];
+    if (!Array.isArray(optional) || optional.some((s) => typeof s !== "string" || !SECRET_NAME_RE.test(s))) return bad("optionalSecrets 는 키 이름(대문자·숫자·_) 배열이에요.");
+    tools[name] = { entry: t.entry, entryFull, args, timeoutSec, network: t.network === true, enabled: t.enabled !== false, manual: t.manual === true, layer: t.layer === "studio" || t.layer === "internal" ? t.layer : "", secrets: [...new Set(secrets)], optionalSecrets: [...new Set(optional)].filter((n) => !secrets.includes(n)) };
   }
-  return { ok: true, tools };
+  return { ok: true, tools, studioTools: readStudioDefaults(m.studioTools) };
+}
+
+/** tools.json 최상위 studioTools → { 도구: { 결과 종류: 기본 방식 } }. 없거나 깨졌으면 {} (옛 tools.json 은 지금처럼 동작) */
+function readStudioDefaults(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [id, t] of Object.entries(raw)) {
+    if (!SUBCOMMAND_RE.test(id) || !t || typeof t !== "object" || !t.kinds || typeof t.kinds !== "object" || Array.isArray(t.kinds)) continue;
+    out[id] = {};
+    for (const [kind, k] of Object.entries(t.kinds)) {
+      if (SUBCOMMAND_RE.test(kind) && k && typeof k === "object" && typeof k.defaultMethod === "string" && ARG_NAME_RE.test(k.defaultMethod)) out[id][kind] = k.defaultMethod;
+    }
+  }
+  return out;
+}
+
+// 선택 키(optionalSecrets)는 그 호출이 이 방식일 때만 필요하다. 여기에 없는 선택 키는 어떤 호출에도 넘기지 않는다
+const OPTIONAL_SECRET_METHODS = Object.freeze({ PIXELLAB_TOKEN: "pixellab" });
+
+/** 이 호출에서 실제로 필요한 선택 키 이름. method 인자가 있으면 그 값, 없으면 툴킷이 알려 준 결과 종류의 기본 방식으로 본다(프로젝트 설정 파일 안의 기본값은 툴킷이 판단하므로 여기서 읽지 않는다) */
+export function neededOptionalSecrets(command, tool, given, studioDefaults = {}) {
+  if (!tool.optionalSecrets?.length) return [];
+  const method = typeof given.method === "string" && given.method ? given.method : (studioDefaults[command]?.[given.kind] ?? "");
+  return tool.optionalSecrets.filter((n) => OPTIONAL_SECRET_METHODS[n] === method);
 }
 
 /** 툴킷 목록에 선언된 비밀값 이름(중계가 켜져 있으면 AI 환경에서 빼고 도구에만 준다) */
@@ -170,7 +196,7 @@ export function jobUsableTools(tools) {
 
 export function toolkitSecretNames(toolkitDir) {
   const m = loadToolkitManifest(toolkitDir);
-  return m.ok ? [...new Set(Object.values(m.tools).flatMap((t) => t.secrets))] : [];
+  return m.ok ? [...new Set(Object.values(m.tools).flatMap((t) => [...t.secrets, ...t.optionalSecrets]))] : [];
 }
 
 // ───────── 도구 어댑터 ─────────
@@ -227,24 +253,27 @@ const toolkitAdapter = {
       }
     }
     // 네트워크·비밀값이 필요한 도구는 '허용' 모드이면서 이 일감의 requiredSecrets 에 이름이 있을 때만
-    if (tool.network || tool.secrets.length) {
+    // 선택 키(optionalSecrets)는 이 호출에 실제로 필요할 때(pixel-art 의 method=pixellab)만 필수 키처럼 검사하고 넘긴다
+    const optional = neededOptionalSecrets(args.command, tool, given, manifest.studioTools);
+    const need = [...tool.secrets, ...optional];
+    if (tool.network || need.length) {
       if (ctx.mode !== "allow") return { ok: false, reason: "네트워크·키가 필요한 도구는 '허용' 모드에서만 실행해요." };
-      const missing = tool.secrets.filter((n) => !ctx.requiredSecrets.includes(n));
+      const missing = need.filter((n) => !ctx.requiredSecrets.includes(n));
       if (missing.length) return { ok: false, reason: `이 일감에 허용되지 않은 키가 필요해요: ${missing.join(", ")} (일감의 필요한 키에 넣어야 해요)` };
-      const absent = tool.secrets.filter((n) => !ctx.hasSecret(n));
+      const absent = need.filter((n) => !ctx.hasSecret(n));
       if (absent.length) return { ok: false, status: "failed", reason: `이 PC 의 키 파일에 없는 키: ${absent.join(", ")}` };
     }
     if (!fs.existsSync(tool.entryFull) || isLink(tool.entryFull)) return { ok: false, status: "failed", reason: `툴킷 진입점이 없어요: ${tool.entry}` };
-    return { ok: true, value: { command: args.command, tool, argv } };
+    return { ok: true, value: { command: args.command, tool, argv, need } };
   },
-  async run({ command, tool, argv }, ctx) {
+  async run({ command, tool, argv, need = tool.secrets }, ctx) {
     const assets = factoryDir(ctx.appDir, "assets");
     const env = { PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1", FACTORY_APP_DIR: ctx.appDir, FACTORY_ASSETS_DIR: assets, FACTORY_REQUEST_ID: ctx.requestId };
     // AI·감독 프로그램의 환경(토큰 등)은 물려주지 않는다. 실행에 필요한 최소 변수 + 이 도구에 선언된 키만
     for (const k of ["PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG"]) {
       if (process.env[k] !== undefined) env[k] = process.env[k];
     }
-    Object.assign(env, ctx.secretsFor(tool.secrets));
+    Object.assign(env, ctx.secretsFor(need));
     // 통제실 제한 시간이 0(제한 없음)이면 tools.json 에 도구가 선언한 시간만 쓴다
     const timeoutSec = ctx.toolTimeoutSec > 0 ? Math.min(tool.timeoutSec, ctx.toolTimeoutSec) : tool.timeoutSec;
     const started = Date.now();
@@ -253,9 +282,45 @@ const toolkitAdapter = {
     const output = ctx.redact(r.output).slice(-LIMITS.outputSummary);
     if (r.timedOut) return { status: "timeout", message: `도구 실행 시간 초과(${timeoutSec}초)`, files, output };
     if (r.error) return { status: "failed", message: `도구를 실행하지 못했어요: ${ctx.redact(r.error).slice(0, 300)}`, files, output };
-    return { status: r.code === 0 ? "ok" : "failed", message: r.code === 0 ? `${command} 완료` : `${command} 실패(종료 코드 ${r.code})`, files, output };
+    const art = tool.layer === "studio" ? summarizeStudioResult(ctx.appDir, argv, r.code === 0, r.output) : null;
+    const confirm = art?.needsConfirmation ? " (PixelLab 비용 한도 초과 — 승인 필요)" : "";
+    return { status: r.code === 0 ? "ok" : "failed", message: r.code === 0 ? `${command} 완료` : `${command} 실패(종료 코드 ${r.code})${confirm}`, files, output, ...(art ? { art } : {}) };
   },
 };
+
+const RESULT_JSON_BYTES = 256 * 1024;
+const clipText = (v, n) => maskText(String(v ?? "")).replace(/[\u0000-\u001f]/g, " ").trim().slice(0, n);
+
+/**
+ * 스튜디오 도구(pixel-art) 실행 결과 요약: output_dir/result.json 에서 대상 이름·결과 종류·방식·참고 그림·비용만 뽑는다(프롬프트·경로·키는 담지 않는다).
+ * 실패했는데 출력에 needs_confirmation:true 가 있으면 PixelLab 비용 한도 초과(승인 필요)로 표시한다. 읽을 게 없으면 null
+ */
+export function summarizeStudioResult(appDir, argv, ok, output) {
+  if (!ok) return /"needs_confirmation"\s*:\s*true/.test(String(output ?? "")) ? { needsConfirmation: true } : null;
+  const dirArg = argv.find((a) => a.startsWith("--output_dir="));
+  if (!dirArg) return null;
+  const p = safeAppPath(appDir, `${dirArg.slice("--output_dir=".length)}/result.json`);
+  if (!p.ok) return null;
+  try {
+    const st = fs.lstatSync(p.full);
+    if (st.isSymbolicLink() || !st.isFile() || st.size > RESULT_JSON_BYTES) return null;
+    const j = JSON.parse(fs.readFileSync(p.full, "utf8").replace(/^\uFEFF/, ""));
+    if (!j || typeof j !== "object" || Array.isArray(j)) return null;
+    const refs = Array.isArray(j.refs) ? j.refs : [];
+    const cost = typeof j.cost === "number" ? j.cost : typeof j.cost?.pixellab_calls === "number" ? j.cost.pixellab_calls : typeof j.cost?.calls === "number" ? j.cost.calls : 0;
+    return {
+      subject: clipText(j.subject, 60),
+      kind: /^[a-z][a-z0-9_-]{0,39}$/.test(j.kind ?? "") ? j.kind : "",
+      method: /^[a-z][a-z0-9_]{0,39}$/.test(j.method ?? "") ? j.method : "",
+      refs: refs.length,
+      refReasons: [...new Set(refs.map((r) => (typeof r?.reason === "string" ? r.reason : "")).filter((x) => /^[①②③④A-Za-z0-9_-]{1,24}$/.test(x)))].slice(0, 4),
+      refsFallback: clipText(j.refs_fallback, 100),
+      cost: Number.isFinite(cost) && cost >= 0 ? Math.min(cost, 100000) : 0,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export const ADAPTERS = Object.freeze({ echo: echoAdapter, "toolkit.run": toolkitAdapter });
 
@@ -376,7 +441,7 @@ export function createBroker(opts) {
     const tmp = path.join(dir, `.${id}.${process.pid}.tmp`);
     fs.writeFileSync(tmp, JSON.stringify(out, null, 2) + "\n", { mode: 0o600 });
     fs.renameSync(tmp, file);
-    const rec = { id, tool: tool ?? "?", ...(command ? { command } : {}), status: out.status, at: startedAt.toISOString(), ms: finishedAt - startedAt, message: String(out.message ?? "").slice(0, 200) };
+    const rec = { id, tool: tool ?? "?", ...(command ? { command } : {}), ...(out.art ? { art: out.art } : {}), status: out.status, at: startedAt.toISOString(), ms: finishedAt - startedAt, message: String(out.message ?? "").slice(0, 200) };
     records.push(rec);
     if (records.length > 100) records.shift();
     event(rec);
@@ -421,7 +486,7 @@ export function createBroker(opts) {
     if (!v.ok) return respond(id, req.tool, { status: v.status ?? "denied", message: v.reason, files: [] }, startedAt, command);
     if (settings.mode === "report") return respond(id, req.tool, { status: "denied", message: "보고만 모드: 요청은 기록했지만 실행하지 않았어요.", files: [] }, startedAt, command);
     const r = await adapter.run(v.value, ctx);
-    return respond(id, req.tool, { status: r.status, message: r.message, files: r.files ?? [], ...(r.output ? { output: r.output } : {}), ...(r.result !== undefined ? { result: r.result } : {}), cost: adapter.cost(req.args) }, startedAt, command);
+    return respond(id, req.tool, { status: r.status, message: r.message, files: r.files ?? [], ...(r.output ? { output: r.output } : {}), ...(r.result !== undefined ? { result: r.result } : {}), ...(r.art ? { art: r.art } : {}), cost: adapter.cost(req.args) }, startedAt, command);
   }
 
   /** 한 번 확인: 응답이 없는 새 요청을 처리한다(꺼짐 모드면 아무것도 하지 않는다) */

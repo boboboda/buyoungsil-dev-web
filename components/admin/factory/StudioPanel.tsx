@@ -32,7 +32,7 @@ export default async function StudioPanel() {
 
       if (list.length < 5) list.push({ id: j.id, title: j.title, status: j.status, createdAt: j.createdAt.toISOString() });
     }
-    const tools: StudioToolRow[] = view.rows.map((r) => ({ id: r.id, desc: r.desc, purpose: r.purpose, purposeSource: r.purposeSource, enabled: r.enabled }));
+    const tools: StudioToolRow[] = view.rows.map((r) => ({ id: r.id, desc: r.desc, purpose: r.purpose, purposeSource: r.purposeSource, enabled: r.enabled, layer: r.layer, kinds: view.info?.studioTools.find((s) => s.id === r.id)?.kinds ?? [] }));
 
     const { products, toolApps } = splitStudioApps(buildStudioApps(jobs), readAppRoles(rolesRow?.value));
 

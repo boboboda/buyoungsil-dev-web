@@ -120,3 +120,55 @@ test("모드: 있으면 담고(clip→cut), 없으면 칸 자체가 없고, 깨�
   assert.deepEqual(readModes(undefined), []);
   assert.ok(Buffer.byteLength(JSON.stringify(r)) <= 8192);
 });
+
+test("새 구조: studioTools·layer·optionalSecrets 를 담고, 옛 tools.json 이면 칸 자체가 없다", () => {
+  const dir = makeKit({ "pixel-art": { description: "도트 이미지 생성", layer: "studio", entry: "cli.py", args: [{ name: "kind", type: "string", required: true }], network: true, secrets: [], optionalSecrets: ["PIXELLAB_TOKEN", "bad name"], timeoutSec: 900 } });
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, "tools.json"), "utf8"));
+    manifest.tools["pixel-anim"].layer = "internal";
+    manifest.studioTools = {
+      "pixel-art": {
+        title: "도트 이미지 생성",
+        description: "사람이 쓰는 도구",
+        methodOrder: ["request", "project", "default"],
+        refOrder: ["①picked", "②subject"],
+        refsMax: 4,
+        kinds: {
+          "image-prop": { label: "소품·캐릭터 한 장", background: "transparent", defaultMethod: "codex", methods: ["codex", "pixellab", "claude"] },
+          "motion-clip": { label: "움짤", background: "keep", defaultMethod: "manual", methods: ["manual", "codex"] },
+          "Bad Kind": { label: "x" },
+        },
+      },
+      "Bad Tool": { kinds: {} },
+    };
+    fs.writeFileSync(path.join(dir, "tools.json"), JSON.stringify(manifest));
+    const r = collectToolkitInfo(dir);
+    assert.equal(r.state, "ok");
+    const art = r.tools.find((t) => t.id === "pixel-art");
+    assert.equal(art.ly, "studio");
+    assert.deepEqual(art.osec, ["PIXELLAB_TOKEN"], "선택 키는 이름만, 형식이 틀리면 버림");
+    assert.deepEqual(art.sec, []);
+    assert.equal(r.tools.find((t) => t.id === "pixel-anim").ly, "internal");
+    assert.equal(r.tools.find((t) => t.id === "pixel-slice").ly, undefined, "layer 가 없는 도구는 칸이 없다");
+    assert.equal(r.studio.length, 1);
+    assert.deepEqual(r.studio[0].k.map((k) => [k.id, k.def, k.m.length]), [["image-prop", "codex", 3], ["motion-clip", "manual", 2]]);
+    assert.deepEqual(r.studio[0].ro, ["①picked", "②subject"]);
+    assert.ok(Buffer.byteLength(JSON.stringify(r)) <= 7600);
+    assert.equal(JSON.stringify(r).includes(SECRET), false);
+
+    delete manifest.studioTools;
+    fs.writeFileSync(path.join(dir, "tools.json"), JSON.stringify(manifest));
+    const old = collectToolkitInfo(dir);
+    assert.equal(old.studio, undefined, "studioTools 가 없으면 지금처럼");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("스튜디오 목록이 있어도 도구가 많으면 8KB 이하로 줄어든다", () => {
+  const tools = Array.from({ length: 40 }, (_, i) => ({ id: `t${i}`, desc: "설명 ".repeat(60), entry: "cli.py", script: "cli.py", dir: ".", args: [], out: [], tags: [], net: false, sec: [], optSec: [], layer: "internal", to: 60, en: true, mod: "2026-10-14", opts: [], modes: [] }));
+  const studio = [{ id: "pixel-art", title: "도트", desc: "긴 설명 ".repeat(80), methodOrder: ["a"], refOrder: ["b"], refsMax: 4, kinds: [{ id: "k1", label: "종류", output: "PNG", background: "keep", defaultMethod: "codex", methods: ["codex", "pixellab"] }] }];
+  const r = fitReport(tools, { state: "ok" }, 7600, studio);
+  assert.ok(Buffer.byteLength(JSON.stringify(r)) <= 7600);
+  assert.equal(r.studio[0].id, "pixel-art", "스튜디오 도구는 남는다");
+});

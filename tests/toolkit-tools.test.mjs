@@ -191,3 +191,56 @@ test("모드: 있으면 읽고(clip→움짤·컷용 표기), 없거나 옛 형�
   assert.match(html, /게임용 0 · 움짤·컷용 0 · 공용 1 · 미분류 1/, "도구 기준 개수");
   assert.match(html, /보고된 도구 <b>2개<\/b>/);
 });
+
+test("새 구조: layer·optionalSecrets·studioTools 를 읽고, 기본 보기는 스튜디오 도구만(내부 단계는 접힌 영역에 이름·설명만)", () => {
+  const studio = [
+    {
+      id: "pixel-art",
+      title: "도트 이미지 생성",
+      mo: ["request", "project", "default"],
+      ro: ["①picked", "②subject", "③kind", "④prompt-only"],
+      rm: 4,
+      k: [
+        { id: "image-prop", l: "소품·캐릭터 한 장", bg: "transparent", def: "codex", m: ["codex", "pixellab", "claude"] },
+        { id: "image-scene", l: "장면 한 컷", bg: "keep", def: "codex", m: ["codex", "pixellab"] },
+        { id: "motion-game", l: "게임 애니메이션", bg: "transparent", def: "claude", m: ["claude", "pixellab", "codex"] },
+        { id: "motion-clip", l: "움짤", bg: "keep", def: "manual", m: ["manual", "codex"] },
+      ],
+    },
+  ];
+  const tools = [tool("pixel-art", { ly: "studio", osec: ["PIXELLAB_TOKEN", "bad"], net: true }), tool("pixel-generate", { ly: "internal", sec: ["PIXELLAB_TOKEN"] }), tool("pixel-anim", { ly: "internal" })];
+  const info = lib.validateToolkitReport(report(tools, { studio }), new Date(0)).info;
+  assert.deepEqual(info.tools.map((t) => [t.id, t.layer, t.optionalSecrets]), [["pixel-art", "studio", ["PIXELLAB_TOKEN"]], ["pixel-generate", "internal", []], ["pixel-anim", "internal", []]]);
+  assert.equal(info.studioTools[0].kinds.length, 4);
+  assert.equal(info.studioTools[0].kinds[2].defaultMethod, "claude");
+
+  const view = lib.buildToolkitView(info, {});
+  assert.deepEqual(lib.studioToolRows(view.rows).map((r) => r.id), ["pixel-art"]);
+  assert.deepEqual(lib.internalToolRows(view.rows).map((r) => r.id), ["pixel-generate", "pixel-anim"]);
+  const html = renderToStaticMarkup(h(ToolkitToolsView, { view }));
+  assert.match(html, /data-toolkit-tool="pixel-art"/);
+  assert.equal(html.includes('data-toolkit-tool="pixel-generate"'), false, "내부 도구는 기본 목록에 없다");
+  assert.match(html, /스튜디오 도구 <b>1개<\/b> · 내부 단계 2개/);
+  assert.equal((html.match(/data-studio-kind="/g) ?? []).length, 4, "결과 종류 4개");
+  assert.match(html, /data-kind-method="claude"[^>]*>.*?claude<\/span><b data-kind-default="true"> \[기본\]<\/b>/, "motion-game 의 기본은 claude");
+  assert.match(html, /방식 우선순위: request &gt; project &gt; default/);
+  assert.match(html, /선택 키 이름\(방식에 따라 필요할 때만\): PIXELLAB_TOKEN/);
+  assert.match(html, /<details class="mt-3" data-toolkit-internal="true">/, "내부 단계는 접힌 영역");
+  assert.match(html, /data-toolkit-internal-tool="pixel-generate"/);
+  assert.match(html, /data-toolkit-internal-tool="pixel-anim"/);
+  assert.equal(html.includes("fx-label\">모드"), false);
+});
+
+test("옛 보고·저장값(layer·studio 칸 없음)은 지금처럼 전부 보인다", async () => {
+  const info = lib.validateToolkitReport(report([tool("pixel-slice"), tool("env-doctor")]), new Date(0)).info;
+  assert.deepEqual(info.studioTools, []);
+  const stored = JSON.stringify({ ...info, studioTools: undefined, tools: info.tools.map(({ layer: _l, optionalSecrets: _o, ...rest }) => rest) });
+  const view = await lib.readToolkitView(fakeDb({ toolkitInfo: stored }));
+  assert.equal(view.rows.length, 2);
+  assert.equal(view.rows[0].layer, "");
+  assert.deepEqual(lib.studioToolRows(view.rows).map((r) => r.id), ["pixel-slice", "env-doctor"]);
+  const html = renderToStaticMarkup(h(ToolkitToolsView, { view }));
+  assert.match(html, /보고된 도구 <b>2개<\/b>/);
+  assert.match(html, /data-toolkit-tool="env-doctor"/);
+  assert.equal(html.includes("data-toolkit-internal"), false);
+});

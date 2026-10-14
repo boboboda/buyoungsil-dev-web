@@ -207,3 +207,34 @@ test("스튜디오 목록 필터: 제품만 프로젝트 목록, tool 은 접힌
 
   assert.doesNotMatch(none, /data-studio-tool-apps/);
 });
+
+test("새 툴킷 구조: 스튜디오 도구(pixel-art)만 고르고, 예전에 연결한 내부 도구 이름은 깨지지 않게 남는다", () => {
+  const rows = [
+    { id: "pixel-art", layer: "studio" },
+    { id: "pixel-generate", layer: "internal" },
+    { id: "pixel-anim", layer: "internal" },
+  ];
+  assert.deepEqual([...toolkit.allowedStudioToolIds(rows, [])].sort(), ["pixel-art"], "새로 연결·일감 보내기 허용은 pixel-art 뿐");
+  assert.deepEqual([...toolkit.allowedStudioToolIds(rows, ["pixel-generate", "gone-tool"])].sort(), ["pixel-art", "pixel-generate"], "이미 연결된 내부 이름은 읽기 호환");
+  const old = [{ id: "a", layer: "" }, { id: "b", layer: "" }];
+  assert.deepEqual([...toolkit.allowedStudioToolIds(old, [])].sort(), ["a", "b"], "layer 구분 없는 옛 툴킷은 전부");
+
+  // 저장: 새로 내부 도구를 고르면 거절, 이미 연결된 내부 도구를 유지한 채 pixel-art 를 더하는 건 허용
+  const cur = { "memo-app": { kind: "app", tools: ["pixel-generate"] } };
+  assert.equal(lib.applyStudioPatch(cur, { appSlug: "memo-app", tools: ["pixel-generate", "pixel-art"] }, known, toolkit.allowedStudioToolIds(rows, cur["memo-app"].tools)).ok, true);
+  assert.equal(lib.applyStudioPatch(cur, { appSlug: "memo-app", tools: ["pixel-anim"] }, known, toolkit.allowedStudioToolIds(rows, cur["memo-app"].tools)).ok, false, "새 내부 도구는 거절");
+
+  const tools = [
+    { id: "pixel-art", desc: "도트 이미지 생성", purpose: "common", purposeSource: "guess", enabled: true, layer: "studio", kinds: [{ id: "image-prop", label: "소품·캐릭터 한 장", output: "", background: "transparent", defaultMethod: "codex", methods: ["codex", "pixellab"] }] },
+    ...rows.slice(1).map((r) => ({ id: r.id, desc: "", purpose: "game", purposeSource: "guess", enabled: true, layer: "internal" })),
+  ];
+  const apps = [{ appSlug: "memo-app", title: "메모", stack: "flutter", status: "done", finishedAt: null, done: true }];
+  const html = renderToStaticMarkup(h(Workbench, { apps, tools, toolsReported: true, initial: { "memo-app": { kind: "app", tools: ["pixel-generate"] } }, initialStudio: "app", initialPicked: "memo-app" }));
+  assert.match(html, /data-studio-tool="pixel-art"/);
+  assert.match(html, /소품·캐릭터 한 장: codex\(기본\)·pixellab/, "결과 종류와 기본 방식");
+  assert.match(html, /data-studio-legacy-tools/, "연결돼 있던 내부 도구는 따로 남는다");
+  assert.match(html, /data-studio-tool="pixel-generate"/);
+  assert.equal(html.includes('data-studio-tool="pixel-anim"'), false, "연결 안 된 내부 도구는 고르는 목록에 없다");
+  // 일감 보내기: 연결돼 있던 내부 이름도 깨지지 않고 고를 수 있다
+  assert.match(html, /<option[^>]*value="pixel-generate"/);
+});

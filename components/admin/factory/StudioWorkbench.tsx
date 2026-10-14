@@ -4,7 +4,7 @@
 // 저장은 /api/admin/factory/control 의 { studioProject } 액션. 종류가 없는 프로젝트는 '미분류'에 보이고 [게임]/[앱]을 누르면 옮겨진다.
 import { useState } from "react";
 
-import { PURPOSE_LABELS, type Purpose } from "@/lib/factory/toolkit";
+import { PURPOSE_LABELS, type Purpose, type StudioKind as ToolKind, type ToolLayer } from "@/lib/factory/toolkit";
 import { cleanStudioUrl, FIRST_PURPOSES, isManualTool, orderToolsFor, STUDIO_KIND_LABELS, type StudioAppInfo, type StudioKind, type StudioProjects } from "@/lib/factory/studioProjects";
 
 export interface StudioToolRow {
@@ -13,6 +13,8 @@ export interface StudioToolRow {
   purpose: Purpose;
   purposeSource: "saved" | "guess";
   enabled: boolean;
+  layer?: ToolLayer; // studio = 스튜디오 도구, internal = 내부 단계, 없거나 "" = 옛 툴킷(구분 없음)
+  kinds?: ToolKind[]; // 스튜디오 도구의 결과 종류·방식(읽기 전용 표시)
 }
 
 const STATUS_LABELS: Record<string, string> = { pending: "승인 대기", approved: "승인됨", running: "제작 중", review: "검토 대기", done: "완료", failed: "실패", cancelled: "취소" };
@@ -247,10 +249,14 @@ export default function StudioWorkbench({
   };
 
   const kind = cfg?.kind;
-  const ordered = kind ? orderToolsFor(kind, tools) : tools;
+  const layered = tools.some((t) => t.layer === "studio" || t.layer === "internal");
+  const studioTools = layered ? tools.filter((t) => t.layer === "studio") : tools; // 새 툴킷이면 스튜디오 도구만 고른다
+  // 예전에 연결해 둔 내부 도구 이름은 깨지지 않게 남겨 두고(해제만 가능), 새로 고를 수는 없다
+  const legacyTools = layered ? tools.filter((t) => t.layer === "internal" && (cfg?.tools.includes(t.id) || draftTools.includes(t.id))) : [];
+  const ordered = kind ? orderToolsFor(kind, studioTools) : studioTools;
   const dirty = !!cfg && (!sameSet(draftTools, cfg.tools) || draftUrl.trim() !== (cfg.studioUrl ?? ""));
   const urlBad = draftUrl.trim() !== "" && !cleanStudioUrl(draftUrl);
-  const firstCount = kind ? tools.filter((t) => FIRST_PURPOSES[kind].includes(t.purpose)).length : 0;
+  const firstCount = kind ? studioTools.filter((t) => FIRST_PURPOSES[kind].includes(t.purpose)).length : 0;
 
   const listButton = (a: StudioAppInfo) => (
     <li key={a.appSlug}>
@@ -406,12 +412,41 @@ export default function StudioWorkbench({
                                       {t.enabled ? "" : " · 꺼짐"}
                                     </span>
                                     {t.desc ? <span className="block fx-muted">{t.desc}</span> : null}
+                                    {t.kinds?.length ? (
+                                      <span className="block fx-muted" data-studio-tool-kinds={t.id}>
+                                        {t.kinds.map((k) => `${k.label || k.id}: ${k.methods.map((m) => (m === k.defaultMethod ? `${m}(기본)` : m)).join("·")}`).join(" / ")}
+                                      </span>
+                                    ) : null}
                                   </span>
                                 </label>
                               </li>
                             );
                           })}
                         </ul>
+                        {legacyTools.length ? (
+                          <div className="mt-2" data-studio-legacy-tools>
+                            <p className="text-sm fx-muted">예전에 연결한 내부 단계 이름이에요(그대로 쓸 수 있고, 해제만 할 수 있어요).</p>
+                            <ul className="grid gap-1">
+                              {legacyTools.map((t) => (
+                                <li key={t.id} className="min-w-0 text-sm" data-studio-tool={t.id}>
+                                  <label className="flex min-w-0 items-start gap-2">
+                                    <input
+                                      checked={draftTools.includes(t.id)}
+                                      className="mt-1"
+                                      disabled={busy}
+                                      type="checkbox"
+                                      onChange={(e) => setDraftTools((cur) => (e.target.checked ? [...cur, t.id] : cur.filter((x) => x !== t.id)))}
+                                    />
+                                    <span className="min-w-0 break-words">
+                                      <span className="font-mono font-semibold">{t.id}</span>
+                                      <span className="fx-muted"> · 내부 단계</span>
+                                    </span>
+                                  </label>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
                       </>
                     )}
                   </fieldset>
@@ -428,7 +463,7 @@ export default function StudioWorkbench({
                     </button>
                     {dirty ? <span className="text-sm fx-muted">저장하지 않은 변경이 있어요.</span> : null}
                   </div>
-                  <SendJobCard key={app.appSlug} appSlug={app.appSlug} connected={cfg.tools.filter((id) => !isManualTool(id) && tools.some((t) => t.id === id))} initialRecent={recent[app.appSlug] ?? []} />
+                  <SendJobCard key={app.appSlug} appSlug={app.appSlug} connected={cfg.tools.filter((id) => !isManualTool(id) && tools.some((t) => t.id === id)).sort((x, y) => Number(tools.find((t) => t.id === y)?.layer === "studio") - Number(tools.find((t) => t.id === x)?.layer === "studio"))} initialRecent={recent[app.appSlug] ?? []} />
                 </>
               )}
               {notice ? (
