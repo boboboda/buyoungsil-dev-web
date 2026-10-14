@@ -62,7 +62,7 @@ test("파일 이름·종류: png·webp·gif·mp4 와 report.md 만, 이상한 �
   assert.equal(lab.labFileType("other.md"), null);
 });
 
-test("파일 받기: 8MB 조각으로 받아 다 모이면 complete, 실험·실행 중인 일감만", async () => {
+test("파일 받기: 512KB 조각으로 받아 다 모이면 complete, 실험·실행 중인 일감만", async () => {
   const { db, lab } = load();
   addJob(db);
   const size = lab.LAB_CHUNK + 5;

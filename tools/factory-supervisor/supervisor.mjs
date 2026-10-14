@@ -832,6 +832,7 @@ async function runJob(job) {
   let lock;
   let dir;
   let home;
+  let guardDirs = null; // 실험 사후 검사에 알린 폴더(앱 폴더·워크트리 사본)
   try {
     job.aiEngine = engineOf(job.aiEngine);
     if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(job.appSlug)) throw new Error("앱 폴더 이름이 올바르지 않습니다.");
@@ -841,7 +842,8 @@ async function runJob(job) {
       job.worktree = await setupWorktree(job, home);
       dir = job.worktree.wtDir;
     }
-    labGuard.touch(home);
+    labGuard.begin(home, dir);
+    guardDirs = [home, dir];
     lock = acquireWorkspace(dir, { engine: job.aiEngine, taskId: job.id });
     // 인계 기록에 쓸 일감 정보(요청은 앞부분만, 기획서 전문은 넣지 않음)
     job.aiOutcome = { handoff: { kind: "job", appSlug: job.appSlug, title: job.title, request: `${job.kind === "new" ? "새 앱" : job.kind === "release" ? "출시 준비" : "수정"}: ${String(job.planMarkdown ?? job.prompt ?? "").replace(/^#.*$/gm, " ").slice(0, 600)}`, model: job.aiEngine === "claude" ? job.aiModel || "기본" : cfg.codexModel || "기본" } };
@@ -850,7 +852,8 @@ async function runJob(job) {
     await failEarly(job, e.message);
   } finally {
     running.delete(job.id);
-    labGuard.touch(home);
+    if (guardDirs) labGuard.end(...guardDirs);
+    else labGuard.touch(home);
     if (lock) {
       try { if (fs.existsSync(home)) saveHandoff(home, { engine: job.aiEngine, taskId: job.id, status: "interrupted", ...job.aiOutcome }, (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s))); }
       catch (e) { log(`[${job.appSlug}] 상태 인계 기록 실패: ${maskText(e.message)}`); }

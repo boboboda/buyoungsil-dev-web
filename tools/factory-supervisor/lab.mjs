@@ -4,7 +4,7 @@
 // - 권한: 공장 안 다른 폴더는 읽기·복사만, 실험 폴더(lab/<id>, lab/shared)만 쓰기·실행. 명령은 승인 없이, 인터넷 허용.
 // - 금지의 보장은 두 겹: (1) 실행 설정에서 쓰기 가능 경로를 실험 폴더로 제한(Claude: permission 설정, Codex: writable_roots)
 //   (2) 실험이 끝난 뒤 공장 안 저장소들의 `git status --porcelain` 을 실험 전과 비교해 달라졌으면 일감을 실패로 표시(되돌리지는 않음).
-// - 결과(outputs/ 의 png·webp·gif·mp4, report.md)는 8MB 조각으로 홈페이지에 올린다(파일 50MB·일감 200MB·40개 상한, 넘으면 목록만).
+// - 결과(outputs/ 의 png·webp·gif·mp4, report.md)는 512KB 조각으로 홈페이지에 올린다(파일 50MB·일감 200MB·40개 상한, 넘으면 목록만).
 // 이 파일은 홈페이지로 나가는 요청만 한다(api 함수를 받아서 쓴다). 앱 일감·정비의 동작은 바꾸지 않는다.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -16,7 +16,7 @@ export const LAB_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 export const LAB_FILE_MAX = 50 * 1024 * 1024; // 파일당
 export const LAB_JOB_MAX = 200 * 1024 * 1024; // 일감당
 export const LAB_FILE_COUNT_MAX = 40; // 일감당 파일 수 (홈페이지 lib/factory/lab.ts 와 같게)
-export const LAB_CHUNK = 8 * 1024 * 1024;
+export const LAB_CHUNK = 512 * 1024; // 앞단 nginx 기본 본문 한도(1MB)보다 작게. 감독 프로그램 lab.mjs 와 같게
 
 const OUTPUT_EXT = new Set([".png", ".webp", ".gif", ".mp4"]);
 const MAX_SCAN = 400; // outputs 아래에서 훑는 항목 수 상한
@@ -222,13 +222,24 @@ export function compareSnapshots(before, after, { isBusy = () => false } = {}) {
 /** 다른 일감이 실험 동안 어느 저장소를 만졌는지 기억한다 (앱 일감 시작·끝에 touch 를 부른다) */
 export function createLabGuard() {
   const touched = new Map(); // 폴더 → 마지막으로 시작하거나 끝난 시각
+  const active = new Map(); // 폴더 → 지금 돌고 있는 앱 일감 수 (실험 시작 전부터 돌던 일감·워크트리 사본 포함)
   const key = (d) => (process.platform === "win32" ? path.resolve(d).toLowerCase() : path.resolve(d));
   return {
     touch(dir) { if (dir) touched.set(key(dir), Date.now()); },
-    /** 실험이 시작한 뒤(sinceMs 이후) 만져졌거나 지금 다른 일감이 돌고 있으면 true */
+    /** 앱 일감이 폴더(앱 폴더·워크트리 사본)에서 일을 시작함. 끝날 때 end 로 같은 폴더를 돌려준다 */
+    begin(...dirs) { for (const d of dirs) if (d) { touched.set(key(d), Date.now()); active.set(key(d), (active.get(key(d)) ?? 0) + 1); } },
+    end(...dirs) {
+      for (const d of dirs) {
+        if (!d) continue;
+        const n = (active.get(key(d)) ?? 0) - 1;
+        if (n > 0) active.set(key(d), n); else active.delete(key(d));
+        touched.set(key(d), Date.now());
+      }
+    },
+    /** 실험이 시작한 뒤(sinceMs 이후) 만져졌거나, 시작 전부터 지금까지 다른 일감이 돌고 있으면 true */
     isBusy(dir, sinceMs, runningDirs = []) {
       const k = key(dir);
-      return (touched.get(k) ?? 0) >= sinceMs || runningDirs.some((d) => key(d) === k);
+      return (touched.get(k) ?? 0) >= sinceMs || active.has(k) || runningDirs.some((d) => key(d) === k);
     },
   };
 }

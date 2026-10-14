@@ -1,7 +1,7 @@
 // lib/factory/lab.ts
 // 실험(lab) 일감: 도구·방식이 되는지 확인하는 테스트 전용 일감 종류. 앱 폴더가 아니라 lab\<일감id>\ 에서 돈다.
 // - 일감은 kind="lab", appSlug="lab"(고정). 같은 appSlug 는 한 번에 하나만 돌기 때문에 실험은 동시에 1개다(claimJobs 가 이미 그렇게 한다).
-// - 결과 파일(이미지·mp4·report.md)은 감독 프로그램이 8MB 이하 조각으로 올리고(워커 토큰), 통제실(관리자)과 커넥터(서명 주소)가 읽는다.
+// - 결과 파일(이미지·mp4·report.md)은 감독 프로그램이 512KB 이하 조각으로 올리고(워커 토큰), 통제실(관리자)과 커넥터(서명 주소)가 읽는다.
 // - 사후 검사(공장 안 저장소의 git status 비교)와 건너뛴 파일 목록은 labResult 에 저장한다.
 import { createHmac, timingSafeEqual } from "crypto";
 
@@ -13,7 +13,7 @@ export const LAB_SLUG = "lab"; // 실험 일감의 고정 appSlug(앱 목록에�
 export const LAB_FILE_MAX = 50 * 1024 * 1024; // 파일당
 export const LAB_JOB_MAX = 200 * 1024 * 1024; // 일감당
 export const LAB_FILE_COUNT_MAX = 40; // 일감당 파일 수
-export const LAB_CHUNK = 8 * 1024 * 1024;
+export const LAB_CHUNK = 512 * 1024; // 앞단 nginx 기본 본문 한도(1MB)보다 작게. 감독 프로그램 lab.mjs 와 같게
 export const LAB_REPORT_TEXT_MAX = 20_000; // 커넥터에 싣는 report.md 본문 상한(글자)
 const LINK_TTL_MS = 6 * 60 * 60 * 1000; // 커넥터에 준 파일 주소의 유효 시간
 

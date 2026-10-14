@@ -170,6 +170,25 @@ test("사후 검사: 실험 동안 다른 앱 일감이 만진 저장소는 비�
   assert.equal(guard.isBusy(path.join(root, "app-b"), Date.now() + 5000, []), false);
 });
 
+test("사후 검사: 실험 시작 전부터 돌던 일감·워크트리 사본·실험 뒤에도 도는 일감의 저장소는 뺀다", { skip: !gitOk }, (t) => {
+  const root = factory(t);
+  const repos = discoverRepos(root);
+  const guard = createLabGuard();
+  const wt = path.join(root, "wt-copy");
+  guard.begin(path.join(root, "app-a"), wt); // 실험보다 먼저 시작한 병행(워크트리) 일감
+  const startedAt = Date.now() + 50; // 시작 시각 이후에는 touch 가 없다
+  const before = snapshotRepos(repos);
+  fs.writeFileSync(path.join(root, "app-a", "by-long-job.txt"), "x");
+  const cmp = compareSnapshots(before, snapshotRepos(repos), { isBusy: (d) => guard.isBusy(d, startedAt, []) });
+  assert.equal(cmp.ok, true);
+  assert.ok(cmp.notes.some((n) => n.startsWith("app-a:")));
+  assert.equal(guard.isBusy(wt, startedAt), true);
+  // 끝나면 풀리지만, 끝난 시각이 실험 중이면 여전히 뺀다
+  guard.end(path.join(root, "app-a"), wt);
+  assert.equal(guard.isBusy(path.join(root, "app-a"), startedAt - 10_000), true);
+  assert.equal(guard.isBusy(path.join(root, "app-a"), Date.now() + 5000), false);
+});
+
 test("결과 고르기: outputs 의 이미지·mp4·report.md, 지시문이 지정한 파일만(링크·폴더 밖 제외)", (t) => {
   const root = factory(t);
   const { dir, outputs } = prepareLab(root, job());
@@ -215,7 +234,7 @@ test("용량 상한: 파일 50MB·실험 200MB·40개 넘으면 올리지 않고
   assert.equal(pickUploads([f("outputs/../x.png", 5)]).skipped.length, 1);
 });
 
-test("올리기: 8MB 조각으로 순서대로 보내고, 실패한 파일은 목록에 남기고 나머지는 계속한다", async (t) => {
+test("올리기: 512KB 조각으로 순서대로 보내고, 실패한 파일은 목록에 남기고 나머지는 계속한다", async (t) => {
   const root = factory(t);
   const { dir, outputs } = prepareLab(root, job());
   const big = Buffer.alloc(LAB_CHUNK * 2 + 10, 7); // 조각 3개
