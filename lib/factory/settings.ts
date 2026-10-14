@@ -352,6 +352,8 @@ export interface SupervisorRuntime {
   restartFail?: string; // PC 가 알려 준 재시작 실패 이유
   drain?: "update" | "deploy"; // 감독 프로그램이 업데이트·서버 배포를 진행 중 일감이 끝나길 기다리는 중(새 일감은 받지 않음)
   drainJobs?: number; // 그때 끝나길 기다리는 일감 수(정비 지시 포함)
+  outbox?: number; // 감독 프로그램의 재전송 대기열에 남은 보고 수(배포 중 홈페이지가 응답하지 않는 동안 쌓임). 없으면 0
+  deployingPc?: boolean; // 감독 프로그램이 서버 배포(git push)를 하는 중
   restartTakenAt?: string; // 감독 프로그램이 재시작 요청을 받아 간 시각(새로 켜지면 지운다)
   restartedAt?: string; // 마지막으로 재시작이 끝난 시각
   restartFailNotified?: string; // 텔레그램으로 알린 실패 이유(같은 이유를 두 번 보내지 않게)

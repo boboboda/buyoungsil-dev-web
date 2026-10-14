@@ -20,7 +20,7 @@ import { MAX_LOGS_PER_JOB, MAX_LOG_MESSAGE } from "@/lib/factory/jobs";
 import { cleanHandoff } from "@/lib/factory/handoff";
 import { notifyDeployReady, notifyMaintenance, notifyText } from "@/lib/factory/telegram";
 import { getDefaultAiEngine, getDefaultClaudeModel, getSettingValue, getSupervisorRuntime, isAutoDeployEnabled, setSettingValue, type SupervisorRuntime } from "@/lib/factory/settings";
-import { drainNote } from "@/lib/factory/supervisorDrain";
+import { deployNote, drainNote } from "@/lib/factory/supervisorDrain";
 
 export const TURN_ACTIVE = ["queued", "running"] as const;
 const QUEUE_STATES = ["awaiting_approval", "queued", "running"];
@@ -465,10 +465,18 @@ async function haltIfWaiting(turnId: string, threadId: string): Promise<boolean>
   return true;
 }
 
+/** 서버 배포 중인가(배포 기록에서). 못 읽으면 false */
+const deployingNow = () => import("@/lib/factory/deployWindow").then((m) => m.isDeployingNow()).catch(() => false);
+
 /** 오래 보고가 없는 진행 중 지시·배포를 정리한다. */
 async function releaseStale(): Promise<void> {
   const cut = new Date(Date.now() - STALE_MS);
-  const stale = await prisma.factoryMaintenanceMessage.findMany({ where: { role: "user", status: "running", heartbeatAt: { lt: cut } } });
+  const late = await prisma.factoryMaintenanceMessage.findMany({ where: { role: "user", status: "running", heartbeatAt: { lt: cut } } });
+  // 서버 배포 중에는 홈페이지가 응답하지 않아 보고가 끊긴다. 그 구간은 빼고 센다(배포가 끝나면 쌓인 보고가 다시 들어온다)
+  const dw = late.length ? await import("@/lib/factory/deployWindow").catch(() => null) : null;
+  const windows = dw ? await dw.loadDeployWindows(cut) : [];
+  const nowMs = Date.now();
+  const stale = dw && windows.length ? late.filter((s) => s.heartbeatAt && dw.idleMsExcludingDeploy(windows, s.heartbeatAt.getTime(), nowMs) > STALE_MS) : late;
 
   for (const s of stale) {
     await prisma.factoryMaintenanceMessage.update({ where: { id: s.id }, data: { status: "failed", finishedAt: new Date() } });
@@ -719,6 +727,7 @@ export async function maintenanceOverview(opts: { threadId?: string; limit?: num
     drain, // null | update | deploy
     drainJobs: drain ? (rt.drainJobs ?? 0) : null,
     drainNote: drain ? drainNote(drain, rt.drainJobs ?? 0) : null,
+    deployNote: deployNote(!!rt.deployingPc || (await deployingNow()), rt.outbox ?? 0), // "배포 중 · 재전송 대기 N개" 또는 null
     queue, // 대기열(모든 정비 대화, 보낸 순서)
     deploy, // 다음 배포 묶음
     autoDeploy, // 대기열이 끝나면 자동 배포(설정)

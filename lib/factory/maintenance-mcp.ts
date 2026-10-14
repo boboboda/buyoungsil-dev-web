@@ -98,6 +98,7 @@ export async function callMaintenanceTool(name: string, args: Record<string, unk
           새앱일감멈춤: o.hold,
           정비진행중: o.active,
           대기상태: o.drainNote,
+          배포상태: o.deployNote,
           ...queueView(o),
           정비: o.threads.map((t) => ({
             id: t.id,

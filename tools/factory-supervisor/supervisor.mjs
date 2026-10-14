@@ -16,6 +16,7 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { enforceTestMode } from "./testmode.mjs";
+import { BIG_UPLOAD_BYTES, createOutbox, trackUpload, uploadBusy } from "./outbox.mjs";
 import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard, updateWaiting } from "./update.mjs";
 import {
   maskText,
@@ -31,7 +32,7 @@ import {
   sentRelease,
   syncKeyPasswords,
 } from "./release.mjs";
-import { deployHold, deployWaiting, maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
+import { deployRunning, deployWaiting, maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
 import { expectedSigner, gitCommitOf, judgeSignature, readApkInfo, sha256File, uploadTestApk, verifyApk } from "./apk.mjs";
 import { compactSession } from "./compact.mjs";
 import { runKeyTasks } from "./keyvault.mjs";
@@ -166,8 +167,9 @@ async function init() {
 // ───────────── 홈페이지 호출 ─────────────
 let cfg;
 
-async function api(method, pathname, body, { timeoutMs = 60_000 } = {}) {
+async function api(method, pathname, body, { timeoutMs = 60_000, requestId } = {}) {
   const headers = { Authorization: `Bearer ${cfg.token}` };
+  if (requestId) headers["X-Request-Id"] = requestId; // 재전송 대기열이 같은 보고를 다시 보내도 홈페이지가 한 번만 처리하게 한다
   const extra = {};
   let payload;
   if (body instanceof FormData) payload = body;
@@ -185,7 +187,10 @@ async function api(method, pathname, body, { timeoutMs = 60_000 } = {}) {
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
-  const res = await fetch(cfg.serverUrl + pathname, { method, headers, body: payload, ...extra, signal: AbortSignal.timeout(timeoutMs) });
+  // 큰 파일(영상·스크린샷 묶음·실험 결과) 업로드가 도는 동안은 서버 배포가 끝나길 기다려 준다(최대 10분, maintenance.mjs)
+  const bigBytes = body && typeof body === "object" && typeof body.streamFile === "string" ? Number(body.size) || 0 : body instanceof Uint8Array ? body.length : body instanceof FormData ? [...body.values()].reduce((n, v) => n + (typeof v === "object" ? v.size ?? 0 : 0), 0) : 0;
+  const doFetch = () => fetch(cfg.serverUrl + pathname, { method, headers, body: payload, ...extra, signal: AbortSignal.timeout(timeoutMs) });
+  const res = await (bigBytes >= BIG_UPLOAD_BYTES ? trackUpload(`${method} ${pathname.split("?")[0]}`, doFetch) : doFetch());
   let data = null;
   // JSON 이 아닌 응답(nginx 413 HTML 등)도 실패 사유에 남길 수 있게 본문 앞부분을 text 로 같이 돌려준다
   let text = "";
@@ -197,6 +202,9 @@ async function api(method, pathname, body, { timeoutMs = 60_000 } = {}) {
   }
   return { status: res.status, data, text: data ? "" : text.slice(0, 2000) };
 }
+
+// 재전송 대기열: 홈페이지가 응답하지 않을 때(서버 배포 중 3~5분 포함) 보고·로그·하트비트·완료 보고·스크린샷 등록을 쌓았다가 순서대로 다시 보낸다
+const outbox = createOutbox({ sendOnce: (method, p, body, o) => api(method, p, body, o), log: (m) => log(m) });
 
 async function check() {
   // 없는 지시에 빈 보고를 보내 본다: 토큰이 맞으면 404, 틀리면 401. 일감은 건드리지 않는다.
@@ -607,11 +615,12 @@ async function uploadShots(st) {
     form.append("label", label);
     form.append("file", new Blob([buf], { type: MIME[ext] }), name);
     try {
-      const r = await api("POST", "/api/factory/screenshot", form);
+      // 홈페이지가 응답하지 않으면(서버 배포 중) 대기열에 쌓았다가 순서대로 다시 올린다. 나중에 일감이 끝난 걸 알게 되면 그때 멈춘다
+      const r = await outbox.send({ kind: "screenshot", path: "/api/factory/screenshot", body: form, jobId: st.job.id, bytes: buf.length, onResult: (late) => late.status === 409 && handleConflict(st, late) });
       if (r.status === 200) {
         st.shots.add(key);
         st.shotHashes.add(contentKey);
-        addLog(st, "info", `스크린샷 올림: ${label}`);
+        addLog(st, "info", r.queued ? `스크린샷 등록을 대기열에 넣음(홈페이지가 돌아오면 올려요): ${label}` : `스크린샷 올림: ${label}`);
       } else if (r.status === 409) return handleConflict(st, r);
       else if (r.status >= 500 || r.status === 429) {
         failed++;
@@ -656,7 +665,9 @@ async function flush(st, extra = {}) {
       const body = { jobId: st.job.id, logs: batch, ...(st.phaseDirty ? { phase: st.phase } : {}), ...(toolDirty && st.broker ? { toolRequests: st.broker.list() } : {}), ...(sentParallel ? { parallel: sentParallel } : {}), ...extra };
       let r;
       try {
-        r = await api("POST", "/api/factory/report", body);
+        // 내용 없는 보고(임대만 잇는 하트비트)는 대기열에도 일감마다 하나만 둔다
+        const kind = batch.length === 0 && !st.phaseDirty && !toolDirty && !sentParallel && Object.keys(extra).length === 0 ? "heartbeat" : "report";
+        r = await outbox.send({ kind, path: "/api/factory/report", body, jobId: st.job.id, onResult: (late) => late.status === 409 && handleConflict(st, late) });
       } catch (e) {
         st.logs.unshift(...batch);
         log(`[${st.job.appSlug}] 보고 실패(네트워크): ${e.message}`);
@@ -718,8 +729,11 @@ async function finish(st, status, fields) {
     try {
       readPhase(st);
       const tools = st.broker?.list() ?? [];
-      const r = await api("POST", "/api/factory/report", { jobId: st.job.id, logs: st.logs.splice(0, 50), phase: status === "done" ? "done" : st.phase, status, ...(tools.length ? { toolRequests: tools } : {}), ...(st.parallel ? { parallel: st.parallel } : {}), ...fields });
+      // 완료 보고는 홈페이지가 돌아와 받을 때까지 기다린다(서버 배포 중이면 대기열에 쌓였다가 순서대로 나간다). 최대 12분
+      const finalBody = { jobId: st.job.id, logs: st.logs.splice(0, 50), phase: status === "done" ? "done" : st.phase, status, ...(tools.length ? { toolRequests: tools } : {}), ...(st.parallel ? { parallel: st.parallel } : {}), ...fields };
+      const r = await outbox.send({ kind: "final", path: "/api/factory/report", body: finalBody, jobId: st.job.id, wait: true });
       if (r.status === 200) {
+        if (r.queued) return log(`[${st.job.appSlug}] 최종 보고(${status})를 대기열에 넣었어요. 홈페이지가 돌아오면 보내요.`);
         if (status === "done" && r.data?.finalCheck) st.finalCheck = r.data.finalCheck; // 지휘자가 묶은 그룹의 마지막 일감: 앱 전체 점검을 맡는다
         return log(`[${st.job.appSlug}] 보고 완료: ${status}`);
       }
@@ -1205,10 +1219,10 @@ async function runJobUnlocked(job, lock) {
   readPhase(st);
   seedShots(st);
   // 도구 중계 결과 이미지: 시작 때 이미 있던 파일(이전 일감 것)은 올리지 않는다
-  st.assets = createAssetUploader({ appDir: dir, jobId: job.id, post: (form) => api("POST", "/api/factory/screenshot", form), log: (level, m) => addLog(st, level, m) });
+  st.assets = createAssetUploader({ appDir: dir, jobId: job.id, post: (form) => outbox.send({ kind: "screenshot", path: "/api/factory/screenshot", body: form, jobId: job.id, bytes: [...form.values()].reduce((n, v) => n + (typeof v === "object" ? v.size ?? 0 : 0), 0) }), log: (level, m) => addLog(st, level, m) });
   st.assets.seed();
   // 도트 그림 저장소: pixel-art 결과를 '후보'로 올린다(승인은 부영실이 스튜디오에서)
-  st.arts = createArtRegistrar({ appDir: dir, jobId: job.id, appSlug: job.appSlug, post: (form) => api("POST", "/api/factory/art", form), log: (level, m) => addLog(st, level, m) });
+  st.arts = createArtRegistrar({ appDir: dir, jobId: job.id, appSlug: job.appSlug, post: (form) => outbox.send({ kind: "art", path: "/api/factory/art", body: form, jobId: job.id, bytes: [...form.values()].reduce((n, v) => n + (typeof v === "object" ? v.size ?? 0 : 0), 0) }), log: (level, m) => addLog(st, level, m) });
   addLog(st, "info", `앱 폴더 준비 완료: ${dir} (작업 규칙: ${job.rulesSource})`);
   if (job.projectSettingsState === "written") addLog(st, "info", `프로젝트 도구 설정을 내려 줬어요(버전 ${job.projectToolSettings?.version ?? "?"}): .factory/project-settings.json`);
   else if (job.projectSettingsState === "invalid") addLog(st, "warn", "프로젝트 도구 설정을 내려 주지 못했어요(형식 오류·너무 큼). 도구 기본값을 써요.");
@@ -1884,13 +1898,14 @@ async function loop() {
       { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
-        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery() });
+        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery(), ...(outbox.size() > 0 ? { outbox: String(outbox.size()) } : {}), ...(deployRunning() ? { deploying: "1" } : {}) });
         const sentTools = aiTools;
         const sentMemory = extra.get("memory");
         // 정비가 진행 중이어도 앱·실험 일감은 계속 받는다. 새 일감을 멈추는 건 위험한 순간을 앞둔 드레인뿐이다:
-        // 감독 프로그램 업데이트 대기·서버 배포 대기·배포 중(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌)
-        const drain = updateWaiting() ? "update" : deployWaiting() ? "deploy" : "";
-        const take = planTake({ limit: appLimit(), running: running.size, draining: !!drain || deployHold() });
+        // 감독 프로그램 업데이트 대기(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌). 서버 배포는 일감을 막지 않는다:
+        // 배포 중 보고는 재전송 대기열(outbox)이 지키고, 새 일감도 계속 가져간다(1-1 D-1)
+        const drain = updateWaiting() ? "update" : "";
+        const take = planTake({ limit: appLimit(), running: running.size, draining: !!drain });
         const drainQuery = drain ? new URLSearchParams({ drain, drainJobs: String(running.size + (maintenanceBusy() ? 1 : 0)) }).toString() : "";
         const r = await api(
           "GET",
@@ -1960,7 +1975,7 @@ async function loop() {
           if (Array.isArray(r.data?.labCleanup)) void runLabCleanups(r.data.labCleanup).catch(() => {});
           // 이번 응답으로 방금 받은 일감도 '진행 중'으로 센다(배포가 그 일감과 겹쳐 시작하지 않게). 아래에서 시작되는 만큼만
           const incoming = r.data?.paused === true ? 0 : Math.min((r.data?.jobs ?? []).length, Math.max(0, free));
-          onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size + incoming, updateDraining: () => updateWaiting() || restartPending(), requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) });
+          onMaintenance(r.data, { api, outbox, uploadBusy, log, cfg, runningApps: () => running.size + incoming, updateDraining: () => updateWaiting() || restartPending(), requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) });
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
           if (nowPaused !== paused) {

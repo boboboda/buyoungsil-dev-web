@@ -1134,3 +1134,13 @@ model FactoryArt {
   @@index([appSlug, status])
   @@map("factory_arts")
 }
+
+// 감독 프로그램 재전송 중복 방지. 배포 중에 쌓였다 다시 보내는 보고·로그·스크린샷에 붙은 요청 번호(X-Request-Id)를
+// 처리한 뒤 남겨 두고, 같은 번호가 또 오면 다시 처리하지 않는다. 하루 지난 줄은 정리한다.
+model FactoryRequestSeen {
+  id        String   @id
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("factory_request_seen")
+}

@@ -93,6 +93,10 @@ export async function GET(req: NextRequest) {
   // 드레인(업데이트·배포를 진행 중 일감이 끝나길 기다리는 중, 새 일감은 받지 않음). 표시용이라 모양이 이상하면 무시한다
   const drainRaw = param("drain", 10);
   const drain = drainRaw === "update" || drainRaw === "deploy" ? drainRaw : undefined;
+  // 재전송 대기열(배포 중 홈페이지가 응답하지 않는 동안 쌓인 보고 수)·배포 진행 여부. 표시용
+  const outboxRaw = Math.floor(Number(param("outbox", 6)));
+  const outbox = Number.isFinite(outboxRaw) && outboxRaw > 0 ? Math.min(9999, outboxRaw) : undefined;
+  const deployingPc = param("deploying", 1) === "1" ? true : undefined;
   const drainJobs = drain ? Math.min(99, Math.max(0, Math.floor(Number(param("drainJobs", 4))) || 0)) : undefined;
   // AI 도구 상태(읽기 전용). PC 가 확인한 때만 온다
   const aiToolsAtRaw = param("aiToolsAt", 40);
@@ -125,6 +129,8 @@ export async function GET(req: NextRequest) {
           restartWait: hold || undefined,
           drain,
           drainJobs,
+          outbox,
+          deployingPc,
           restartFail: param("restartFail", 300) || undefined,
         },
         restart,

@@ -26,7 +26,7 @@ import {
   setSupervisorEnabled,
   type SupervisorRuntime,
 } from "@/lib/factory/settings";
-import { drainNote } from "@/lib/factory/supervisorDrain";
+import { deployNote, drainNote } from "@/lib/factory/supervisorDrain";
 import { addSupervisorLog, type SupervisorLogKind } from "@/lib/factory/supervisorLog";
 import { notifyText } from "@/lib/factory/telegram";
 import { getAppChecks } from "@/lib/factory/appChecks";
@@ -71,6 +71,9 @@ export async function supervisorSnapshot() {
   const online = !!lastSeen && Date.now() - lastSeen.getTime() < ONLINE_MS;
   // 업데이트·서버 배포를 진행 중 일감이 끝나길 기다리는 중(드레인). 온라인일 때만 보인다
   const drain = online && rt.drain ? rt.drain : null;
+  // 배포 중이거나 재전송 대기 보고가 남아 있으면 통제실에 보인다(감독 프로그램이 알려 준 값 + 서버가 아는 배포 진행)
+  const deploying = !!(online && rt.deployingPc) || (await import("@/lib/factory/deployWindow").then((m) => m.isDeployingNow()).catch(() => false));
+  const outbox = online ? (rt.outbox ?? 0) : 0;
 
   return {
     defaultAiEngine,
@@ -105,6 +108,9 @@ export async function supervisorSnapshot() {
     drainState: drain, // null | update | deploy. 정비가 진행 중이어도 앱 일감은 돌고, 이때만 새 일감이 멈춘다
     drainJobs: drain ? (rt.drainJobs ?? 0) : null,
     drainNote: drain ? drainNote(drain, rt.drainJobs ?? 0) : null,
+    deploying, // 서버 배포 중(이 사이 홈페이지가 잠깐 응답하지 않는다)
+    outboxCount: outbox, // 감독 프로그램이 못 보내고 쌓아 둔 보고 수
+    deployNote: deployNote(deploying, outbox), // "배포 중 · 재전송 대기 N개" 또는 null
     online,
     lastSeenAt: lastSeen,
     workerName: last?.name ?? null,
@@ -143,7 +149,7 @@ async function restartStatus(rt: SupervisorRuntime, requestedAt: string | null, 
 /** /next 에서 부른다. 감독 프로그램이 알려 준 실행 정보를 저장하고, 재시작이 끝났거나 실패했으면 텔레그램으로 알린다.
  *  tookRestart: 이번 응답으로 재시작 요청을 넘겨줬는지. */
 export async function noteSupervisorRuntime(
-  pc: Pick<SupervisorRuntime, "startedAt" | "boot" | "ffmpeg" | "ffprobe" | "claudeTool" | "codexTool" | "aiToolsAt" | "memory" | "restartWait" | "restartFail" | "drain" | "drainJobs">,
+  pc: Pick<SupervisorRuntime, "startedAt" | "boot" | "ffmpeg" | "ffprobe" | "claudeTool" | "codexTool" | "aiToolsAt" | "memory" | "restartWait" | "restartFail" | "drain" | "drainJobs" | "outbox" | "deployingPc">,
   tookRestart: boolean,
 ): Promise<void> {
   const cur = await getSupervisorRuntime();

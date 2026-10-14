@@ -10,6 +10,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
+import { isTransient } from "./outbox.mjs";
+
+const TRANSIENT_RETRY_MS = 8 * 60_000; // 서버 배포(3~5분) 동안 결과 파일 올리기를 다시 시도하는 시간
 
 export const LAB_SLUG = "lab";
 export const LAB_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
@@ -348,10 +351,14 @@ export async function uploadLabOutputs({ labDir, plan, put, log = () => {} }) {
           got += n;
         }
         let r;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        const chunkStart = Date.now();
+        for (let attempt = 1; ; attempt++) {
           try { r = await put({ name: f.name, idx, count, size: f.size, bytes: buf }); } catch (e) { r = { status: 0, data: { message: e.message } }; }
           if (r.status === 200 || (r.status >= 400 && r.status < 500 && r.status !== 429)) break;
-          await new Promise((res) => setTimeout(res, 1500 * attempt));
+          // 홈페이지가 응답하지 않으면(서버 배포 중 3~5분) 돌아올 때까지 길게 다시 시도한다. 그 밖의 오류는 예전처럼 3번
+          const down = isTransient(r);
+          if (down ? Date.now() - chunkStart > TRANSIENT_RETRY_MS : attempt >= 3) break;
+          await new Promise((res) => setTimeout(res, down ? Math.min(30_000, 3000 * attempt) : 1500 * attempt));
         }
         if (r.status === 409) { stopped = true; throw new Error("일감이 더 이상 실행 중이 아니에요"); }
         if (r.status !== 200) throw new Error(`서버가 받지 않았어요(${r.status}${r.data?.message ? `: ${String(r.data.message).slice(0, 120)}` : ""})`);

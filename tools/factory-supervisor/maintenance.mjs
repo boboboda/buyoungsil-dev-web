@@ -5,8 +5,11 @@
 // - Claude 는 커밋만 하고, 올리기는 감독 프로그램이 검사(node --check, tsc 0 오류)를 통과했을 때만 한다(GitHub main).
 // - /next 의 maintenanceDeploy 는 사람이 [배포]를 누른 것. 정해진 명령 하나(서버 배포 저장소로 그 커밋 push)만 실행한다.
 //   서버가 보낸 것은 커밋 해시뿐이고, 그 커밋이 GitHub main 에 있는지 확인한 뒤에만 올린다.
-//   배포는 진행 중인 앱·실험 일감과 정비 지시가 모두 끝난 뒤에 시작한다(배포 대기 = 드레인: 그동안 새 일감·새 정비 지시를 시작하지 않는다).
-//   배포 중에는 홈페이지 컨테이너가 바뀌어 일감의 보고·업로드가 끊기므로, 보고를 다시 보내는 것보다 겹치지 않게 비키는 쪽이 안전하다.
+//   배포는 진행 중인 앱·실험 일감이 있어도 시작하고, 새 일감 가져가기도 막지 않는다(1-1 D-1).
+//   배포 중 홈페이지가 3~5분 응답하지 않는 동안의 보고·로그·하트비트·완료 보고·스크린샷 등록은 감독 프로그램의 재전송 대기열(outbox.mjs)이
+//   쌓았다가 순서대로 다시 보낸다(요청 번호로 중복 처리 방지). 기다리는 건 두 가지뿐이다:
+//   - 정비 지시가 도는 중이면 그게 끝난 뒤(보통 대기열이 끝난 뒤에야 배포 요청이 오므로 거의 없다)
+//   - 큰 파일 업로드(영상·스크린샷 묶음·실험 결과)가 진행 중이면 그 업로드가 끝날 때까지, 최대 10분. 넘으면 배포하고 업로드는 다시 시도한다.
 // - 정비 대기열(서버가 maintenance.deployBundling 을 보낼 때): 서버가 보낸 순서대로 하나씩 준다. 앞 지시가 검사 실패 등으로
 //   로컬에만 남긴 커밋은 같은 정비 대화가 이어갈 때만 그 위에서 하고, 다른 대화의 지시면 백업 브랜치로 옮긴 뒤 origin/main 에서 시작한다.
 //   배포 안내도 서버가 대기열 끝에 묶어서 하므로 결과 문구를 그에 맞춘다. 이 필드가 없으면(예전 서버) 예전 방식 그대로.
@@ -77,11 +80,14 @@ function permissionSettings() {
 let current = null; // 진행 중인 정비 지시
 let deploying = false;
 
-let deployWait = false; // [배포]를 받았지만 진행 중인 일감이 끝나길 기다리는 중
+let deployWait = false; // [배포]를 받았지만 정비 지시나 큰 업로드가 끝나길 기다리는 중
+let uploadWaitSince = 0; // 큰 업로드를 기다리기 시작한 시각(0 = 기다리지 않음)
+export const UPLOAD_WAIT_MAX_MS = 10 * 60_000; // 큰 업로드를 기다리는 최대 시간
 
 export const maintenanceBusy = () => !!current || deploying; // 정비 지시나 배포가 도는 중(자동 업데이트·재시작 보류)
-export const deployWaiting = () => deployWait && !deploying; // 배포 대기(드레인): 새 일감을 받지 않는다
-export const deployHold = () => deployWait || deploying; // 배포를 기다리거나 하는 중: 새 일감·새 정비 지시를 시작하지 않는다
+export const deployWaiting = () => deployWait && !deploying; // 배포 대기(정비 지시·큰 업로드가 끝나길 기다리는 중). 새 앱·실험 일감은 막지 않는다
+export const deployHold = () => deployWait || deploying; // 배포를 기다리거나 하는 중: 새 정비 지시만 시작하지 않는다(앱·실험 일감은 계속 받는다)
+export const deployRunning = () => deploying; // 서버 배포(git push·빌드·교체) 진행 중. 통제실 "배포 중" 표시용
 
 const tail = (s, n) => String(s ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim().slice(-n);
 const short = (h) => (h ? h.slice(0, 7) : "?");
@@ -106,20 +112,27 @@ function run(cmd, args, dir, timeout = 600_000) {
 /** /next 응답(200)마다 부른다. 기다리지 않는다. */
 export function onNext(data, ctx) {
   if (data?.maintenanceDeploy && !deploying) {
-    // 앱·실험 일감이나 정비 지시가 돌고 있으면 다 끝날 때까지 기다린다(서버 응답은 배포를 시작하기 전까지 계속 같은 요청을 준다)
-    if (ctx.runningApps() > 0 || current) {
-      if (!deployWait) ctx.log(`[정비 배포] 대기: 진행 중인 일감 ${ctx.runningApps() + (current ? 1 : 0)}개가 모두 끝나면 배포해요(그동안 새 일감은 받지 않아요).`);
+    // 진행 중인 앱·실험 일감이 있어도 배포한다(보고는 재전송 대기열이 지켜 준다). 기다리는 건 정비 지시, 큰 업로드뿐(서버 응답은 배포를 시작하기 전까지 계속 같은 요청을 준다)
+    const uploads = ctx.uploadBusy?.() ?? 0;
+    if (uploads > 0 && !uploadWaitSince) uploadWaitSince = Date.now();
+    if (uploads === 0) uploadWaitSince = 0;
+    const uploadTimedOut = uploads > 0 && Date.now() - uploadWaitSince >= UPLOAD_WAIT_MAX_MS;
+    if (current || (uploads > 0 && !uploadTimedOut)) {
+      if (!deployWait) ctx.log(current ? "[정비 배포] 대기: 진행 중인 정비 지시가 끝나면 배포해요." : `[정비 배포] 대기: 큰 파일 업로드 ${uploads}개가 끝나면 배포해요(최대 10분).`);
       deployWait = true;
     } else {
+      if (uploadTimedOut) ctx.log(`[정비 배포] 큰 파일 업로드가 10분 넘게 끝나지 않아 그대로 배포해요(업로드 ${uploads}개는 끊기면 다시 시도해요).`);
       deployWait = false;
+      uploadWaitSince = 0;
       deploying = true;
       deploy(data.maintenanceDeploy, ctx).finally(() => (deploying = false));
     }
   } else if (!data?.maintenanceDeploy && deployWait) {
     ctx.log("[정비 배포] 대기 취소: 서버에 배포 요청이 더 없어요.");
     deployWait = false;
+    uploadWaitSince = 0;
   }
-  // 새 지시는 배포 대기·배포 중, 감독 프로그램 업데이트·재시작 대기 중에는 시작하지 않는다(앱 일감은 상관없이 같이 돈다)
+  // 새 정비 지시는 배포 대기·배포 중, 감독 프로그램 업데이트·재시작 대기 중에는 시작하지 않는다(앱 일감은 상관없이 같이 돈다)
   if (data?.maintenance && !current && !deployHold() && !(ctx.updateDraining?.())) {
     current = data.maintenance;
     runTurn(data.maintenance, ctx)
@@ -130,6 +143,13 @@ export function onNext(data, ctx) {
 
 async function post(ctx, body) {
   try {
+    // 정비 지시의 진행·결과 보고는 홈페이지가 응답하지 않을 때(서버 배포 중) 재전송 대기열에 쌓아 순서대로 다시 보낸다.
+    // 시작(start)과 배포 시작·결과는 여기 오지 않고 직접 보낸다(배포 결과는 deploy() 가 받아들여질 때까지 다시 보낸다)
+    if (ctx.outbox && body.action === "report") {
+      const final = !!body.done;
+
+      return await ctx.outbox.send({ kind: final ? "final" : body.logs?.length ? "report" : "heartbeat", path: "/api/factory/maintenance", body, jobId: `maint:${body.turnId}`, wait: final });
+    }
     return await ctx.api("POST", "/api/factory/maintenance", body);
   } catch (e) {
     return { status: 0, data: { message: e.message } };

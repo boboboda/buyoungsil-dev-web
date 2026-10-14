@@ -305,7 +305,7 @@ test("감독 프로그램 연결: 서버 값 적용·꽉 차도 확인·같은 �
   const src = read("tools/factory-supervisor/supervisor.mjs");
   assert.match(src, /import \{ DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake \} from "\.\/slots\.mjs"/);
   assert.match(src, /effectiveSlots\(\{ server: r\.data\?\.appSlots, serverIsDefault: r\.data\?\.appSlotsDefault === true, pc: cfg\.pcSlots \}\)/);
-  assert.match(src, /planTake\(\{ limit: appLimit\(\), running: running\.size, draining: !!drain \|\| deployHold\(\) \}\)/);
+  assert.match(src, /planTake\(\{ limit: appLimit\(\), running: running\.size, draining: !!drain \}\)/);
   assert.doesNotMatch(src, /if \(free > 0\) \{/, "꽉 차면 확인을 건너뛰던 예전 코드가 남아 있지 않음");
   assert.doesNotMatch(src, /cfg\.slots - running\.size/);
   assert.match(src, /slots=\$\{take\}/);

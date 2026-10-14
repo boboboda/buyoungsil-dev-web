@@ -71,7 +71,38 @@ const ts = (d: Date) => Prisma.sql`${d.toISOString().replace("T", " ").replace("
 // ───────────── 가져가기 ─────────────
 
 // 임대가 만료된 running 을 정리한다. next 를 부를 때마다 먼저 실행한다. (별도 크론 없음)
+// 서버 배포 중에는 홈페이지가 응답하지 않아 보고(임대 연장)가 끊긴다. 마지막 임대 연장 뒤 지난 시간에서 배포 구간을 뺀 값이
+// LEASE_MS 를 넘을 때만 만료로 본다(배포 구간이 없으면 예전과 같다).
 export async function releaseExpiredLeases(now = new Date()): Promise<void> {
+  const dw = await import("@/lib/factory/deployWindow").catch(() => null);
+  const windows = dw ? await dw.loadDeployWindows(new Date(now.getTime() - 2 * 60 * 60 * 1000), now.getTime()) : [];
+
+  if (dw && windows.length) {
+    const late = await prisma.$queryRaw<{ id: string; leaseUntil: Date; attempts: number; maxAttempts: number }[]>(Prisma.sql`
+      SELECT "id", "leaseUntil", "attempts", "maxAttempts" FROM "factory_jobs"
+      WHERE "status" = 'running' AND "leaseUntil" < ${ts(now)}`);
+    // 임대는 보고할 때마다 (그때 + LEASE_MS) 로 늘어나므로 leaseUntil - LEASE_MS 가 마지막 보고 시각이다
+    const dead = late.filter((j) => dw.idleMsExcludingDeploy(windows, new Date(j.leaseUntil).getTime() - LEASE_MS, now.getTime()) > LEASE_MS);
+    const retry = dead.filter((j) => j.attempts < j.maxAttempts).map((j) => j.id);
+    const exhausted = dead.filter((j) => j.attempts >= j.maxAttempts).map((j) => j.id);
+
+    if (retry.length) {
+      await prisma.$executeRaw(Prisma.sql`
+        UPDATE "factory_jobs"
+        SET "status" = 'approved', "workerId" = NULL, "leaseUntil" = NULL, "phase" = NULL, "updatedAt" = ${ts(now)}
+        WHERE "status" = 'running' AND "id" IN (${Prisma.join(retry)})`);
+    }
+    if (exhausted.length) {
+      await prisma.$executeRaw(Prisma.sql`
+        UPDATE "factory_jobs"
+        SET "status" = 'failed', "failReason" = '임대 만료(시도 횟수 소진)', "leaseUntil" = NULL,
+            "finishedAt" = ${ts(now)}, "updatedAt" = ${ts(now)}
+        WHERE "status" = 'running' AND "id" IN (${Prisma.join(exhausted)})`);
+    }
+
+    return;
+  }
+
   await prisma.$executeRaw(Prisma.sql`
     UPDATE "factory_jobs"
     SET "status" = 'approved', "workerId" = NULL, "leaseUntil" = NULL, "phase" = NULL, "updatedAt" = ${ts(now)}

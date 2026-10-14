@@ -73,6 +73,7 @@ interface Data {
   active?: boolean; // 정비 지시가 대기·진행 중(앱 일감은 계속 돈다). 예전 서버에는 없다
   drain?: "update" | "deploy" | null;
   drainNote?: string | null;
+  deployNote?: string | null; // "배포 중 · 재전송 대기 N개". 예전 서버에는 없다
   queue?: Queue; // 예전 서버에는 없다
   deploy?: Bundle;
   autoDeploy?: boolean;
@@ -212,6 +213,7 @@ export default function MaintenancePanel({ initialThreadId = null }: { initialTh
           홈페이지·감독 프로그램 코드를 고치는 대화예요. 정비가 진행 중이어도 앱·실험 일감은 계속 돌아요.
           {data?.drainNote ? ` (${data.drainNote})` : ""}
         </span>
+        {data?.deployNote && <span className="text-xs font-semibold text-warning-600">🚀 {data.deployNote}</span>}
       </div>
 
       {queue?.halted && (

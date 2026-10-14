@@ -8,7 +8,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { planTake } from "../slots.mjs";
-import { deployHold, deployWaiting, maintenanceBusy, onNext } from "../maintenance.mjs";
+import { deployHold, deployRunning, deployWaiting, maintenanceBusy, onNext, UPLOAD_WAIT_MAX_MS } from "../maintenance.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SUP = path.resolve(HERE, "..");
@@ -74,48 +74,73 @@ test("정비 지시: 업데이트·재시작 대기(드레인) 중에는 새로 
   assert.equal(calls.length, 0, "서버 호출도 없음(대기열에 그대로 남음)");
 });
 
-test("서버 배포: 진행 중 일감이 있으면 기다리고(배포 대기=드레인), 다 끝난 다음 응답에서 시작한다", async (t) => {
-  const running = { n: 1 };
-  const { ctx, calls, logs, tmp } = fakeCtx(running);
+test("서버 배포: 진행 중인 앱·실험 일감이 있어도 기다리지 않고 바로 시작한다(1-1 D-1)", async (t) => {
+  const running = { n: 3 };
+  const { ctx, calls, tmp } = fakeCtx(running);
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   onNext({ maintenanceDeploy: DEPLOY }, ctx);
-  assert.equal(deployWaiting(), true, "배포 대기");
-  assert.equal(deployHold(), true);
-  assert.equal(maintenanceBusy(), false, "아직 배포하지 않음");
-  assert.equal(calls.length, 0, "서버에 배포 시작을 알리지 않음");
-  assert.ok(logs.some((l) => /배포\] 대기: 진행 중인 일감 1개/.test(l)));
-  // 정비 지시도 배포 대기 중에는 새로 시작하지 않는다
-  onNext({ maintenanceDeploy: DEPLOY, maintenance: { ...MAINT, turnId: "turn3" } }, ctx);
-  assert.equal(calls.length, 0);
-  // 일감이 끝나면 다음 /next 응답(maintenanceDeploy 는 시작 전까지 계속 온다)에서 시작
-  running.n = 0;
-  onNext({ maintenanceDeploy: DEPLOY }, ctx);
-  assert.equal(deployWaiting(), false);
+  assert.equal(deployWaiting(), false, "일감 때문에 대기하지 않음");
   assert.equal(maintenanceBusy(), true, "배포 시작");
+  assert.equal(deployRunning(), true);
   assert.equal(await until(() => calls.some((c) => c.action === "deploy_start")), true);
   assert.equal(await until(() => calls.some((c) => c.action === "deploy_done")), true, "결과도 보고(가짜 홈페이지는 바로 받음)");
   assert.equal(await until(() => !maintenanceBusy()), true);
   assert.equal(deployHold(), false);
 });
 
-test("서버 배포: 기다리던 배포 요청이 사라지면(취소) 대기를 풀고 새 일감을 다시 받는다", async (t) => {
-  const running = { n: 1 };
-  const { ctx, tmp } = fakeCtx(running);
+test("서버 배포: 정비 지시가 도는 중이면 그게 끝난 뒤 시작, 그동안 새 정비 지시도 시작하지 않는다", async (t) => {
+  const { ctx, calls, logs, tmp } = fakeCtx({ n: 0 });
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  onNext({ maintenance: { ...MAINT, turnId: "turn-d1" } }, ctx);
+  assert.equal(maintenanceBusy(), true);
+  onNext({ maintenanceDeploy: DEPLOY }, ctx);
+  assert.equal(deployWaiting(), true, "정비 지시가 끝나길 기다림");
+  assert.ok(logs.some((l) => /배포\] 대기: 진행 중인 정비 지시/.test(l)));
+  assert.equal(await until(() => !maintenanceBusy(), 5000), true, "정비(폴더 없음)는 실패로 곧 끝남");
+  onNext({ maintenanceDeploy: DEPLOY }, ctx);
+  assert.equal(deployWaiting(), false);
+  assert.equal(await until(() => calls.some((c) => c.action === "deploy_done")), true);
+  assert.equal(await until(() => !maintenanceBusy()), true);
+});
+
+test("서버 배포: 큰 업로드가 있을 때만 그 업로드가 끝날 때까지 기다리고(최대 10분), 넘으면 배포한다", async (t) => {
+  const uploads = { n: 1 };
+  const { ctx, calls, logs, tmp } = fakeCtx({ n: 2 }, { uploadBusy: () => uploads.n });
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  onNext({ maintenanceDeploy: DEPLOY }, ctx);
+  assert.equal(deployWaiting(), true, "업로드 중이라 대기");
+  assert.equal(calls.length, 0);
+  assert.ok(logs.some((l) => /큰 파일 업로드 1개가 끝나면 배포해요\(최대 10분\)/.test(l)));
+  uploads.n = 0; // 업로드 끝
+  onNext({ maintenanceDeploy: DEPLOY }, ctx);
+  assert.equal(deployWaiting(), false);
+  assert.equal(await until(() => calls.some((c) => c.action === "deploy_done")), true);
+  assert.equal(await until(() => !maintenanceBusy()), true);
+
+  // 10분 넘게 업로드가 안 끝나면 그대로 배포
+  const realNow = Date.now;
+  const t0 = realNow();
+  const calls2 = fakeCtx({ n: 0 }, { uploadBusy: () => 1 });
+  t.after(() => { Date.now = realNow; fs.rmSync(calls2.tmp, { recursive: true, force: true }); });
+  onNext({ maintenanceDeploy: DEPLOY }, calls2.ctx);
+  assert.equal(deployWaiting(), true);
+  Date.now = () => t0 + UPLOAD_WAIT_MAX_MS + 1000;
+  onNext({ maintenanceDeploy: DEPLOY }, calls2.ctx);
+  Date.now = realNow;
+  assert.equal(deployWaiting(), false, "10분이 지나 배포로 넘어감");
+  assert.ok(calls2.logs.some((l) => /10분 넘게 끝나지 않아 그대로 배포/.test(l)));
+  assert.equal(await until(() => calls2.calls.some((c) => c.action === "deploy_done")), true);
+  assert.equal(await until(() => !maintenanceBusy()), true);
+});
+
+test("서버 배포: 기다리던 배포 요청이 사라지면(취소) 대기를 풀고 새 정비 지시를 다시 받는다", async (t) => {
+  const { ctx, tmp } = fakeCtx({ n: 0 }, { uploadBusy: () => 1 });
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   onNext({ maintenanceDeploy: DEPLOY }, ctx);
   assert.equal(deployWaiting(), true);
   onNext({}, ctx);
   assert.equal(deployWaiting(), false);
   assert.equal(deployHold(), false);
-});
-
-test("서버 배포: 이번 응답에 방금 받은 일감이 있으면 그것도 진행 중으로 세어 배포가 겹쳐 시작하지 않는다", (t) => {
-  const { ctx, calls, tmp } = fakeCtx({ n: 0 }, { runningApps: () => 0 + 2 /* running.size 0 + 방금 받은 2개 */ });
-  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
-  onNext({ maintenanceDeploy: DEPLOY }, ctx);
-  assert.equal(deployWaiting(), true);
-  assert.equal(calls.length, 0);
-  onNext({}, ctx); // 정리
 });
 
 // ── 감독 프로그램 업데이트 (임시 git 저장소, 진짜 update.mjs) ──
@@ -233,8 +258,9 @@ say({ step: "off", waiting: u.updateWaiting() });
 
 test("연결: 감독 루프가 업데이트·배포 대기를 새 일감 멈춤과 통제실 표시로 이어 줌", () => {
   const src = fs.readFileSync(path.join(SUP, "supervisor.mjs"), "utf8").replace(/\r\n/g, "\n");
-  assert.match(src, /updateWaiting\(\) \? "update" : deployWaiting\(\) \? "deploy" : ""/);
-  assert.match(src, /draining: !!drain \|\| deployHold\(\)/);
+  assert.match(src, /const drain = updateWaiting\(\) \? "update" : ""/);
+  assert.match(src, /draining: !!drain \}\)/);
+  assert.doesNotMatch(src, /deployHold\(\)/, "서버 배포는 새 일감 가져가기를 막지 않음(1-1 D-1)");
   assert.match(src, /drain, drainJobs: String\(running\.size \+ \(maintenanceBusy\(\) \? 1 : 0\)\)/);
   assert.match(src, /updateDraining: \(\) => updateWaiting\(\) \|\| restartPending\(\)/);
   assert.doesNotMatch(src, /maintenanceBusy: maintenanceBusy\(\) \}\)/, "정비 중이라서 새 일감을 멈추던 예전 코드가 없음");

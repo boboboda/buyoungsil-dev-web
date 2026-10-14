@@ -37,6 +37,7 @@
     "preview:admin-ui": "node tests/admin-ui-preview.mjs",
     "lint": "eslint --fix --color",
     "test:app-slots": "node tests/app-slots.test.mjs",
+    "test:deploy-continuity": "node tests/deploy-continuity.test.mjs && node tools/factory-supervisor/tests/outbox.test.mjs",
     "test:settings-card": "node tests/settings-card.test.mjs",
     "test:app-queue": "node tests/app-queue.test.mjs",
     "test:parallel-fixes": "node tests/parallel-fixes.test.mjs && node tools/factory-supervisor/tests/checks.test.mjs",

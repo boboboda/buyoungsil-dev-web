@@ -5,10 +5,12 @@
 //   { action: "deploy_start", threadId, commit }                  사람이 누른 배포를 시작
 //   { action: "deploy_done", threadId, ok, output }               배포 결과
 //   { action: "server_change", turnId?, text }                    serverctl 이 서버 설정을 바꿀 때 기록(값 없음)
+// report 는 헤더 X-Request-Id 가 같으면 한 번만 처리한다(감독 프로그램의 재전송 대기열 중복 방지).
 // 다음 지시와 배포 요청은 /api/factory/next 응답의 maintenance, maintenanceDeploy 로 내려간다.
 import { NextRequest, NextResponse } from "next/server";
 
 import { fail, guardWorker } from "@/lib/factory/http";
+import { markRequest, requestIdOf, seenRequest } from "@/lib/factory/requestSeen";
 import { deployFinished, deployStarted, noteServerChange, reportTurn, startTurn } from "@/lib/factory/maintenance";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +31,14 @@ export async function POST(req: NextRequest) {
     let r;
 
     if (body.action === "start" && typeof body.turnId === "string" && ID.test(body.turnId)) r = await startTurn(body.turnId, body.aiEngine === undefined ? "claude" : body.aiEngine);
-    else if (body.action === "report") r = await reportTurn(body);
+    else if (body.action === "report") {
+      // 재전송 대기열이 같은 보고를 다시 보낸 것이면(X-Request-Id) 다시 처리하지 않는다
+      const requestId = requestIdOf(req);
+
+      if (await seenRequest(requestId)) return NextResponse.json({ ok: true, duplicate: true });
+      r = await reportTurn(body);
+      if (r.ok) await markRequest(requestId);
+    }
     else if (body.action === "deploy_start" && typeof body.threadId === "string" && ID.test(body.threadId) && typeof body.commit === "string") {
       r = await deployStarted(body.threadId, body.commit);
     } else if (body.action === "deploy_done" && typeof body.threadId === "string" && ID.test(body.threadId)) {
