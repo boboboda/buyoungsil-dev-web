@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: purpose ? `${tp.id} 의 용도를 '${PURPOSE_LABELS[purpose]}'로 저장했어요.` : `${tp.id} 의 용도를 자동 추정으로 되돌렸어요.`, id: tp.id, purpose });
   }
 
-  // 스튜디오 프로젝트 설정: { studioProject: { appSlug, kind?: game|app, tools?: [도구 id], studioUrl?: https 주소 | null } }. 저장은 factory_settings 의 studioProjects 한 칸
+  // 스튜디오 프로젝트 설정: { studioProject: { appSlug, kind?: game|app|none(미분류), tools?: [도구 id], studioUrl?: https 주소 | null, links?: [{ name, url }] | null } }. 저장은 factory_settings 의 studioProjects 한 칸
   if (body && Object.hasOwn(body, "studioProject")) {
     const patch = body.studioProject as { appSlug?: unknown } | null;
     const slug = typeof patch?.appSlug === "string" ? patch.appSlug.trim() : "";

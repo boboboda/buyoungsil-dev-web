@@ -381,3 +381,45 @@ export const ONE_TINY_FRAME_SETTINGS: Record<string, unknown> = {
     ]
   }
 };
+
+/** 새싹 허브(saessak-hub) 처음 값: 게임 코드에서 확인한 값만. 값마다 출처는 주석(저장소 ~/dev/factory/saessak-hub, game-toolkit)
+ *  넣지 않은 것(코드에서 확인 못 함): spec.canvas(장면 캔버스) · motion(프리셋·프레임·fps·pixel_motion) · references.approved(승인 그림은 스튜디오에서 승인하면 생김) */
+export const SAESSAK_HUB_APP_SLUG = "saessak-hub";
+export const SAESSAK_HUB_WHO = "정비(새싹 허브 코드 기준)";
+export const SAESSAK_HUB_NOTE = "처음 값(허브 게임 코드 기준)";
+export const SAESSAK_HUB_SETTINGS: Record<string, unknown> = {
+  "version": 1,
+  // 방식: game-toolkit toolkit/pixelart.py KINDS(줄 23~28)의 방식 목록·첫 번째 기본값. PixelLab 허용은 켬(motion-clip 은 툴킷이 pixellab 을 안 줌)
+  "methods": {
+    "image-prop": { "allowed": ["codex", "pixellab", "claude"], "default": "codex" },
+    "image-scene": { "allowed": ["codex", "pixellab"], "default": "codex" },
+    "motion-game": { "allowed": ["claude", "pixellab", "codex"], "default": "claude" },
+    "motion-clip": { "allowed": ["manual", "codex"], "default": "manual" }
+  },
+  "results": {
+    "allowed_kinds": ["image-prop", "image-scene", "motion-game", "motion-clip"],
+    "default_kind": "image-prop"
+  },
+  // 규격: 한 칸 32px = saessak-hub lib/game/config.dart:13 `Cfg.tile = 32`. 크기 그룹 = lib/tool/check_rules.dart:46~52 sizeGroups 이름
+  "spec": {
+    "cell_size": 32,
+    "size_group": "길가 건물·나무·마당 소품·세트 소품·연구/교육/휴게실"
+  },
+  // 스타일: 외곽선 58,40,32 = check_rules.dart:10 · 최대 색 수 56 = check_rules.dart:28(작은 그림은 32, 줄 32) · 프리셋 hub = game-toolkit styles/hub/preset.json
+  "style": {
+    "outline_color": "#3A2820",
+    "max_colors": 56,
+    "preset": "hub",
+    "notes": "소품은 투명 배경(마진 20% 이하·잘림 없음, check_rules.dart:35·38). 정면에서 약간 위 시점, 진한 갈색 외곽선 1칸 두께, 색 2~3단 음영·그라데이션 없음. 작은 그림은 32색 이하. 자세한 규칙: styles/hub/preset.json"
+  },
+  // 비용 한도: 하찮은 한 컷(one-tiny-frame)과 같은 값
+  "cost": {
+    "pixellab_per_job": 3,
+    "pixellab_per_month": 30
+  },
+  // 별칭: 허브 게임에는 이름이 정해진 캐릭터가 없고 직원 이름은 실행 때 무작위(config.dart:169 이름 목록). 그림 폴더 이름(assets/sprites/staff, customer)만 묶음
+  "aliases": {
+    "직원": ["staff", "staff_walk"],
+    "손님": ["customer", "cust"]
+  }
+};

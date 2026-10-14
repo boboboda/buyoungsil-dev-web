@@ -1,7 +1,8 @@
 "use client";
 
-// 통제실 [스튜디오] 탭 본체(클라이언트): 서브탭 [게임 스튜디오][앱 스튜디오] → 프로젝트 고르기 → 카드(정보·종류·연결 도구·스튜디오 주소).
-// 저장은 /api/admin/factory/control 의 { studioProject } 액션. 종류가 없는 프로젝트는 '미분류'에 보이고 [게임]/[앱]을 누르면 옮겨진다.
+// 통제실 [스튜디오] 탭 본체(클라이언트): 서브탭 [게임 스튜디오][앱 스튜디오] → 프로젝트 고르기 → 카드(정보·스튜디오 분류·바로가기·연결 도구).
+// 저장은 /api/admin/factory/control 의 { studioProject } 액션. 분류가 없거나 '미분류'인 프로젝트는 '미분류' 묶음에 보이고 [게임]/[앱]/[미분류]를 누르면 옮겨진다.
+// 바로가기: 상세 맨 위 [스튜디오 열기](studioUrl) + 이름·주소 목록(links). 주소가 없으면 맨 위에서 바로 입력·저장한다.
 import { useState } from "react";
 
 import ProjectToolSettingsCard from "./ProjectToolSettingsCard";
@@ -9,7 +10,7 @@ import AppQueue from "./AppQueue";
 import StudioArtsCard from "./StudioArtsCard";
 
 import { PURPOSE_LABELS, type Purpose, type StudioKind as ToolKind, type ToolLayer } from "@/lib/factory/toolkit";
-import { cleanStudioUrl, FIRST_PURPOSES, isManualTool, orderToolsFor, STUDIO_KIND_LABELS, type StudioAppInfo, type StudioKind, type StudioProjects } from "@/lib/factory/studioProjects";
+import { cleanLinks, cleanStudioUrl, FIRST_PURPOSES, isManualTool, MAX_LINK_NAME, MAX_STUDIO_LINKS, orderToolsFor, STUDIO_KIND_LABELS, type ClassifiedKind, type StudioAppInfo, type StudioKind, type StudioLink, type StudioProjects } from "@/lib/factory/studioProjects";
 
 export interface StudioToolRow {
   id: string;
@@ -22,7 +23,7 @@ export interface StudioToolRow {
 }
 
 const STATUS_LABELS: Record<string, string> = { pending: "승인 대기", approved: "승인됨", running: "제작 중", review: "검토 대기", done: "완료", failed: "실패", cancelled: "취소" };
-const STUDIOS: { kind: StudioKind; label: string }[] = [
+const STUDIOS: { kind: ClassifiedKind; label: string }[] = [
   { kind: "game", label: "게임 스튜디오" },
   { kind: "app", label: "앱 스튜디오" },
 ];
@@ -177,6 +178,16 @@ function SendJobCard({ appSlug, connected, initialRecent, pickedArts = [], onSen
 }
 
 const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+const KIND_BUTTONS: StudioKind[] = ["game", "app", "none"];
+const BTN = "rounded border border-default-300 px-2 py-1";
+
+/** 바로가기 편집 칸 → 저장할 목록. 둘 다 빈 줄은 버리고, 이름이나 주소가 틀렸거나 같은 주소가 겹치면 bad */
+function readDraftLinks(rows: StudioLink[]): { links: StudioLink[]; bad: boolean } {
+  const filled = rows.filter((r) => r.name.trim() !== "" || r.url.trim() !== "");
+  const links = cleanLinks(filled);
+
+  return { links, bad: links.length !== filled.length };
+}
 
 export default function StudioWorkbench({
   apps,
@@ -194,15 +205,17 @@ export default function StudioWorkbench({
   tools: StudioToolRow[];
   toolsReported: boolean;
   recent?: Record<string, StudioSentJob[]>; // 프로젝트별 Studio 요청 최근 일감(최신순 5개)
-  initialStudio?: StudioKind; // 시험·미리보기용 처음 상태
+  initialStudio?: ClassifiedKind; // 시험·미리보기용 처음 상태
   initialPicked?: string | null;
 }) {
   const [saved, setSaved] = useState<StudioProjects>(initial);
-  const [studio, setStudio] = useState<StudioKind>(initialStudio);
+  const [studio, setStudio] = useState<ClassifiedKind>(initialStudio);
   const [picked, setPicked] = useState<string | null>(initialPicked);
   // 편집 중인 값(저장 전). 프로젝트를 바꾸면 저장된 값으로 다시 시작한다
   const [draftTools, setDraftTools] = useState<string[]>(initialPicked ? (initial[initialPicked]?.tools ?? []) : []);
   const [draftUrl, setDraftUrl] = useState(initialPicked ? (initial[initialPicked]?.studioUrl ?? "") : "");
+  const [draftLinks, setDraftLinks] = useState<StudioLink[]>(initialPicked ? (initial[initialPicked]?.links ?? []) : []);
+  const [quickUrl, setQuickUrl] = useState(""); // 상세 맨 위에서 바로 적는 스튜디오 주소(주소가 없을 때만 보임)
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [pickedArts, setPickedArts] = useState<string[]>([]); // 그림 카드에서 '참고로 고르기' 한 승인 그림 id (프로젝트를 바꾸면 비움)
@@ -215,7 +228,7 @@ export default function StudioWorkbench({
       .map((appSlug) => ({ appSlug, title: appSlug, stack: "", status: "", finishedAt: null, done: false })),
   ];
   const inStudio = all.filter((a) => saved[a.appSlug]?.kind === studio);
-  const unclassified = all.filter((a) => !saved[a.appSlug]);
+  const unclassified = all.filter((a) => !saved[a.appSlug] || saved[a.appSlug].kind === "none"); // 저장값이 없거나 '미분류'로 정한 것
   const app = all.find((a) => a.appSlug === picked) ?? null;
   const cfg = app ? saved[app.appSlug] : undefined;
 
@@ -223,6 +236,8 @@ export default function StudioWorkbench({
     setPicked(slug);
     setDraftTools(saved[slug]?.tools ?? []);
     setDraftUrl(saved[slug]?.studioUrl ?? "");
+    setDraftLinks(saved[slug]?.links ?? []);
+    setQuickUrl("");
     setNotice("");
     setPickedArts([]);
   };
@@ -241,6 +256,8 @@ export default function StudioWorkbench({
         setSaved(data.studioProjects);
         setDraftTools(data.studioProjects[slug]?.tools ?? []);
         setDraftUrl(data.studioProjects[slug]?.studioUrl ?? "");
+        setDraftLinks(data.studioProjects[slug]?.links ?? []);
+        setQuickUrl("");
 
         return data.studioProjects;
       }
@@ -257,40 +274,53 @@ export default function StudioWorkbench({
     if (!app) return;
     const next = await post({ appSlug: app.appSlug, kind });
 
-    if (next) setStudio(kind); // 옮겨진 스튜디오로 같이 이동
+    if (next && kind !== "none") setStudio(kind); // 옮겨진 스튜디오로 같이 이동
   };
 
   const kind = cfg?.kind;
+  const classified = kind === "game" || kind === "app"; // 도구를 연결하고 일감을 보낼 수 있는 분류
   const layered = tools.some((t) => t.layer === "studio" || t.layer === "internal");
   const studioTools = layered ? tools.filter((t) => t.layer === "studio") : tools; // 새 툴킷이면 스튜디오 도구만 고른다
   // 예전에 연결해 둔 내부 도구 이름은 깨지지 않게 남겨 두고(해제만 가능), 새로 고를 수는 없다
   const legacyTools = layered ? tools.filter((t) => t.layer === "internal" && (cfg?.tools.includes(t.id) || draftTools.includes(t.id))) : [];
   const ordered = kind ? orderToolsFor(kind, studioTools) : studioTools;
-  const dirty = !!cfg && (!sameSet(draftTools, cfg.tools) || draftUrl.trim() !== (cfg.studioUrl ?? ""));
+  const draft = readDraftLinks(draftLinks);
+  const dirty = !!app && (!sameSet(draftTools, cfg?.tools ?? []) || draftUrl.trim() !== (cfg?.studioUrl ?? "") || JSON.stringify(draft.links) !== JSON.stringify(cfg?.links ?? []));
   const urlBad = draftUrl.trim() !== "" && !cleanStudioUrl(draftUrl);
+  const quickBad = quickUrl.trim() !== "" && !cleanStudioUrl(quickUrl);
+  const setLink = (i: number, patch: Partial<StudioLink>) => setDraftLinks((cur) => cur.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const firstCount = kind ? studioTools.filter((t) => FIRST_PURPOSES[kind].includes(t.purpose)).length : 0;
 
-  const listButton = (a: StudioAppInfo) => (
-    <li key={a.appSlug}>
-      <button
-        aria-pressed={picked === a.appSlug}
-        className={`fx-panel w-full min-w-0 break-all p-2 text-left text-sm ${picked === a.appSlug ? "font-bold" : ""}`}
-        data-studio-project={a.appSlug}
-        type="button"
-        onClick={() => pick(a.appSlug)}
-      >
-        <span className="font-mono">{a.appSlug}</span>
-        <span className="fx-muted"> · {a.status ? (STATUS_LABELS[a.status] ?? a.status) : "일감 없음"}</span>
-      </button>
-    </li>
-  );
+  const listButton = (a: StudioAppInfo) => {
+    const url = saved[a.appSlug]?.studioUrl;
+
+    return (
+      <li key={a.appSlug} className="flex min-w-0 items-stretch gap-1">
+        <button
+          aria-pressed={picked === a.appSlug}
+          className={`fx-panel w-full min-w-0 break-all p-2 text-left text-sm ${picked === a.appSlug ? "font-bold" : ""}`}
+          data-studio-project={a.appSlug}
+          type="button"
+          onClick={() => pick(a.appSlug)}
+        >
+          <span className="font-mono">{a.appSlug}</span>
+          <span className="fx-muted"> · {a.status ? (STATUS_LABELS[a.status] ?? a.status) : "일감 없음"}</span>
+        </button>
+        {url ? (
+          <a aria-label={`${a.appSlug} 스튜디오 열기(새 탭)`} className="fx-panel flex shrink-0 items-center px-2 text-sm" data-studio-shortcut={a.appSlug} href={url} rel="noopener noreferrer" target="_blank" title="스튜디오 열기">
+            ↗
+          </a>
+        ) : null}
+      </li>
+    );
+  };
 
   return (
     <section aria-label="스튜디오" className="fx-hud" id="studio">
       <header className="fx-hud-head">
         <h2 className="fx-hud-title">studio · 프로젝트와 도구 연결</h2>
       </header>
-      <p className="mb-3 text-sm fx-muted">종류는 관리자가 지정해요 · 연결한 도구로 [일감 보내기]를 할 수 있어요.</p>
+      <p className="mb-3 text-sm fx-muted">스튜디오 분류(게임·앱·미분류)는 관리자가 지정해요 · 연결한 도구로 [일감 보내기]를 할 수 있어요. 분류는 &apos;제품 / 도구·플랫폼&apos; 역할과 별개예요.</p>
 
       <nav aria-label="스튜디오 종류" className="fx-tabs mb-4">
         {STUDIOS.map((s) => (
@@ -311,8 +341,10 @@ export default function StudioWorkbench({
             )}
           </div>
           <div>
-            <h3 className="fx-label mb-1">미분류 ({unclassified.length})</h3>
-            {unclassified.length ? <ul className="grid gap-2">{unclassified.map(listButton)}</ul> : <p className="text-sm fx-muted">모든 프로젝트의 종류가 정해졌어요.</p>}
+            <h3 className="fx-label mb-1" data-studio-unclassified>
+              미분류 ({unclassified.length})
+            </h3>
+            {unclassified.length ? <ul className="grid gap-2">{unclassified.map(listButton)}</ul> : <p className="text-sm fx-muted">모든 프로젝트의 분류가 정해졌어요.</p>}
           </div>
           {toolApps.length ? (
             <details data-studio-tool-apps>
@@ -351,12 +383,12 @@ export default function StudioWorkbench({
                     </dd>
                   </div>
                   <div>
-                    <dt className="fx-label">종류</dt>
+                    <dt className="fx-label">스튜디오 분류</dt>
                     <dd className="flex flex-wrap items-center gap-2">
-                      <b>{kind ? STUDIO_KIND_LABELS[kind] : "미분류"}</b>
-                      {STUDIOS.map((s) => (
-                        <button key={s.kind} className="rounded border border-default-300 px-2 py-1" data-classify={s.kind} disabled={busy || kind === s.kind} type="button" onClick={() => void classify(s.kind)}>
-                          [{STUDIO_KIND_LABELS[s.kind]}]
+                      <b data-studio-kind={kind ?? "none"}>{STUDIO_KIND_LABELS[kind ?? "none"]}</b>
+                      {KIND_BUTTONS.map((k) => (
+                        <button key={k} className={BTN} data-classify={k} disabled={busy || (kind ?? "none") === k} type="button" onClick={() => void classify(k)}>
+                          [{STUDIO_KIND_LABELS[k]}]
                         </button>
                       ))}
                     </dd>
@@ -364,36 +396,76 @@ export default function StudioWorkbench({
                 </dl>
               </div>
 
-              {!cfg ? (
-                <p className="text-sm fx-muted">종류를 정하면 도구를 연결할 수 있어요.</p>
-              ) : (
-                <>
-                  <div data-studio-url>
-                    <label className="fx-label" htmlFor={`studio-url-${app.appSlug}`}>
-                      스튜디오 주소 (https 만, 비워 두면 없음)
+              <div className="flex min-w-0 flex-wrap items-center gap-2" data-studio-shortcuts>
+                {cfg?.studioUrl ? (
+                  <a className="rounded border border-default-300 px-3 py-1 font-semibold" data-studio-open href={cfg.studioUrl} rel="noopener noreferrer" target="_blank">
+                    [스튜디오 열기] ↗
+                  </a>
+                ) : (
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2" data-studio-quick-url>
+                    <label className="fx-label" htmlFor={`quick-url-${app.appSlug}`}>
+                      스튜디오 주소 없음
                     </label>
                     <input
-                      className="mt-1 w-full min-w-0 rounded border border-default-300 bg-transparent px-2 py-1 font-mono text-sm"
-                      id={`studio-url-${app.appSlug}`}
+                      className="min-w-0 flex-1 rounded border border-default-300 bg-transparent px-2 py-1 font-mono text-sm"
+                      id={`quick-url-${app.appSlug}`}
                       inputMode="url"
                       maxLength={200}
                       placeholder="https://"
-                      value={draftUrl}
-                      onChange={(e) => setDraftUrl(e.target.value)}
+                      value={quickUrl}
+                      onChange={(e) => setQuickUrl(e.target.value)}
                     />
-                    {urlBad ? <p className="mt-1 text-sm fx-bad">https:// 로 시작하는 200자 이하 주소만 쓸 수 있어요.</p> : null}
-                    {cfg.studioUrl ? (
-                      <p className="mt-1 break-all text-sm">
-                        <a className="underline" data-studio-open href={cfg.studioUrl} rel="noopener noreferrer" target="_blank">
-                          스튜디오 열기 ↗
-                        </a>
-                      </p>
-                    ) : null}
+                    <button className={BTN} data-quick-url-save disabled={busy || quickUrl.trim() === "" || quickBad} type="button" onClick={() => void post({ appSlug: app.appSlug, studioUrl: quickUrl.trim() })}>
+                      [주소 저장]
+                    </button>
+                    {quickBad ? <span className="w-full text-sm fx-bad">https:// 로 시작하는 200자 이하 주소만 쓸 수 있어요.</span> : null}
                   </div>
+                )}
+                {cfg?.links?.map((l) => (
+                  <a key={l.url} className="rounded border border-default-300 px-2 py-1 text-sm" data-studio-link href={l.url} rel="noopener noreferrer" target="_blank">
+                    {l.name} ↗
+                  </a>
+                ))}
+              </div>
 
-                  <fieldset className="min-w-0" data-studio-tools>
-                    <legend className="fx-label">연결된 도구 ({draftTools.length}개 선택)</legend>
-                    {!toolsReported ? (
+              <div className="min-w-0 space-y-2" data-studio-url>
+                <label className="fx-label" htmlFor={`studio-url-${app.appSlug}`}>
+                  스튜디오 주소 (https 만, 비워 두면 없음)
+                </label>
+                <input
+                  className="mt-1 w-full min-w-0 rounded border border-default-300 bg-transparent px-2 py-1 font-mono text-sm"
+                  id={`studio-url-${app.appSlug}`}
+                  inputMode="url"
+                  maxLength={200}
+                  placeholder="https://"
+                  value={draftUrl}
+                  onChange={(e) => setDraftUrl(e.target.value)}
+                />
+                {urlBad ? <p className="mt-1 text-sm fx-bad">https:// 로 시작하는 200자 이하 주소만 쓸 수 있어요.</p> : null}
+                <div className="fx-label">바로가기 (이름 + 주소, 최대 {MAX_STUDIO_LINKS}개)</div>
+                <ul className="grid gap-2" data-studio-links-edit>
+                  {draftLinks.map((l, i) => (
+                    <li key={i} className="flex min-w-0 flex-wrap items-center gap-2">
+                      <input aria-label={`바로가기 ${i + 1} 이름`} className="w-32 min-w-0 rounded border border-default-300 bg-transparent px-2 py-1 text-sm" maxLength={MAX_LINK_NAME} placeholder="이름" value={l.name} onChange={(e) => setLink(i, { name: e.target.value })} />
+                      <input aria-label={`바로가기 ${i + 1} 주소`} className="min-w-0 flex-1 rounded border border-default-300 bg-transparent px-2 py-1 font-mono text-sm" inputMode="url" maxLength={200} placeholder="https://" value={l.url} onChange={(e) => setLink(i, { url: e.target.value })} />
+                      <button className={BTN} data-link-remove={i} type="button" onClick={() => setDraftLinks((cur) => cur.filter((_, j) => j !== i))}>
+                        [삭제]
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <button className={BTN} data-link-add disabled={draftLinks.length >= MAX_STUDIO_LINKS} type="button" onClick={() => setDraftLinks((cur) => [...cur, { name: "", url: "" }])}>
+                  [바로가기 추가]
+                </button>
+                {draft.bad ? <p className="text-sm fx-bad">바로가기는 이름({MAX_LINK_NAME}자 이하)과 https:// 주소가 모두 있어야 하고, 같은 주소는 한 번만 쓸 수 있어요.</p> : null}
+              </div>
+
+              {!classified ? (
+                <p className="text-sm fx-muted">종류를 정하면 도구를 연결할 수 있어요. 위에서 [게임] 또는 [앱]으로 분류해 주세요.</p>
+              ) : (
+                <fieldset className="min-w-0" data-studio-tools>
+                  <legend className="fx-label">연결된 도구 ({draftTools.length}개 선택)</legend>
+                  {!toolsReported ? (
                       <p className="text-sm fx-muted">○ 보고된 도구 목록이 아직 없어요. 감독 프로그램이 tools.json 을 보고하면 여기에 나와요.</p>
                     ) : (
                       <>
@@ -461,26 +533,27 @@ export default function StudioWorkbench({
                         ) : null}
                       </>
                     )}
-                  </fieldset>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      className="rounded border border-default-300 px-3 py-1 font-semibold"
-                      data-studio-save
-                      disabled={busy || !dirty || urlBad}
-                      type="button"
-                      onClick={() => void post({ appSlug: app.appSlug, tools: draftTools, studioUrl: draftUrl.trim() || null })}
-                    >
-                      [저장]
-                    </button>
-                    {dirty ? <span className="text-sm fx-muted">저장하지 않은 변경이 있어요.</span> : null}
-                  </div>
-                  <ProjectToolSettingsCard key={`settings-${app.appSlug}`} appSlug={app.appSlug} />
-                  <StudioArtsCard key={`arts-${app.appSlug}`} appSlug={app.appSlug} picked={pickedArts} onPickedChange={setPickedArts} />
-                  <AppQueue key={`queue-${app.appSlug}`} appSlug={app.appSlug} />
-                  <SendJobCard key={app.appSlug} appSlug={app.appSlug} pickedArts={pickedArts} onSent={() => setPickedArts([])} connected={cfg.tools.filter((id) => !isManualTool(id) && tools.some((t) => t.id === id)).sort((x, y) => Number(tools.find((t) => t.id === y)?.layer === "studio") - Number(tools.find((t) => t.id === x)?.layer === "studio"))} initialRecent={recent[app.appSlug] ?? []} />
-                </>
+                </fieldset>
               )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className="rounded border border-default-300 px-3 py-1 font-semibold"
+                  data-studio-save
+                  disabled={busy || !dirty || urlBad || draft.bad}
+                  type="button"
+                  onClick={() => void post({ appSlug: app.appSlug, ...(classified ? { tools: draftTools } : {}), studioUrl: draftUrl.trim() || null, links: draft.links })}
+                >
+                  [저장]
+                </button>
+                {dirty ? <span className="text-sm fx-muted">저장하지 않은 변경이 있어요.</span> : null}
+              </div>
+              <ProjectToolSettingsCard key={`settings-${app.appSlug}`} appSlug={app.appSlug} />
+              <StudioArtsCard key={`arts-${app.appSlug}`} appSlug={app.appSlug} picked={pickedArts} onPickedChange={setPickedArts} />
+              <AppQueue key={`queue-${app.appSlug}`} appSlug={app.appSlug} />
+              {classified && cfg ? (
+                <SendJobCard key={app.appSlug} appSlug={app.appSlug} pickedArts={pickedArts} onSent={() => setPickedArts([])} connected={cfg.tools.filter((id) => !isManualTool(id) && tools.some((t) => t.id === id)).sort((x, y) => Number(tools.find((t) => t.id === y)?.layer === "studio") - Number(tools.find((t) => t.id === x)?.layer === "studio"))} initialRecent={recent[app.appSlug] ?? []} />
+              ) : null}
               {notice ? (
                 <p className="text-sm fx-muted" role="status">
                   {notice}

@@ -274,3 +274,32 @@ test("일부 수정(patch): 지정한 항목만 바꾸고 나머지는 그대로
   assert.equal((await dbLib.patchProjectToolSettings(db, "one-tiny-frame", { spec: { cell_size: 4 } }, "정비")).status, 400);
   assert.equal(db.rows.get("one-tiny-frame").version, 2);
 });
+
+test("새싹 허브 처음 값: 스키마 검증 통과, 방식 기본값·PixelLab 허용·한 컷과 같은 비용 한도, 마이그레이션은 추가만(빈 설정일 때만 채움)", () => {
+  const hub = JSON.parse(JSON.stringify(schemaMod.SAESSAK_HUB_SETTINGS));
+  const cleaned = lib.cleanProjectSettings(hub);
+  assert.ok(cleaned.ok, JSON.stringify(cleaned.errors));
+  assert.equal(schemaMod.SAESSAK_HUB_APP_SLUG, "saessak-hub");
+  assert.equal(schemaMod.SAESSAK_HUB_WHO, "정비(새싹 허브 코드 기준)");
+  const m = hub.methods;
+  assert.deepEqual([m["image-prop"].default, m["image-scene"].default, m["motion-game"].default, m["motion-clip"].default], ["codex", "codex", "claude", "manual"]);
+  for (const k of ["image-prop", "image-scene", "motion-game"]) assert.ok(m[k].allowed.includes("pixellab"), k + " PixelLab 허용");
+  assert.deepEqual(hub.cost, example.cost, "비용 한도는 한 컷과 같은 값");
+  assert.equal(hub.spec.cell_size, 32);
+  assert.equal(hub.style.outline_color.toLowerCase(), "#3a2820");
+  assert.equal(hub.style.max_colors, 56);
+  assert.equal(hub.style.preset, "hub");
+  assert.ok(!("motion" in hub) && !("canvas" in hub.spec), "코드에서 확인 못 한 값은 비워 둔다");
+
+  const dir = fs.readdirSync(path.join(repo, "prisma", "migrations")).find((d) => d.endsWith("_saessak_hub_tool_settings"));
+  assert.ok(dir, "마이그레이션 폴더");
+  const sql = read(`prisma/migrations/${dir}/migration.sql`);
+  const body = sql.replace(/--.*$/gm, "");
+  assert.ok(!/\b(DROP|DELETE|TRUNCATE|ALTER)\b/i.test(body), "지우거나 바꾸는 구조 변경 없음");
+  const json = JSON.stringify(hub).replace(/'/g, "''");
+  assert.ok(body.includes(`'${json}'`), "마이그레이션의 값이 코드의 처음 값과 같다");
+  assert.ok(body.includes("'정비(새싹 허브 코드 기준)'"), "수정자");
+  assert.match(body, /ON CONFLICT \("appSlug"\) DO NOTHING/);
+  assert.match(body, /UPDATE "factory_project_tool_settings"[\s\S]*"settings" IN \('\{"version":1\}'/, "이미 값이 있으면 건드리지 않고 빈 설정일 때만 채운다");
+  assert.match(body, /NOT EXISTS \(SELECT 1 FROM "factory_project_tool_setting_history"/);
+});

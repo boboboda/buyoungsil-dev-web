@@ -25,7 +25,7 @@ const mask = loadTs("lib/factory/mask.ts");
 const toolkit = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
 const roles = loadTs("lib/factory/appRoles.ts");
 const lib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkit, "@/lib/factory/appRoles": roles });
-const { default: Workbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkit, "@/lib/factory/studioProjects": lib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null }, "./StudioArtsCard": { __esModule: true, default: () => null } }); // 도구 설정 카드는 tests/project-tool-settings.test.mjs 에서 따로 시험
+const { default: Workbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkit, "@/lib/factory/studioProjects": lib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null }, "./StudioArtsCard": { __esModule: true, default: () => null }, "./AppQueue": { __esModule: true, default: () => null } }); // 도구 설정 카드는 tests/project-tool-settings.test.mjs 에서 따로 시험
 
 const reported = new Set(["pixel-generate", "pixel-anim", "env-doctor"]);
 const known = new Set(["saessak-hub", "memo-app"]);
@@ -119,7 +119,8 @@ test("화면: 프로젝트를 고른 상태 — 게임은 game/common 먼저, se
   const game = renderToStaticMarkup(h(Workbench, { apps, tools, toolsReported: true, initial, initialPicked: "saessak-hub" }));
   assert.ok(game.indexOf('data-studio-tool="pixel-generate"') < game.indexOf('data-studio-tool="setup-runtime"'));
   assert.ok(game.indexOf('data-studio-tool="setup-runtime"') < game.indexOf('data-studio-tool="pixel-anim"'), "게임: game·common 다음에 cut");
-  assert.match(game, /<a class="underline" data-studio-open="true" href="https:\/\/hub\.example\.com\/s" rel="noopener noreferrer" target="_blank">/);
+  assert.match(game, /<a class="rounded border border-default-300 px-3 py-1 font-semibold" data-studio-open="true" href="https:\/\/hub\.example\.com\/s" rel="noopener noreferrer" target="_blank">\[스튜디오 열기\] ↗<\/a>/);
+  assert.ok(game.indexOf("data-studio-open") < game.indexOf("data-studio-tools"), "[스튜디오 열기]는 상세 맨 위");
   assert.match(game, /<input class="mt-1" disabled="" type="checkbox"\/>.*?setup-runtime<\/span><span class="fx-muted"> · 공용\(추정\) · 직접 해야 하는 도구라 연결 불가/, "setup-runtime 은 체크 불가");
   assert.match(game, /data-studio-tool="pixel-generate"><label[^>]*><input class="mt-1" type="checkbox" checked=""/, "저장된 도구는 체크됨");
   assert.match(game, /완료 시각 2026-10-12 01:02\(UTC\)/);
@@ -237,4 +238,91 @@ test("새 툴킷 구조: 스튜디오 도구(pixel-art)만 고르고, 예전에 
   assert.equal(html.includes('data-studio-tool="pixel-anim"'), false, "연결 안 된 내부 도구는 고르는 목록에 없다");
   // 일감 보내기: 연결돼 있던 내부 이름도 깨지지 않고 고를 수 있다
   assert.match(html, /<option[^>]*value="pixel-generate"/);
+});
+
+test("미분류(none): 주소만 먼저 적어도 만들어지고, 도구는 게임·앱으로 분류해야 연결된다, 되돌릴 수 있다", () => {
+  assert.equal(lib.STUDIO_KIND_LABELS.none, "미분류");
+  const urlOnly = apply({}, { appSlug: "memo-app", studioUrl: "https://example.com/s/" });
+  assert.ok(urlOnly.ok);
+  assert.deepEqual(urlOnly.projects["memo-app"], { kind: "none", tools: [], studioUrl: "https://example.com/s/" });
+  assert.equal(apply({}, { appSlug: "memo-app", tools: ["pixel-anim"] }).ok, false, "도구는 종류 없이 못 연결");
+  const none = apply({}, { appSlug: "memo-app", kind: "none" });
+  assert.deepEqual(none.projects["memo-app"], { kind: "none", tools: [] });
+  const game = apply(none.projects, { appSlug: "memo-app", kind: "game", tools: ["pixel-anim"] });
+  assert.equal(game.projects["memo-app"].kind, "game");
+  const back = apply(game.projects, { appSlug: "memo-app", kind: "none" });
+  assert.equal(back.projects["memo-app"].kind, "none");
+  assert.deepEqual(back.projects["memo-app"].tools, ["pixel-anim"], "미분류로 옮겨도 연결해 둔 도구·주소는 지우지 않는다");
+  assert.equal(apply({}, { appSlug: "memo-app", kind: "movie" }).ok, false);
+  assert.deepEqual(lib.readStudioProjects(JSON.stringify({ "memo-app": { kind: "none", tools: [] } })), { "memo-app": { kind: "none", tools: [] } });
+  assert.deepEqual(lib.orderToolsFor("none", [{ purpose: "game" }, { purpose: "common" }]).map((r) => r.purpose), ["common", "game"]);
+});
+
+test("바로가기 목록: 이름+https 주소 여러 개, 중복·잘못된 항목 거절, null 로 비움, 저장값 읽기에서 이상한 항목은 버림", () => {
+  const links = [{ name: "게임 Studio", url: "https://studio.example.com/p/hub/studio/" }, { name: " 관리자  페이지 ", url: "https://hancut.example.com/admin" }];
+  const ok = apply({}, { appSlug: "memo-app", kind: "app", links });
+  assert.ok(ok.ok);
+  assert.deepEqual(ok.projects["memo-app"].links.map((l) => l.name), ["게임 Studio", "관리자 페이지"], "이름 공백 정리");
+  assert.equal(apply(ok.projects, { appSlug: "memo-app", tools: [] }).projects["memo-app"].links.length, 2, "다른 칸만 바꿔도 바로가기 유지");
+  assert.equal(apply({}, { appSlug: "memo-app", kind: "app", links: [{ name: "x", url: "http://insecure.example.com" }] }).ok, false, "https 만");
+  assert.equal(apply({}, { appSlug: "memo-app", kind: "app", links: [{ name: "", url: "https://a.example.com" }] }).ok, false, "이름 필수");
+  assert.equal(apply({}, { appSlug: "memo-app", kind: "app", links: [{ name: "a", url: "https://a.example.com" }, { name: "b", url: "https://a.example.com" }] }).ok, false, "같은 주소 중복");
+  assert.equal(apply({}, { appSlug: "memo-app", kind: "app", links: Array.from({ length: 9 }, (_, i) => ({ name: "n" + i, url: `https://a${i}.example.com` })) }).ok, false, "최대 8개");
+  assert.equal(apply({}, { appSlug: "memo-app", kind: "app", links: "x" }).ok, false);
+  assert.equal(apply(ok.projects, { appSlug: "memo-app", links: null }).projects["memo-app"].links, undefined);
+  assert.equal(apply(ok.projects, { appSlug: "memo-app", links: [] }).projects["memo-app"].links, undefined, "빈 목록도 비움");
+  const raw = JSON.stringify({ "memo-app": { kind: "app", tools: [], links: [{ name: "ok", url: "https://a.example.com" }, { name: "bad", url: "javascript:1" }, 5, { url: "https://b.example.com" }] } });
+  assert.deepEqual(lib.readStudioProjects(raw)["memo-app"].links, [{ name: "ok", url: "https://a.example.com/" }]);
+});
+
+test("기본 바로가기: 새싹 허브는 확인한 Studio 주소, 하찮은 한 컷은 관리자·앱 서버 주소. 저장값이 있으면 건드리지 않는다", () => {
+  const d = lib.DEFAULT_STUDIO_SHORTCUTS;
+  assert.equal(d["saessak-hub"].studioUrl, "https://studio.buyoungsilcoding.com/p/hub/studio/");
+  assert.deepEqual(d["one-tiny-frame"].links.map((l) => l.url), ["https://hancut.buyoungsilcoding.com/admin", "https://hancut.buyoungsilcoding.com/today"]);
+  for (const v of Object.values(d)) for (const u of [v.studioUrl, ...(v.links ?? []).map((l) => l.url)].filter(Boolean)) assert.equal(lib.cleanStudioUrl(u), u, u);
+  const merged = lib.withDefaultShortcuts({}, ["saessak-hub", "one-tiny-frame", "memo-app"]);
+  assert.deepEqual(Object.keys(merged).sort(), ["one-tiny-frame", "saessak-hub"]);
+  assert.equal(merged["saessak-hub"].kind, "none", "설정이 없으면 미분류로 보인다");
+  const kept = lib.withDefaultShortcuts({ "saessak-hub": { kind: "game", tools: ["pixel-art"], studioUrl: "https://mine.example.com/" }, "one-tiny-frame": { kind: "app", tools: [], links: [] } }, ["saessak-hub", "one-tiny-frame"]);
+  assert.equal(kept["saessak-hub"].studioUrl, "https://mine.example.com/");
+  assert.equal(kept["saessak-hub"].kind, "game");
+  assert.deepEqual(kept["one-tiny-frame"].links, [], "관리자가 비운 바로가기(빈 목록)는 그대로");
+});
+
+test("화면: 맨 위 [스튜디오 열기]·바로가기 링크, 주소가 없으면 맨 위에서 바로 입력, 목록 카드 아이콘, 미분류 묶음·[미분류] 버튼", () => {
+  const apps = [
+    { appSlug: "saessak-hub", title: "새싹 허브", stack: "flutter", status: "done", finishedAt: null, done: true },
+    { appSlug: "memo-app", title: "메모", stack: "flutter", status: "done", finishedAt: null, done: true },
+    { appSlug: "free-app", title: "자유", stack: "flutter", status: "done", finishedAt: null, done: true },
+  ];
+  const initial = {
+    "saessak-hub": { kind: "game", tools: [], studioUrl: "https://hub.example.com/s", links: [{ name: "관리자", url: "https://hub.example.com/admin" }] },
+    "memo-app": { kind: "none", tools: [] },
+  };
+  const hub = renderToStaticMarkup(h(Workbench, { apps, tools: [], toolsReported: true, initial, initialPicked: "saessak-hub" }));
+  assert.match(hub, /data-studio-shortcut="saessak-hub"[^>]*>\s*↗/);
+  assert.ok(!/data-studio-shortcut="memo-app"/.test(hub), "주소 없는 프로젝트는 아이콘 없음");
+  assert.match(hub, /data-studio-link="true" href="https:\/\/hub\.example\.com\/admin"[^>]*>관리자 ↗/);
+  assert.match(hub, /data-studio-links-edit/);
+  assert.match(hub, /data-link-add/);
+  assert.match(hub, /미분류 \(2\)/, "저장값 없음(free-app) + 미분류로 정한 것(memo-app)");
+  assert.ok(!/data-studio-quick-url/.test(hub), "주소가 있으면 빠른 입력 칸 없음");
+  assert.match(hub, /data-studio-kind="game"[^>]*>게임/);
+  for (const k of ["game", "app", "none"]) assert.ok(hub.includes(`data-classify="${k}"`), k);
+  assert.match(hub, /data-classify="none"[^>]*>\[미분류\]/);
+  assert.match(hub, /data-classify="game"[^>]*disabled=""/, "현재 분류 버튼은 꺼짐");
+  assert.match(hub, /제품 \/ 도구·플랫폼/, "분류와 앱 역할을 구분하는 안내");
+  const memo = renderToStaticMarkup(h(Workbench, { apps, tools: [], toolsReported: true, initial, initialPicked: "memo-app" }));
+  assert.match(memo, /data-studio-quick-url/, "주소가 없으면 맨 위에서 바로 입력");
+  assert.match(memo, /data-quick-url-save/);
+  assert.ok(!/data-studio-open/.test(memo));
+  assert.match(memo, /data-studio-kind="none"[^>]*>미분류/);
+  assert.match(memo, /종류를 정하면 도구를 연결할 수 있어요/, "미분류는 도구 연결·일감 보내기 없음");
+  assert.ok(!/data-studio-send/.test(memo) && !/data-studio-tools/.test(memo));
+  assert.match(memo, /data-studio-url/, "미분류에도 주소·바로가기 편집은 된다");
+  const free = renderToStaticMarkup(h(Workbench, { apps, tools: [], toolsReported: true, initial, initialPicked: "free-app" }));
+  assert.match(free, /data-studio-kind="none"[^>]*>미분류/, "저장값이 없는 프로젝트도 미분류");
+  assert.match(free, /data-studio-quick-url/);
+  // 저장 본문: 분류가 게임·앱이면 도구도, 아니면 주소·바로가기만
+  assert.match(read("components/admin/factory/StudioWorkbench.tsx"), /\.\.\.\(classified \? \{ tools: draftTools \} : \{\}\)/);
 });

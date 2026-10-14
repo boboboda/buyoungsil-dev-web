@@ -1,11 +1,11 @@
 // components/admin/factory/StudioPanel.tsx
 // 통제실 [스튜디오] 탭: 홈페이지가 아는 앱(일감의 appSlug)을 [게임 스튜디오]·[앱 스튜디오]로 나눠 보이고, 도구 연결·스튜디오 주소를 저장한다.
-// 자료: 앱 목록 = factory_jobs(앱마다 가장 최근 일감, 완료된 앱 먼저), 도구 = 도구함이 보고받은 tools.json(ToolkitToolsPanel 과 같은 자료), 종류·연결 = factory_settings.studioProjects.
+// 자료: 앱 목록 = factory_jobs(앱마다 가장 최근 일감, 완료된 앱 먼저), 도구 = 도구함이 보고받은 tools.json(ToolkitToolsPanel 과 같은 자료), 분류·연결·바로가기 = factory_settings.studioProjects(바로가기가 비어 있으면 코드에서 확인한 기본 주소를 얹어 보여 준다).
 // 읽기에 실패해도 통제실은 뜬다.
 import prisma from "@/lib/prisma";
 import { readToolkitView } from "@/lib/factory/toolkit";
 import { APP_ROLES_KEY, readAppRoles } from "@/lib/factory/appRoles";
-import { buildStudioApps, splitStudioApps, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
+import { buildStudioApps, splitStudioApps, readStudioProjects, withDefaultShortcuts, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
 
 import { STUDIO_REQUEST_SOURCE } from "@/lib/studio/requests";
 
@@ -36,7 +36,7 @@ export default async function StudioPanel() {
 
     const { products, toolApps } = splitStudioApps(buildStudioApps(jobs), readAppRoles(rolesRow?.value));
 
-    return <StudioWorkbench apps={products} toolApps={toolApps} initial={readStudioProjects(setting?.value)} tools={tools} recent={recent} toolsReported={!!view.info && view.info.state === "ok"} />;
+    return <StudioWorkbench apps={products} toolApps={toolApps} initial={withDefaultShortcuts(readStudioProjects(setting?.value), products.map((a) => a.appSlug))} tools={tools} recent={recent} toolsReported={!!view.info && view.info.state === "ok"} />;
   } catch (error) {
     console.error("[studio] 스튜디오 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
 

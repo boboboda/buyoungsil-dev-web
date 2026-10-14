@@ -250,7 +250,7 @@ test("마이그레이션: 새 표만 만들고 기존 데이터는 건드리지 
   assert.match(sql, /UNIQUE INDEX "factory_arts_srcKey_key"/);
   assert.ok(!/\b(DROP|DELETE|TRUNCATE|ALTER|UPDATE)\b/i.test(sql), "기존 데이터를 지우거나 바꾸지 않는다");
   const sorted = fs.readdirSync(dir).filter((d) => /^\d{14}_/.test(d)).sort();
-  assert.equal(sorted[sorted.length - 1], name, "가장 나중 마이그레이션");
+  assert.ok(sorted.includes(name), "정렬 목록에 있다(이후 마이그레이션이 더 생겨도 된다)");
   const schema = read("prisma/schema.prisma");
   assert.match(schema, /model FactoryArt \{[\s\S]*?@@map\("factory_arts"\)/);
 });
@@ -325,4 +325,23 @@ test("자동 참고: 가져온 장면 컷들(옛 승인 시각)이 있어도 새
   const refs = arts.selectReferences({ approved: list, subject: "싹이", kind: "image-prop" });
   assert.equal(refs.length, 4);
   assert.equal(refs[0].url, U("ref"));
+});
+
+test("그림 크기: 칸 너비에 맞는 정수 배율, 장면은 큰 칸(모바일 1열)·소품은 작은 칸(모바일 2열 이상), 확대 화면은 좌우 넘기기", () => {
+  assert.equal(card.integerScale(300, 128), 2);
+  assert.equal(card.integerScale(520, 128), 4);
+  assert.equal(card.integerScale(127, 128), 1, "칸보다 커도 1배 아래로는 안 줄인다");
+  assert.equal(card.integerScale(0, 128), 1);
+  assert.equal(card.integerScale(300, 0), 1, "원본 크기를 모르면 1배");
+  const view = (id, kind) => ({ id, appSlug: "one-tiny-frame", subject: "싹이", kind, status: "approved", url: U(id), method: "codex", summary: null, jobId: null, createdAt: "2026-10-14T01:02:03.000Z", decidedBy: "부영실", decidedAt: "2026-10-14T02:00:00.000Z", note: "" });
+  const html = renderToStaticMarkup(h(card.default, { appSlug: "one-tiny-frame", picked: [], onPickedChange: () => {}, initialArts: [view("s1", "image-scene"), view("p1", "image-prop"), view("m1", "motion-game")], initialAliases: {} }));
+  const grid = (name) => html.slice(html.indexOf(`data-arts-grid="${name}"`), html.indexOf("</ul>", html.indexOf(`data-arts-grid="${name}"`)));
+  assert.match(html, /<ul class="[^"]*grid-cols-1 sm:grid-cols-2[^"]*" data-arts-grid="scene"/, "장면: 큰 칸");
+  assert.match(html, /<ul class="[^"]*grid-cols-2 sm:grid-cols-3 lg:grid-cols-4[^"]*" data-arts-grid="prop"/, "소품·캐릭터: 작은 칸, 모바일도 2열");
+  assert.ok(grid("scene").includes('data-art="s1"') && !grid("scene").includes('data-art="p1"'));
+  assert.ok(grid("prop").includes('data-art="p1"') && grid("prop").includes('data-art="m1"'));
+  assert.ok(!/h-32 w-32/.test(html), "고정 128px 칸 아님");
+  assert.match(html, /data-art-img="true"[^>]*style="image-rendering:pixelated;width:100%/, "측정 전에는 칸 너비 + pixelated");
+  const src = read("components/admin/factory/StudioArtsCard.tsx");
+  for (const k of ["ArrowLeft", "ArrowRight", "Escape", "data-art-prev", "data-art-next", "data-art-close", 'aria-modal="true"', "fixed inset-0"]) assert.ok(src.includes(k), k);
 });
