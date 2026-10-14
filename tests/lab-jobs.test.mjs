@@ -233,7 +233,7 @@ test("연결 지점: 커넥터 도구·앱 이름 보호·앱 목록 제외·감
   assert.match(read("lib/factory/release.ts"), /kind: \{ not: "lab" \}/);
   assert.match(read("components/admin/factory/StudioPanel.tsx"), /kind: \{ not: "lab" \}/);
   const next = read("app/api/factory/next/route.ts");
-  assert.match(next, /if \(j\.kind === LAB_KIND\) return j;/);
+  assert.match(next, /if \(j\.kind === LAB_KIND\) return \{ \.\.\.j, \.\.\.card, \.\.\.\(cardRun \? \{ projectToolSettings \} : \{\}\) \};/); // 실험은 앱 규칙을 붙이지 않고, 카드를 불렀을 때만 카드 정보와 설정
   assert.match(next, /labCleanup/);
   const sup = read("tools/factory-supervisor/supervisor.mjs");
   assert.match(sup, /job\.kind === "lab" \? runLabJob\(job\) : runJob\(job\)/);

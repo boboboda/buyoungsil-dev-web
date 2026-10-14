@@ -48,7 +48,8 @@
     "test:lab": "node tests/lab-jobs.test.mjs && node tools/factory-supervisor/tests/lab.test.mjs",
     "test:stale-copies": "node tests/stale-copies.test.mjs",
     "test:project-links": "node tests/project-links.test.mjs",
-    "test:tool-manifests": "node tests/tool-manifests.test.mjs && node tools/factory-supervisor/tests/toolmanifest.test.mjs"
+    "test:tool-manifests": "node tests/tool-manifests.test.mjs && node tools/factory-supervisor/tests/toolmanifest.test.mjs",
+    "test:result-cards": "node tests/result-cards.test.mjs && node tools/factory-supervisor/tests/cards.test.mjs"
   },
   "dependencies": {
     "@channel.io/channel-web-sdk-loader": "^2.0.0",

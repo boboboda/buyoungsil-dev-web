@@ -4,6 +4,8 @@ import { PURPOSE_LABELS } from "@/lib/factory/projectLinks";
 import { readLinksView } from "@/lib/factory/projectLinksDb";
 import { inspectPlan, readManifestsView } from "@/lib/factory/toolManifestDb";
 import { limitLines } from "@/lib/factory/toolManifest";
+import { createCard, getCard, listCardHistory, listCards, resolveCardForEnqueue, updateCard, type CardView } from "@/lib/factory/cardsDb";
+import { DEFAULT_CARD_NAME } from "@/lib/factory/cards";
 import { createHash } from "crypto";
 
 import prisma from "@/lib/prisma";
@@ -82,7 +84,7 @@ export const FACTORY_INSTRUCTIONS =
   + "auto_update_on/off. 사용자가 요청한 경우에만 상태를 바꾸세요. "
   + "출시: get_release_status 로 앱별 출시 상태·배포 계정·패키지(스토어 문구·체크리스트)·AAB 정보·테스트 일정을 보고, "
   + "enqueue_release_job(appSlug, kind) 으로 출시 일감을 등록해요(kind: first=첫 출시, store=스토어 자료 수정, project=프로젝트 업데이트. 지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
-  + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 앱별 git 원격·배포 서버·도메인·컨테이너는 get_project_links 로 읽어요(읽기 전용). 게임 툴킷 도구의 방법·필요한 키·한계는 list_tools 와 get_tool_manifest 로 읽어요(읽기 전용, 지시문이 설명서 한계를 넘으면 등록이 거절되고 필요한 키는 자동으로 들어가요). 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
+  + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 앱별 git 원격·배포 서버·도메인·컨테이너는 get_project_links 로 읽어요(읽기 전용). 결과물 카드(프로젝트마다 이런 결과물을 이렇게 만든다는 뜻: 도구·방법·옵션·참고 규칙)는 list_cards·get_card 로 읽고 create_card·update_card 로 만들고 고쳐요(설명서 한계 검사를 통과해야 저장, 키는 저장하지 않고 방법에 맞게 자동). 카드로 일을 시키려면 enqueue_app_job 의 card 에 카드 이름을 적어요. 게임 툴킷 도구의 방법·필요한 키·한계는 list_tools 와 get_tool_manifest 로 읽어요(읽기 전용, 지시문이 설명서 한계를 넘으면 등록이 거절되고 필요한 키는 자동으로 들어가요). 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
   + "실험: 도구·방식이 되는지 확인하는 테스트는 앱 수정 일감이 아니라 enqueue_lab_job(title, planMarkdown, aiEngine?, keep?)으로 보내요(앱 이름 없이, 작업 PC 의 실험 폴더에서 무인 실행. 승인은 관리자). "
   + "끝나면 get_factory_job 의 실험_결과에 올라온 이미지·mp4 주소(몇 시간 뒤 만료)와 report.md 본문이 나와요. 이미지 주소를 열어 직접 보고 검수할 수 있어요.";
 
@@ -220,6 +222,10 @@ export const FACTORY_TOOLS = [
           maximum: 100,
           description: "우선순위(클수록 먼저, 기본 0)",
         },
+        card: {
+          type: "string",
+          description: "결과물 카드 이름 또는 id (선택, 그 앱의 카드: list_cards). 주면 일감이 그 카드의 도구·방법·옵션·참고 규칙으로 실행되고, 만든 그림에 카드와 판 번호가 붙어요. 카드 방법에 필요한 키는 requiredSecrets 에 자동으로 들어가요. 새 앱·출시 일감엔 쓸 수 없어요.",
+        },
         parallelWith: {
           type: "string",
           description:
@@ -275,6 +281,8 @@ export const FACTORY_TOOLS = [
           description: `실험 내용: 무엇을 해 보고 어떤 결과(이미지·영상·report.md)를 남길지. ${MIN_PLAN}~${MAX_PLAN}자, 마크다운`,
         },
         aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 홈페이지의 주사용 AI" },
+        card: { type: "string", description: "결과물 카드 이름 또는 id (선택). 주면 그 카드로 만든 pixel-art 설정(card-settings.json)과 카드 정보를 실험 폴더에 내려 줘요. 이름이면 cardApp 도 같이 주세요" },
+        cardApp: { type: "string", description: "card 가 이름일 때 그 카드가 있는 프로젝트(앱) 이름" },
         keep: { type: "boolean", description: "false 면 '지워도 되는 실험'으로 표시해요(자동 삭제는 안 해요. 폴더는 통제실 [폴더 지우기]로 지움). 기본 true" },
         source: { type: "string", description: "어느 기획 대화에서 온 건지 짧게 (선택, 100자 이내)" },
       },
@@ -332,6 +340,85 @@ export const FACTORY_TOOLS = [
       additionalProperties: false,
     },
     annotations: READ_ONLY,
+  },
+  {
+    name: "list_cards",
+    description:
+      "프로젝트의 결과물 카드 목록을 읽어요(읽기 전용). 카드 = 이름 붙은 '이런 결과물을 이렇게 만든다': 도구·방법·옵션(설명서 입력 항목)·참고 규칙(기본 그림 고정·같은 대상/종류 승인 그림·최대 장 수)·판 번호. 방법에 맞는 키 이름과 등록 여부(값은 없음)와 경고도 나와요.",
+    inputSchema: {
+      type: "object",
+      properties: { appSlug: { type: "string", description: "프로젝트(앱) 이름. 예: one-tiny-frame" } },
+      required: ["appSlug"],
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "get_card",
+    description: "결과물 카드 한 장과 최근 변경 이력(판 번호·누가 통제실/채팅/정비·바뀐 곳)을 읽어요(읽기 전용).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appSlug: { type: "string", description: "프로젝트(앱) 이름" },
+        card: { type: "string", description: "카드 이름 또는 id" },
+      },
+      required: ["appSlug", "card"],
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "create_card",
+    description:
+      "프로젝트에 결과물 카드를 만들어요. 도구 설명서 검사를 통과해야 저장돼요(방법 이름, 옵션 형식, 크기·프레임 수 한계). 키는 저장하지 않고 방법에 맞는 키가 설명서에서 자동으로 정해져요. 이력에는 '채팅'으로 남아요. " +
+      "카드로 일감을 시키는 건 enqueue_app_job 의 card 에 카드 이름을 적어서 해요(카드로 생성 요청하는 전용 도구는 따로 나와요).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appSlug: { type: "string", description: "프로젝트(앱) 이름" },
+        name: { type: "string", description: "카드 이름 (한국어, 40자 이하, 프로젝트 안에서 겹치지 않게). 예: 싹이 단독 짤" },
+        description: { type: "string", description: "카드 설명 (300자 이하)" },
+        tool: { type: "string", description: "도구 이름 (list_tools 의 name, 기본 pixel-art)" },
+        method: { type: "string", description: "도구 방법 id (get_tool_manifest 의 방법 id. 예: pixellab). 그 방법에 필요한 키는 도구 설명서에서 자동으로 정해져요(키는 카드에 저장하지 않아요)" },
+        options: { type: "object", description: "설명서 입력 항목 값 { kind, size, frames, preset, background(transparent|scene) } 중 필요한 것. 설명서 한계(크기·프레임 수)를 넘으면 저장되지 않아요" },
+        refRules: {
+          type: "object",
+          description: "참고 규칙 { pinDefault(기본 그림 1순위 고정), defaultArtId(승인된 그림 id), sameSubject(같은 대상 승인 그림), sameKind(같은 종류 승인 그림), maxRefs(0~4, 고정 그림 포함 최대 장 수) }",
+        },
+        settings: { type: "object", description: "(고급) 카드가 갖는 pixel-art 프로젝트 설정 묶음 { spec, style, motion, cost, aliases … }. 비우려면 {}" },
+        enabled: { type: "boolean", description: "false 면 카드를 꺼요(일감이 부를 수 없음)" },
+      },
+      required: ["appSlug", "name"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "update_card",
+    description:
+      "결과물 카드를 고쳐요(보낸 칸만 바뀌고 나머지는 그대로). 설명서 검사를 통과해야 저장되고, 저장하면 판 번호가 올라가요(이력에 '채팅'으로 남음). 새로 시작하는 일감부터 적용돼요. 기본 카드의 설정 묶음(settings)은 프로젝트 도구 설정을 따라가요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appSlug: { type: "string", description: "프로젝트(앱) 이름" },
+        card: { type: "string", description: "고칠 카드 이름 또는 id" },
+        name: { type: "string", description: "새 카드 이름 (바꿀 때만)" },
+        description: { type: "string", description: "카드 설명 (300자 이하)" },
+        tool: { type: "string", description: "도구 이름 (list_tools 의 name, 기본 pixel-art)" },
+        method: { type: "string", description: "도구 방법 id (get_tool_manifest 의 방법 id. 예: pixellab). 그 방법에 필요한 키는 도구 설명서에서 자동으로 정해져요(키는 카드에 저장하지 않아요)" },
+        options: { type: "object", description: "설명서 입력 항목 값 { kind, size, frames, preset, background(transparent|scene) } 중 필요한 것. 설명서 한계(크기·프레임 수)를 넘으면 저장되지 않아요" },
+        refRules: {
+          type: "object",
+          description: "참고 규칙 { pinDefault(기본 그림 1순위 고정), defaultArtId(승인된 그림 id), sameSubject(같은 대상 승인 그림), sameKind(같은 종류 승인 그림), maxRefs(0~4, 고정 그림 포함 최대 장 수) }",
+        },
+        settings: { type: "object", description: "(고급) 카드가 갖는 pixel-art 프로젝트 설정 묶음 { spec, style, motion, cost, aliases … }. 비우려면 {}" },
+        enabled: { type: "boolean", description: "false 면 카드를 꺼요(일감이 부를 수 없음)" },
+        note: { type: "string", description: "이력에 남길 한 줄 (100자 이하, 선택)" },
+      },
+      required: ["appSlug", "card"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "enqueue_release_job",
@@ -444,6 +531,14 @@ export async function callFactoryTool(
       return listTools();
     case "get_tool_manifest":
       return getToolManifest(args);
+    case "list_cards":
+      return listCardsTool(args);
+    case "get_card":
+      return getCardTool(args);
+    case "create_card":
+      return createCardTool(args);
+    case "update_card":
+      return updateCardTool(args);
     case "enqueue_release_job":
       return enqueueReleaseJob(args);
     default:
@@ -515,6 +610,99 @@ async function getToolManifest(args: Record<string, unknown>): Promise<ToolResul
     입력: t.inputs,
     결과: t.outputs,
   });
+}
+
+// ───────── 결과물 카드(2-2) ─────────
+
+const CARD_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
+
+function cardJson(c: CardView) {
+  return {
+    id: c.id,
+    이름: c.name,
+    설명: c.description,
+    도구: c.tool,
+    방법: c.method || "(설정의 기본 방식)",
+    옵션: c.options,
+    참고규칙: c.refRules,
+    설정묶음: c.settings ? Object.keys(c.settings).filter((k) => k !== "version") : [],
+    필요한키: c.secrets.map((s) => `${s.name}(${s.ready ? "등록됨" : "없음"})`),
+    판: c.version,
+    사용: c.enabled,
+    기본카드: c.isDefault,
+    기본그림: c.pinnedArt ? { id: c.pinnedArt.id, 대상: c.pinnedArt.subject } : null,
+    마지막수정: { 시각: c.updatedAt, 누가: c.updatedBy },
+    ...(c.warnings.length ? { 경고: c.warnings } : {}),
+  };
+}
+
+function cardSlugArg(args: Record<string, unknown>): string | null {
+  const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
+
+  return CARD_SLUG_RE.test(appSlug) ? appSlug : null;
+}
+
+async function listCardsTool(args: Record<string, unknown>): Promise<ToolResult> {
+  const appSlug = cardSlugArg(args);
+
+  if (!appSlug) return text("appSlug(프로젝트 이름)가 필요해요. 예: one-tiny-frame", true);
+  const cards = await listCards(appSlug);
+
+  if (!cards.length) return text(`${appSlug} 에는 아직 카드가 없어요. create_card 로 만들 수 있어요.`);
+
+  return json({ 프로젝트: appSlug, 카드: cards.map(cardJson) });
+}
+
+async function getCardTool(args: Record<string, unknown>): Promise<ToolResult> {
+  const appSlug = cardSlugArg(args);
+
+  if (!appSlug) return text("appSlug(프로젝트 이름)가 필요해요.", true);
+  const card = await getCard(appSlug, args.card);
+
+  if (!card) return text(`${appSlug} 에 그 카드가 없어요. list_cards 로 이름을 확인하세요.`, true);
+  const history = await listCardHistory(card.id);
+
+  return json({
+    ...cardJson(card),
+    설정묶음내용: card.settings,
+    이력: history.map((h) => ({ 판: h.version, 누가: h.source, 이름: h.who, 시각: h.createdAt, 메모: h.note, 바뀐곳: h.changed })),
+  });
+}
+
+/** 커넥터 인자 → 카드 칸(보낸 칸만) */
+function cardPatchFrom(args: Record<string, unknown>) {
+  const patch: Record<string, unknown> = {};
+
+  for (const k of ["name", "description", "tool", "method", "options", "refRules", "settings", "enabled"]) if (args[k] !== undefined) patch[k] = args[k];
+
+  return patch;
+}
+
+async function createCardTool(args: Record<string, unknown>): Promise<ToolResult> {
+  const appSlug = cardSlugArg(args);
+
+  if (!appSlug) return text("appSlug(프로젝트 이름)가 필요해요.", true);
+  if (typeof args.name !== "string" || !args.name.trim()) return text("name(카드 이름)이 필요해요.", true);
+  const res = await createCard(appSlug, cardPatchFrom(args), "채팅", "채팅(커넥터)");
+
+  if (res.ok === false) return text(`카드를 만들지 못했어요: ${res.errors.join(" / ")}`, true);
+
+  return text(`${res.message} ${res.card.secrets.length ? `필요한 키(설명서 기준): ${res.card.secrets.map((s) => `${s.name}(${s.ready ? "등록됨" : "없음"})`).join(", ")}. ` : ""}카드 id: ${res.card.id}${res.card.warnings.length ? ` / 경고: ${res.card.warnings.join(" ")}` : ""}`);
+}
+
+async function updateCardTool(args: Record<string, unknown>): Promise<ToolResult> {
+  const appSlug = cardSlugArg(args);
+
+  if (!appSlug) return text("appSlug(프로젝트 이름)가 필요해요.", true);
+  const patch = cardPatchFrom(args);
+
+  if (!Object.keys(patch).length) return text("바꿀 칸(name, description, tool, method, options, refRules, settings, enabled 중)을 하나 이상 보내세요.", true);
+  const note = typeof args.note === "string" && args.note.trim() ? clean(args.note, 100) : "수정";
+  const res = await updateCard(appSlug, args.card, patch, "채팅", "채팅(커넥터)", note);
+
+  if (res.ok === false) return text(`카드를 저장하지 못했어요: ${res.errors.join(" / ")}`, true);
+
+  return text(`${res.message}${res.card.warnings.length ? ` 경고: ${res.card.warnings.join(" ")}` : ""}`);
 }
 
 // 앱별 배포·저장소 연결 정보(읽기 전용)
@@ -962,6 +1150,27 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
     }
   }
 
+  // 결과물 카드(2-2): 카드 이름·id → 그 앱의 켜진 카드. 카드 방법에 필요한 키는 설명서에서 정해 requiredSecrets 에 넣는다(등록된 이름만)
+  let cardId: string | null = null;
+  const cardKeys: string[] = [];
+
+  if (args.card !== undefined && args.card !== null && args.card !== "") {
+    if (typeof args.card !== "string") return text("card 는 카드 이름 또는 id 예요(list_cards).", true);
+    if (kind === "release") return text("출시 일감에는 카드를 쓸 수 없어요.", true);
+    const found = await resolveCardForEnqueue(appSlug, args.card);
+
+    if (found.ok === false) return text(found.message, true);
+    cardId = found.id;
+    const registered = new Set((await knownSecretNames()).map((k) => k.name));
+
+    for (const name of found.secrets) {
+      if (!secrets.includes(name) && registered.has(name) && secrets.length < 10) {
+        secrets.push(name);
+        cardKeys.push(name);
+      }
+    }
+  }
+
   // 도구 설명서(2-1b): 지시문이 설명서의 한계를 넘으면 바로 거절하고, 지시문이 부르는 방법에 필요한 키는 requiredSecrets 에 자동으로 넣는다(등록된 키 이름만)
   const autoSecrets: string[] = [];
 
@@ -1123,6 +1332,7 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
           requiredSecrets: secrets,
           priority,
           source,
+          cardId,
           // 출시 일감 종류(enqueueReleaseJob 만 넘긴다. enqueue_app_job 은 kind=release 를 막는다)
           releaseKind: kind === "release" && typeof args.releaseKind === "string" ? args.releaseKind : null,
           overwriteProject: kind === "release" && args.overwriteProject === true,
@@ -1166,6 +1376,7 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
             ? `이 앱의 대기 순서는 ${mine?.position}번째예요(앞에 대기 ${ahead}개${running ? " + 지금 실행 중 1개" : ""}, priority ${priority}). 앱마다 한 번에 하나씩 priority 큰 값 → 승인 순 → 등록 순으로 실행해요.`
             : `이 앱의 대기 순서는 1번째예요(앞에 쌓인 지시 없음).`) +
           (autoSecrets.length ? ` 도구 설명서에 따라 필요한 키를 자동으로 넣었어요: ${autoSecrets.join(", ")}.` : "") +
+          (cardId ? ` 결과물 카드로 실행해요(${typeof args.card === "string" ? args.card.slice(0, 40) : cardId}).${cardKeys.length ? ` 카드 방법에 필요한 키를 자동으로 넣었어요: ${cardKeys.join(", ")}.` : ""}` : "") +
           (joinGroup ? ` 일감 ${joinGroup.targetId} 와 같은 묶음(${joinGroup.group})으로 넣었어요. 묶음 안 일감이 모두 승인돼야 같이 돌기 시작해요(관리자가 통제실 대기열의 [묶음 승인]으로 한 번에 승인할 수 있어요).` : ""),
       } as EnqueueOk;
     },
@@ -1201,6 +1412,21 @@ export async function enqueueLabJob(args: Record<string, unknown>): Promise<Tool
 
   if (!title) return text("title(실험 이름)이 필요해요.", true);
   if (args.keep !== undefined && typeof args.keep !== "boolean") return text("keep 은 true/false 예요.", true);
+  // 결과물 카드(2-2): 이름이면 cardApp(프로젝트)도 필요하고, id 면 어느 프로젝트 카드든 된다
+  let cardId: string | null = null;
+
+  if (args.card !== undefined && args.card !== null && args.card !== "") {
+    if (typeof args.card !== "string") return text("card 는 카드 이름 또는 id 예요(list_cards).", true);
+    const given = typeof args.cardApp === "string" ? args.cardApp.trim() : "";
+    const byId = /^card_[A-Za-z0-9_-]{1,35}$/.test(args.card.trim()) ? await prisma.factoryCard.findUnique({ where: { id: args.card.trim() }, select: { appSlug: true } }) : null;
+    const cardApp = given || byId?.appSlug || "";
+
+    if (!APP_SLUG_RE.test(cardApp)) return text("card 가 이름이면 cardApp(카드가 있는 프로젝트 이름)도 같이 보내세요.", true);
+    const found = await resolveCardForEnqueue(cardApp, args.card);
+
+    if (found.ok === false) return text(found.message, true);
+    cardId = found.id;
+  }
   if (plan.length < MIN_PLAN) return text(`planMarkdown 이 너무 짧아요(${MIN_PLAN}자 이상).`, true);
   if (plan.length > MAX_PLAN) return text(`planMarkdown 이 너무 길어요(${MAX_PLAN}자 이하). 핵심만 줄여서 다시 보내세요.`, true);
   const planHash = createHash("sha256").update(plan).digest("hex");
@@ -1226,6 +1452,7 @@ export async function enqueueLabJob(args: Record<string, unknown>): Promise<Tool
         aiEngine,
         stack: "lab",
         source,
+        cardId,
         labResult: args.keep === false ? { keep: false } : undefined,
       },
       select: { id: true },

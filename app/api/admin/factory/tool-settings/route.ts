@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
+import { mirrorLegacySettings } from "@/lib/factory/cardsDb";
 import { auth } from "@/lib/auth/get-sesstion";
 import { schemaWarning } from "@/lib/factory/projectToolSettings";
 import { getProjectToolSettings, getProjectToolSettingsHistory, revertProjectToolSettings, saveProjectToolSettings, schemaHash, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
@@ -56,9 +57,12 @@ export async function PUT(req: NextRequest) {
 
   if (!SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 형식이 올바르지 않아요." }, { status: 400 });
   if (!(await knownApp(appSlug))) return NextResponse.json({ message: "홈페이지가 모르는 앱이에요." }, { status: 400 });
-  const res = await saveProjectToolSettings(db, appSlug, body?.settings, await adminName(), "저장", settingsLimitViolations);
+  const who = await adminName();
+  const res = await saveProjectToolSettings(db, appSlug, body?.settings, who, "저장", settingsLimitViolations);
 
   if (res.ok === false) return NextResponse.json({ message: `설정을 저장하지 못했어요: ${res.errors.slice(0, 5).join(" / ")}`, errors: res.errors }, { status: res.status });
+
+  if (!res.unchanged) await mirrorLegacySettings(appSlug, res.record.settings, "통제실", who); // 기본 카드의 설정 묶음도 같이 맞춘다
 
   return NextResponse.json({ message: res.message, unchanged: res.unchanged, ...(await snapshot(appSlug)) });
 }
@@ -71,9 +75,11 @@ export async function POST(req: NextRequest) {
   const appSlug = typeof body?.appSlug === "string" ? body.appSlug.trim() : "";
 
   if (!SLUG_RE.test(appSlug)) return NextResponse.json({ message: "appSlug 형식이 올바르지 않아요." }, { status: 400 });
-  const res = await revertProjectToolSettings(db, appSlug, body?.revert, await adminName(), settingsLimitViolations);
+  const who = await adminName();
+  const res = await revertProjectToolSettings(db, appSlug, body?.revert, who, settingsLimitViolations);
 
   if (res.ok === false) return NextResponse.json({ message: res.errors[0], errors: res.errors }, { status: res.status });
+  if (!res.unchanged) await mirrorLegacySettings(appSlug, res.record.settings, "통제실", who);
 
   return NextResponse.json({ message: res.message.replace("저장했어요", "되돌려 저장했어요"), unchanged: res.unchanged, ...(await snapshot(appSlug)) });
 }

@@ -1,6 +1,7 @@
 // app/api/factory/art/route.ts
 // 도트 그림 저장소의 감독 프로그램용 주소 (lib/factory/arts.ts).
 //   POST multipart (appSlug, subject, kind, method?, summary?, srcKey, jobId?, status?, note?, file) → 그림을 업로드 서버에 올리고 '후보'로 등록. 헤더 Authorization: Bearer <FACTORY_WORKER_TOKEN>
+//        cardId·cardVersion(선택): 결과물 카드로 만든 그림이면 카드 id 와 그때의 판 번호를 같이 기록한다(2-2).
 //        jobId 가 있으면 언제나 후보(승인 상태로는 등록 못 함). jobId 없이 status=approved 를 주는 건 손으로 올리는 처음 값뿐. 같은 srcKey 는 다시 올리지 않고 기존 것을 돌려준다.
 //        응답 200 { ok, duplicate, art } / 실행 중이 아닌 일감은 409
 //   GET  ?appSlug=…  → { approved: [{ url, subject, kind, approvedAt }] }  (이 프로젝트의 '승인' 그림만. 중계가 pixel-art 를 실행하기 직전에 최신 목록을 받는다)
@@ -103,6 +104,8 @@ export async function POST(req: NextRequest) {
       decidedBy: "처음 값",
       createdAt: text("createdAt"),
       decidedAt: text("decidedAt"),
+      cardId: text("cardId") || undefined,
+      cardVersion: /^d{1,6}$/.test(text("cardVersion")) ? Number(text("cardVersion")) : undefined,
     });
 
     if (registered.ok === false) return fail(registered.status, registered.message);

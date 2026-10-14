@@ -40,6 +40,8 @@ export interface ArtRow {
   decidedBy: string;
   decidedAt: Date | null;
   note: string;
+  cardId?: string | null; // 이 그림을 만든 결과물 카드(2-2)
+  cardVersion?: number | null; // 그때의 카드 판 번호
 }
 
 /** 화면·API 로 나가는 모양(날짜는 ISO 글자) */
@@ -57,6 +59,8 @@ export interface ArtView {
   decidedBy: string;
   decidedAt: string | null;
   note: string;
+  cardId: string | null;
+  cardVersion: number | null;
 }
 
 export interface ArtSummary {
@@ -134,6 +138,8 @@ export function toArtView(r: ArtRow): ArtView {
     decidedBy: r.decidedBy,
     decidedAt: r.decidedAt ? r.decidedAt.toISOString() : null,
     note: r.note,
+    cardId: r.cardId ?? null,
+    cardVersion: r.cardVersion ?? null,
   };
 }
 
@@ -260,6 +266,9 @@ export interface CandidateInput {
   /** 옛 그림을 가져올 때(jobId 없을 때만): 원래 만든 시각·승인 시각(ISO). 잘못된 값·미래 시각은 무시 */
   createdAt?: unknown;
   decidedAt?: unknown;
+  /** 카드로 만든 그림이면 카드 id·판 번호(2-2). 일감이 올릴 때만 */
+  cardId?: unknown;
+  cardVersion?: unknown;
 }
 
 export type RegisterResult = { ok: true; art: ArtView; duplicate: boolean } | { ok: false; status: number; message: string };
@@ -287,6 +296,8 @@ export async function registerArt(db: ArtDb, input: CandidateInput): Promise<Reg
   if (!srcKey || srcKey.length > 300 || /[\u0000-\u001f]/.test(srcKey)) return bad("srcKey 형식이 올바르지 않아요.");
   if (jobId && !ID_RE.test(jobId)) return bad("jobId 형식이 올바르지 않아요.");
   const method = typeof input.method === "string" && METHOD_RE.test(input.method) ? input.method : "";
+  const cardId = typeof input.cardId === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(input.cardId) ? input.cardId : null;
+  const cardVersion = cardId && typeof input.cardVersion === "number" && Number.isInteger(input.cardVersion) && input.cardVersion >= 1 && input.cardVersion <= 100000 ? input.cardVersion : null;
   // 일감이 올리는 그림은 항상 후보. 승인으로 바로 등록하는 건 일감 없이 손으로 올리는 처음 값뿐
   const status: ArtStatus = !jobId && (input.status === "approved" || input.status === "candidate") ? input.status : "candidate";
   const existing = await db.factoryArt.findUnique({ where: { srcKey } });
@@ -306,6 +317,7 @@ export async function registerArt(db: ArtDb, input: CandidateInput): Promise<Reg
       jobId,
       srcKey,
       note: oneLine(input.note, MAX_NOTE),
+      ...(cardId ? { cardId, cardVersion } : {}),
       ...(!jobId && originalTime(input.createdAt) ? { createdAt: originalTime(input.createdAt) as Date } : {}),
       ...(decided ? { decidedBy: oneLine(input.decidedBy, 80) || "처음 값", decidedAt: (!jobId && originalTime(input.decidedAt)) || new Date() } : {}),
     },

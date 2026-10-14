@@ -46,7 +46,7 @@ import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStore
 import { safeEnv } from "./envfilter.mjs";
 import { acquireWorkspace, advertisedEngines, recoverWorkspace, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, makeHandoffEntry, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 import { checksFromVerification, headOf } from "./handoff.mjs";
-import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames, writeArtRefs, writeProjectSettings } from "./toolbroker.mjs";
+import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames, writeArtRefs, writeCardFiles, writeProjectSettings } from "./toolbroker.mjs";
 import { findBash, reportProvisionNames, syncProvisions } from "./keyprovision.mjs";
 import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
 import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
@@ -416,7 +416,7 @@ function prepareDir(job) {
   fs.mkdirSync(path.join(dir, ".factory", "history"), { recursive: true });
   // 프로젝트 도구 설정(홈페이지 통제실의 값)을 .factory/project-settings.json 으로 내려 준다. 설정이 없으면 이전 일감이 남긴 파일을 지운다
   // 그림 저장소: 승인 그림 목록은 같은 파일의 references.approved 로 합치고, 이번 일감에서 '참고로 고른' 그림은 .factory/art-refs.json 으로 둔다(없으면 이전 일감 것을 지움)
-  job.projectSettingsState = writeProjectSettings(dir, job.projectToolSettings, job.approvedArts);
+  job.projectSettingsState = writeProjectSettings(dir, job.projectToolSettings, job.approvedArts, job.card?.rules ?? null);
   job.pickedArtsCount = writeArtRefs(dir, job.pickedArts, job.approvedArts);
 
   if (job.kind === "revision") {
@@ -1218,11 +1218,18 @@ async function runAiProcess(st, prompt, resumeSession) {
     refreshArts: async () => {
       if (Date.now() - (st.artsRefreshedAt ?? 0) < 20_000) return;
       st.artsRefreshedAt = Date.now();
+      // 결과물 카드 목록(호출의 card 인자로 부를 수 있게). 옛 서버(404)나 실패는 카드 없이 계속한다
+      const c = await api("GET", `/api/factory/cards?appSlug=${encodeURIComponent(job.appSlug)}`, undefined, { timeoutMs: 10_000 }).catch(() => null);
+      if (c?.status === 200 && Array.isArray(c.data?.cards)) job.cards = c.data.cards;
       const r = await api("GET", `/api/factory/art?appSlug=${encodeURIComponent(job.appSlug)}`, undefined, { timeoutMs: 10_000 });
-      if (r.status !== 200 || !Array.isArray(r.data?.approved)) return;
+      if (r.status !== 200 || !Array.isArray(r.data?.approved)) {
+        if (job.cards) writeCardFiles(dir, job.cards, job.approvedArts);
+        return;
+      }
       job.approvedArts = r.data.approved;
-      writeProjectSettings(dir, job.projectToolSettings, job.approvedArts);
+      writeProjectSettings(dir, job.projectToolSettings, job.approvedArts, job.card?.rules ?? null);
       writeArtRefs(dir, job.pickedArts, job.approvedArts);
+      writeCardFiles(dir, job.cards, job.approvedArts);
     },
   }).start();
 
@@ -1362,10 +1369,12 @@ async function runJobUnlocked(job, lock, resume = null) {
   st.assets = createAssetUploader({ appDir: dir, jobId: job.id, post: (form) => outbox.send({ kind: "screenshot", path: "/api/factory/screenshot", body: form, jobId: job.id, bytes: [...form.values()].reduce((n, v) => n + (typeof v === "object" ? v.size ?? 0 : 0), 0) }), log: (level, m) => addLog(st, level, m) });
   st.assets.seed();
   // 도트 그림 저장소: pixel-art 결과를 '후보'로 올린다(승인은 부영실이 스튜디오에서)
-  st.arts = createArtRegistrar({ appDir: dir, jobId: job.id, appSlug: job.appSlug, post: (form) => outbox.send({ kind: "art", path: "/api/factory/art", body: form, jobId: job.id, bytes: [...form.values()].reduce((n, v) => n + (typeof v === "object" ? v.size ?? 0 : 0), 0) }), log: (level, m) => addLog(st, level, m) });
+  st.arts = createArtRegistrar({ appDir: dir, jobId: job.id, appSlug: job.appSlug, post: (form) => outbox.send({ kind: "art", path: "/api/factory/art", body: form, jobId: job.id, bytes: [...form.values()].reduce((n, v) => n + (typeof v === "object" ? v.size ?? 0 : 0), 0) }), log: (level, m) => addLog(st, level, m), card: job.card ?? null });
   addLog(st, "info", `앱 폴더 준비 완료: ${dir} (작업 규칙: ${job.rulesSource})`);
   if (job.projectSettingsState === "written") addLog(st, "info", `프로젝트 도구 설정을 내려 줬어요(버전 ${job.projectToolSettings?.version ?? "?"}): .factory/project-settings.json`);
   else if (job.projectSettingsState === "invalid") addLog(st, "warn", "프로젝트 도구 설정을 내려 주지 못했어요(형식 오류·너무 큼). 도구 기본값을 써요.");
+  if (job.card) addLog(st, "info", `결과물 카드로 실행해요: ${String(job.card.name).slice(0, 40)} (판 ${job.card.version}, ${job.card.tool}${job.card.method ? ` · ${job.card.method}` : ""}). 만든 그림에 카드와 판 번호가 붙어요.`);
+  else if (job.cardMissing) addLog(st, "warn", "이 일감이 부른 카드를 쓸 수 없어요(지워졌거나 꺼졌거나 설정 오류). 카드 없이 프로젝트 도구 설정으로 실행해요.");
   if (Array.isArray(job.approvedArts) && job.approvedArts.length) addLog(st, "info", `승인된 그림 ${job.approvedArts.length}장을 자동 참고 목록으로 내려 줬어요(후보·반려는 제외).`);
   if (job.pickedArtsCount) addLog(st, "info", `이번 일감에서 참고로 고른 승인 그림 ${job.pickedArtsCount}장을 pixel-art 호출에 먼저 붙여요.`);
 

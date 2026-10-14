@@ -37,11 +37,17 @@ export function pickArtOutputs(appDir, outputs) {
   return [still, gif].filter(Boolean).slice(0, MAX_PER_RESULT);
 }
 
+/** { id, version } 모양이 맞는 카드 정보만(카드 id 는 영문·숫자·_-, 판 번호는 1 이상 정수). 아니면 null */
+function cardOf(c) {
+  return c && typeof c.id === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(c.id) && Number.isInteger(c.version) && c.version >= 1 ? { id: c.id, version: c.version } : null;
+}
+
 /**
- * 일감 하나의 그림 등록기. opts: { appDir, jobId, appSlug, post(form) → { status, data }, log(level, message) }
+ * 일감 하나의 그림 등록기. opts: { appDir, jobId, appSlug, post(form) → { status, data }, log(level, message), card? }
+ * - card: { id, version } 일감이 결과물 카드(2-2)로 시작했으면 그 카드. source.card(호출에 card 인자를 준 경우)가 있으면 그게 먼저다. 그림에 카드 id·판 번호가 붙는다
  * - register(source): source 는 toolbroker 의 readStudioArtSource() 결과. 기다리지 않고 불러도 되고, 일감이 끝날 때 idle() 로 마무리를 기다린다.
  */
-export function createArtRegistrar({ appDir, jobId, appSlug, post, log = () => {} }) {
+export function createArtRegistrar({ appDir, jobId, appSlug, post, log = () => {}, card = null }) {
   let stopped = false; // 한도·409 뒤에는 이 일감에서 더 올리지 않는다
   let registered = 0;
   const pending = new Set();
@@ -68,6 +74,11 @@ export function createArtRegistrar({ appDir, jobId, appSlug, post, log = () => {
       form.append("method", source.method ?? "");
       form.append("summary", JSON.stringify(source.summary ?? {}));
       form.append("srcKey", srcKey);
+      const cardRef = cardOf(source.card) ?? cardOf(card);
+      if (cardRef) {
+        form.append("cardId", cardRef.id);
+        form.append("cardVersion", String(cardRef.version));
+      }
       form.append("file", new Blob([buf], { type: ASSET_MIME[f.ext] }), f.name);
       let r;
       try {

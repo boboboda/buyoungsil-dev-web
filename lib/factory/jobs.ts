@@ -129,6 +129,7 @@ export interface ClaimedJob {
   planMarkdown: string;
   attempts: number;
   parallelGroup: string | null; // 병행 그룹(수정 일감만 의미 있음). 있으면 감독 프로그램이 git worktree 에서 실행한다
+  cardId?: string | null; // 결과물 카드(2-2). 있으면 /next 가 그 카드로 만든 설정·카드 정보를 붙인다
 }
 
 // approved 중 우선순위 높은 순(같으면 먼저 승인한 순, 그다음 먼저 등록한 순)으로 최대 slots 개를 running 으로 바꿔 돌려준다.
@@ -163,7 +164,7 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
         "phase" = NULL, "failReason" = NULL, "failStage" = NULL, "parallelInfo" = NULL, "updatedAt" = ${ts(now)}
     WHERE "status" = 'approved' AND "id" IN (${Prisma.join(ids)})
     RETURNING "id", "appSlug", "title", "kind", "parentJobId", "stack", "priority",
-              "requiredSecrets", "planMarkdown", "attempts", "aiEngine", "aiModel", "parallelGroup"`);
+              "requiredSecrets", "planMarkdown", "attempts", "aiEngine", "aiModel", "parallelGroup", "cardId"`);
 
   rows.sort((a, b) => b.priority - a.priority);
   await reassignParents(rows);

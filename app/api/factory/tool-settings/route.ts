@@ -5,6 +5,7 @@
 //   응답 200 { ok, unchanged, version, message } / 404 저장된 설정 없음 / 400 형식 오류
 import { NextRequest, NextResponse } from "next/server";
 
+import { mirrorLegacySettings } from "@/lib/factory/cardsDb";
 import { fail, guardWorker } from "@/lib/factory/http";
 import { patchProjectToolSettings, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
 import { settingsLimitViolations } from "@/lib/factory/toolManifestDb";
@@ -28,6 +29,8 @@ export async function POST(req: NextRequest) {
     const res = await patchProjectToolSettings(db, appSlug, body?.patch, who, note, settingsLimitViolations);
 
     if (res.ok === false) return fail(res.status, res.errors.slice(0, 5).join(" / "));
+
+    if (!res.unchanged) await mirrorLegacySettings(appSlug, res.record.settings, "정비", who); // 기본 카드의 설정 묶음도 같이 맞춘다
 
     return NextResponse.json({ ok: true, unchanged: res.unchanged, version: res.record.version, message: res.message });
   } catch (error) {

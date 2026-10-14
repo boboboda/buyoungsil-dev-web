@@ -66,6 +66,7 @@ import { labCleanupForNext, LAB_KIND } from "@/lib/factory/lab";
 import { getAppChecks } from "@/lib/factory/appChecks";
 import { projectSettingsForNext, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
 import { approvedForNext, pickedForJobs, type ArtDb, type PickDb } from "@/lib/factory/arts";
+import { cardRunForJobs, type CardRun } from "@/lib/factory/cardsDb";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -221,18 +222,23 @@ export async function GET(req: NextRequest) {
     const pickedArts = await pickedForJobs(prisma as unknown as PickDb & ArtDb, artJobs).catch(() => new Map());
     // 앱별 합치기·최종 점검 검사 명령(통제실 설정). 있는 앱의 일감에만 checkCommands 를 붙인다(비면 stack 기본 검사만)
     const appChecks = claimed.length ? await getAppChecks().catch(() => ({} as Record<string, string[]>)) : {};
+    // 결과물 카드(2-2): 카드를 부른 일감은 그 카드로 만든 설정을 projectToolSettings 로 내려 주고(감독 프로그램이 .factory/project-settings.json 으로 씀), 기본 그림 고정은 picked 맨 앞에 붙인다. 카드 정보는 card 로
+    const cardRuns = await cardRunForJobs(claimed.flatMap((j) => (j.cardId ? [j.cardId] : []))).catch(() => new Map<string, CardRun>());
     const jobs = claimed.map((j) => {
       const release = releases.get(j.id);
-      const projectToolSettings = toolSettings.get(j.appSlug);
+      const cardRun = j.cardId ? cardRuns.get(j.cardId) : undefined;
+      const projectToolSettings = cardRun ? { version: cardRun.version, settings: cardRun.settings } : toolSettings.get(j.appSlug);
       const checks = appChecks[j.appSlug]?.length ? { checkCommands: appChecks[j.appSlug] } : {};
-      const arts = { ...checks, ...(approvedArts.has(j.appSlug) ? { approvedArts: approvedArts.get(j.appSlug) } : {}), ...(pickedArts.has(j.id) ? { pickedArts: pickedArts.get(j.id) } : {}) };
+      const picked = [...(cardRun?.pinned ? [cardRun.pinned] : []), ...(pickedArts.get(j.id) ?? [])].filter((e, i, all) => all.findIndex((x) => x.url === e.url) === i);
+      const arts = { ...checks, ...(approvedArts.has(j.appSlug) ? { approvedArts: approvedArts.get(j.appSlug) } : {}), ...(picked.length ? { pickedArts: picked } : {}) };
+      const card = cardRun ? { card: { id: cardRun.id, name: cardRun.name, version: cardRun.version, tool: cardRun.tool, method: cardRun.method, rules: cardRun.rules, pinnedUrl: cardRun.pinned?.url ?? null } } : j.cardId ? { cardMissing: j.cardId } : {};
 
-      if (j.kind === LAB_KIND) return j; // 실험은 앱 작업 규칙·첫 지시문을 붙이지 않는다(감독 프로그램이 머리말을 만든다)
+      if (j.kind === LAB_KIND) return { ...j, ...card, ...(cardRun ? { projectToolSettings } : {}) }; // 실험은 앱 작업 규칙·첫 지시문을 붙이지 않는다(감독 프로그램이 머리말을 만든다). 카드를 불렀으면 카드 정보와 설정만
 
       try {
-        return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...arts };
+        return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...card, ...arts };
       } catch {
-        return { ...j, ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...arts };
+        return { ...j, ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...card, ...arts };
       }
     });
 

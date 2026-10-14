@@ -228,6 +228,8 @@ function enqueueCtx(names) {
     "@/lib/factory/projectLinksDb": {},
     "@/lib/factory/toolManifest": lib,
     "@/lib/factory/toolManifestDb": db,
+    "@/lib/factory/cardsDb": {},
+    "@/lib/factory/cards": {},
     "@/lib/factory/supervisor": { runSupervisorAction: async () => ({}), SUPERVISOR_ACTIONS: [] },
     "@/lib/factory/release": {},
     "@/lib/factory/storeAssets": {},

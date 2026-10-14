@@ -608,6 +608,7 @@ model FactoryJob {
   parallelInfo    Json? // 감독 프로그램이 보고하는 병행 상태(worktree·lockWait·merging·rebases·mergedAt·checks). 비밀값 없음
   parallelSource  String? // 병행 그룹을 정한 쪽: manual(사람이 묶거나 푼 일감: 지휘자는 건드리지 않음) | conductor(지휘자가 자동으로 묶음). lib/factory/conductor.ts
   conductorInfo   Json? // 지휘자 판단(결정·이유·예상 파일·영역·확신도·판단 키). 비밀값 없음
+  cardId          String? // 결과물 카드(factory_cards.id): 있으면 이 카드의 도구·방법·옵션·참고 규칙으로 실행한다(2-2). NULL = 예전 방식(프로젝트 도구 설정)
   handoff         Json? // 인계 기록 마지막 항목(Claude Code ↔ Codex 공유 인계, 읽기 전용 표시용). lib/factory/handoff.ts 가 정리해서 저장. 비밀값·기획서·diff 없음
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
@@ -1130,8 +1131,11 @@ model FactoryArt {
   decidedBy  String    @default("") // 승인·반려한 사람
   decidedAt  DateTime? // 승인·반려 시각
   note       String    @default("")
+  cardId     String? // 이 그림을 만든 결과물 카드(factory_cards.id). 카드 없이 만든 그림은 NULL
+  cardVersion Int? // 그때의 카드 판 번호
 
   @@index([appSlug, status])
+  @@index([cardId])
   @@map("factory_arts")
 }
 
@@ -1159,8 +1163,50 @@ model FactoryAppConnection {
   containerName String? // 서버 도커 컨테이너 이름
   services      Json? // 연결된 서비스 컨테이너 이름 목록
   notes         String?
+  exportKind    String? // 승인 그림을 내보낼 곳(2-2): folder(앱 폴더 경로) | upload(서비스 업로드) | null(안 정함)
+  exportPath    String? // exportKind=folder 일 때 앱 폴더 안 상대 경로
+  studioBatch   Boolean  @default(false) // 스튜디오 기능: 배치
+  studioService Boolean  @default(false) // 스튜디오 기능: 서비스 운영
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@map("factory_app_connections")
+}
+
+// 결과물 카드(2-2): 프로젝트마다 "이런 결과물을 이렇게 만든다"를 이름 붙여 저장한 것. 일감은 카드 이름만 부른다.
+// 키는 저장하지 않는다(도구 설명서의 방법 → 키가 자동으로 정해진다). settings 는 pixel-art 프로젝트 설정(JSON 글자) 중 카드가 직접 갖는 묶음.
+model FactoryCard {
+  id          String   @id
+  appSlug     String
+  name        String // 한국어 카드 이름(프로젝트 안에서 겹치지 않음)
+  description String   @default("")
+  tool        String   @default("pixel-art")
+  method      String   @default("") // 도구 설명서의 방법 id. 비면 설정의 기본 방식
+  options     Json     @default("{}") // 설명서 입력 항목 값 { kind, size, frames, preset, background … }
+  refRules    Json     @default("{}") // 참고 규칙 { pinDefault, defaultArtId, sameSubject, sameKind, maxRefs }
+  settings    String   @default("") // 카드가 갖는 설정 묶음(spec·style·motion·cost·aliases …)의 JSON 글자. 비면 없음
+  enabled     Boolean  @default(true)
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now())
+  updatedBy   String   @default("")
+
+  @@unique([appSlug, name])
+  @@index([appSlug])
+  @@map("factory_cards")
+}
+
+model FactoryCardHistory {
+  id        Int      @id @default(autoincrement())
+  cardId    String
+  appSlug   String
+  version   Int
+  source    String   @default("통제실") // 누가: 통제실 | 채팅 | 정비
+  who       String   @default("")
+  note      String   @default("")
+  snapshot  Json // 그 판의 카드 내용(이름·설명·도구·방법·옵션·참고 규칙·설정)
+  createdAt DateTime @default(now())
+
+  @@index([cardId, version])
+  @@map("factory_card_history")
 }

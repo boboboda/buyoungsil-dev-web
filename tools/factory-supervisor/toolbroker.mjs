@@ -92,14 +92,17 @@ export function cleanArtList(list, max) {
  * 설정에 승인 그림을 합친다(lib/factory/arts.ts mergeApprovedIntoSettings 와 같은 규칙): 승인 그림이 앞, 설정에 원래 있던 approved 항목은 뒤, 같은 path 는 한 번만.
  * 툴킷 항목은 { path, subject, kind } 만 쓴다(project 는 넣지 않는다: 이미 이 프로젝트의 목록이고, 넣으면 요청에 project 가 없을 때 걸러진다)
  */
-export function mergeApprovedArts(settings, approved) {
-  const arts = cleanArtList(approved, MAX_APPROVED_ENTRIES);
+export function mergeApprovedArts(settings, approved, rules = null) {
+  // 결과물 카드(2-2)의 참고 규칙: 같은 대상(②)·같은 종류(③) 승인 그림을 쓸지. 둘 다 끄면 합치지 않고, 하나만 켜면 다른 쪽 단서(kind·subject)를 빼서 툴킷이 그쪽으로는 못 고르게 한다
+  const sameSubject = rules?.sameSubject !== false;
+  const sameKind = rules?.sameKind !== false;
+  const arts = !sameSubject && !sameKind ? [] : cleanArtList(approved, MAX_APPROVED_ENTRIES);
   if (!arts.length) return settings ?? null;
   const base = settings && typeof settings === "object" && !Array.isArray(settings) ? settings : { version: 1 };
   const refs = base.references && typeof base.references === "object" && !Array.isArray(base.references) ? base.references : {};
   const stored = Array.isArray(refs.approved) ? refs.approved : [];
   const seen = new Set();
-  const list = [...arts.map((a) => ({ path: a.url, subject: a.subject, kind: a.kind })), ...stored].filter((e) => e && typeof e.path === "string" && !seen.has(e.path) && !!seen.add(e.path));
+  const list = [...arts.map((a) => ({ path: a.url, ...(sameSubject ? { subject: a.subject } : {}), ...(sameKind ? { kind: a.kind } : {}) })), ...stored].filter((e) => e && typeof e.path === "string" && !seen.has(e.path) && !!seen.add(e.path));
   return { ...base, references: { ...refs, approved: list } };
 }
 
@@ -139,7 +142,7 @@ export function readPickedRefs(appDir) {
  * 승인 그림이 있으면 설정이 없어도 { version: 1, references: { approved } } 만으로 쓴다. 16KB 를 넘으면 승인 그림을 뒤에서부터 줄인다.
  * 반환: "written" | "removed" | "none" | "invalid"  (값은 기록에 남기지 않는다)
  */
-export function writeProjectSettings(appDir, projectToolSettings, approvedArts = []) {
+export function writeProjectSettings(appDir, projectToolSettings, approvedArts = [], rules = null) {
   const file = path.join(appDir, ".factory", "project-settings.json");
   const remove = () => {
     try {
@@ -158,7 +161,7 @@ export function writeProjectSettings(appDir, projectToolSettings, approvedArts =
   let s;
   let text = "";
   for (;;) {
-    s = mergeApprovedArts(hasGiven ? given : null, arts);
+    s = mergeApprovedArts(hasGiven ? given : null, arts, rules);
     if (!s || !Object.keys(s).some((k) => k !== "version" && k !== "$schema")) return remove() ? "removed" : "none";
     text = JSON.stringify(s, null, 2) + "\n";
     if (Buffer.byteLength(text) <= PROJECT_SETTINGS_MAX_BYTES) break;
@@ -172,6 +175,92 @@ export function writeProjectSettings(appDir, projectToolSettings, approvedArts =
     return "written";
   } catch {
     return "invalid";
+  }
+}
+
+// 결과물 카드(2-2): 홈페이지가 준 카드 목록(카드로 만든 pixel-art 설정)을 .factory/cards/<id>.json 으로 두고, index.json 에 이름 → 파일을 적는다.
+// pixel-art 호출의 card 인자(카드 id 또는 이름)가 오면 그 카드 파일을 --settings 로 붙인다(승인 그림은 카드의 참고 규칙에 맞게 합쳐서).
+export const CARDS_DIR_REL = ".factory/cards";
+const CARD_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const MAX_CARDS = 40;
+
+/** 카드 한 장의 설정 파일 글자(16KB 를 넘으면 승인 그림을 뒤에서부터 줄인다). 못 만들면 null */
+function cardSettingsText(card, approved) {
+  const given = card.settings && typeof card.settings === "object" && !Array.isArray(card.settings) ? card.settings : null;
+  if (!given) return null;
+  let arts = cleanArtList(approved, MAX_APPROVED_ENTRIES);
+  for (;;) {
+    const s = mergeApprovedArts(given, arts, card.rules);
+    const text = JSON.stringify(s, null, 2) + "\n";
+    if (Buffer.byteLength(text) <= PROJECT_SETTINGS_MAX_BYTES) return text;
+    if (!arts.length) return null;
+    arts = arts.slice(0, -1);
+  }
+}
+
+/** 카드 목록 → .factory/cards/. 못 쓰는 카드는 건너뛰고, 목록에 없는 예전 카드 파일은 지운다. 반환: 쓴 카드 수 */
+export function writeCardFiles(appDir, cards, approved = []) {
+  let dir;
+  try {
+    dir = factoryDir(appDir, "cards"); // .factory 와 cards 가 실제 폴더인지 확인(심볼릭 링크면 던짐)
+  } catch {
+    return 0;
+  }
+  const index = [];
+  const keep = new Set(["index.json"]);
+  for (const c of (Array.isArray(cards) ? cards : []).slice(0, MAX_CARDS)) {
+    if (!c || typeof c.id !== "string" || !CARD_ID_RE.test(c.id) || typeof c.name !== "string" || !c.name.trim() || c.name.length > 60) continue;
+    const text = cardSettingsText(c, approved);
+    if (!text) continue;
+    const file = path.join(dir, `${c.id}.json`);
+    try {
+      if (isLink(file)) fs.rmSync(file, { force: true });
+      fs.writeFileSync(file, text, { mode: 0o600 });
+    } catch {
+      continue;
+    }
+    keep.add(`${c.id}.json`);
+    index.push({ id: c.id, name: c.name.trim(), version: Number.isInteger(c.version) ? c.version : 0, file: `${c.id}.json`, pinnedUrl: httpUrl(c.pinned?.url) ? c.pinned.url : null });
+  }
+  try {
+    const idx = path.join(dir, "index.json");
+    if (isLink(idx)) fs.rmSync(idx, { force: true });
+    fs.writeFileSync(idx, JSON.stringify(index, null, 2) + "\n", { mode: 0o600 });
+    for (const name of fs.readdirSync(dir)) if (!keep.has(name)) fs.rmSync(path.join(dir, name), { recursive: false, force: true });
+  } catch {
+    /* 정리 실패는 무시: 호출은 index 에 있는 카드만 쓴다 */
+  }
+  return index.length;
+}
+
+/** 카드 id 또는 이름 → { id, name, version, rel, settings, pinnedUrl }. 없으면 { error } (이 PC 가 받은 카드 이름 목록 포함) */
+export function resolveCard(appDir, ref) {
+  if (typeof ref !== "string" || !ref.trim() || ref.length > 60 || /[\0\r\n]/.test(ref)) return { error: "card 는 카드 이름 또는 id(60자 이하 한 줄)여야 해요." };
+  const key = ref.trim();
+  let index = [];
+  try {
+    const f = path.join(appDir, ".factory", "cards", "index.json");
+    const st = fs.lstatSync(f);
+    if (!st.isSymbolicLink() && st.isFile() && st.size <= 64 * 1024) {
+      const j = JSON.parse(fs.readFileSync(f, "utf8"));
+      if (Array.isArray(j)) index = j.filter((e) => e && typeof e.id === "string" && CARD_ID_RE.test(e.id) && typeof e.name === "string" && typeof e.file === "string" && e.file === `${e.id}.json`);
+    }
+  } catch {
+    index = [];
+  }
+  const hit = index.find((e) => e.id === key) ?? index.find((e) => e.name === key);
+  if (!hit) {
+    return { error: index.length ? `카드를 찾지 못했어요: ${key.slice(0, 40)} (이 일감이 받은 카드: ${index.map((e) => e.name).slice(0, 10).join(", ")})` : `카드를 찾지 못했어요: ${key.slice(0, 40)} (카드 목록을 아직 받지 못했어요 — 홈페이지가 카드 기능 배포 전이거나 연결이 불안정해요)` };
+  }
+  try {
+    const file = path.join(appDir, ".factory", "cards", hit.file);
+    const st = fs.lstatSync(file);
+    if (st.isSymbolicLink() || !st.isFile() || st.size > PROJECT_SETTINGS_MAX_BYTES) return { error: "카드 설정 파일을 읽지 못했어요." };
+    const settings = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!settings || typeof settings !== "object" || Array.isArray(settings)) return { error: "카드 설정 파일 형식이 이상해요." };
+    return { id: hit.id, name: hit.name, version: Number.isInteger(hit.version) ? hit.version : 0, rel: `${CARDS_DIR_REL}/${hit.file}`, settings, pinnedUrl: httpUrl(hit.pinnedUrl) ? hit.pinnedUrl : null };
+  } catch {
+    return { error: "카드 설정 파일을 읽지 못했어요." };
   }
 }
 
@@ -365,8 +454,18 @@ const toolkitAdapter = {
     if (!tool) return { ok: false, reason: `tools.json 에 없는 하위 명령이에요: ${args.command}` };
     if (tool.enabled === false) return { ok: false, reason: `꺼져 있는 도구라 실행할 수 없어요: ${args.command}` };
     if (tool.manual === true) return { ok: false, reason: `사람이 직접 쓰는 도구라 일감 안에서는 실행할 수 없어요: ${args.command}` };
-    const given = args.args === undefined ? {} : args.args;
-    if (!given || typeof given !== "object" || Array.isArray(given)) return { ok: false, reason: "toolkit.run 의 args.args 는 객체여야 해요." };
+    const rawGiven = args.args === undefined ? {} : args.args;
+    if (!rawGiven || typeof rawGiven !== "object" || Array.isArray(rawGiven)) return { ok: false, reason: "toolkit.run 의 args.args 는 객체여야 해요." };
+    // card: 결과물 카드(2-2). 도구 인자가 아니라 중계가 받는 값이라 여기서 떼어 낸다(그 카드의 설정을 --settings 로 붙인다)
+    const { card: cardArg, ...given } = rawGiven;
+    let card = null;
+    if (cardArg !== undefined && cardArg !== null) {
+      if (tool.layer !== "studio" || !tool.args.some((a) => a.name === "settings" && a.type === "path")) return { ok: false, reason: `${args.command} 는 카드를 받지 않아요(settings 인자가 있는 스튜디오 도구만).` };
+      if (given.settings !== undefined && given.settings !== null) return { ok: false, reason: "card 와 settings 는 같이 줄 수 없어요(카드가 settings 를 대신해요)." };
+      const found = resolveCard(ctx.appDir, cardArg);
+      if (found.error) return { ok: false, reason: found.error };
+      card = found;
+    }
     const unknown = Object.keys(given).filter((k) => !tool.args.some((a) => a.name === k));
     if (unknown.length) return { ok: false, reason: `선언되지 않은 인자: ${unknown.slice(0, 5).join(", ")}` };
     const argv = [];
@@ -391,13 +490,13 @@ const toolkitAdapter = {
     // settings 인자가 없으면 프로젝트 설정 파일(.factory/project-settings.json)을 자동으로 붙인다(요청의 인자 > 프로젝트 설정 > 도구 기본값)
     let autoSettings = null;
     if (tool.layer === "studio" && tool.args.some((a) => a.name === "settings" && a.type === "path") && (given.settings === undefined || given.settings === null)) {
-      autoSettings = readProjectSettings(ctx.appDir);
+      autoSettings = card ? { rel: card.rel, settings: card.settings } : readProjectSettings(ctx.appDir);
       if (autoSettings) argv.push(`--settings=${autoSettings.rel}`);
     }
     // refs 인자가 없으면 이번 일감에서 '참고로 고른' 승인 그림(.factory/art-refs.json)을 자동으로 붙인다(먼저 참고됨, 최대 4장). 요청에 refs 를 적었으면 그 값을 따른다
     if (tool.layer === "studio" && tool.args.some((a) => a.name === "refs" && a.type !== "path" && a.type !== "int") && (given.refs === undefined || given.refs === null)) {
       const urls = [];
-      for (const u of readPickedRefs(ctx.appDir)) if ([...urls, u].join(",").length <= 500) urls.push(u);
+      for (const u of [...(card?.pinnedUrl ? [card.pinnedUrl] : []), ...readPickedRefs(ctx.appDir)]) if (!urls.includes(u) && [...urls, u].join(",").length <= 500) urls.push(u);
       if (urls.length) argv.push(`--refs=${urls.join(",")}`);
     }
     // 네트워크·비밀값이 필요한 도구는 '허용' 모드이면서 이 일감의 requiredSecrets 에 이름이 있을 때만
@@ -416,9 +515,9 @@ const toolkitAdapter = {
       if (absent.length) return { ok: false, status: "failed", reason: `이 PC 의 키 파일에 없는 키: ${absent.join(", ")}` };
     }
     if (!fs.existsSync(tool.entryFull) || isLink(tool.entryFull)) return { ok: false, status: "failed", reason: `툴킷 진입점이 없어요: ${tool.entry}` };
-    return { ok: true, value: { command: args.command, tool, argv, need } };
+    return { ok: true, value: { command: args.command, tool, argv, need, card: card ? { id: card.id, version: card.version } : null } };
   },
-  async run({ command, tool, argv, need = tool.secrets }, ctx) {
+  async run({ command, tool, argv, need = tool.secrets, card = null }, ctx) {
     const assets = factoryDir(ctx.appDir, "assets");
     const env = { PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1", FACTORY_APP_DIR: ctx.appDir, FACTORY_ASSETS_DIR: assets, FACTORY_REQUEST_ID: ctx.requestId };
     // AI·감독 프로그램의 환경(토큰 등)은 물려주지 않는다. 실행에 필요한 최소 변수 + 이 도구에 선언된 키만
@@ -438,6 +537,7 @@ const toolkitAdapter = {
     const confirm = art?.needsConfirmation ? " (PixelLab 비용 한도 초과 — 승인 필요)" : "";
     // 그림 저장소에 후보로 올릴 원본 정보(result.json 전체 요약). 응답 파일·보고에는 싣지 않고 onArt 로만 넘긴다
     const artSource = tool.layer === "studio" && r.code === 0 ? readStudioArtSource(ctx.appDir, argv) : null;
+    if (artSource && card) artSource.card = card; // 카드로 부른 호출이면 만든 그림에 카드 id·판 번호가 붙는다
     return { status: r.code === 0 ? "ok" : "failed", message: r.code === 0 ? `${command} 완료` : `${command} 실패(종료 코드 ${r.code})${confirm}`, files, output, ...(art ? { art } : {}), ...(artSource ? { artSource } : {}) };
   },
 };

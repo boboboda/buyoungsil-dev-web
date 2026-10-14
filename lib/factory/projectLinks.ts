@@ -27,6 +27,11 @@ const MAX_APPS = 60;
 const MAX_REMOTES = 8;
 const MAX_CONTAINERS = 60;
 
+export const EXPORT_KINDS = ["folder", "upload"] as const;
+export type ExportKind = (typeof EXPORT_KINDS)[number];
+export const EXPORT_LABELS: Record<ExportKind, string> = { folder: "앱 폴더 경로", upload: "서비스 업로드" };
+const EXPORT_PATH_RE = /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|[\\/])\.\.(?:[\\/]|$))[A-Za-z0-9가-힣_.\-][A-Za-z0-9가-힣_.\-/ ]{0,199}$/;
+
 export const isSlug = (v: unknown): v is string => typeof v === "string" && SLUG_RE.test(v);
 export const isDeployServer = (v: unknown): v is DeployServer => typeof v === "string" && (DEPLOY_SERVERS as readonly string[]).includes(v);
 
@@ -160,6 +165,10 @@ export interface ConnectionRow {
   containerName: string | null;
   services: string[];
   notes: string | null;
+  exportKind: ExportKind | null; // 승인 그림을 내보낼 곳(2-2)
+  exportPath: string | null; // exportKind=folder 일 때 앱 폴더 안 상대 경로
+  studioBatch: boolean; // 스튜디오 기능: 배치
+  studioService: boolean; // 스튜디오 기능: 서비스 운영
 }
 
 export interface ConnectionPatch {
@@ -171,6 +180,10 @@ export interface ConnectionPatch {
   containerName?: string | null;
   services?: string[];
   notes?: string | null;
+  exportKind?: ExportKind | null;
+  exportPath?: string | null;
+  studioBatch?: boolean;
+  studioService?: boolean;
 }
 
 const clean = (v: unknown, max: number): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
@@ -221,6 +234,24 @@ export function validatePatch(raw: unknown): { ok: true; patch: ConnectionPatch 
     patch.services = [...new Set(names)];
   }
   if (has("notes")) patch.notes = clean(o.notes, 500);
+  if (has("exportKind")) {
+    if (o.exportKind !== null && o.exportKind !== "" && !(EXPORT_KINDS as readonly string[]).includes(o.exportKind as string)) return { ok: false, reason: "승인 그림을 내보낼 곳은 folder(앱 폴더 경로) / upload(서비스 업로드) 중 하나예요." };
+    patch.exportKind = o.exportKind ? (o.exportKind as ExportKind) : null;
+    if (patch.exportKind !== "folder") patch.exportPath = null;
+  }
+  if (has("exportPath") && (patch.exportKind === undefined || patch.exportKind === "folder")) {
+    const v = clean(o.exportPath, 200);
+
+    if (v && !EXPORT_PATH_RE.test(v)) return { ok: false, reason: "내보낼 앱 폴더 경로는 앱 폴더 안의 상대 경로여야 해요(절대 경로·.. 은 안 돼요)." };
+    patch.exportPath = v;
+  }
+  if (patch.exportKind === "folder" && !patch.exportPath) return { ok: false, reason: "앱 폴더 경로로 내보내려면 폴더 경로도 적어 주세요(예: assets/sprites)." };
+  for (const k of ["studioBatch", "studioService"] as const) {
+    if (has(k)) {
+      if (typeof o[k] !== "boolean") return { ok: false, reason: `${k} 는 true/false 예요.` };
+      patch[k] = o[k] as boolean;
+    }
+  }
 
   return { ok: true, patch };
 }
@@ -250,6 +281,10 @@ export interface LinkRow {
   services: string[];
   containersFound: boolean | null; // 컨테이너 이름이 서버 목록에 있는지(서버 목록을 못 읽었으면 null)
   notes: string | null;
+  exportKind: ExportKind | null;
+  exportPath: string | null;
+  studioBatch: boolean;
+  studioService: boolean;
   warnings: { kind: WarningKind; text: string }[];
 }
 
@@ -302,6 +337,10 @@ export function buildLinksView(input: { appSlugs: string[]; connections: Connect
       services: c?.services ?? [],
       containersFound,
       notes: c?.notes ?? null,
+      exportKind: c?.exportKind ?? null,
+      exportPath: c?.exportPath ?? null,
+      studioBatch: c?.studioBatch ?? false,
+      studioService: c?.studioService ?? false,
       warnings,
     };
   });

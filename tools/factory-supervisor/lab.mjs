@@ -47,6 +47,7 @@ export function prepareLab(workDir, job) {
   fs.mkdirSync(path.join(dir, "outputs"), { recursive: true });
   fs.mkdirSync(shared, { recursive: true });
   fs.writeFileSync(path.join(dir, "PLAN.md"), `${job.planMarkdown}\n`);
+  writeLabCard(dir, job);
   return { dir, shared, outputs: path.join(dir, "outputs") };
 }
 
@@ -54,7 +55,43 @@ const slash = (p) => path.resolve(p).replace(/\\/g, "/");
 // Claude 권한 규칙의 절대 경로는 //경로. 윈도우 경로는 POSIX 꼴로(C:\Users\x → //c/Users/x)
 const ruleAbs = (p) => slash(p).replace(/^([A-Za-z]):/, (_, d) => d.toLowerCase()).replace(/^\/+/, "");
 
+// 결과물 카드(2-2): 실험이 카드를 불렀으면 카드로 만든 pixel-art 프로젝트 설정을 실험 폴더에 card-settings.json 으로 둔다(없거나 이상하면 예전 파일을 지운다).
+// 승인 그림 목록은 실험엔 안 내려 주고(앱 일감만), 기본 그림 고정 주소는 카드 정보로만 알려 준다.
+const LAB_CARD_FILE = "card-settings.json";
+export function writeLabCard(dir, job) {
+  const file = path.join(dir, LAB_CARD_FILE);
+  const settings = job.projectToolSettings?.settings;
+  const ok = job.card && settings && typeof settings === "object" && !Array.isArray(settings);
+  try {
+    if (!ok) {
+      fs.rmSync(file, { force: true });
+      return false;
+    }
+    const text = JSON.stringify(settings, null, 2) + "\n";
+    if (Buffer.byteLength(text) > 16 * 1024) return false;
+    fs.writeFileSync(file, text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ───────────── 지시문 머리말 ─────────────
+
+/** 결과물 카드로 시작한 실험이면 카드 설명 줄들 (아니면 빈 목록) */
+function labCardLines(job, dir) {
+  if (!job.card) return [];
+  const c = job.card;
+  const one = (v, n) => String(v ?? "").replace(/[\u0000-\u001f]/g, " ").slice(0, n);
+
+  return [
+    "## 결과물 카드",
+    `- 이 실험은 결과물 카드 '${one(c.name, 40)}' (판 ${Number.isInteger(c.version) ? c.version : "?"}, 도구 ${one(c.tool, 40)}${c.method ? `, 방법 ${one(c.method, 40)}` : ""})로 실행해요.`,
+    `- 카드로 만든 pixel-art 프로젝트 설정: ${path.join(dir, "card-settings.json")} — pixel-art 를 쓸 때 이 파일을 settings 인자로 주세요(요청 > 카드 설정 > 도구 기본값).`,
+    ...(c.pinnedUrl ? [`- 기본 그림(1순위 참고로 고정): ${one(c.pinnedUrl, 300)}`] : []),
+    "",
+  ];
+}
 
 /** AI 에게 가는 첫 지시문: 실험 규칙 머리말 + 실험 내용 */
 export function labPrompt({ job, dir, shared, workDir }) {
@@ -82,6 +119,7 @@ export function labPrompt({ job, dir, shared, workDir }) {
     "- 파일은 한 개 50MB, 한 실험 200MB, 40개까지만 올라가요. 넘는 파일은 올라가지 않고 목록만 보여요. 영상은 짧고 가볍게(예: 720p 이하) 만드세요.",
     "- 인터넷에서 받은 파일은 report.md 에 '받은 파일' 표로 적으세요(주소, 저장한 파일 이름, 크기). 모델·설치 파일처럼 큰 것은 크기를 꼭 적으세요.",
     "",
+    ...labCardLines(job, dir),
     "## 실험 내용",
     job.planMarkdown,
     "",

@@ -5,6 +5,7 @@
 // 바로가기: 상세 맨 위 [스튜디오 열기](studioUrl) + 이름·주소 목록(links). 주소가 없으면 맨 위에서 바로 입력·저장한다.
 import { useState } from "react";
 
+import CardsPanel from "./CardsPanel";
 import ProjectToolSettingsCard from "./ProjectToolSettingsCard";
 import AppQueue from "./AppQueue";
 import StudioArtsCard from "./StudioArtsCard";
@@ -570,6 +571,7 @@ export default function StudioWorkbench({
                 {dirty ? <span className="text-sm fx-muted">저장하지 않은 변경이 있어요.</span> : null}
               </div>
               <ProjectToolSettingsCard key={`settings-${app.appSlug}`} appSlug={app.appSlug} />
+              <CardsPanel key={`cards-${app.appSlug}`} appSlug={app.appSlug} />
               <StudioArtsCard key={`arts-${app.appSlug}`} appSlug={app.appSlug} picked={pickedArts} onPickedChange={setPickedArts} />
               <AppQueue key={`queue-${app.appSlug}`} appSlug={app.appSlug} />
               {classified && cfg ? (

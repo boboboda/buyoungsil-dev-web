@@ -18,7 +18,7 @@ import {
 
 // ───────── DB ─────────
 
-type DbRow = { appSlug: string; folder: string | null; stack: string | null; defaultBranch: string | null; remotes: unknown; deployServer: string | null; deployMethod: string | null; domain: string | null; containerName: string | null; services: unknown; notes: string | null };
+type DbRow = { appSlug: string; folder: string | null; stack: string | null; defaultBranch: string | null; remotes: unknown; deployServer: string | null; deployMethod: string | null; domain: string | null; containerName: string | null; services: unknown; notes: string | null; exportKind?: string | null; exportPath?: string | null; studioBatch?: boolean; studioService?: boolean };
 
 function toConnection(r: DbRow): ConnectionRow {
   const remotes = Array.isArray(r.remotes)
@@ -42,6 +42,10 @@ function toConnection(r: DbRow): ConnectionRow {
     containerName: r.containerName,
     services: Array.isArray(r.services) ? r.services.filter((s): s is string => typeof s === "string") : [],
     notes: r.notes,
+    exportKind: r.exportKind === "folder" || r.exportKind === "upload" ? r.exportKind : null,
+    exportPath: r.exportPath ?? null,
+    studioBatch: r.studioBatch === true,
+    studioService: r.studioService === true,
   };
 }
 

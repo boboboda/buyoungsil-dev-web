@@ -391,3 +391,10 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
 - 설명서 파일이 없는 도구는 `tools.json`(도구함 정보)으로 최소 설명서를 만들어 같이 보낸다(`source:"fallback"`: 방법은 기본 하나 + `optionalSecrets` 가 가리키는 방법). 본문이 60KB 를 넘으면 최소 설명서부터 뺀다. 구현 안 한 제안 메모(`proposals`)는 보내지 않는다. 키는 이름만 다룬다.
 - **방법 → 필요한 키는 `secretsForMethod` 한 곳**에서 정한다: 설명서 파일의 그 방법 `secrets` + `tools.json` 의 `optionalSecrets` 중 `OPTIONAL_SECRET_METHODS` 가 그 방법으로 가리키는 것(PixelLab). 도구 중계(`toolbroker.mjs`)가 이 함수로 호출마다 필요한 키를 정하고, 설명서에만 적힌 키도 도구 전용 키(AI 환경에서 뺌)로 친다. 일감에 키를 자동으로 넣는 쪽은 서버(`enqueue_app_job` 이 지시문이 부르는 방법의 키를 `requiredSecrets` 에 더함).
 - 사람이 직접 보기: `node tools/factory-supervisor/toolmanifest.mjs once [툴킷폴더]`. 시험: `npm run test:tool-manifests`.
+
+## 결과물 카드 (2-2: `toolbroker.mjs` 의 카드 파일 · `artregister.mjs` · `lab.mjs`)
+- **카드** = 홈페이지 통제실의 프로젝트별 "이런 결과물을 이렇게 만든다"(도구·방법·옵션·참고 규칙). 일감이 카드를 부르면(`enqueue_app_job` 의 `card`) `/api/factory/next` 가 **카드로 만든 pixel-art 설정**을 `projectToolSettings` 로 내려 주고 `card: { id, name, version, rules, … }` 를 붙인다. 감독은 그 설정을 예전처럼 `.factory/project-settings.json` 으로 쓴다(승인 그림은 `card.rules` 의 같은 대상/같은 종류 규칙에 맞게 합침). 기본 그림 고정은 서버가 `pickedArts` 맨 앞에 넣어 준다.
+- **호출의 `card` 인자**: `toolkit.run` 의 `args.args.card`(카드 이름 또는 id)를 주면 중계가 `.factory/cards/<id>.json`(카드 설정 + 승인 그림)을 `--settings` 로 붙이고, 고정 그림을 `--refs` 맨 앞에 붙이고, 카드 방법에 필요한 키(예: pixellab → `PIXELLAB_TOKEN`)를 평소처럼 일감의 `requiredSecrets` 에서 넘긴다. `card` 는 도구 인자가 아니라 중계가 떼어 쓰고, `settings` 와 같이 주면 거절한다. 카드 목록은 스튜디오 도구 호출 직전(20초에 한 번) `GET /api/factory/cards?appSlug=` 로 받아 `.factory/cards/` 에 둔다(옛 서버 404 는 카드 없이 계속).
+- **그림에 카드 붙이기**: 후보 그림을 올릴 때 `cardId`·`cardVersion` 을 같이 보낸다(호출에 `card` 를 줬으면 그 카드, 아니면 일감의 카드). 카드 없이 만든 그림은 비어 있다.
+- **실험 일감**: 카드를 불렀으면 실험 폴더에 `card-settings.json` 을 쓰고 지시문 머리말에 카드 안내(+고정 그림 주소)를 넣는다.
+- 시험: `npm run test:result-cards`.
