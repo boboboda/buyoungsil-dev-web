@@ -21,6 +21,9 @@ const PROP_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const TOOL_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/i; // tools.json 도구 id 형식
 const MODE_RE = /^[A-Za-z0-9_.-]{1,30}$/;
 const PATH_RE = /^[A-Za-z0-9_][A-Za-z0-9_./-]{0,199}$/;
+const PART_RE = /^[가-힣ㄱ-ㅎA-Za-z0-9 ]{1,20}$/; // 백틱·줄바꿈·특수문자 금지
+const MIN_PARTS = 2;
+const MAX_PARTS = 8;
 const MAX_PLACEMENT_ITEMS = 500;
 const MAX_ID = 80;
 export const DEFAULT_LAYOUT_FILE = "assets/layout/hub_layout.json";
@@ -53,6 +56,16 @@ export type StudioRequest =
       layout: Record<string, unknown>;
       /** layout 이 schema 1 placement 형식이면 true */
       placement?: boolean;
+      note: string;
+    } & StudioExtras)
+  | ({
+      /** 한 그림에 붙은 여러 물건을 따로 놓을 수 있는 소품 여러 개로 쪼갠다. method=redraw 면 engine 필수, cut 이면 없다 */
+      kind: "split";
+      appSlug: string;
+      propName: string;
+      parts: string[];
+      method: "redraw" | "cut";
+      engine?: "codex" | "pixellab";
       note: string;
     } & StudioExtras)
   | ({
@@ -89,8 +102,8 @@ export function parseStudioRequest(
 
   const free = opts.allowFree === true && kind === "free";
 
-  if (kind !== "regen" && kind !== "layout" && !free)
-    return { ok: false, error: "kind 는 regen 또는 layout 이에요." };
+  if (kind !== "regen" && kind !== "layout" && kind !== "split" && !free)
+    return { ok: false, error: "kind 는 regen, layout, split 중 하나예요." };
   if (!APP_SLUG_RE.test(appSlug))
     return {
       ok: false,
@@ -126,6 +139,37 @@ export function parseStudioRequest(
       ok: true,
       value: { kind, appSlug, instruction, note, ...extras.value },
     };
+  }
+  if (kind === "split") {
+    const propName = typeof raw.propName === "string" ? raw.propName : "";
+    const method = raw.method;
+    const engine = raw.engine;
+
+    if (!PROP_RE.test(propName))
+      return { ok: false, error: "propName 은 영문·숫자·_·- 80자 이하예요." };
+    if (!Array.isArray(raw.parts) || raw.parts.length < MIN_PARTS || raw.parts.length > MAX_PARTS)
+      return { ok: false, error: `parts 는 ${MIN_PARTS}~${MAX_PARTS}개예요.` };
+    const parts: string[] = [];
+
+    for (const p of raw.parts) {
+      if (typeof p !== "string" || !PART_RE.test(p) || !p.trim())
+        return { ok: false, error: "조각 이름은 한글·영문·숫자·공백 1~20자예요." };
+      parts.push(p.trim());
+    }
+    if (new Set(parts.map((p) => p.toLowerCase())).size !== parts.length)
+      return { ok: false, error: "조각 이름이 겹쳐요." };
+    if (method !== "redraw" && method !== "cut")
+      return { ok: false, error: "method 는 redraw 또는 cut 이에요." };
+    if (method === "redraw") {
+      if (engine !== "codex" && engine !== "pixellab")
+        return { ok: false, error: "redraw 는 engine(codex 또는 pixellab)이 필요해요." };
+
+      return { ok: true, value: { kind, appSlug, propName, parts, method, engine, note, ...extras.value } };
+    }
+    if (engine !== undefined && engine !== null)
+      return { ok: false, error: "cut 은 engine 을 보내지 않아요." };
+
+    return { ok: true, value: { kind, appSlug, propName, parts, method, note, ...extras.value } };
   }
   if (kind === "regen") {
     const engine = raw.engine;
@@ -333,7 +377,7 @@ function pickedRefsBlock(v: StudioRequest): string {
 
 function buildStudioPlanBase(v: StudioRequest, appTitle: string): string {
   const head =
-    `# ${appTitle} — Studio 요청 (${v.kind === "regen" ? "소품 다시 요청" : v.kind === "free" ? "자유 지시" : "배치 적용"})\n\n` +
+    `# ${appTitle} — Studio 요청 (${v.kind === "regen" ? "소품 다시 요청" : v.kind === "free" ? "자유 지시" : v.kind === "split" ? "소품 쪼개기" : "배치 적용"})\n\n` +
     `이 지시는 Studio(소품 도구)가 보낸 요청으로 서버가 만들었어요. 승인한 사람이 통제실에서 확인했어요. 범위는 아래 내용으로만 한정해요.\n`;
 
   const layoutFile = v.paths?.layoutFile ?? DEFAULT_LAYOUT_FILE;
@@ -379,6 +423,39 @@ function buildStudioPlanBase(v: StudioRequest, appTitle: string): string {
       noteBlock(v.note)
     );
   }
+  if (v.kind === "split") {
+    const list = fenced(v.parts.map((p, i) => `${i + 1}. ${p}`).join("\n"));
+    const how =
+      v.method === "cut"
+        ? `## 방식: 기존 그림에서 잘라내기\n` +
+          `기존 그림에서 조각을 잘라내세요(game-toolkit 의 \`pixel-slice\` 같은 기존 도구나 알파 마스크를 쓰세요).\n` +
+          `- 서로 겹쳐서 깨끗하게 안 잘리는 조각(예: 러그 위에 놓인 탁자)은 억지로 자르지 마세요. 어느 조각이 안 되는지 결과에 적고, 그 조각만 \`redraw\` 로 다시 요청하길 권하세요.\n`
+        : v.engine === "codex"
+          ? `## 방식: 조각마다 새로 그리기 (Codex)\n` +
+            `조각마다 원본과 같은 화풍으로 Codex 이미지 생성으로 새로 그리세요.\n`
+          : `## 방식: 조각마다 새로 그리기 (PixelLab)\n` +
+            `PixelLab 은 공장 PC 에서 호출할 수 있는지 확인되지 않았어요. **PixelLab 을 직접 호출하지 말고**, 사용자가 Mac 에서 실행할 준비만 하세요.\n` +
+            `1. \`${manifestFile}\` 에 조각별 새 항목을 추가하세요. 이름은 \`${v.propName}_part1\` 처럼 manifest 에 아직 없는 새 이름이에요(겹치면 숫자를 올려 겹치지 않게). 기존 항목은 고치지 마세요.\n` +
+            `2. 결과에 사용자가 Mac 에서 실행할 정확한 명령을 적으세요(<이름들> 은 방금 추가한 새 이름을 공백으로 이은 것):\n\n` +
+            `${fenced("python3 tools/pixellab/pixellab_gen.py run <이름들> --push", "sh")}\n\n` +
+            `3. 이 명령은 PixelLab 크레딧을 쓴다는 것과, 조각 하나당 약 20 generations 기준으로 이번 요청의 예상 사용량(${v.parts.length}조각 약 ${v.parts.length * 20} generations)이 크레딧 상한 안인지를 한 줄로 적으세요.\n`;
+
+    return (
+      `${head}\n## 할 일: 소품 \`${v.propName}\` 쪼개기 (${v.parts.length}조각)\n` +
+      `소품 \`${v.propName}\` 한 그림에 여러 물건이 붙어 있어요. 아래 이름의 조각으로 쪼개서 따로 놓을 수 있는 소품 여러 개로 만드세요.\n` +
+      templateLine +
+      toolLine +
+      `\n## 조각 이름 (순서 = 번호, 데이터)\n${list}\n\n` +
+      `${how}\n` +
+      `## 공통 지시\n` +
+      `- 먼저 원본 소품 \`${v.propName}\` 의 그림을 읽고, 어떤 조각이 어떻게 겹쳐 있는지 결과에 설명하세요.\n` +
+      `- 조각마다 따로 놓을 수 있는 투명 PNG 를 만드세요. 저장 위치와 이름은 \`assets/sprites/decor/${v.propName}_<번호>.png\` 예요(번호는 1부터, 위 조각 이름 순서와 같아요).\n` +
+      `- 게임이 불러오는 장식 소품 목록(\`Sprites.decorNames\` 등)에 등록하고, 크기를 32px 타일 단위에 맞추세요.\n` +
+      `- **원본 \`${v.propName}\` 그림과 이를 쓰는 시설(휴게실 등)은 바꾸지 마세요.** 조각은 새 장식 소품으로만 추가하고, 시설을 조각으로 바꿀지는 사람이 정한다고 결과에 적으세요.\n` +
+      `- 결과에 조각별 미리보기(한 장짜리 시트)와 원본과의 크기·색 일치 여부를 적으세요. 채택하지 않은 후보는 \`assets/raw/\` 아래에 두세요.\n` +
+      noteBlock(v.note)
+    );
+  }
   if (v.engine === "codex") {
     return (
       `${head}\n## 할 일: 소품 \`${v.propName}\` 그림 다시 만들기 (Codex)\n` +
@@ -414,7 +491,9 @@ function buildTitle(appTitle: string, v: StudioRequest): string {
   const tail =
     v.kind === "regen"
       ? ` (Studio: 소품 다시 요청 ${v.propName})`
-      : v.kind === "free"
+      : v.kind === "split"
+        ? ` (Studio: 소품 쪼개기 ${v.propName})`
+        : v.kind === "free"
         ? " (Studio: 자유 지시)"
         : " (Studio: 배치 적용)";
   const room = Math.max(1, 80 - tail.length);
@@ -469,7 +548,9 @@ export async function createStudioRequestJob(
       `승인 대기 중인 Studio 요청이 ${pending}개예요. 통제실에서 정리한 뒤에 다시 보내세요.`,
     );
   const aiEngine =
-    v.kind === "regen" && v.engine === "codex" ? "codex" : "claude";
+    (v.kind === "regen" || v.kind === "split") && v.engine === "codex"
+      ? "codex"
+      : "claude";
   const appTitle =
     lastDone.title.replace(/[\u0000-\u001f\u007f]+/g, " ").trim() || v.appSlug;
   const r = await enqueueWithId({

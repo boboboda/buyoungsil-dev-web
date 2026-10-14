@@ -127,12 +127,26 @@ Studio 에서 소품을 눌러 "이상해요, 다시 요청"을 하거나 소품
 }
 ```
 
+```json
+{
+  "kind": "split",
+  "appSlug": "saessak-hub",
+  "propName": "lounge",
+  "parts": ["소파", "정수기", "러그", "탁자"],
+  "method": "redraw",
+  "engine": "codex",
+  "note": "러그 위에 탁자가 있음"
+}
+```
+
 | 값 | 규칙 |
 | --- | --- |
-| `kind` | `regen`(소품 다시 요청) 또는 `layout`(배치 적용) |
+| `kind` | `regen`(소품 다시 요청), `layout`(배치 적용), `split`(소품 쪼개기) |
 | `appSlug` | 영문 소문자·숫자·하이픈 3~40자. 이미 완성(done)된 앱이어야 함 |
-| `engine` | regen 일 때 필수: `codex` 또는 `pixellab` |
-| `propName` | regen 일 때 필수: 영문·숫자·`_`·`-` 80자 이하 |
+| `engine` | regen 일 때 필수, split 은 method=redraw 일 때만 필수(cut 이면 보내지 않는다): `codex` 또는 `pixellab` |
+| `propName` | regen·split 일 때 필수: 영문·숫자·`_`·`-` 80자 이하 |
+| `parts` | split 일 때 필수: 조각 이름 2~8개, 각 한글·영문·숫자·공백 1~20자, 중복 없음(백틱·줄바꿈·특수문자 400) |
+| `method` | split 일 때 필수: `redraw`(조각마다 새로 그림) 또는 `cut`(기존 그림에서 잘라냄) |
 | `note` | 선택, 500자 이하 |
 | `layout` | layout 일 때 필수: 객체, JSON 40KB 이하, 중첩 12단계 이하 |
 
@@ -143,16 +157,20 @@ Studio 에서 소품을 눌러 "이상해요, 다시 요청"을 하거나 소품
 | 201 | 승인 대기 일감을 만들었다 | `{"ok":true,"jobId":"…","status":"승인 대기"}` |
 | 400 | 값 검사 실패(허용 목록 밖, 완성되지 않은 앱, layout 40KB 초과 등) | `{"ok":false,"error":"…"}` |
 | 401 | 키 없음·틀림·폐기됨 | `{"ok":false,"error":"…"}` |
-| 409 | 그 앱에 이미 진행 중 일감이 있음(채팅의 enqueue_app_job 과 같은 검사), 승인 대기 Studio 일감이 5개 이상, 승인 대기 일감이 너무 많음 | 같은 형식 |
+| 409 | 일감을 만들 수 없음(채팅의 enqueue_app_job 과 같은 등록 검사), 승인 대기 Studio 일감이 5개 이상, 승인 대기 일감이 너무 많음 | 같은 형식 |
 | 413 | 본문이 64KB 초과 | 같은 형식 |
 | 429 | 한 주소가 막힘(`Retry-After`), 또는 키당 분당 10건 초과 | 같은 형식 |
 
 일감 내용(기획서는 서버가 템플릿으로 만든다. 보낸 값은 코드블록 안의 데이터로만 들어간다):
 
-- `source`: "Studio 요청". 통제실 일감 목록의 '등록 경로'로 보인다. 제목: `<앱 이름> (Studio: 소품 다시 요청 <propName>)` 또는 `<앱 이름> (Studio: 배치 적용)`. 직전 완료 일감이 `parentJobId`.
+- `source`: "Studio 요청". 통제실 일감 목록의 '등록 경로'로 보인다. 제목: `<앱 이름> (Studio: 소품 다시 요청 <propName>)` `<앱 이름> (Studio: 배치 적용)`, 또는 `<앱 이름> (Studio: 소품 쪼개기 <propName>)`. 직전 완료 일감이 `parentJobId`.
 - regen / codex: 해당 소품 그림을 Codex 로 다시 만들어 후보 풀(`assets/raw/...`)에 올리고 **기존 이미지는 교체하지 않는다**(사람이 고름). `aiEngine`=codex.
 - regen / pixellab: PixelLab 은 공장 PC 에서 호출 가능한지 확인되지 않아, `tools/pixellab/manifest.json` 에 새 항목(`<propName>2` 식)만 추가하고 Mac 에서 실행할 명령 `python3 tools/pixellab/pixellab_gen.py run <이름> --push` 를 결과에 적게 한다(크레딧 상한 언급). `aiEngine`=claude.
 - layout: 보낸 JSON 을 `assets/layout/hub_layout.json` 으로 저장하고 게임이 읽어 반영하게 한다. 파일이 없으면 코드 배치로 되돌아가는 폴백 유지, 겹침·바닥 밖 좌표 검사.
+- split: 원본 소품 그림을 먼저 읽고 겹침을 설명한 뒤, 조각마다 투명 PNG 를 `assets/sprites/decor/<propName>_<번호>.png`(번호는 1부터, 조각 이름 순서)로 만들어 장식 소품 목록(`Sprites.decorNames` 등)에 등록하고 32px 타일 단위에 맞춘다. **원본 그림과 이를 쓰는 시설(휴게실 등)은 바꾸지 않는다**(시설을 조각으로 바꿀지는 사람이 정함). 결과에 조각별 미리보기 시트와 원본과의 크기·색 일치 여부를 적고, 채택하지 않은 후보는 `assets/raw/` 아래에 둔다.
+  - redraw / codex: 조각마다 원본과 같은 화풍으로 새로 그린다. `aiEngine`=codex.
+  - redraw / pixellab: 공장 PC 에서 부르지 않고 `tools/pixellab/manifest.json` 에 조각별 새 항목만 추가, Mac 에서 실행할 `python3 tools/pixellab/pixellab_gen.py run <이름들> --push` 와 크레딧(조각당 약 20 generations)을 결과에 적게 한다. `aiEngine`=claude.
+  - cut: 기존 그림에서 `pixel-slice` 같은 기존 도구나 알파 마스크로 잘라낸다. 겹쳐서 깨끗하게 안 잘리는 조각은 억지로 자르지 않고 결과에 적어 그 조각만 redraw 를 권한다. `aiEngine`=claude.
 
 남용 방지·감사:
 

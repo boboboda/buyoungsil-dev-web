@@ -116,7 +116,10 @@ export async function POST(req: NextRequest) {
 
     if ("error" in parsed) {
       const o = (raw ?? {}) as Record<string, unknown>;
-      const kind = o.kind === "regen" || o.kind === "layout" ? o.kind : "?";
+      const kind =
+        o.kind === "regen" || o.kind === "layout" || o.kind === "split"
+          ? o.kind
+          : "?";
       const slug =
         typeof o.appSlug === "string" && /^[a-z0-9-]{3,40}$/.test(o.appSlug)
           ? o.appSlug
