@@ -11,6 +11,7 @@
 //   [감독 재시작]을 누르면 다음 응답 한 번에 { jobs: [], restart: true } 가 간다(started 를 보내는 감독 프로그램에만. 받아 가면 지운다. 그 응답에는 일감·신호를 싣지 않는다).
 //   재시작을 기다리는 감독 프로그램은 hold=1 을 붙인다: 일감·정비·1회성 신호를 하나도 넘기지 않고(유실 방지) { jobs: [], restartHold: true } 만 돌려준다.
 //   appSlots(1~4)·appSlotsDefault: 통제실 [설정]의 '동시에 만들 앱 수'. 정한 적 없으면 3 과 appSlotsDefault: true (감독 프로그램: slots 로 요청하는 수는 이 값에서 돌고 있는 일감 수를 뺀 만큼).
+//   설정이 저장된 앱의 일감에는 projectToolSettings: { version, settings } 가 붙는다(프로젝트 도구 설정, lib/factory/projectToolSettingsDb.ts).
 //   toolBroker: { mode: off|report|allow, maxRequests, toolTimeoutSec } 가 붙는다(도구 요청 중계, 기본 꺼짐. 수치 null = 제한 없음. lib/factory/toolBroker.ts).
 //   각 job 에 rules(CLAUDE.md 작업 규칙 본문)·prompt(첫 지시문)가 붙는다(lib/factory/rules.ts, 통제실에서 고칠 수 있음).
 //   감독 프로그램은 이 값이 없으면 자기 코드 안 기본값을 쓴다.
@@ -34,6 +35,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { claimJobs, MAX_SLOTS, releaseExpiredLeases, WORKER_RE } from "@/lib/factory/jobs";
 import { fail, guardWorker } from "@/lib/factory/http";
+import prisma from "@/lib/prisma";
 import { consumeKeyScan, notifyTestingDue, pcPathsToCheck, releaseJobExtras } from "@/lib/factory/release";
 import { keyPasswordsPending } from "@/lib/factory/keyPasswords";
 import { provisionPending } from "@/lib/factory/keyProvision";
@@ -48,6 +50,7 @@ import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
 import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
 import { labCleanupForNext, LAB_KIND } from "@/lib/factory/lab";
+import { projectSettingsForNext, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -158,15 +161,18 @@ export async function GET(req: NextRequest) {
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
     const overrides = claimed.length ? await getRuleOverrides().catch(() => ({})) : {};
     const releases = await releaseJobExtras(claimed).catch(() => new Map<string, Record<string, unknown>>());
+    // 프로젝트 도구 설정(pixel-art settings): 설정이 있는 앱의 일감에만 projectToolSettings: { version, settings } 를 붙인다(감독 프로그램이 .factory/project-settings.json 으로 내려 줌)
+    const toolSettings = await projectSettingsForNext(prisma as unknown as SettingsDb, claimed.filter((j) => j.kind !== LAB_KIND).map((j) => j.appSlug)).catch(() => new Map<string, { version: number; settings: Record<string, unknown> }>());
     const jobs = claimed.map((j) => {
       const release = releases.get(j.id);
+      const projectToolSettings = toolSettings.get(j.appSlug);
 
       if (j.kind === LAB_KIND) return j; // 실험은 앱 작업 규칙·첫 지시문을 붙이지 않는다(감독 프로그램이 머리말을 만든다)
 
       try {
-        return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}) };
+        return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}) };
       } catch {
-        return { ...j, ...(release ? { release } : {}) };
+        return { ...j, ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}) };
       }
     });
 

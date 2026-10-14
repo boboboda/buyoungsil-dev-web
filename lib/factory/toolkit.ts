@@ -98,6 +98,7 @@ function readModes(v: unknown): ToolkitMode[] {
 
 export interface ToolkitInfo {
   studioTools: StudioToolInfo[]; // 옛 보고(저장값 포함)는 빈 배열
+  settingsSchemaHash?: string; // 툴킷 프로젝트 설정 스키마 지문(감독 프로그램 보고, 없으면 비교하지 않음)
   state: "ok" | "missing" | "error";
   reason: string;
   count: number;
@@ -194,6 +195,7 @@ export function validateToolkitReport(raw: unknown, now = new Date()): { ok: tru
     ok: true,
     info: {
       studioTools: readStudioTools(raw.studio),
+      ...(typeof raw.psh === "string" && /^[0-9a-f]{16}$/.test(raw.psh) ? { settingsSchemaHash: raw.psh } : {}),
       state,
       reason: text(raw.reason, 200),
       count: Math.max(tools.length, nonNeg(raw.count, 1000)),

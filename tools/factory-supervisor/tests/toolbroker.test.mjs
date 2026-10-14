@@ -9,7 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { brokerRules, brokerSettings, createBroker, imageToolRules, jobUsableTools, loadToolkitManifest, neededOptionalSecrets, readRequest, safeAppPath, TOOLREQ_PATH, toolkitSecretNames, validateRequest } from "../toolbroker.mjs";
+import { brokerRules, brokerSettings, createBroker, imageToolRules, jobUsableTools, loadToolkitManifest, neededOptionalSecrets, projectDefaultMethod, readProjectSettings, readRequest, safeAppPath, TOOLREQ_PATH, toolkitSecretNames, validateRequest, writeProjectSettings } from "../toolbroker.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -670,4 +670,105 @@ test("옛 tools.json(layer·optionalSecrets·studioTools 없음)의 필수 키 �
   assert.equal(response(f.app, "o1").status, "denied");
   assert.match(response(f.app, "o1").message, /PIXEL_TOKEN/);
   assert.equal("art" in response(f.app, "o1"), false);
+});
+
+// ───────── 프로젝트 도구 설정(홈페이지 통제실 값) → .factory/project-settings.json → pixel-art settings 자동 인자 ─────────
+const SETTINGS_CLI = `
+const fs = require("node:fs"), path = require("node:path");
+const [cmd, ...args] = process.argv.slice(2);
+const get = (k) => args.find((a) => a.startsWith("--" + k + "="))?.slice(k.length + 3);
+console.log("cmd=" + cmd + " method=" + get("method") + " settings=" + get("settings") + " token=" + process.env.PIXELLAB_TOKEN);
+const out = get("output_dir");
+fs.mkdirSync(out, { recursive: true });
+fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({ subject: get("subject"), kind: get("kind"), method: get("method") || "codex", steps: [], refs: [], settings_source: "project", cost: 0, outputs: [], created_at: "2026-10-14T00:00:00Z" }));
+`;
+const SETTINGS_TOOLS = {
+  "pixel-art": {
+    entry: "cli.py",
+    layer: "studio",
+    args: [{ name: "kind", type: "string", required: true }, { name: "subject", type: "string", required: true }, { name: "method", type: "string" }, { name: "settings", type: "path" }, { name: "output_dir", type: "path", required: true }],
+    network: true,
+    secrets: [],
+    optionalSecrets: ["PIXELLAB_TOKEN"],
+    timeoutSec: 30,
+  },
+};
+function settingsToolkit(f) {
+  toolkit(f, SETTINGS_TOOLS, SETTINGS_CLI);
+  fs.writeFileSync(path.join(f.toolkit, "tools.json"), JSON.stringify({ version: 1, tools: SETTINGS_TOOLS, studioTools: ART_STUDIO }));
+}
+const PROJECT = { version: 1, settings: { version: 1, methods: { "image-prop": { allowed: ["codex", "claude"], default: "codex" }, "image-pix": { allowed: ["pixellab"], default: "pixellab" } }, style: { max_colors: 16 } } };
+
+test("writeProjectSettings: 설정이 있으면 파일을 쓰고, 없거나 비면 이전 일감의 파일을 지운다", (t) => {
+  const f = fixture(t);
+  const file = path.join(f.app, ".factory", "project-settings.json");
+  assert.equal(writeProjectSettings(f.app, PROJECT), "written");
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), PROJECT.settings);
+  assert.equal(writeProjectSettings(f.app, undefined), "removed", "설정이 없는 일감: 지난 설정이 남지 않는다");
+  assert.equal(fs.existsSync(file), false);
+  assert.equal(writeProjectSettings(f.app, undefined), "none");
+  assert.equal(writeProjectSettings(f.app, { version: 1, settings: { version: 1 } }), "none", "빈 설정은 파일을 만들지 않는다");
+  assert.equal(writeProjectSettings(f.app, { version: 1, settings: { version: 1, style: { notes: "x".repeat(20000) } } }), "invalid", "너무 크면 쓰지 않는다");
+  assert.equal(fs.existsSync(file), false);
+});
+
+test("writeProjectSettings: .factory 가 심볼릭 링크면 쓰지 않는다", (t) => {
+  const f = fixture(t);
+  const other = path.join(f.dir, "elsewhere");
+  fs.mkdirSync(other);
+  fs.rmSync(path.join(f.app, ".factory"), { recursive: true, force: true });
+  try {
+    fs.symlinkSync(other, path.join(f.app, ".factory"), "junction");
+  } catch {
+    t.skip("링크를 만들 수 없는 환경");
+    return;
+  }
+  assert.equal(writeProjectSettings(f.app, PROJECT), "invalid");
+  assert.equal(fs.readdirSync(other).length, 0);
+});
+
+test("projectDefaultMethod: default > allowed 첫 방식 > 없음", () => {
+  assert.equal(projectDefaultMethod(PROJECT.settings, "image-prop"), "codex");
+  assert.equal(projectDefaultMethod({ methods: { x: { allowed: ["claude", "codex"] } } }, "x"), "claude");
+  assert.equal(projectDefaultMethod(PROJECT.settings, "motion-game"), "");
+  assert.equal(projectDefaultMethod(null, "image-prop"), "");
+  const tool = { optionalSecrets: ["PIXELLAB_TOKEN"] };
+  assert.deepEqual(neededOptionalSecrets("pixel-art", tool, { kind: "image-pix" }, ART_STUDIO, PROJECT.settings), ["PIXELLAB_TOKEN"], "프로젝트 설정 기본이 pixellab");
+  assert.deepEqual(neededOptionalSecrets("pixel-art", tool, { kind: "image-pix", method: "codex" }, ART_STUDIO, PROJECT.settings), [], "요청의 method 가 먼저");
+  assert.deepEqual(neededOptionalSecrets("pixel-art", tool, { kind: "image-prop" }, { "pixel-art": { "image-prop": "pixellab" } }, PROJECT.settings), [], "프로젝트 설정이 도구 기본보다 먼저");
+});
+
+test("pixel-art: settings 인자가 없으면 프로젝트 설정 파일을 자동으로 붙이고, 있으면 그대로 둔다", { skip: !canSpawn && "자식 프로세스를 띄울 수 없는 환경" }, async (t) => {
+  const f = fixture(t);
+  settingsToolkit(f);
+  writeProjectSettings(f.app, PROJECT);
+  fs.writeFileSync(path.join(f.app, "mine.json"), "{}");
+  const a = (subject, extra = {}) => ({ command: "pixel-art", args: { kind: "image-prop", subject, output_dir: `.factory/assets/${subject}`, ...extra } });
+  request(f.app, "p1", "toolkit.run", a("s1"));
+  request(f.app, "p2", "toolkit.run", a("s2", { settings: "mine.json" }));
+  request(f.app, "p3", "toolkit.run", { command: "pixel-art", args: { kind: "image-pix", subject: "s3", output_dir: ".factory/assets/s3" } });
+  const { b } = broker(f, { mode: "allow" }, { requiredSecrets: ["PIXELLAB_TOKEN"], secrets: { PIXELLAB_TOKEN: SECRET } });
+  await b.tick();
+  assert.match(response(f.app, "p1").output, /settings=\.factory\/project-settings\.json/, "자동으로 붙음");
+  assert.match(response(f.app, "p1").output, /token=undefined/, "프로젝트 설정 기본 codex: 키 없음");
+  assert.match(response(f.app, "p2").output, /settings=mine\.json/, "요청에 적은 settings 가 먼저");
+  assert.match(response(f.app, "p3").output, /token=\*\*\*/, "프로젝트 설정 기본이 pixellab 이면 키를 넘긴다");
+});
+
+test("pixel-art: 설정 파일이 없으면 settings 를 붙이지 않는다(도구 기본값), 다른 도구에도 붙지 않는다", { skip: !canSpawn && "자식 프로세스를 띄울 수 없는 환경" }, async (t) => {
+  const f = fixture(t);
+  settingsToolkit(f);
+  request(f.app, "q1", "toolkit.run", { command: "pixel-art", args: { kind: "image-prop", subject: "s1", output_dir: ".factory/assets/s1" } });
+  const { b } = broker(f, { mode: "allow" }, { requiredSecrets: [], secrets: {} });
+  await b.tick();
+  assert.match(response(f.app, "q1").output, /settings=undefined/);
+  // 설정 파일이 없으면 읽을 것도 없다
+  assert.equal(readProjectSettings(f.app), null);
+});
+
+test("규칙 블록: 프로젝트 설정을 따르고 묻지 않는다는 한 줄(중계가 켜졌을 때만)", () => {
+  assert.match(brokerRules("allow", null), /프로젝트 설정을 따르고 사람에게 묻지 않아요/);
+  assert.match(brokerRules("allow", null), /needs_confirmation/);
+  assert.match(brokerRules("report", null), /프로젝트 설정/);
+  assert.equal(brokerRules("off", null), "");
 });

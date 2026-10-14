@@ -4,6 +4,8 @@
 // 저장은 /api/admin/factory/control 의 { studioProject } 액션. 종류가 없는 프로젝트는 '미분류'에 보이고 [게임]/[앱]을 누르면 옮겨진다.
 import { useState } from "react";
 
+import ProjectToolSettingsCard from "./ProjectToolSettingsCard";
+
 import { PURPOSE_LABELS, type Purpose, type StudioKind as ToolKind, type ToolLayer } from "@/lib/factory/toolkit";
 import { cleanStudioUrl, FIRST_PURPOSES, isManualTool, orderToolsFor, STUDIO_KIND_LABELS, type StudioAppInfo, type StudioKind, type StudioProjects } from "@/lib/factory/studioProjects";
 
@@ -463,6 +465,7 @@ export default function StudioWorkbench({
                     </button>
                     {dirty ? <span className="text-sm fx-muted">저장하지 않은 변경이 있어요.</span> : null}
                   </div>
+                  <ProjectToolSettingsCard key={`settings-${app.appSlug}`} appSlug={app.appSlug} />
                   <SendJobCard key={app.appSlug} appSlug={app.appSlug} connected={cfg.tools.filter((id) => !isManualTool(id) && tools.some((t) => t.id === id)).sort((x, y) => Number(tools.find((t) => t.id === y)?.layer === "studio") - Number(tools.find((t) => t.id === x)?.layer === "studio"))} initialRecent={recent[app.appSlug] ?? []} />
                 </>
               )}

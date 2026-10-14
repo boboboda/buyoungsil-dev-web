@@ -66,6 +66,54 @@ export function factoryDir(appDir, name) {
   return path.join(base, name);
 }
 
+// 프로젝트 도구 설정: 홈페이지가 일감과 같이 내려 준 설정을 앱 폴더의 이 파일에 쓰고, pixel-art 호출에 settings 인자가 없으면 이 파일을 자동으로 붙인다
+export const PROJECT_SETTINGS_REL = ".factory/project-settings.json";
+const PROJECT_SETTINGS_MAX_BYTES = 16 * 1024;
+
+/**
+ * 일감의 projectToolSettings({ version, settings }) → <앱 폴더>/.factory/project-settings.json. 없거나 이상하면 예전 파일을 지운다(다른 일감의 설정이 남지 않게).
+ * 반환: "written" | "removed" | "none" | "invalid"  (값은 기록에 남기지 않는다)
+ */
+export function writeProjectSettings(appDir, projectToolSettings) {
+  const file = path.join(appDir, ".factory", "project-settings.json");
+  const remove = () => {
+    try {
+      if (fs.existsSync(file) || isLink(file)) {
+        fs.rmSync(file, { force: true });
+        return true;
+      }
+    } catch {
+      /* 못 지워도 일감은 계속 */
+    }
+    return false;
+  };
+  const s = projectToolSettings?.settings;
+  if (!s || typeof s !== "object" || Array.isArray(s) || !Object.keys(s).some((k) => k !== "version" && k !== "$schema")) return remove() ? "removed" : "none";
+  const text = JSON.stringify(s, null, 2) + "\n";
+  if (Buffer.byteLength(text) > PROJECT_SETTINGS_MAX_BYTES) return remove() ? "removed" : "invalid";
+  try {
+    factoryDir(appDir, "assets"); // .factory 가 실제 폴더인지 확인(심볼릭 링크면 던짐)
+    if (isLink(file)) fs.rmSync(file, { force: true });
+    fs.writeFileSync(file, text, { mode: 0o600 });
+    return "written";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** 자동으로 붙일 프로젝트 설정 파일이 앱 폴더에 있으면 { rel, settings }, 아니면 null */
+export function readProjectSettings(appDir) {
+  try {
+    const file = path.join(appDir, ".factory", "project-settings.json");
+    const st = fs.lstatSync(file);
+    if (st.isSymbolicLink() || !st.isFile() || st.size > PROJECT_SETTINGS_MAX_BYTES) return null;
+    const s = JSON.parse(fs.readFileSync(file, "utf8"));
+    return s && typeof s === "object" && !Array.isArray(s) ? { rel: PROJECT_SETTINGS_REL, settings: s } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** AI 가 준 상대 경로 → 앱 폴더 안의 정규화된 상대 경로. 절대경로·..·심볼릭 링크(있는 부분)는 거부 */
 export function safeAppPath(appDir, rel) {
   if (typeof rel !== "string" || !rel || rel.length > 300) return { ok: false, reason: "경로는 1~300자 문자열이어야 해요." };
@@ -181,10 +229,21 @@ function readStudioDefaults(raw) {
 // 선택 키(optionalSecrets)는 그 호출이 이 방식일 때만 필요하다. 여기에 없는 선택 키는 어떤 호출에도 넘기지 않는다
 const OPTIONAL_SECRET_METHODS = Object.freeze({ PIXELLAB_TOKEN: "pixellab" });
 
-/** 이 호출에서 실제로 필요한 선택 키 이름. method 인자가 있으면 그 값, 없으면 툴킷이 알려 준 결과 종류의 기본 방식으로 본다(프로젝트 설정 파일 안의 기본값은 툴킷이 판단하므로 여기서 읽지 않는다) */
-export function neededOptionalSecrets(command, tool, given, studioDefaults = {}) {
+/** 프로젝트 설정의 결과 종류별 방식: methods.<kind>.default, 없으면 allowed 의 첫 방식. 없으면 "" */
+export function projectDefaultMethod(settings, kind) {
+  const m = settings?.methods && typeof settings.methods === "object" ? settings.methods[kind] : null;
+  if (!m || typeof m !== "object") return "";
+  if (typeof m.default === "string") return m.default;
+  return Array.isArray(m.allowed) && typeof m.allowed[0] === "string" ? m.allowed[0] : "";
+}
+
+/**
+ * 이 호출에서 실제로 필요한 선택 키 이름. 우선순위는 요청의 method 인자 > 프로젝트 설정(자동으로 붙는 settings 파일의 기본 방식) > 툴킷이 알려 준 결과 종류의 기본 방식.
+ * projectSettings 는 settings 인자가 자동으로 붙는 호출에서만 넘긴다(AI 가 다른 settings 파일을 주면 툴킷이 판단하므로 읽지 않는다)
+ */
+export function neededOptionalSecrets(command, tool, given, studioDefaults = {}, projectSettings = null) {
   if (!tool.optionalSecrets?.length) return [];
-  const method = typeof given.method === "string" && given.method ? given.method : (studioDefaults[command]?.[given.kind] ?? "");
+  const method = typeof given.method === "string" && given.method ? given.method : (projectDefaultMethod(projectSettings, given.kind) || (studioDefaults[command]?.[given.kind] ?? ""));
   return tool.optionalSecrets.filter((n) => OPTIONAL_SECRET_METHODS[n] === method);
 }
 
@@ -252,9 +311,15 @@ const toolkitAdapter = {
         argv.push(`--${a.name}=${v}`);
       }
     }
+    // settings 인자가 없으면 프로젝트 설정 파일(.factory/project-settings.json)을 자동으로 붙인다(요청의 인자 > 프로젝트 설정 > 도구 기본값)
+    let autoSettings = null;
+    if (tool.layer === "studio" && tool.args.some((a) => a.name === "settings" && a.type === "path") && (given.settings === undefined || given.settings === null)) {
+      autoSettings = readProjectSettings(ctx.appDir);
+      if (autoSettings) argv.push(`--settings=${autoSettings.rel}`);
+    }
     // 네트워크·비밀값이 필요한 도구는 '허용' 모드이면서 이 일감의 requiredSecrets 에 이름이 있을 때만
     // 선택 키(optionalSecrets)는 이 호출에 실제로 필요할 때(pixel-art 의 method=pixellab)만 필수 키처럼 검사하고 넘긴다
-    const optional = neededOptionalSecrets(args.command, tool, given, manifest.studioTools);
+    const optional = neededOptionalSecrets(args.command, tool, given, manifest.studioTools, autoSettings?.settings ?? null);
     const need = [...tool.secrets, ...optional];
     if (tool.network || need.length) {
       if (ctx.mode !== "allow") return { ok: false, reason: "네트워크·키가 필요한 도구는 '허용' 모드에서만 실행해요." };
@@ -585,6 +650,7 @@ export function brokerRules(mode, toolkitDir) {
 - args 를 JSON 파일로 쓴 뒤 한 줄로: \`node "${cli}" submit --tool <echo|toolkit.run> --args-file <json파일>\` (응답이 올 때까지 기다렸다가 상태와 응답 파일 경로를 출력해요. 기본 5분)
 - 이 명령은 오래 걸릴 수 있으니 명령 제한 시간을 넉넉히(예: 360000ms) 주세요. 중간에 끊겼으면 \`node "${cli}" wait --id <요청ID>\` 로 이어서 기다리세요.
 - toolkit.run 의 args: { "command": "<tools.json 의 하위 명령>", "args": { 이름: 값 } }. 경로 인자는 앱 폴더 안 상대 경로만 돼요.
+- 방식·규격·스타일은 프로젝트 설정을 따르고 사람에게 묻지 않아요. \`pixel-art\` 는 settings 인자를 안 주면 프로젝트 설정(.factory/project-settings.json)이 자동으로 붙어요(요청에 적은 값 > 프로젝트 설정 > 도구 기본값). 묻는 경우는 PixelLab 비용 한도 초과(needs_confirmation)뿐이에요.
 - 결과: .factory/responses/<요청ID>.json(status ok|denied|failed|timeout, message, files), 만든 파일은 .factory/assets/ 아래. denied 면 이유를 읽고 같은 요청을 반복하지 마세요.
 ${imageToolRules(toolkitDir)}`;
 }

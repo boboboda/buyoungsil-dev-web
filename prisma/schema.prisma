@@ -1083,3 +1083,27 @@ model NovelLog {
   @@index([workId, at])
   @@map("novel_logs")
 }
+
+// 프로젝트(앱 이름)별 도구 설정(pixel-art 의 settings 인자). 현재 값은 settings(JSON 글자), 바뀔 때마다 history 에 한 줄씩 쌓는다.
+model FactoryProjectToolSetting {
+  appSlug   String   @id
+  version   Int      @default(1)
+  settings  String
+  updatedAt DateTime @default(now())
+  updatedBy String   @default("")
+
+  @@map("factory_project_tool_settings")
+}
+
+model FactoryProjectToolSettingHistory {
+  id        Int      @id @default(autoincrement())
+  appSlug   String
+  version   Int
+  settings  String
+  note      String   @default("")
+  createdAt DateTime @default(now())
+  createdBy String   @default("")
+
+  @@index([appSlug, version])
+  @@map("factory_project_tool_setting_history")
+}

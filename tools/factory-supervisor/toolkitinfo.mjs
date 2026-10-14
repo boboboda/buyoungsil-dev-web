@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { maskText } from "./release.mjs";
 
 export const TOOLKIT_REPORT_EVERY_MS = 10 * 60_000;
@@ -267,6 +268,19 @@ export function fitReport(tools, base, limit = TOOLKIT_BODY_BYTES, studio = []) 
   return { ...head(lv), count: tools.length, omitted: tools.length - shown.length, tools: shown };
 }
 
+const stable = (v) => (Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, stable(v[k])])) : v);
+
+/** 툴킷의 프로젝트 설정 스키마(schemas/project-settings.schema.json) 지문: 키를 정렬한 JSON 의 sha256 앞 16자. 없거나 못 읽으면 "". 홈페이지 사본과 다른지 비교하는 데만 쓴다 */
+export function projectSettingsSchemaHash(toolkitDir) {
+  try {
+    const f = readInside(toolkitDir, "schemas/project-settings.schema.json");
+    if (!f) return "";
+    return createHash("sha256").update(JSON.stringify(stable(JSON.parse(f.text.replace(/^﻿/, ""))))).digest("hex").slice(0, 16);
+  } catch {
+    return "";
+  }
+}
+
 /** 툴킷 폴더 → 보고서. { state: ok|missing|error, ... }. 던지지 않는다 */
 export function collectToolkitInfo(toolkitDir) {
   const file = path.join(toolkitDir || "", "tools.json");
@@ -290,7 +304,8 @@ export function collectToolkitInfo(toolkitDir) {
       return describeTool(toolkitDir, id, t, scan, entryFile);
     });
 
-    return fitReport(tools, { state: "ok", manifestMod: new Date(st.mtimeMs).toISOString().slice(0, 10) }, TOOLKIT_BODY_BYTES, readStudioTools(manifest.studioTools));
+    const psh = projectSettingsSchemaHash(toolkitDir);
+    return fitReport(tools, { state: "ok", manifestMod: new Date(st.mtimeMs).toISOString().slice(0, 10), ...(psh ? { psh } : {}) }, TOOLKIT_BODY_BYTES, readStudioTools(manifest.studioTools));
   } catch (e) {
     return { state: "error", reason: clip(e?.message ?? "읽지 못했어요.", 120), count: 0, tools: [] };
   }

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { collectToolkitInfo, readModes, fitReport, leadingDoc, scanEntry, startToolkitReport } from "../toolkitinfo.mjs";
+import { collectToolkitInfo, projectSettingsSchemaHash, readModes, fitReport, leadingDoc, scanEntry, startToolkitReport } from "../toolkitinfo.mjs";
 
 const SECRET = "SECRET-VALUE-123";
 function makeKit(extraTools = {}) {
@@ -171,4 +171,22 @@ test("스튜디오 목록이 있어도 도구가 많으면 8KB 이하로 줄어�
   const r = fitReport(tools, { state: "ok" }, 7600, studio);
   assert.ok(Buffer.byteLength(JSON.stringify(r)) <= 7600);
   assert.equal(r.studio[0].id, "pixel-art", "스튜디오 도구는 남는다");
+});
+
+test("프로젝트 설정 스키마 지문(psh): 키 순서와 상관없이 같고, 내용이 바뀌면 달라지고, 스키마가 없으면 빼고 보낸다", () => {
+  const dir = makeKit();
+  assert.equal("psh" in collectToolkitInfo(dir), false, "스키마가 없으면 지문도 없다");
+  fs.mkdirSync(path.join(dir, "schemas"));
+  const file = path.join(dir, "schemas", "project-settings.schema.json");
+  fs.writeFileSync(file, JSON.stringify({ b: 1, a: { y: [1, 2], x: 2 } }));
+  const first = collectToolkitInfo(dir).psh;
+  assert.match(first, /^[0-9a-f]{16}$/);
+  assert.equal(projectSettingsSchemaHash(dir), first);
+  fs.writeFileSync(file, JSON.stringify({ a: { x: 2, y: [1, 2] }, b: 1 }, null, 2));
+  assert.equal(collectToolkitInfo(dir).psh, first, "키 순서·들여쓰기는 지문에 영향이 없다");
+  fs.writeFileSync(file, JSON.stringify({ a: { x: 3, y: [1, 2] }, b: 1 }));
+  assert.notEqual(collectToolkitInfo(dir).psh, first);
+  fs.writeFileSync(file, "{깨진 json");
+  assert.equal("psh" in collectToolkitInfo(dir), false, "읽지 못하면 빼고 보낸다");
+  assert.ok(Buffer.byteLength(JSON.stringify(collectToolkitInfo(dir))) <= 7600);
 });
