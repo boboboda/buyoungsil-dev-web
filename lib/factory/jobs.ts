@@ -98,7 +98,7 @@ export interface ClaimedJob {
   attempts: number;
 }
 
-// approved 중 우선순위 높은 순(같으면 먼저 등록한 순)으로 최대 slots 개를 running 으로 바꿔 돌려준다.
+// approved 중 우선순위 높은 순(같으면 먼저 승인한 순, 그다음 먼저 등록한 순)으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 // 한 문장으로 바꾸고 status = 'approved' 조건을 UPDATE 에서 다시 확인해서, 동시에 불러도 같은 지시를 두 번 가져가지 않는다.
 // 같은 앱(appSlug)은 한 번에 하나만: 이미 running 인 앱의 일감은 건너뛰고, 한 번에 가져가는 묶음에서도 앱마다 가장 앞선 하나만 고른다
 // (동시 실행이 늘면 같은 앱 폴더를 두 일감이 쓰게 되는 걸 서버에서도 막는다. 건너뛴 일감은 approved 로 남아 앞 일감이 끝난 뒤 가져간다).
@@ -114,20 +114,21 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
         "phase" = NULL, "failReason" = NULL, "failStage" = NULL, "updatedAt" = ${ts(now)}
     WHERE "status" = 'approved' AND "id" IN (
       SELECT "id" FROM (
-        SELECT j."id", j."priority", j."createdAt",
-               ROW_NUMBER() OVER (PARTITION BY j."appSlug" ORDER BY j."priority" DESC, j."createdAt" ASC) AS "rn"
+        SELECT j."id", j."priority", j."approvedAt", j."createdAt",
+               ROW_NUMBER() OVER (PARTITION BY j."appSlug" ORDER BY j."priority" DESC, j."approvedAt" ASC NULLS LAST, j."createdAt" ASC) AS "rn"
         FROM "factory_jobs" j
         WHERE j."status" = 'approved' AND j."aiEngine" IN (${Prisma.join(engines)})
           AND NOT EXISTS (SELECT 1 FROM "factory_jobs" r WHERE r."appSlug" = j."appSlug" AND r."status" = 'running')
       ) c
       WHERE c."rn" = 1
-      ORDER BY c."priority" DESC, c."createdAt" ASC
+      ORDER BY c."priority" DESC, c."approvedAt" ASC NULLS LAST, c."createdAt" ASC
       LIMIT ${slots}
     )
     RETURNING "id", "appSlug", "title", "kind", "parentJobId", "stack", "priority",
               "requiredSecrets", "planMarkdown", "attempts", "aiEngine", "aiModel"`);
 
   rows.sort((a, b) => b.priority - a.priority);
+  await reassignParents(rows);
   await fillDefaultModel(rows);
 
   if (rows.length > 0) {
@@ -141,6 +142,31 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
   }
 
   return rows;
+}
+
+// 같은 앱에 일감이 쌓이면 앞 일감이 끝난 뒤에야 시작하므로, 수정·출시 일감의 부모(이어받을 이전 지시)는 등록 때가 아니라 시작 때
+// 그 앱의 가장 최근 완료(done) 지시로 다시 정한다. 등록 요청에 parentJobId 를 직접 적은 일감(parentExplicit)은 그대로 둔다. 실패해도 시작은 막지 않는다.
+async function reassignParents(rows: ClaimedJob[]): Promise<void> {
+  for (const r of rows) {
+    if (r.kind !== "revision" && r.kind !== "release") continue;
+    try {
+      const me = await prisma.factoryJob.findUnique({ where: { id: r.id }, select: { parentExplicit: true } });
+
+      if (me?.parentExplicit) continue;
+      const last = await prisma.factoryJob.findFirst({
+        where: { appSlug: r.appSlug, status: "done", id: { not: r.id } },
+        orderBy: { finishedAt: "desc" },
+        select: { id: true },
+      });
+
+      if (!last || last.id === r.parentJobId) continue;
+      await prisma.factoryJob.update({ where: { id: r.id }, data: { parentJobId: last.id } });
+      await prisma.factoryJobLog.create({ data: { jobId: r.id, level: "info", message: `이어받을 이전 지시를 시작 시점의 가장 최근 완료 지시(${last.id})로 다시 정했어요.` } });
+      r.parentJobId = last.id;
+    } catch {
+      // 부모 재지정 실패는 등록 때 정한 부모로 계속한다
+    }
+  }
 }
 
 // 승인 때 '기본 설정 사용'(aiModel NULL)이던 Claude 일감은 시작할 때 설정 탭의 기본 모델로 채운다(이력에 실제로 쓴 모델이 남게).
@@ -403,15 +429,11 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
     }
 
     case "retry": {
-      const job = await prisma.factoryJob.findUnique({ where: { id }, select: { status: true, appSlug: true } });
+      const job = await prisma.factoryJob.findUnique({ where: { id }, select: { status: true } });
       if (!job) return refuse(404, "없는 지시예요.");
       if (job.status !== "failed") return refuse(409, `지금 상태(${job.status})에서는 재시도할 수 없어요. 실패한 지시만 돼요.`);
 
-      const clash = await prisma.factoryJob.count({
-        where: { appSlug: job.appSlug, id: { not: id }, status: { in: [...ACTIVE_STATUSES] } },
-      });
-      if (clash > 0) return refuse(409, "같은 앱 이름의 진행 중인 지시가 있어서 재시도할 수 없어요.");
-
+      // 같은 앱에 다른 일감이 있어도 재시도할 수 있다(승인됨으로 대기열에 들어가 차례대로 실행)
       const res = await prisma.factoryJob.updateMany({
         where: { id, status: "failed" },
         data: {

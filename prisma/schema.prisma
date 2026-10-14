@@ -571,6 +571,7 @@ model FactoryJob {
   title           String // 표시용 앱 이름
   kind            String    @default("new") // new | revision (수정 지시)
   parentJobId     String? // 수정 지시가 이어받는 이전 지시
+  parentExplicit  Boolean   @default(false) // 등록 요청에 parentJobId 를 직접 적었는가(true 면 실행 시작 때 부모를 다시 정하지 않는다)
   planMarkdown    String // 확정된 기획서 본문(수정 지시는 고칠 내용만)
   planHash        String // 기획서 sha256. 같은 기획서 중복 등록 감지
   stack           String    @default("flutter") // 앱 템플릿 종류

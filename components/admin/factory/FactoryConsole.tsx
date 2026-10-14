@@ -17,6 +17,7 @@ import MaintenancePanel from "./MaintenancePanel";
 import ReleaseAccounts from "./ReleaseAccounts";
 import ResourceAlertStrip from "./RunningPanel";
 import ReleasePanel from "./ReleasePanel";
+import AppQueue from "./AppQueue";
 import RevisionSender from "./RevisionSender";
 import SecretEntries from "./SecretEntries";
 import SecretNames from "./SecretNames";
@@ -103,6 +104,7 @@ export default async function FactoryConsole({
 
           {tab === "jobs" && (
             <div className="space-y-6">
+              <AppQueue />
               <FactoryControl initialJobId={jobId} />
               <RevisionSender />
             </div>

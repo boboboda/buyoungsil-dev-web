@@ -5,6 +5,7 @@
 import { useState } from "react";
 
 import ProjectToolSettingsCard from "./ProjectToolSettingsCard";
+import AppQueue from "./AppQueue";
 import StudioArtsCard from "./StudioArtsCard";
 
 import { PURPOSE_LABELS, type Purpose, type StudioKind as ToolKind, type ToolLayer } from "@/lib/factory/toolkit";
@@ -476,6 +477,7 @@ export default function StudioWorkbench({
                   </div>
                   <ProjectToolSettingsCard key={`settings-${app.appSlug}`} appSlug={app.appSlug} />
                   <StudioArtsCard key={`arts-${app.appSlug}`} appSlug={app.appSlug} picked={pickedArts} onPickedChange={setPickedArts} />
+                  <AppQueue key={`queue-${app.appSlug}`} appSlug={app.appSlug} />
                   <SendJobCard key={app.appSlug} appSlug={app.appSlug} pickedArts={pickedArts} onSent={() => setPickedArts([])} connected={cfg.tools.filter((id) => !isManualTool(id) && tools.some((t) => t.id === id)).sort((x, y) => Number(tools.find((t) => t.id === y)?.layer === "studio") - Number(tools.find((t) => t.id === x)?.layer === "studio"))} initialRecent={recent[app.appSlug] ?? []} />
                 </>
               )}

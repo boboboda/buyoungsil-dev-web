@@ -1,12 +1,12 @@
 // lib/studio/requests.ts
 // Studio 요청 입구(POST /api/studio-requests)의 검사·기획서 템플릿·일감 만들기. docs/studio-access.md
 // - Studio 의 "이상해요, 다시 요청"(소품 다시 만들기)과 "게임에 적용"(배치 저장)이 '승인 대기' 수정 일감(kind=revision)을 만든다. 승인은 통제실에서.
-// - 일감 등록은 채팅 도구 enqueue_app_job 과 같은 함수(enqueueWithId)를 거치므로 같은 검사(앱당 진행 중 일감 1개 등)를 따른다.
+// - 일감 등록은 채팅 도구 enqueue_app_job 과 같은 함수(enqueueWithId)를 거치므로 같은 검사(검토 대기·중복 등록 거절 등)를 따른다. 같은 앱에 일감은 쌓이고 대기열 순서대로 하나씩 실행한다.
 // - 사용자가 보낸 값은 그대로 믿지 않는다: 허용 목록·정규식으로 거르고, 기획서에는 코드블록 안의 '데이터'로만 넣는다.
 // - 키 원문·해시는 여기 오지 않는다(키 id 만). 감사 기록(StudioRequestLog)에도 키 id·종류·앱·결과만 둔다.
 import prisma from "@/lib/prisma";
 import { enqueueWithId } from "@/lib/factory/mcp";
-import { ACTIVE_STATUSES, APP_SLUG_RE } from "@/lib/factory/jobs";
+import { APP_SLUG_RE } from "@/lib/factory/jobs";
 import { isManualTool } from "@/lib/factory/studioProjects";
 
 export const STUDIO_REQUEST_APP = "studio"; // Studio 접근 키의 앱 이름
@@ -585,12 +585,7 @@ export async function createAdminStudioJob(
   const parsed = parseStudioRequest(raw, { allowFree: true });
 
   if ("error" in parsed) return bad(parsed.error);
-  const active = await prisma.factoryJob.findFirst({
-    where: { appSlug, status: { in: [...ACTIVE_STATUSES, "review"] } },
-    select: { title: true },
-  });
-
-  if (active) return bad(`이미 진행 중인 일감이 있어요(${active.title})`, 409);
+  // 같은 앱에 일감이 있어도 쌓인다(대기열 순서대로 실행). 검토 대기·중복 등록은 등록 함수가 거절한다
   const r = await createStudioRequestJob(pickedRefs.length ? { ...parsed.value, pickedRefs } : parsed.value);
 
   if (r.status !== 201) return bad(r.body.error, r.status);

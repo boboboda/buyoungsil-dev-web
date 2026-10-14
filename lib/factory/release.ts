@@ -9,7 +9,6 @@ import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { notifyText } from "@/lib/factory/telegram";
-import { ACTIVE_STATUSES } from "@/lib/factory/jobs";
 import { DEFAULT_KEY_ALIAS, keyPasswordStatuses, keyRefOf, keySecretNames } from "@/lib/factory/keyPasswords";
 import { maskSecrets } from "@/lib/factory/mask";
 import { KEY_KINDS, listVault } from "@/lib/factory/keyVault";
@@ -1779,16 +1778,13 @@ export async function reviewDecision(jobId: string, decision: unknown, noteIn: u
 
 /**
  * [링크 반영]: 링크(youtube.com/watch, youtu.be)를 앱에 저장하고, 감독 프로그램이 Play 등록정보 영상만 바꾸도록(videolink 단계부터, Claude 없이) 다시 대기열에 넣는다.
- * 같은 앱의 다른 일감이 돌고 있으면 끝난 뒤에 하라고 거절한다.
+ * 같은 앱의 다른 일감이 돌고 있어도 승인됨으로 대기열에 들어가 차례대로 실행한다.
  */
 export async function applyVideoLink(jobId: string, raw: unknown): Promise<{ ok: boolean; status: number; message: string }> {
   const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { kind: true, status: true, appSlug: true } });
 
   if (!job || job.kind !== "release") return { ok: false, status: 404, message: "없는 출시 일감이에요." };
   if (job.status !== "linkwait") return { ok: false, status: 409, message: `영상 링크 대기가 아니에요(지금 ${job.status}).` };
-  const busy = await prisma.factoryJob.count({ where: { appSlug: job.appSlug, id: { not: jobId }, status: { in: [...ACTIVE_STATUSES] } } });
-
-  if (busy > 0) return { ok: false, status: 409, message: "같은 앱의 진행 중인 일감이 끝난 뒤에 링크를 반영하세요." };
   const saved = await savePromoVideoUrl(job.appSlug, raw);
 
   if (!saved.ok) return saved;
@@ -1829,9 +1825,6 @@ export async function retryRelease(jobId: string): Promise<{ ok: boolean; status
 
   if (!job || job.kind !== "release") return { ok: false, status: 404, message: "없는 출시 일감이에요." };
   if (job.status !== "failed") return { ok: false, status: 409, message: `지금 상태(${job.status})에서는 재시도할 수 없어요. 실패한 일감만 돼요.` };
-  const clash = await prisma.factoryJob.count({ where: { appSlug: job.appSlug, id: { not: jobId }, status: { in: [...ACTIVE_STATUSES] } } });
-
-  if (clash > 0) return { ok: false, status: 409, message: "같은 앱의 진행 중인 일감이 있어서 재시도할 수 없어요." };
   const stage = job.failStage ?? job.phase;
   const resumeFrom = stage && RESUMABLE.includes(stage) ? stage : null;
   const res = await prisma.factoryJob.updateMany({

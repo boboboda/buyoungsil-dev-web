@@ -35,6 +35,7 @@
     "preview:admin-ui": "node tests/admin-ui-preview.mjs",
     "lint": "eslint --fix --color",
     "test:app-slots": "node tests/app-slots.test.mjs",
+    "test:app-queue": "node tests/app-queue.test.mjs",
     "test:lab": "node tests/lab-jobs.test.mjs && node tools/factory-supervisor/tests/lab.test.mjs"
   },
   "dependencies": {

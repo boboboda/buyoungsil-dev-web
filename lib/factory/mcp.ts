@@ -23,8 +23,10 @@ import {
 } from "@/lib/factory/release";
 import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import { NOT_TARGET_MESSAGE, isStoreTarget } from "@/lib/factory/storeTarget";
+import { appQueue, allAppQueues, numberQueue } from "@/lib/factory/queue";
 import {
   ACTIVE_STATUSES,
+  adminAction,
   APP_SLUG_RE,
   ID_RE,
   JOB_KINDS,
@@ -66,7 +68,7 @@ function clean(v: unknown, max: number, keepNewlines = false): string {
 export const FACTORY_INSTRUCTIONS =
   " 앱 공장: 확정된 앱 기획서는 enqueue_app_job 으로 등록해요(승인은 관리자가 통제실 /admin/factory 에서 해요). " +
   "등록 전에 list_factory_jobs 로 같은 앱 이름이 이미 있는지, list_secret_names 로 쓸 수 있는 키 이름을 확인하세요. " +
-  "이미 만든 앱을 고칠 때는 kind=revision 으로, 반드시 기존 앱 이름(appSlug)과 고칠 내용만 보내세요. "
+  "이미 만든 앱을 고칠 때는 kind=revision 으로, 반드시 기존 앱 이름(appSlug)과 고칠 내용만 보내세요. 같은 앱에 지시를 여러 개 쌓아 둘 수 있고, 앱마다 한 번에 하나씩 priority(큰 값 먼저)→승인 순→등록 순으로 실행해요(응답에 대기 순서가 나와요. 순서는 set_job_priority 로 바꿔요). "
   + "관리자가 통제실에서 직접 보낸 수정 지시는 source 가 '통제실'로 나와요. 결과는 get_factory_job(includePlan=true)으로 읽고 사용자와 의논하세요. "
   + "작업 PC 감독 프로그램은 supervisor_control 로 봐요: action=status(연결·버전·일시 정지·자동 업데이트·진행/대기 일감 수), "
   + "update_now(GitHub main 의 새 감독 프로그램 코드를 지금 받게 함. 15초~1분 뒤 status 의 commit 으로 확인), "
@@ -90,7 +92,8 @@ export const FACTORY_TOOLS = [
     name: "list_factory_jobs",
     description:
       "앱 공장의 지시 목록(최근 순)을 돌려줍니다. 기획서 본문은 빼고 앱 이름(appSlug), 표시 이름, 종류, 상태, 단계, 요약만 담아요. " +
-      "새 앱을 등록하기 전에 같은 이름이 이미 있는지, 수정 지시를 보내기 전에 어떤 앱이 완성돼 있는지(status=done) 확인하는 용도예요.",
+      "새 앱을 등록하기 전에 같은 이름이 이미 있는지, 수정 지시를 보내기 전에 어떤 앱이 완성돼 있는지(status=done) 확인하는 용도예요. " +
+      "실행 중·승인됨·승인 대기 지시에는 앱별 대기 순서(대기순서: 0=지금 실행 중, 1부터 다음 차례)와 priority 가 붙어요.",
     inputSchema: {
       type: "object",
       properties: {
@@ -159,7 +162,9 @@ export const FACTORY_TOOLS = [
     description:
       "확정된 앱 기획서(또는 수정 내용)를 앱 공장 대기열에 등록합니다. 등록만 되고 '승인 대기' 상태로 쌓이며, 관리자가 통제실에서 승인해야 제작이 시작돼요. " +
       "규칙: appSlug 는 앱 폴더 이름(영문 소문자·숫자·하이픈 3~40자)이고 이후 수정 지시에서도 똑같이 써야 해요. " +
-      "kind=new 는 아직 없는 앱만, kind=revision 은 이미 완성(done)된 앱만 가능해요. 같은 앱에 진행 중인 지시가 있으면 새로 등록할 수 없어요. " +
+      "kind=new 는 아직 없는 앱만, kind=revision 은 이미 완성(done)된 앱만 가능해요. 같은 앱에 승인 대기·승인됨·실행 중인 지시가 있어도 계속 쌓을 수 있어요: " +
+      "앱마다 실행은 한 번에 1개이고, 승인된 지시는 priority(큰 값 먼저)→승인 시각→등록 시각 순으로 하나씩 실행해요. 응답에 이 앱의 대기 순서(몇 번째)가 나와요. " +
+      "수정 지시가 이어받는 이전 지시(parentJobId)는 비우면 실행을 시작할 때 그 앱의 가장 최근 완료 지시로 정해져서, 앞 지시의 결과를 이어받아요. " +
       "planMarkdown 은 새 앱이면 기획서 전체, 수정이면 '고칠 내용만' 적으세요(원본 기획서를 다시 보내지 마세요).",
     inputSchema: {
       type: "object",
@@ -220,6 +225,22 @@ export const FACTORY_TOOLS = [
       idempotentHint: false,
       openWorldHint: false,
     },
+  },
+  {
+    name: "set_job_priority",
+    description:
+      "아직 시작하지 않은(승인 대기·승인됨) 지시의 우선순위를 바꿉니다. 같은 앱 안에서 클수록 먼저 실행해요(-100~100, 기본 0, 같으면 먼저 승인한 순). " +
+      "승인은 하지 않아요(승인은 관리자). 응답에 바뀐 대기 순서가 나와요. 실행 중이거나 끝난 지시는 바꿀 수 없어요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "지시 id (list_factory_jobs 의 id)" },
+        priority: { type: "integer", minimum: -100, maximum: 100, description: "새 우선순위" },
+      },
+      required: ["id", "priority"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "enqueue_lab_job",
@@ -358,6 +379,8 @@ export async function callFactoryTool(
       // 출시 준비는 서버가 지시문을 만드는 enqueue_release_job 으로만
       if (args.kind === "release") return text("출시 준비 일감은 enqueue_release_job(appSlug) 으로 보내세요.", true);
       return enqueue(args);
+    case "set_job_priority":
+      return setJobPriority(args);
     case "enqueue_lab_job":
       return enqueueLabJob(args);
     case "supervisor_control":
@@ -607,10 +630,14 @@ async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
       summary: true,
       failReason: true,
       source: true,
+      priority: true,
       createdAt: true,
       finishedAt: true,
     },
   });
+  // 실행 중·승인됨·승인 대기 지시에는 앱별 대기 순서를 붙인다
+  const queues = jobs.some((j) => ["running", "approved", "pending"].includes(j.status)) ? await allAppQueues() : {};
+  const place = (j: { id: string; appSlug: string }) => queues[j.appSlug]?.find((q) => q.id === j.id)?.position;
 
   return json({
     지시: jobs.map((j) => ({
@@ -626,6 +653,7 @@ async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
       summary: j.summary ? j.summary.slice(0, 300) : null,
       failReason: j.failReason ? j.failReason.slice(0, 300) : null,
       source: j.source,
+      ...(place(j) !== undefined ? { 대기순서: place(j), priority: j.priority } : {}),
       createdAt: iso(j.createdAt),
       finishedAt: iso(j.finishedAt),
     })),
@@ -803,23 +831,20 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
         } as EnqueueFail;
       }
 
-      const active = await tx.factoryJob.findFirst({
-        // 검토 대기(review) 출시 일감이 있어도 막는다(검토 중인 자료·AAB 를 PC 에 보존)
-        where: { appSlug, status: { in: [...ACTIVE_STATUSES, "review"] } },
-        select: { id: true, status: true, kind: true, planHash: true },
+      // 같은 앱에 승인 대기·승인됨·실행 중인 지시가 있어도 쌓을 수 있다(앱마다 실행은 1개: 가져갈 때 서버가 지킨다).
+      // 같은 내용을 두 번 누른 중복 등록은 막고, 검토 대기(review) 출시 일감이 있으면(검토 중인 자료·AAB 를 PC 에 보존) 막는다.
+      const clash = await tx.factoryJob.findFirst({
+        where: { appSlug, OR: [{ status: "review" }, { status: { in: [...ACTIVE_STATUSES] }, planHash }] },
+        select: { id: true, status: true },
       });
 
-      if (active) {
-        const dup =
-          active.planHash === planHash
-            ? " 내용도 똑같아서 중복 등록이에요."
-            : "";
-
+      if (clash) {
         return {
           ok: false,
           message:
-            `${appSlug} 에는 이미 진행 중인 지시가 있어요 (id: ${active.id}, 상태: ${active.status}).${dup} ` +
-            `끝나거나 취소된 뒤에 다시 등록하세요.`,
+            clash.status === "review"
+              ? `${appSlug} 에는 검토 대기 중인 출시 일감이 있어요 (id: ${clash.id}). 검토가 끝난 뒤에 다시 등록하세요.`
+              : `${appSlug} 에 내용이 똑같은 지시가 이미 있어요 (id: ${clash.id}, 상태: ${clash.status}). 중복 등록이에요.`,
         } as EnqueueFail;
       }
 
@@ -830,6 +855,7 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
       });
 
       let parentJobId: string | null = null;
+      let parentExplicit = false; // 요청에 parentJobId 를 직접 적었으면 true: 실행 시작 때 부모를 다시 정하지 않는다
       // 새 앱은 고른 종류(기본 flutter), 수정 지시는 원래 앱의 종류를 그대로 쓴다.
       let stack = typeof stackArg === "string" ? stackArg : "flutter";
 
@@ -881,6 +907,7 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
             } as EnqueueFail;
           }
           parentJobId = parentArg;
+          parentExplicit = true;
           stack = parent.stack;
         } else {
           parentJobId = done[0].id;
@@ -900,6 +927,7 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
           title,
           kind,
           parentJobId,
+          parentExplicit,
           planMarkdown: plan,
           planHash,
           aiEngine,
@@ -922,12 +950,24 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
         select: { id: true },
       });
 
+      // 이 앱의 대기 순서(실행 중 포함). 같은 트랜잭션에서 읽는다
+      const waiting = await tx.factoryJob.findMany({
+        where: { appSlug, status: { in: ["running", "approved", "pending"] } },
+        select: { id: true, title: true, kind: true, status: true, priority: true, approvedAt: true, createdAt: true },
+      });
+      const mine = numberQueue(waiting).find((q) => q.id === job.id);
+      const ahead = (mine?.position ?? 1) - 1; // 앞에 대기 중인 지시 수(실행 중인 것은 따로 세지 않는다)
+      const running = waiting.some((w) => w.status === "running");
+
       return {
         ok: true,
         id: job.id,
         message:
           `${kind === "new" ? "새 앱" : kind === "release" ? "출시 준비 일감" : "수정 지시"}를 등록했어요 (id: ${job.id}, appSlug: ${appSlug}). ` +
-          `승인 대기 상태예요. 관리자가 통제실(/admin/factory)에서 승인하면 제작이 시작돼요.`,
+          `승인 대기 상태예요. 관리자가 통제실(/admin/factory)에서 승인하면 대기열에 들어가요. ` +
+          (waiting.length > 1
+            ? `이 앱의 대기 순서는 ${mine?.position}번째예요(앞에 대기 ${ahead}개${running ? " + 지금 실행 중 1개" : ""}, priority ${priority}). 앱마다 한 번에 하나씩 priority 큰 값 → 승인 순 → 등록 순으로 실행해요.`
+            : `이 앱의 대기 순서는 1번째예요(앞에 쌓인 지시 없음).`),
       } as EnqueueOk;
     },
   );
@@ -936,6 +976,20 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
   if (result.ok && source !== "통제실") void notifyJobEvent(result.id, "pending");
 
   return result.ok ? { ...text(result.message), jobId: result.id } : text(result.message, true);
+}
+
+// 아직 시작하지 않은(승인 대기·승인됨) 지시의 우선순위 변경. 승인은 하지 않는다. 응답에 바뀐 대기 순서를 담는다.
+async function setJobPriority(args: Record<string, unknown>): Promise<ToolResult> {
+  const id = typeof args.id === "string" ? args.id.trim() : "";
+
+  if (!ID_RE.test(id)) return text("id 가 올바르지 않아요. list_factory_jobs 의 id 를 쓰세요.", true);
+  const r = await adminAction(id, { action: "set-priority", priority: args.priority });
+
+  if (!r.ok) return text(r.message, true);
+  const job = await prisma.factoryJob.findUnique({ where: { id }, select: { appSlug: true } });
+  const place = job ? (await appQueue(job.appSlug)).find((q) => q.id === id)?.position : undefined;
+
+  return text(`${r.message}${place !== undefined ? ` 이 앱의 대기 순서는 ${place}번째예요.` : ""}`);
 }
 
 // 실험(lab) 일감 등록. 앱 이름 없이(appSlug 는 고정 "lab") 승인 대기로 쌓는다. 같은 내용이 이미 대기·진행 중이면 중복으로 거절한다.
