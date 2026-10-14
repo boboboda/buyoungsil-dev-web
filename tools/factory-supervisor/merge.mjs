@@ -7,7 +7,7 @@
 // 2) 에서 글자 충돌이 나거나 3) 에서 검사가 실패하면 그 일감의 AI 에게 '최신 기본 브랜치 기준으로 다시 맞추기'를 되돌려 보내고(askFix), 다시 시도한다.
 // 다시 맞추기는 최대 maxRebases(기본 2)회. 그래도 안 되면 { ok:false } 를 돌려주고, 호출한 쪽이 그 일감만 '합치기 실패'로 멈추고 보고한다.
 // 이미 합쳐진 다른 일감의 커밋은 건드리지 않는다. 이 파일은 push 를 하지 않는다.
-import { commitAll, conflictFiles, currentBranch, dirtyCount, fastForwardBase, git, mergeBaseIntoBranch, mergeInProgress } from "./worktree.mjs";
+import { FACTORY_FILES, commitAll, conflictFiles, currentBranch, dirtyCount, fastForwardBase, git, mergeBaseIntoBranch, mergeInProgress } from "./worktree.mjs";
 
 export const MAX_REBASES = 2;
 const AUTHOR = ["-c", "user.name=app-factory", "-c", "user.email=factory@localhost"];
@@ -34,6 +34,19 @@ ${problem.files.map((f) => `- ${f}`).join("\n")}
 \`\`\`
 ${tail(problem.reason)}
 \`\`\`${ask}`;
+}
+
+/** 이 일감이 실제로 바꾼 파일 목록(공장이 폴더마다 쓰는 파일·.factory/ 는 뺀다). 못 구하면 빈 배열. 최대 200개 */
+export function changedFiles(repoDir, base, branch) {
+  const r = git(repoDir, ["diff", "--name-only", "--no-renames", base, branch]);
+
+  if (!r.ok) return [];
+
+  return r.stdout
+    .split("\n")
+    .map((f) => f.trim().split("\\").join("/"))
+    .filter((f) => f && !f.startsWith(".factory/") && !FACTORY_FILES.includes(f))
+    .slice(0, 200);
 }
 
 /**
@@ -68,9 +81,10 @@ async function attemptMerge(ctx) {
     const v = await ctx.verify(wtDir);
 
     if (!v.ok) return { ok: false, problem: { kind: "checks", reason: v.reason } };
+    const files = changedFiles(repoDir, base, branch); // 합치기 직전: 기본 브랜치를 이미 합쳐 넣은 상태라 base..branch 가 이 일감이 바꾼 파일이다
     const ff = fastForwardBase(repoDir, branch);
 
-    if (ff.ok) return { ok: true, checks: "통과 (최신 기본 브랜치와 합친 상태에서 빌드·시험)" };
+    if (ff.ok) return { ok: true, checks: "통과 (최신 기본 브랜치와 합친 상태에서 빌드·시험)", files };
     log("warn", `기본 브랜치를 앞으로 감기(fast-forward)하지 못했어요(그 사이 기본 브랜치가 움직임). 다시 합쳐요: ${tail(ff.stderr || ff.stdout, 200)}`);
   }
 
@@ -108,9 +122,9 @@ export async function mergeJob(ctx) {
     if (r.ok) {
       const mergedAt = new Date().toISOString();
 
-      ctx.report({ mergedAt, checks: r.checks, rebases });
+      ctx.report({ mergedAt, checks: r.checks, rebases, ...(r.files?.length ? { actualFiles: r.files } : {}) });
 
-      return { ok: true, rebases, checks: r.checks, mergedAt };
+      return { ok: true, rebases, checks: r.checks, mergedAt, files: r.files ?? [] };
     }
     if (r.fatal) return { ok: false, rebases, reason: r.reason, problem: { kind: "fatal" } };
 

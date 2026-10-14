@@ -55,6 +55,7 @@ import { DEFAULT_MEMORY_REMOTE, memoryReport, setMemoryConfig } from "./memory.m
 import { acquireLock, clearLocks, clearWait, LOCK_LABELS, lockRules, readWait } from "./applock.mjs";
 import { branchName, cleanupLeftovers, createWorktree, defaultBranch, currentBranch, dirtyCount, removeWorktree, savePatch, worktreePath } from "./worktree.mjs";
 import { MAX_REBASES, mergeJob } from "./merge.mjs";
+import { conductorBusy, runConductor } from "./conductor.mjs";
 import { LAB_SLUG, compareSnapshots, createLabGuard, deleteLabFolder, discoverRepos, labCodexOptions, labPrompt, prepareLab, snapshotRepos, uploadLabOutputs, writeLabClaudeSettings } from "./lab.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
@@ -714,7 +715,10 @@ async function finish(st, status, fields) {
       readPhase(st);
       const tools = st.broker?.list() ?? [];
       const r = await api("POST", "/api/factory/report", { jobId: st.job.id, logs: st.logs.splice(0, 50), phase: status === "done" ? "done" : st.phase, status, ...(tools.length ? { toolRequests: tools } : {}), ...(st.parallel ? { parallel: st.parallel } : {}), ...fields });
-      if (r.status === 200) return log(`[${st.job.appSlug}] 보고 완료: ${status}`);
+      if (r.status === 200) {
+        if (status === "done" && r.data?.finalCheck) st.finalCheck = r.data.finalCheck; // 지휘자가 묶은 그룹의 마지막 일감: 앱 전체 점검을 맡는다
+        return log(`[${st.job.appSlug}] 보고 완료: ${status}`);
+      }
       if (r.status === 409) return log(`[${st.job.appSlug}] 최종 보고가 거부됨(이미 ${r.data?.status ?? "다른 상태"})`);
       log(`[${st.job.appSlug}] 최종 보고 거부: ${r.status}`);
     } catch (e) {
@@ -1392,6 +1396,88 @@ async function finishWorktree(st) {
 
   st.handoffText = text;
   await finish(st, "done", { summary: (text || "완료(요약 없음)").slice(0, 3800) + footer });
+  if (st.finalCheck) await runFinalCheck(st);
+}
+
+// 지휘자가 묶은 그룹의 마지막 일감까지 합쳐진 뒤: 기본 브랜치 최신 상태에서 앱 전체 검사(빌드와 시험)를 한 번 더 돌려 결과를 알린다.
+// 실패해도 이미 합친 커밋은 되돌리지 않는다(서버가 '그룹 최종 점검 실패'로 통제실·텔레그램에 보고). 던지지 않는다.
+async function runFinalCheck(st) {
+  const { job } = st;
+  const wt = job.worktree;
+  const { appSlug, group } = st.finalCheck;
+  let ok = false;
+  let detail = "";
+
+  try {
+    log(`[${appSlug}] 묶음 ${group}: 마지막 전체 점검을 시작해요(기본 브랜치 최신 상태).`);
+    // 일감은 이미 끝났으니 일감 보고(flush)를 건드리지 않도록 잠금만 직접 얻는다(합치기 → 빌드 순서, 합치기와 같은 순서)
+    const v = await withBareLock(appSlug, "merge", job.id, () =>
+      withBareLock(appSlug, "build", job.id, async () => {
+        const cur = currentBranch(wt.repoDir);
+
+        if (cur !== wt.base) return { ok: false, reason: `앱 폴더가 기본 브랜치(${wt.base})에 있지 않아요(지금: ${cur || "분리된 HEAD"})` };
+
+        return verifyWorkspace(wt.repoDir, job.stack, (m) => log(`[${appSlug}] 최종 점검: ${m}`), 15 * 60_000);
+      }),
+    );
+
+    ok = !!v?.ok;
+    detail = ok ? "" : String(v?.reason ?? "검사 실패");
+  } catch (e) {
+    detail = `점검을 끝까지 돌리지 못했어요: ${e.message}`;
+  }
+  try {
+    const r = await api("POST", "/api/factory/conductor", { action: "final", appSlug, group, ok, detail: maskText(detail).slice(-500) });
+
+    log(`[${appSlug}] 묶음 ${group} 마지막 전체 점검 ${ok ? "통과" : "실패"} (보고 ${r.status})`);
+  } catch (e) {
+    log(`[${appSlug}] 최종 점검 결과를 보내지 못했어요: ${e.message}`);
+  }
+}
+
+// 지휘자(C-2): 서버가 내준 판단 요청을 읽기 전용 AI 턴으로 처리하고 결과를 보낸다. 공장 전체 동시 실행 수에 세지 않고, 동시에 1개만 돈다.
+async function runConductorTask(task) {
+  const slug = String(task?.appSlug ?? "");
+  const post = (body) => api("POST", "/api/factory/conductor", { appSlug: slug, key: task.key, model: task.model, ...body }, { timeoutMs: 30_000 });
+
+  try {
+    if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(slug) || !/^[a-f0-9]{8,40}$/.test(String(task.key))) return;
+    const dir = path.join(cfg.workDir, slug);
+
+    // 앱 폴더에서 단독 일감이 돌고 있으면 읽기 전용 확인이 흔들린다: 판단하지 않고 서버의 잠금만 풀어 둔다(다음 확인 때 다시 받음)
+    if (!fs.existsSync(path.join(dir, ".git")) || [...running.values()].some((s) => s.job.appSlug === slug && !s.job.worktree)) {
+      await post({ action: "skip" });
+
+      return;
+    }
+    log(`[${slug}] 지휘자: 일감 ${task.jobs.length}개가 겹치는지 판단해요(모델 ${task.model}).`);
+    // 병행 일감의 합치기와 겹치지 않게 merge 잠금 안에서 돌린다(합치기가 HEAD 를 바꾸면 읽기 전용 확인이 틀어진다)
+    const res = await withBareLock(slug, "merge", "conductor", () => runConductor(task, dir, { claudeCmd: cfg.claudeCmd }));
+
+    if (res.ok) {
+      const r = await post({ action: "verdict", verdict: res.verdict, usage: res.usage });
+
+      log(`[${slug}] 지휘자 판단 반영: ${r.data?.message ?? r.status}`);
+    } else {
+      const r = await post({ action: "fail", reason: maskText(res.reason), usage: res.usage });
+
+      log(`[${slug}] 지휘자 판단 실패(순서대로 실행): ${res.reason} (보고 ${r.status})`);
+    }
+  } catch (e) {
+    log(`[${slug}] 지휘자 오류: ${e.message}`);
+    await post({ action: "fail", reason: maskText(`지휘자 처리 중 오류: ${e.message}`) }).catch(() => {});
+  }
+}
+
+// 일감 상태(st) 없이 앱 단위 잠금만 얻어 fn 실행(지휘자·최종 점검용)
+async function withBareLock(app, name, owner, fn) {
+  const lock = await acquireLock({ dir: lockDir(), app, name, owner });
+
+  try {
+    return await fn();
+  } finally {
+    lock.release();
+  }
 }
 
 const MARK = { ok: "✅", skipped: "⏭", failed: "❌" };
@@ -1788,7 +1874,7 @@ async function loop() {
       { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
-        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), ...(aiTools ?? {}), ...memoryQuery() });
+        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery() });
         const sentTools = aiTools;
         const sentMemory = extra.get("memory");
         // 정비가 진행 중이어도 앱·실험 일감은 계속 받는다. 새 일감을 멈추는 건 위험한 순간을 앞둔 드레인뿐이다:
@@ -1871,6 +1957,7 @@ async function loop() {
             paused = nowPaused;
             log(paused ? "일시 정지됨 (홈페이지)" : "다시 시작됨");
           }
+          if (!paused && r.data?.conductor && !conductorBusy() && Array.isArray(r.data.conductor.jobs)) void runConductorTask(r.data.conductor); // 지휘자 판단(기다리지 않음)
           const offered = paused ? [] : r.data.jobs ?? [];
           if (offered.length > Math.max(0, free)) log(`서버가 자리(${Math.max(0, free)}개)보다 많은 일감 ${offered.length}개를 줬어요. 넘친 ${offered.length - Math.max(0, free)}개는 시작하지 않아요(10분 안에 서버가 대기열로 되돌려요).`);
           for (const job of offered.slice(0, Math.max(0, free))) {

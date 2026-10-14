@@ -235,6 +235,18 @@ PIXELLAB_TOKEN=여기에값
 - **그룹 완료 요약**: 그룹의 일감이 모두 합쳐져 완료되면 서버가 합친 순서·다시 맞추기 횟수·검사 결과를 통제실 대기열 아래와 각 일감 로그에 남겨요.
 - 인계 기록·작업 메모리는 사본이 아니라 앱 폴더에 남겨요(사본은 사라지므로).
 
+## 지휘자: 겹치지 않는 일감 자동 묶기 (병렬화 단계 C-2: `conductor.mjs`, 서버 `lib/factory/conductor.ts`)
+
+같은 앱에 승인된 수정 일감이 그룹 없이 2개 이상 쌓이면, 서버가 `/next` 응답에 `conductor: { appSlug, key, model, perApp, sharedFiles, jobs }` 를 한 번 실어 판단을 맡겨요(감독 프로그램이 `conductor=1` 을 보낼 때만, 공장 전체 동시에 1개).
+
+- **AI 턴**: 앱 폴더에서 Claude Code 를 읽기 도구(`--tools Read,Glob,Grep`)만 열고 한 번 돌려요. `Bash·Edit·Write·WebFetch·WebSearch` 는 `--disallowedTools` 로 막고, 외부 MCP·세션 저장도 꺼요. 지시문은 표준입력으로만 넘겨요. 모델은 통제실 설정(기본 `haiku`, 허용 목록 별칭만). 끝난 뒤 `git status`·HEAD 가 시작 때와 다르면 **읽기 전용 위반**으로 보고 판단을 쓰지 않아요. 4분 안에 안 끝나면 중단해요. 합치기가 HEAD 를 바꾸지 않게 앱 단위 `merge` 잠금 안에서 돌고, `running`(공장 전체 동시 실행 수)에는 세지 않아요. 앱 폴더에서 단독 일감이 돌고 있으면 `skip`(기록 없이 나중에 다시).
+- **입력**: 일감별 id·제목·우선순위·지시문(계획), `git ls-files` 파일 목록(최대 1500줄), 공용 파일 패턴. **출력 JSON**: `{ jobs: [{ id, files[], areas[], confidence: high|medium|low, note }], groups: [{ jobIds[], reason }], sequential: [{ jobIds[], reason }] }`.
+- **서버 재검사**(AI 제안을 그대로 믿지 않음): 예상 파일이 하나라도 겹치거나, 확신도가 `high` 가 아니거나, 공용 파일(의존성·빌드 `pubspec.yaml`·`package.json`·잠금 파일·`build.gradle*`·`AndroidManifest.xml`, 라우터·앱 전역 설정, 마이그레이션·스키마, 번역 파일; 통제실 설정에서 고침)을 건드리거나, 의존성 영역이면 묶지 않고 순서대로 두며 이유를 남겨요. 묶음은 우선순위 순으로 이어진 일감이고 `parallelPerApp` 이하예요. 출시·새 앱 일감은 대상이 아니에요(C-1 규칙).
+- **결과 보고**: `POST /api/factory/conductor` — `verdict`(AI 판단, 서버가 반영) · `fail`(판단 실패: 순서대로 두고 사유 표시, 공장은 멈추지 않음) · `skip` · `final`(마지막 전체 점검 결과). `usage`(시간·토큰·비용)는 통제실 설정의 '최근 지휘자 판단'에 `[지휘자]` 로 따로 남아요.
+- **사람 결정 우선**: 사람이 묶거나 푼 일감은 `parallelSource=manual` 이라 지휘자가 바꾸지 않아요(푼 일감은 다시 자동으로 묶지 않아요). 자동 묶기를 끄면(통제실 설정) C-1 과 똑같이 동작해요.
+- **예상과 실제**: 합칠 때 `merge.mjs` 가 실제로 바뀐 파일(`actualFiles`)을 보고하고, 서버가 예상과 비교해 `unexpected`·`overlapFiles`·`overlap` 을 `parallelInfo` 에 기록해요. 예상 밖 파일 때문에 같은 묶음 일감과 실제로 겹쳤으면 그룹 완료 요약에 '예상 빗나감'이 붙어요.
+- **마지막 전체 점검**: 지휘자가 묶은 그룹의 마지막 일감까지 합쳐지면 보고 응답에 `finalCheck` 가 실려 와요. 감독 프로그램이 기본 브랜치 최신 상태에서 앱 전체 검사(빌드·시험)를 한 번 더 돌려 `final` 로 알려요. 실패하면 '그룹 최종 점검 실패'로 통제실·텔레그램에 보고하고, 이미 합친 커밋은 되돌리지 않아요. 결과가 30분 안에 오지 않으면 '결과가 오지 않음'으로 요약만 남겨요.
+
 ## 작업 메모리 (`memory.mjs`, 폴더의 `.factory/memory/`)
 
 긴 대화로 느려지는 걸 막고, 새 대화로 시작해도 이어서 하게 해요. 일감·정비·터미널이 같은 코드(`makeHandoffEntry`)를 지나고 Claude Code·Codex 가 같은 파일을 읽고 써요. 기존 인계 기록(`handoff.mjs`)을 재사용해요: `current.md` 는 인계 항목에서 그려요.
