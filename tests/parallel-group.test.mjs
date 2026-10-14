@@ -395,7 +395,7 @@ test("/next 응답 문서와 통제실 설정: 같은 앱에서 같이 돌릴 �
   const route = read("app/api/factory/next/route.ts");
 
   assert.match(route, /getParallelPerApp\(\)/);
-  assert.match(route, /claimJobs\(worker, slots, engines, perApp === undefined \? \{\} : \{ perApp \}\)/);
+  assert.match(route, /claimJobs\(worker, slots, engines, \{ \.\.\.\(perApp === undefined \? \{\} : \{ perApp \}\), holdApps \}\)/);
   assert.match(read("app/api/admin/factory/control/route.ts"), /Object\.hasOwn\(body, "parallelPerApp"\)/);
   assert.match(read("lib/factory/supervisor.ts"), /parallelPerApp: parallelPerApp\.value/);
   assert.match(read("components/admin/factory/FactoryConsole.tsx"), /<ParallelPerAppSettings \/>/);

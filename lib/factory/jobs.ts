@@ -13,7 +13,7 @@ import { AI_LABELS, isAiEngine, readModelChoice, type AiEngine } from "@/lib/fac
 import { getDefaultClaudeModel } from "@/lib/factory/settings";
 import { cleanToolRequests, type ToolRequestRecord } from "@/lib/factory/toolBroker";
 import { cleanHandoff, type HandoffEntry } from "@/lib/factory/handoff";
-import { cleanParallelInfo, DEFAULT_PER_APP, pickClaims, recordGroupReportIfDone, type ParallelInfo } from "@/lib/factory/parallel";
+import { cleanParallelInfo, DEFAULT_PER_APP, pickClaims, finishGroupIfDone, type ParallelInfo } from "@/lib/factory/parallel";
 
 // 실험 일감 종류 이름. 실험 결과 처리(lib/factory/lab.ts)는 보고에 lab 값이 있을 때만 불러온다(앱 일감 경로는 그 파일을 읽지 않는다)
 const LAB_KIND = "lab";
@@ -105,7 +105,7 @@ export interface ClaimedJob {
 //   같은 앱(appSlug)은 앱당 1개(이미 running 인 앱은 건너뜀). 단 같은 병행 그룹(parallelGroup)의 승인된 수정 일감은
 //   perApp(설정 '같은 앱에서 같이 돌릴 수', 기본 2)개까지 같이 가져간다. 그룹이 없으면 예전과 똑같다.
 // UPDATE 에서 status = 'approved' 를 다시 확인해서, 동시에 불러도 같은 지시를 두 번 가져가지 않는다.
-export async function claimJobs(worker: string, slots: number, engines: readonly AiEngine[] = ["claude"], opts: { perApp?: number } = {}): Promise<ClaimedJob[]> {
+export async function claimJobs(worker: string, slots: number, engines: readonly AiEngine[] = ["claude"], opts: { perApp?: number; holdApps?: ReadonlySet<string> } = {}): Promise<ClaimedJob[]> {
   if (!engines.length) return [];
   const now = new Date();
   const lease = new Date(now.getTime() + LEASE_MS);
@@ -117,7 +117,9 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
     }),
     prisma.factoryJob.findMany({ where: { status: "running" }, select: { appSlug: true, kind: true, parallelGroup: true } }),
   ]);
-  const ids = pickClaims({ approved, running, slots, perApp: opts.perApp ?? DEFAULT_PER_APP });
+  // 지휘자(C-2)가 같은 앱의 대기 일감 판단을 기다리는 동안은 그 앱 일감을 가져가지 않는다(순서를 새치기하지 않도록 앱 전체 보류)
+  const waiting = opts.holdApps?.size ? approved.filter((a) => !opts.holdApps!.has(a.appSlug)) : approved;
+  const ids = pickClaims({ approved: waiting, running, slots, perApp: opts.perApp ?? DEFAULT_PER_APP });
 
   if (!ids.length) return [];
   const rows = await prisma.$queryRaw<ClaimedJob[]>(Prisma.sql`
@@ -278,7 +280,7 @@ function cleanBuild(v: unknown): Prisma.InputJsonObject | null {
 }
 
 export type ReportOutcome =
-  | { kind: "ok"; status: string; leaseUntil: Date | null }
+  | { kind: "ok"; status: string; leaseUntil: Date | null; finalCheck?: { appSlug: string; group: string } }
   | { kind: "not_found" }
   | { kind: "conflict"; status: string; cancelled: boolean };
 
@@ -297,7 +299,17 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   if (input.phase !== undefined) data.phase = input.phase;
   if (input.toolRequests) data.toolRequests = input.toolRequests as unknown as Prisma.InputJsonArray;
   if (input.handoff) data.handoff = input.handoff as unknown as Prisma.InputJsonObject;
-  if (input.parallel) data.parallelInfo = input.parallel as unknown as Prisma.InputJsonObject;
+  if (input.parallel) {
+    let info = input.parallel;
+
+    if (info.actualFiles?.length) {
+      // 지휘자가 묶은 일감: 실제 변경 파일을 예상과 비교해 예상 밖 파일·겹침을 채운다(실패하면 그대로 저장)
+      const { annotateActual } = await import("@/lib/factory/conductor");
+
+      info = await annotateActual(input.jobId, info).catch(() => info);
+    }
+    data.parallelInfo = info as unknown as Prisma.InputJsonObject;
+  }
 
   // 검토가 필요한 출시 일감은 [이대로 진행] 전에는 완료가 될 수 없다(완료 보고가 와도 검토 대기로 둔다)
   let status = input.status;
@@ -339,7 +351,8 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   if (res.count === 0) return conflictOf(input.jobId);
 
   // 병행 그룹의 마지막 일감이 합쳐져 완료되면 그룹 요약을 통제실에 남긴다(던지지 않음)
-  if (status === "done") await recordGroupReportIfDone(input.jobId);
+  // 지휘자가 묶은 그룹이면 마지막 전체 점검을 감독 프로그램에 맡긴다(finalCheck)
+  const group = status === "done" ? await finishGroupIfDone(input.jobId) : null;
 
   if (input.lab) {
     // 실험 일감만 저장한다(다른 종류가 lab 필드를 보내도 무시)
@@ -360,7 +373,7 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
     await trimLogs(input.jobId);
   }
 
-  return { kind: "ok", status: status ?? "running", leaseUntil: data.leaseUntil === null ? null : lease };
+  return { kind: "ok", status: status ?? "running", leaseUntil: data.leaseUntil === null ? null : lease, ...(group?.finalCheck ? { finalCheck: group.finalCheck } : {}) };
 }
 
 // 지시당 로그는 최근 500줄만 남긴다.

@@ -1,7 +1,7 @@
 // 앱별 일감 대기열(병렬화 단계 B). 같은 앱 안에서는 실행(running)이 1개이고, 승인된(approved) 일감은
 // priority(큰 값 먼저) → 승인 시각 → 등록 시각 순으로 하나씩 실행한다. 승인 대기(pending)는 같은 규칙으로 뒤에 줄을 세워 보여 준다.
 import prisma from "@/lib/prisma";
-import { MERGE_FAIL_STAGE, readParallelInfo, type ParallelInfo } from "@/lib/factory/parallel";
+import { MERGE_FAIL_STAGE, readConductorInfo, readParallelInfo, type ConductorInfo, type ParallelInfo } from "@/lib/factory/parallel";
 
 export interface QueueSortable {
   priority: number;
@@ -34,6 +34,10 @@ export interface QueueItem {
   parallel: ParallelInfo | null;
   /** 합치기 실패로 멈춤(status 는 failed). 이미 합쳐진 다른 일감은 그대로다 */
   mergeFailed: boolean;
+  /** 그룹을 정한 쪽: manual(사람) | conductor(지휘자) | null */
+  parallelSource: string | null;
+  /** 지휘자 판단(묶음·순서대로·판단 실패와 이유·예상 파일). 판단한 적 없으면 null */
+  conductor: ConductorInfo | null;
 }
 
 /** 순서를 매긴다: 합치기 실패로 멈춘 것 → 실행 중(running) → 승인된 것 → 승인 대기 순으로 compareQueue. */
@@ -46,14 +50,14 @@ export function orderQueue<T extends QueueSortable & { status: string }>(rows: T
   return [...failed, ...running, ...approved, ...pending];
 }
 
-const SELECT = { id: true, appSlug: true, title: true, kind: true, status: true, priority: true, approvedAt: true, createdAt: true, parallelGroup: true, parallelInfo: true, failStage: true } as const;
+const SELECT = { id: true, appSlug: true, title: true, kind: true, status: true, priority: true, approvedAt: true, createdAt: true, parallelGroup: true, parallelInfo: true, failStage: true, parallelSource: true, conductorInfo: true } as const;
 
 /** 대기열에 올릴 상태: 실행 중·승인됨·승인 대기, 그리고 최근 7일 안에 합치기 실패로 멈춘 병행 일감(관리자 확인이 필요해서) */
 const listWhere = () => ({
   OR: [{ status: { in: ["running", "approved", "pending"] } }, { status: "failed", failStage: MERGE_FAIL_STAGE, parallelGroup: { not: null }, finishedAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) } }],
 });
 
-type Row = QueueSortable & { id: string; title: string; kind: string; status: string; priority: number; parallelGroup?: string | null; parallelInfo?: unknown; failStage?: string | null };
+type Row = QueueSortable & { id: string; title: string; kind: string; status: string; priority: number; parallelGroup?: string | null; parallelInfo?: unknown; failStage?: string | null; parallelSource?: string | null; conductorInfo?: unknown };
 
 /** 한 앱의 행들을 순서대로 번호 붙인다(순수 함수: 시험용). */
 export function numberQueue(rows: Row[]): QueueItem[] {
@@ -70,6 +74,8 @@ export function numberQueue(rows: Row[]): QueueItem[] {
     parallelGroup: r.parallelGroup ?? null,
     parallel: readParallelInfo(r.parallelInfo),
     mergeFailed: r.status === "failed" && r.failStage === MERGE_FAIL_STAGE,
+    parallelSource: r.parallelSource ?? null,
+    conductor: readConductorInfo(r.conductorInfo),
   }));
 }
 

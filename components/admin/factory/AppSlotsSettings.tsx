@@ -207,3 +207,106 @@ export function ParallelPerAppSettings() {
     </div>
   );
 }
+
+interface ConductorState {
+  autoGroup: boolean;
+  model: string;
+  modelIsDefault: boolean;
+  sharedFiles: string[];
+  sharedFilesIsDefault: boolean;
+  log: { at: string; appSlug: string; model: string | null; ok: boolean; outcome: string; ms: number | null; costUsd: number | null }[];
+}
+
+export const CONDUCTOR_MODELS = ["haiku", "sonnet", "opus"] as const;
+
+/**
+ * 통제실 [설정] '지휘자(자동 묶기)'(단계 C-2): 같은 앱에 승인된 수정 일감이 2개 이상 쌓이면 읽기 전용 AI 가 겹치는지 보고 안전할 때만 자동으로 '같이 돌리기'로 묶는다.
+ * 켜기·끄기(기본 켜기), 모델(기본 haiku), 공용 파일 목록(건드리면 순서대로 두는 파일 패턴), 최근 판단 기록(지휘자 턴을 따로 표시).
+ */
+export function ConductorSettings() {
+  const [s, setS] = useState<ConductorState | null>(null);
+  const [files, setFiles] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/factory/control", { cache: "no-store" });
+      const data = (await res.json()) as { conductor?: ConductorState };
+
+      if (res.ok && data.conductor) {
+        setS(data.conductor);
+        setFiles((f) => f ?? data.conductor!.sharedFiles.join("\n"));
+      }
+    } catch {
+      /* 못 읽으면 그대로 둔다 */
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const send = async (body: Record<string, unknown>) => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/factory/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = (await res.json().catch(() => ({}))) as { message?: string; conductor?: ConductorState };
+
+      setNotice(data.message ?? (res.ok ? "저장했어요." : "저장하지 못했어요."));
+      if (res.ok && data.conductor) {
+        setS(data.conductor);
+        setFiles(data.conductor.sharedFiles.join("\n"));
+      }
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded-lg border border-default-200 p-4" data-title="settings · 지휘자(자동 묶기)" data-conductor="">
+      <h2 className="font-semibold">지휘자(자동 묶기)</h2>
+      <p className="text-sm text-default-500">같은 앱에 승인된 수정 일감이 2개 이상 쌓이면, 읽기 전용 AI 가 일감이 서로 겹치지 않는지 보고 안전할 때만 자동으로 &lsquo;같이 돌리기&rsquo;로 묶어요. 예상 파일이 겹치거나, 확신이 높지 않거나, 의존성·라우터·스키마·번역 같은 공용 파일을 건드리면 묶지 않고 순서대로 둬요. 끄면 사람이 묶은 것만 같이 돌아요. 사람이 직접 묶거나 푼 일감은 지휘자가 바꾸지 않아요.</p>
+      {s ? (
+        <>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button aria-pressed={s.autoGroup} color={s.autoGroup ? "primary" : "default"} data-conductor-toggle="" isDisabled={busy} size="sm" variant={s.autoGroup ? "solid" : "flat"} onPress={() => send({ conductorAutoGroup: !s.autoGroup })}>
+              {s.autoGroup ? "자동 묶기 켜짐" : "자동 묶기 꺼짐"}
+            </Button>
+            <div aria-label="지휘자 모델" className="flex gap-2" role="group">
+              {CONDUCTOR_MODELS.map((m) => (
+                <Button key={m} aria-pressed={s.model === m} color={s.model === m ? "primary" : "default"} data-conductor-model={m} isDisabled={busy} size="sm" variant={s.model === m ? "solid" : "flat"} onPress={() => send({ conductorModel: m })}>
+                  {m}
+                </Button>
+              ))}
+            </div>
+            <span className="text-sm" data-conductor-current="">{`모델 ${s.model}${s.modelIsDefault ? " (기본)" : ""}`}</span>
+          </div>
+          <label className="block text-sm">
+            공용 파일 패턴(한 줄에 하나, 건드리면 순서대로 둬요{s.sharedFilesIsDefault ? " · 지금 기본 목록" : ""})
+            <textarea className="mt-1 h-32 w-full rounded border border-default-300 p-2 font-mono text-xs" data-conductor-shared="" value={files ?? ""} onChange={(e) => setFiles(e.target.value)} />
+          </label>
+          <div className="flex gap-2">
+            <Button data-conductor-shared-save="" isDisabled={busy || files === null} size="sm" variant="flat" onPress={() => send({ conductorSharedFiles: files })}>
+              목록 저장
+            </Button>
+            <Button isDisabled={busy} size="sm" variant="flat" onPress={() => send({ conductorSharedFiles: null })}>
+              기본값으로
+            </Button>
+          </div>
+          {s.log.length ? (
+            <div className="space-y-1 text-xs text-default-500" data-conductor-log="">
+              <div className="font-semibold">최근 지휘자 판단(비용 기록에 &lsquo;지휘자&rsquo;로 따로 표시)</div>
+              {s.log.map((r) => (
+                <div key={`${r.at}-${r.appSlug}`}>{`[지휘자] ${r.at.slice(5, 16).replace("T", " ")} ${r.appSlug} · ${r.model ?? "?"} · ${r.outcome}${r.costUsd !== null ? ` · $${r.costUsd.toFixed(4)}` : ""}${r.ms !== null ? ` · ${Math.round(r.ms / 1000)}초` : ""}`}</div>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+      {notice && <p className="text-sm" role="status">{notice}</p>}
+    </div>
+  );
+}

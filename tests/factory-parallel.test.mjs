@@ -33,6 +33,7 @@ const nextRoute = loadTs("app/api/factory/next/route.ts", {
     releaseExpiredLeases: async () => {},
     claimJobs: async (worker, n) => (claimCalls.push(n), Array.from({ length: n }, (_, i) => ({ id: `j${i}`, appSlug: `app-${i}`, priority: 0, kind: i === 0 ? "lab" : "new" }))),
   },
+  "@/lib/factory/conductor": { appsToHold: async () => new Set(), conductorTaskForNext: async () => null, isAutoGroupEnabled: async () => false }, // 지휘자(C-2): 자동 묶기 꺼짐과 같은 동작
   "@/lib/prisma": { __esModule: true, default: {} },
   "@/lib/factory/http": { fail: (status, message) => NextResponse.json({ message }, { status }), guardWorker: async () => null },
   "@/lib/factory/release": { consumeKeyScan: async () => false, notifyTestingDue: async () => {}, pcPathsToCheck: async () => [], releaseJobExtras: async () => new Map() },

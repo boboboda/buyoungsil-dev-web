@@ -8,7 +8,7 @@
 //   { "jobId": "cm…", "status": "review", "summary": "…" }
 //   { "jobId": "cm…", "status": "linkwait", "summary": "…" }   (스토어 수정: 홍보 영상을 만들고 반영까지 끝낸 뒤 YouTube 링크 대기)   (출시 일감: 자료를 만들고 검토 대기로. 검토가 필요한 일감은 승인 전 done 도 review 로 둔다)
 //   완료 때 "build": { versionName, versionCode, aabPath, aabSize, tests, track, uploaded, uploadNote } (앱 업데이트 빌드 결과, 선택)
-// 응답: 200 { ok, status } / running 이 아닌 지시는 409 (취소된 경우 { cancelled: true 포함 })
+// 응답: 200 { ok, status, finalCheck? } (finalCheck: { appSlug, group } = 지휘자가 묶은 그룹의 마지막 일감이 완료됨. 감독 프로그램이 앱 전체 검사를 돌려 /api/factory/conductor 로 알린다) / running 이 아닌 지시는 409 (취소된 경우 { cancelled: true 포함 })
 import { NextRequest, NextResponse } from "next/server";
 
 import { fail, guardWorker, readJson } from "@/lib/factory/http";
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     // 끝났거나 실패했으면 텔레그램으로 알린다. (실패해도 보고 응답에는 영향 없음)
     if (out.status === "done" || out.status === "failed" || out.status === "review" || out.status === "linkwait") void notifyJobEvent(parsed.value.jobId, out.status);
 
-    return NextResponse.json({ ok: true, status: out.status, leaseUntil: out.leaseUntil });
+    return NextResponse.json({ ok: true, status: out.status, leaseUntil: out.leaseUntil, ...(out.finalCheck ? { finalCheck: out.finalCheck } : {}) });
   } catch (error) {
     console.error("[factory] report 실패:", error);
     return fail(500, "처리에 실패했습니다.");

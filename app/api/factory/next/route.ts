@@ -35,9 +35,13 @@
 //   출시 일감(kind=release)에는 release: { kind, stages, outbox, resumeFrom, resumeNote, key } 가 붙는다(lib/factory/release.ts releaseJobExtras).
 //   병행 실행(단계 C-1): 각 job 에 parallelGroup(문자열 또는 null)이 붙는다. 수정(revision) 일감이 그룹을 가지면 감독 프로그램은 앱 폴더가 아니라 git worktree 에서 실행하고
 //   끝난 순서대로 기본 브랜치에 합친다. 같은 앱·같은 그룹의 승인된 수정 일감은 설정 '같은 앱에서 같이 돌릴 수'(parallelPerApp, 기본 2)개까지 같이 내준다. 그룹이 없으면 앱당 1개.
+//   지휘자(단계 C-2): 감독 프로그램이 conductor=1(지금 판단을 맡을 수 있음) 또는 conductor=busy(판단 중)를 보내면, 같은 앱의 승인된 수정 일감이 그룹 없이 2개 이상일 때 응답에
+//   conductor: { appSlug, key, model, perApp, sharedFiles, jobs: [{ id, title, priority, instruction }] } 가 한 번 붙는다(공장 전체 동시에 1개). 결과는 POST /api/factory/conductor.
+//   판단 결과를 기다리는 동안(최대 5분) 그 앱의 승인된 일감은 가져가지 않는다. conductor 를 보내지 않는 감독 프로그램에는 아무 영향이 없다.
 //   만료된 running 을 먼저 정리하고, approved 중 우선순위 높은 순으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 import { NextRequest, NextResponse } from "next/server";
 
+import { appsToHold, conductorTaskForNext, isAutoGroupEnabled } from "@/lib/factory/conductor";
 import { claimJobs, MAX_SLOTS, releaseExpiredLeases, WORKER_RE } from "@/lib/factory/jobs";
 import { fail, guardWorker } from "@/lib/factory/http";
 import prisma from "@/lib/prisma";
@@ -169,7 +173,13 @@ export async function GET(req: NextRequest) {
     // 감독 프로그램이 업데이트·배포를 기다리는 동안에는 스스로 slots=0 으로 요청한다.
     // 같은 앱에서 병행 그룹 일감을 같이 가져갈 수(설정, 기본 2). 그룹이 없는 일감은 예전처럼 앱당 1개
     const perApp = (await getParallelPerApp().catch(() => null))?.value;
-    const claimed = slots > 0 ? await claimJobs(worker, slots, engines, perApp === undefined ? {} : { perApp }) : [];
+    // 지휘자(C-2): 감독 프로그램이 conductor=1|busy 를 보낼 때만(지휘자를 쓸 줄 알 때). 판단을 기다리는 앱은 잠깐 가져가지 않고, 판단할 일이 있으면 conductor 로 내준다
+    const conductorParam = param("conductor", 8);
+    const capable = conductorParam === "1" || conductorParam === "busy";
+    const cs = { autoGroup: await isAutoGroupEnabled().catch(() => false), perApp: perApp ?? 2, appSlots: appSlotsSetting?.value ?? 3 };
+    const holdApps = await appsToHold(cs, capable).catch(() => new Set<string>());
+    const claimed = slots > 0 ? await claimJobs(worker, slots, engines, { ...(perApp === undefined ? {} : { perApp }), holdApps }) : [];
+    const conductor = conductorParam === "1" && !drain ? await conductorTaskForNext(cs).catch(() => null) : null;
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
     const overrides = claimed.length ? await getRuleOverrides().catch(() => ({})) : {};
     const releases = await releaseJobExtras(claimed).catch(() => new Map<string, Record<string, unknown>>());
@@ -193,7 +203,7 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    return NextResponse.json({ jobs, autoUpdate, ...extra });
+    return NextResponse.json({ jobs, autoUpdate, ...(conductor ? { conductor } : {}), ...extra });
   } catch (error) {
     console.error("[factory] next 실패:", error);
     return fail(500, "처리에 실패했습니다.");

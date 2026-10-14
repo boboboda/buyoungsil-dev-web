@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
 import { allAppQueues, appQueue } from "@/lib/factory/queue";
-import { groupJobs, readGroupReports, ungroupJob } from "@/lib/factory/parallel";
+import { groupJobs, readGroupReports, settleStaleFinalChecks, ungroupJob } from "@/lib/factory/parallel";
 import { APP_SLUG_RE, ID_RE } from "@/lib/factory/jobs";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +17,8 @@ export async function GET(req: NextRequest) {
 
   if (denied) return denied;
   const appSlug = req.nextUrl.searchParams.get("appSlug")?.trim() ?? "";
+
+  await settleStaleFinalChecks().catch(() => 0); // 최종 점검 결과가 오지 않은 그룹 요약을 마무리한다
 
   if (appSlug) {
     if (!APP_SLUG_RE.test(appSlug)) return NextResponse.json({ message: "앱 이름이 올바르지 않아요." }, { status: 400 });

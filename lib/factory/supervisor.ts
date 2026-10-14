@@ -38,7 +38,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp, conductor] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -60,6 +60,7 @@ export async function supervisorSnapshot() {
     getDefaultClaudeModel(),
     getAppSlots(),
     getParallelPerApp(),
+    import("@/lib/factory/conductor").then((m) => m.conductorSnapshot()).catch(() => null), // 지휘자(C-2) 설정·최근 판단 기록
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
@@ -79,6 +80,7 @@ export async function supervisorSnapshot() {
     appSlotsDefault: appSlots.isDefault, // true = 통제실에서 정한 적 없음
     parallelPerApp: parallelPerApp.value, // 같은 앱에서 병행 그룹 일감을 같이 돌릴 수(1~4, 기본 2)
     parallelPerAppDefault: parallelPerApp.isDefault,
+    ...(conductor ? { conductor } : {}), // 지휘자(C-2) 설정·최근 판단 비용 기록
     commit: info?.commit ?? null,
     commitSubject: info?.subject ?? null, // 현재 커밋 메시지 첫 줄(무엇이 바뀌었는지)
     updateNote: info?.note ?? null,

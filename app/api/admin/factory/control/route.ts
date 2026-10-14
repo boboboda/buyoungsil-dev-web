@@ -4,7 +4,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
-import { isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
+import { CLAUDE_MODELS, isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
+import { cleanSharedPatterns, conductorSnapshot, setAutoGroupEnabled, setConductorModel, setSharedFiles } from "@/lib/factory/conductor";
 import { cleanAppSlots, cleanPerApp, MAX_APP_SLOTS, MAX_PER_APP, MIN_APP_SLOTS, MIN_PER_APP, setAppSlots, setParallelPerApp, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
 import { allowedStudioToolIds, isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
 import { APP_ROLES_KEY, applyAppRolePatch, readAppRoles } from "@/lib/factory/appRoles";
@@ -49,6 +50,9 @@ export async function POST(req: NextRequest) {
     compactAfterJob?: unknown;
     appSlots?: unknown;
     parallelPerApp?: unknown;
+    conductorAutoGroup?: unknown;
+    conductorModel?: unknown;
+    conductorSharedFiles?: unknown;
     updateNow?: unknown;
     restart?: unknown;
   } | null;
@@ -115,6 +119,39 @@ export async function POST(req: NextRequest) {
       ...(await supervisorSnapshot()),
       message: `같은 앱에서 같이 돌릴 수를 ${n}개로 저장했어요. '같이 돌리기'로 묶은 수정 일감만 해당돼요. 이미 도는 일감은 끊지 않아요.`,
     });
+  }
+
+  // 지휘자(C-2) 자동 묶기 켜기·끄기: { conductorAutoGroup: boolean }. 끄면 C-1 과 똑같이 사람이 묶은 것만 같이 돈다
+  if (body && Object.hasOwn(body, "conductorAutoGroup")) {
+    if (typeof body.conductorAutoGroup !== "boolean") return NextResponse.json({ message: "conductorAutoGroup 은 true/false 여야 해요." }, { status: 400 });
+    await setAutoGroupEnabled(body.conductorAutoGroup);
+
+    return NextResponse.json({ ...(await supervisorSnapshot()), message: body.conductorAutoGroup ? "자동 묶기를 켰어요. 같은 앱에 승인된 수정 일감이 2개 이상 쌓이면 지휘자가 겹치는지 보고 묶어요." : "자동 묶기를 껐어요. 사람이 묶은 일감만 같이 돌고, 나머지는 앱당 1개씩 순서대로 돌아요." });
+  }
+
+  // 지휘자 모델: { conductorModel: Claude Code 별칭 }. 가벼운 모델(기본 haiku)이면 충분해요
+  if (body && Object.hasOwn(body, "conductorModel")) {
+    const m = body.conductorModel;
+
+    if (typeof m !== "string" || !(CLAUDE_MODELS as readonly string[]).includes(m)) return NextResponse.json({ message: "허용된 Claude Code 모델 별칭을 골라 주세요." }, { status: 400 });
+    await setConductorModel(m);
+
+    return NextResponse.json({ ...(await supervisorSnapshot()), message: `지휘자 모델을 ${m}로 저장했어요. 다음 판단부터 적용돼요.` });
+  }
+
+  // 지휘자 공용 파일 목록(건드리면 순서대로 두는 파일 패턴): { conductorSharedFiles: 줄바꿈으로 나눈 글자 | 배열 | null(기본값으로) }
+  if (body && Object.hasOwn(body, "conductorSharedFiles")) {
+    if (body.conductorSharedFiles === null) {
+      await setSharedFiles([...(await conductorSnapshot()).defaultSharedFiles]);
+
+      return NextResponse.json({ ...(await supervisorSnapshot()), message: "공용 파일 목록을 기본값으로 되돌렸어요." });
+    }
+    const list = cleanSharedPatterns(body.conductorSharedFiles);
+
+    if (!list) return NextResponse.json({ message: "공용 파일 목록은 줄바꿈으로 나눈 패턴(최대 100줄)이어야 해요." }, { status: 400 });
+    await setSharedFiles(list);
+
+    return NextResponse.json({ ...(await supervisorSnapshot()), message: `공용 파일 패턴 ${list.length}개를 저장했어요. 다음 판단부터 적용돼요.` });
   }
 
   // 툴킷 도구 용도: { toolPurpose: { id, purpose: game|cut|common|unclassified|null } }. null = 저장값을 지우고 자동 추정으로

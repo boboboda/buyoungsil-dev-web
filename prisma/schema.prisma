@@ -606,6 +606,8 @@ model FactoryJob {
   labCleanupAt    DateTime? // 실험 [폴더 지우기]를 요청한 시각(감독 프로그램이 지우고 알리면 labResult.folderDeleted)
   parallelGroup   String? // 병행 그룹: 같은 앱·같은 그룹의 승인된 수정 일감은 worktree 에서 동시에 실행한다(NULL = 앱당 1개). lib/factory/parallel.ts
   parallelInfo    Json? // 감독 프로그램이 보고하는 병행 상태(worktree·lockWait·merging·rebases·mergedAt·checks). 비밀값 없음
+  parallelSource  String? // 병행 그룹을 정한 쪽: manual(사람이 묶거나 푼 일감: 지휘자는 건드리지 않음) | conductor(지휘자가 자동으로 묶음). lib/factory/conductor.ts
+  conductorInfo   Json? // 지휘자 판단(결정·이유·예상 파일·영역·확신도·판단 키). 비밀값 없음
   handoff         Json? // 인계 기록 마지막 항목(Claude Code ↔ Codex 공유 인계, 읽기 전용 표시용). lib/factory/handoff.ts 가 정리해서 저장. 비밀값·기획서·diff 없음
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?

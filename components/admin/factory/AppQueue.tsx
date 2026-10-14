@@ -29,6 +29,17 @@ export function parallelBadges(q: Pick<QueueItem, "status" | "parallelGroup" | "
   return out;
 }
 
+/** 지휘자(C-2) 판단 한 줄: 묶었으면 이유와 예상 파일, 순서대로 뒀으면 이유, 판단 실패면 사유. 판단한 적 없거나 사람이 정한 그룹이면 null */
+export function conductorLine(q: Pick<QueueItem, "conductor" | "parallelSource">): string | null {
+  const c = q.conductor;
+
+  if (!c || q.parallelSource === "manual") return null;
+  if (c.decision === "grouped") return `🎼 지휘자: 같이 돌리기 — ${c.reason}${c.files.length ? ` · 예상 파일: ${c.files.slice(0, 6).join(", ")}${c.files.length > 6 ? ` 외 ${c.files.length - 6}개` : ""}` : ""}`;
+  if (c.decision === "sequential") return `🎼 지휘자: 순서대로 — ${c.reason}`;
+
+  return `🎼 지휘자 판단 실패(순서대로 실행): ${c.reason}`;
+}
+
 /** '같이 돌리기'로 묶을 수 있는 일감: 시작 전(승인 대기·승인됨) 수정 일감 */
 export const groupable = (q: Pick<QueueItem, "status" | "kind">) => q.kind === "revision" && (q.status === "pending" || q.status === "approved");
 /** 올리기/내리기로 바꿀 priority: 바로 앞(뒤) 일감과 순서가 바뀌도록 1 차이를 둔다(-100~100). */
@@ -147,6 +158,16 @@ export default function AppQueue({ appSlug }: { appSlug?: string }) {
                     {b}
                   </span>
                 ))}
+                {q.parallelGroup && q.parallelSource ? (
+                  <span className="rounded bg-default-100 px-1.5 text-xs" data-queue-source={q.parallelSource}>
+                    {q.parallelSource === "manual" ? "사람이 묶음" : "지휘자가 묶음"}
+                  </span>
+                ) : null}
+                {conductorLine(q) ? (
+                  <span className="basis-full pl-8 text-xs fx-muted" data-queue-conductor={q.conductor?.decision}>
+                    {conductorLine(q)}
+                  </span>
+                ) : null}
                 {q.mergeFailed ? (
                   <span className="flex items-center gap-1">
                     <button className="rounded border border-default-300 px-2" data-queue-retry disabled={busy} type="button" onClick={() => void act(q.id, { action: "retry" }, `"${q.title}" 일감을 처음부터 다시 실행할까요?`)}>
