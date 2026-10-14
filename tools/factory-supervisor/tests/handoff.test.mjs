@@ -187,6 +187,12 @@ test("앱 일감 시작: 같은 앱의 이전 일감 기록이 있으면 먼저 
   assert.match(next, /\[작업 메모리/);
 });
 
+test("앱 일감에는 구조 파악 규칙이 붙고, 정비·터미널에는 붙지 않는다", { skip }, (t) => {
+  const dir = repo(t);
+  assert.match(handoffPrompt(dir, "CHANGE_REQUEST.md 반영", { appScope: true }), /STRUCTURE\.md[\s\S]*확인 필요 사항/);
+  assert.doesNotMatch(handoffPrompt(dir, "[공장 정비 지시]"), /구조 파악 규칙/);
+});
+
 test("makeHandoffEntry/buildEntry 는 git 이 아닌 폴더에서도 던지지 않는다", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "factory-handoff-nogit-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
