@@ -200,10 +200,21 @@ test("/next: 정비가 대기·진행 중이어도 앱 일감을 내준다(병�
 test("claimJobs: 같은 앱은 앱마다 하나만, 이미 running 인 앱은 건너뜀, 가져가는 수는 slots", async () => {
   const { Prisma } = require("@prisma/client");
   const queries = [];
+  const at = (n) => new Date(n);
+  const approvedRows = [
+    { id: "a1", appSlug: "app-a", kind: "revision", priority: 0, approvedAt: at(1), createdAt: at(1), parallelGroup: null },
+    { id: "a2", appSlug: "app-a", kind: "revision", priority: 0, approvedAt: at(2), createdAt: at(2), parallelGroup: null },
+    { id: "b1", appSlug: "app-b", kind: "revision", priority: 0, approvedAt: at(3), createdAt: at(3), parallelGroup: null },
+    { id: "c1", appSlug: "app-c", kind: "revision", priority: 0, approvedAt: at(4), createdAt: at(4), parallelGroup: null },
+    { id: "d1", appSlug: "app-d", kind: "revision", priority: 0, approvedAt: at(5), createdAt: at(5), parallelGroup: null },
+  ];
   const fakePrisma = {
     $queryRaw: async (q) => (queries.push(q), []),
     factoryJobLog: { createMany: async () => {} },
-    factoryJob: { updateMany: async () => {} },
+    factoryJob: {
+      updateMany: async () => {},
+      findMany: async ({ where }) => (where.status === "approved" ? approvedRows : [{ appSlug: "app-c", kind: "revision", parallelGroup: null }]),
+    },
   };
   const jobs = loadTs("lib/factory/jobs.ts", {
     "@/lib/prisma": { __esModule: true, default: fakePrisma },
@@ -213,16 +224,14 @@ test("claimJobs: 같은 앱은 앱마다 하나만, 이미 running 인 앱은 �
     "@/lib/factory/settings": { getDefaultClaudeModel: async () => null },
     "@/lib/factory/toolBroker": { cleanToolRequests: () => [] },
     "@/lib/factory/handoff": { cleanHandoff: () => null },
+    "@/lib/factory/parallel": loadTs("lib/factory/parallel.ts", { "@/lib/prisma": { __esModule: true, default: fakePrisma } }),
   });
   await jobs.claimJobs("pc", 3, ["claude"]);
   assert.equal(queries.length, 1, "한 문장으로 가져감");
   const sql = queries[0].sql.replace(/\s+/g, " ");
-  assert.match(sql, /PARTITION BY j\."appSlug"/, "앱마다 하나");
-  assert.match(sql, /NOT EXISTS \(SELECT 1 FROM "factory_jobs" r WHERE r\."appSlug" = j\."appSlug" AND r\."status" = 'running'\)/, "이미 도는 앱은 건너뜀");
-  assert.match(sql, /c\."rn" = 1/);
   assert.match(sql, /WHERE "status" = 'approved' AND "id" IN/, "UPDATE 에서 승인 상태를 다시 확인(같은 일감 두 번 가져가기 방지)");
-  assert.match(sql, /ORDER BY c\."priority" DESC, c\."createdAt" ASC LIMIT/);
-  assert.ok(queries[0].values.includes(3), "LIMIT 은 slots");
+  // 앱마다 하나(app-a 의 a2 는 건너뜀), 이미 도는 앱(app-c)은 건너뜀, 가져가는 수는 slots(3): a1·b1·d1
+  assert.deepEqual(queries[0].values.filter((v) => typeof v === "string" && /^[abcd]\d$/.test(v)), ["a1", "b1", "d1"]);
   assert.equal(Prisma.sql`x`.sql, "x");
 });
 

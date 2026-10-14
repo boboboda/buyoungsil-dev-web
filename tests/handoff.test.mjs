@@ -59,6 +59,7 @@ test("cleanHandoff: 형식이 틀리거나 너무 크면 저장하지 않는다(
 
 test("parseReport: 인계 항목을 정리해 싣고, 없으면 null(예전 감독 프로그램)", () => {
   const jobs = loadTs("lib/factory/jobs.ts", {
+    "@/lib/factory/parallel": loadTs("lib/factory/parallel.ts", { "@/lib/prisma": { __esModule: true, default: {} } }),
     "@/lib/prisma": { __esModule: true, default: {} },
     "@/lib/factory/ai": loadTs("lib/factory/ai.ts"),
     "@/lib/factory/project": { ensureProjectForJob: async () => {} },
@@ -138,8 +139,9 @@ test("연결 지점: 정비·앱 일감·터미널이 끝날 때 인계 기록�
   assert.match(maintenance, /kind: "maintenance"[^\n]*checks/);
   assert.match(maintenance, /done\.handoff = saveHandoff\(/);
   const supervisor = read("tools/factory-supervisor/supervisor.mjs");
-  assert.match(supervisor, /makeHandoffEntry\(st\.dir/);
-  assert.match(supervisor, /handoffPrompt\(dir, promptFor\(job\), \{ appScope: true \}\)/);
+  assert.match(supervisor, /makeHandoffEntry\(st\.home \?\? st\.dir/); // 병행 일감은 사본이 사라지므로 인계 기록은 앱 폴더(home)에 남긴다
+  assert.match(supervisor, /handoffPrompt\(dir, prompt, \{ appScope: true \}\)/); // runAiTurn 이 지시문(prompt)을 받는다
+  assert.match(supervisor, /runAiTurn\(st, promptFor\(job\)\)/);
   assert.match(supervisor, /kind: "job"/);
   assert.match(read("tools/factory-supervisor/ai.mjs"), /handoff: \{ kind: "terminal"/);
   // 실패한 일감도 기록(검증 실패 → failed 항목), 검사는 감독이 직접 돌린 결과만(AI 의 말은 증거 아님)

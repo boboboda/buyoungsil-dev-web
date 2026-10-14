@@ -134,7 +134,8 @@ export async function notifyJobEvent(
     } else if (event === "done") {
       text = `✅ 완료\n${name} (${job.appSlug}) · ${kind}\n${cut(job.summary, 200) || "(요약 없음)"}`;
     } else {
-      text = `❌ 실패\n${name} (${job.appSlug}) · ${kind}${job.kind === "release" && stage ? `\n실패 단계: ${STAGE_TEXT[stage] ?? stage}` : ""}\n${cut(maskSecrets(job.failReason), 200) || "(사유 없음)"}`;
+      const mergeFail = job.failStage === "merge"; // 병행 일감을 기본 브랜치에 합치지 못함(다시 맞추기를 해도 안 됨). 이미 합쳐진 다른 일감은 그대로
+      text = `❌ ${mergeFail ? "합치기 실패" : "실패"}\n${name} (${job.appSlug}) · ${kind}${mergeFail ? "\n이미 합쳐진 다른 일감은 그대로예요. 이 일감만 멈췄어요." : ""}${job.kind === "release" && stage ? `\n실패 단계: ${STAGE_TEXT[stage] ?? stage}` : ""}\n${cut(maskSecrets(job.failReason), 200) || "(사유 없음)"}`;
     }
 
     const row: Record<string, string>[] = [

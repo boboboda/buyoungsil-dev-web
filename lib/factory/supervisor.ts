@@ -5,6 +5,7 @@
 import prisma from "@/lib/prisma";
 import {
   getAppSlots,
+  getParallelPerApp,
   getDefaultAiEngine,
   getDefaultClaudeModel,
   getPendingRestart,
@@ -37,7 +38,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -58,6 +59,7 @@ export async function supervisorSnapshot() {
     isCompactAfterJobEnabled(),
     getDefaultClaudeModel(),
     getAppSlots(),
+    getParallelPerApp(),
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
@@ -75,6 +77,8 @@ export async function supervisorSnapshot() {
     compactAfterJob, // 작업 후 컨텍스트 정리(/compact, 기본 켜짐)
     appSlots: appSlots.value, // 동시에 만들 앱 수(1~4, 기본 3)
     appSlotsDefault: appSlots.isDefault, // true = 통제실에서 정한 적 없음
+    parallelPerApp: parallelPerApp.value, // 같은 앱에서 병행 그룹 일감을 같이 돌릴 수(1~4, 기본 2)
+    parallelPerAppDefault: parallelPerApp.isDefault,
     commit: info?.commit ?? null,
     commitSubject: info?.subject ?? null, // 현재 커밋 메시지 첫 줄(무엇이 바뀌었는지)
     updateNote: info?.note ?? null,

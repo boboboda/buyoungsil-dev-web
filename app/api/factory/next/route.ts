@@ -33,6 +33,8 @@
 //   실험 일감(kind=lab, appSlug=lab)은 앱 폴더가 아니라 lab<id> 에서 돈다(rules·prompt 없음). 통제실 [폴더 지우기]가 눌렸으면 labCleanup: [jobId, ...] 가 붙는다
 //   (감독 프로그램이 해당 lab<id> 만 지우고 /api/factory/lab 으로 알린다. shared 는 지우지 않는다).
 //   출시 일감(kind=release)에는 release: { kind, stages, outbox, resumeFrom, resumeNote, key } 가 붙는다(lib/factory/release.ts releaseJobExtras).
+//   병행 실행(단계 C-1): 각 job 에 parallelGroup(문자열 또는 null)이 붙는다. 수정(revision) 일감이 그룹을 가지면 감독 프로그램은 앱 폴더가 아니라 git worktree 에서 실행하고
+//   끝난 순서대로 기본 브랜치에 합친다. 같은 앱·같은 그룹의 승인된 수정 일감은 설정 '같은 앱에서 같이 돌릴 수'(parallelPerApp, 기본 2)개까지 같이 내준다. 그룹이 없으면 앱당 1개.
 //   만료된 running 을 먼저 정리하고, approved 중 우선순위 높은 순으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 import { NextRequest, NextResponse } from "next/server";
 
@@ -48,7 +50,7 @@ import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
 import { maintenanceForNext } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
-import { consumeRestart, consumeUpdateNow, getAppSlots, getDefaultAiEngine, getToolBrokerSettings, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
+import { consumeRestart, consumeUpdateNow, getAppSlots, getDefaultAiEngine, getParallelPerApp, getToolBrokerSettings, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
 import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
@@ -165,7 +167,9 @@ export async function GET(req: NextRequest) {
     await releaseExpiredLeases();
     // 공장 정비가 대기·진행 중이어도 일감은 내준다(정비는 정비 전용 폴더에서 돌아 앱 폴더와 겹치지 않는다).
     // 감독 프로그램이 업데이트·배포를 기다리는 동안에는 스스로 slots=0 으로 요청한다.
-    const claimed = slots > 0 ? await claimJobs(worker, slots, engines) : [];
+    // 같은 앱에서 병행 그룹 일감을 같이 가져갈 수(설정, 기본 2). 그룹이 없는 일감은 예전처럼 앱당 1개
+    const perApp = (await getParallelPerApp().catch(() => null))?.value;
+    const claimed = slots > 0 ? await claimJobs(worker, slots, engines, perApp === undefined ? {} : { perApp }) : [];
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
     const overrides = claimed.length ? await getRuleOverrides().catch(() => ({})) : {};
     const releases = await releaseJobExtras(claimed).catch(() => new Map<string, Record<string, unknown>>());

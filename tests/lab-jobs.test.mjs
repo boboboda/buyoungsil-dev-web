@@ -181,6 +181,7 @@ function loadJobs() {
     "@/lib/factory/handoff": { cleanHandoff: () => null },
     "@/lib/factory/mask": mask,
     "@/lib/factory/lab": lab,
+    "@/lib/factory/parallel": loadTs("lib/factory/parallel.ts", { "@/lib/prisma": { __esModule: true, default: prisma } }),
   };
   stubs["@/lib/factory/ai"] = loadTs("lib/factory/ai.ts");
   return { db, prisma, jobs: loadTs("lib/factory/jobs.ts", stubs) };

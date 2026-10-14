@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
 import { isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
-import { cleanAppSlots, MAX_APP_SLOTS, MIN_APP_SLOTS, setAppSlots, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
+import { cleanAppSlots, cleanPerApp, MAX_APP_SLOTS, MAX_PER_APP, MIN_APP_SLOTS, MIN_PER_APP, setAppSlots, setParallelPerApp, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
 import { allowedStudioToolIds, isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
 import { APP_ROLES_KEY, applyAppRolePatch, readAppRoles } from "@/lib/factory/appRoles";
 import { applyStudioPatch, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
     autoDeploy?: unknown;
     compactAfterJob?: unknown;
     appSlots?: unknown;
+    parallelPerApp?: unknown;
     updateNow?: unknown;
     restart?: unknown;
   } | null;
@@ -98,6 +99,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ...(await supervisorSnapshot()),
       message: `동시에 만들 앱 수를 ${n}개로 저장했어요. 감독 프로그램이 다음 확인 때 받아 가요. 줄여도 이미 도는 일감은 끊지 않고, 끝나면서 줄어들어요.`,
+    });
+  }
+
+  // 같은 앱에서 같이 돌릴 수(병행 그룹 일감 기준): { parallelPerApp: 1~4 정수 }. 서버가 일감을 내줄 때 바로 쓴다(감독 프로그램 재시작 필요 없음)
+  if (body && Object.hasOwn(body, "parallelPerApp")) {
+    const n = cleanPerApp(body.parallelPerApp);
+
+    if (n === null || typeof body.parallelPerApp === "string") {
+      return NextResponse.json({ message: `같은 앱에서 같이 돌릴 수는 ${MIN_PER_APP}~${MAX_PER_APP} 사이 정수여야 해요.` }, { status: 400 });
+    }
+    await setParallelPerApp(n);
+
+    return NextResponse.json({
+      ...(await supervisorSnapshot()),
+      message: `같은 앱에서 같이 돌릴 수를 ${n}개로 저장했어요. '같이 돌리기'로 묶은 수정 일감만 해당돼요. 이미 도는 일감은 끊지 않아요.`,
     });
   }
 

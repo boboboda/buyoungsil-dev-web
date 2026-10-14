@@ -13,6 +13,7 @@ import { AI_LABELS, isAiEngine, readModelChoice, type AiEngine } from "@/lib/fac
 import { getDefaultClaudeModel } from "@/lib/factory/settings";
 import { cleanToolRequests, type ToolRequestRecord } from "@/lib/factory/toolBroker";
 import { cleanHandoff, type HandoffEntry } from "@/lib/factory/handoff";
+import { cleanParallelInfo, DEFAULT_PER_APP, pickClaims, recordGroupReportIfDone, type ParallelInfo } from "@/lib/factory/parallel";
 
 // 실험 일감 종류 이름. 실험 결과 처리(lib/factory/lab.ts)는 보고에 lab 값이 있을 때만 불러온다(앱 일감 경로는 그 파일을 읽지 않는다)
 const LAB_KIND = "lab";
@@ -96,36 +97,37 @@ export interface ClaimedJob {
   requiredSecrets: string[];
   planMarkdown: string;
   attempts: number;
+  parallelGroup: string | null; // 병행 그룹(수정 일감만 의미 있음). 있으면 감독 프로그램이 git worktree 에서 실행한다
 }
 
 // approved 중 우선순위 높은 순(같으면 먼저 승인한 순, 그다음 먼저 등록한 순)으로 최대 slots 개를 running 으로 바꿔 돌려준다.
-// 한 문장으로 바꾸고 status = 'approved' 조건을 UPDATE 에서 다시 확인해서, 동시에 불러도 같은 지시를 두 번 가져가지 않는다.
-// 같은 앱(appSlug)은 한 번에 하나만: 이미 running 인 앱의 일감은 건너뛰고, 한 번에 가져가는 묶음에서도 앱마다 가장 앞선 하나만 고른다
-// (동시 실행이 늘면 같은 앱 폴더를 두 일감이 쓰게 되는 걸 서버에서도 막는다. 건너뛴 일감은 approved 로 남아 앞 일감이 끝난 뒤 가져간다).
-export async function claimJobs(worker: string, slots: number, engines: readonly AiEngine[] = ["claude"]): Promise<ClaimedJob[]> {
+// 어떤 일감을 가져갈지는 lib/factory/parallel.ts pickClaims 가 고른다:
+//   같은 앱(appSlug)은 앱당 1개(이미 running 인 앱은 건너뜀). 단 같은 병행 그룹(parallelGroup)의 승인된 수정 일감은
+//   perApp(설정 '같은 앱에서 같이 돌릴 수', 기본 2)개까지 같이 가져간다. 그룹이 없으면 예전과 똑같다.
+// UPDATE 에서 status = 'approved' 를 다시 확인해서, 동시에 불러도 같은 지시를 두 번 가져가지 않는다.
+export async function claimJobs(worker: string, slots: number, engines: readonly AiEngine[] = ["claude"], opts: { perApp?: number } = {}): Promise<ClaimedJob[]> {
   if (!engines.length) return [];
   const now = new Date();
   const lease = new Date(now.getTime() + LEASE_MS);
 
+  const [approved, running] = await Promise.all([
+    prisma.factoryJob.findMany({
+      where: { status: "approved", aiEngine: { in: [...engines] } },
+      select: { id: true, appSlug: true, kind: true, priority: true, approvedAt: true, createdAt: true, parallelGroup: true },
+    }),
+    prisma.factoryJob.findMany({ where: { status: "running" }, select: { appSlug: true, kind: true, parallelGroup: true } }),
+  ]);
+  const ids = pickClaims({ approved, running, slots, perApp: opts.perApp ?? DEFAULT_PER_APP });
+
+  if (!ids.length) return [];
   const rows = await prisma.$queryRaw<ClaimedJob[]>(Prisma.sql`
     UPDATE "factory_jobs"
     SET "status" = 'running', "workerId" = ${worker}, "leaseUntil" = ${ts(lease)},
         "attempts" = "attempts" + 1, "startedAt" = COALESCE("startedAt", ${ts(now)}),
-        "phase" = NULL, "failReason" = NULL, "failStage" = NULL, "updatedAt" = ${ts(now)}
-    WHERE "status" = 'approved' AND "id" IN (
-      SELECT "id" FROM (
-        SELECT j."id", j."priority", j."approvedAt", j."createdAt",
-               ROW_NUMBER() OVER (PARTITION BY j."appSlug" ORDER BY j."priority" DESC, j."approvedAt" ASC NULLS LAST, j."createdAt" ASC) AS "rn"
-        FROM "factory_jobs" j
-        WHERE j."status" = 'approved' AND j."aiEngine" IN (${Prisma.join(engines)})
-          AND NOT EXISTS (SELECT 1 FROM "factory_jobs" r WHERE r."appSlug" = j."appSlug" AND r."status" = 'running')
-      ) c
-      WHERE c."rn" = 1
-      ORDER BY c."priority" DESC, c."approvedAt" ASC NULLS LAST, c."createdAt" ASC
-      LIMIT ${slots}
-    )
+        "phase" = NULL, "failReason" = NULL, "failStage" = NULL, "parallelInfo" = NULL, "updatedAt" = ${ts(now)}
+    WHERE "status" = 'approved' AND "id" IN (${Prisma.join(ids)})
     RETURNING "id", "appSlug", "title", "kind", "parentJobId", "stack", "priority",
-              "requiredSecrets", "planMarkdown", "attempts", "aiEngine", "aiModel"`);
+              "requiredSecrets", "planMarkdown", "attempts", "aiEngine", "aiModel", "parallelGroup"`);
 
   rows.sort((a, b) => b.priority - a.priority);
   await reassignParents(rows);
@@ -195,6 +197,7 @@ export interface ReportInput {
   failStage?: string | null; // 실패한 단계(출시 일감: key, build, sign, upload, homepage, store …)
   toolRequests?: ToolRequestRecord[] | null; // 도구 요청 중계 목록(감독 프로그램이 전체를 보냄. null 이면 그대로 둔다)
   handoff?: HandoffEntry | null; // 인계 기록 항목(일감이 끝날 때만. null 이면 그대로 둔다)
+  parallel?: ParallelInfo | null; // 병행 상태(worktree 실행·잠금 대기·합치는 중·다시 맞추기·합친 시각·검사). lib/factory/parallel.ts. null·없음이면 그대로 둔다
   lab?: Record<string, unknown> | null; // 실험 일감 결과(건너뛴 파일·사후 검사). 아직 정리 전 값: 저장할 때 lib/factory/lab.ts cleanLabResult 로 정리하고, 실험 일감에만 저장한다
 }
 
@@ -250,6 +253,7 @@ export function parseReport(body: unknown): ParseResult {
       build: cleanBuild(b.build),
       toolRequests: cleanToolRequests(b.toolRequests),
       handoff: cleanHandoff(b.handoff),
+      parallel: cleanParallelInfo(b.parallel),
       lab: b.lab && typeof b.lab === "object" && !Array.isArray(b.lab) ? (b.lab as Record<string, unknown>) : null,
     },
   };
@@ -293,6 +297,7 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   if (input.phase !== undefined) data.phase = input.phase;
   if (input.toolRequests) data.toolRequests = input.toolRequests as unknown as Prisma.InputJsonArray;
   if (input.handoff) data.handoff = input.handoff as unknown as Prisma.InputJsonObject;
+  if (input.parallel) data.parallelInfo = input.parallel as unknown as Prisma.InputJsonObject;
 
   // 검토가 필요한 출시 일감은 [이대로 진행] 전에는 완료가 될 수 없다(완료 보고가 와도 검토 대기로 둔다)
   let status = input.status;
@@ -332,6 +337,9 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   // running 일 때만 바꾼다. 취소가 먼저 들어왔으면 0건이라 conflict 가 된다.
   const res = await prisma.factoryJob.updateMany({ where: { id: input.jobId, status: "running" }, data });
   if (res.count === 0) return conflictOf(input.jobId);
+
+  // 병행 그룹의 마지막 일감이 합쳐져 완료되면 그룹 요약을 통제실에 남긴다(던지지 않음)
+  if (status === "done") await recordGroupReportIfDone(input.jobId);
 
   if (input.lab) {
     // 실험 일감만 저장한다(다른 종류가 lab 필드를 보내도 무시)

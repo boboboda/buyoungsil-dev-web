@@ -47,6 +47,7 @@ const nextRoute = loadTs("app/api/factory/next/route.ts", {
   "@/lib/factory/maintenance": { maintenanceForNext: async () => (maintActive ? { maintenance: { turnId: "t1", threadId: "m1" } } : {}) },
   "@/lib/factory/rules": { getRuleOverrides: async () => ({}), renderRules: () => ({}) },
   "@/lib/factory/settings": {
+    getParallelPerApp: async () => ({ value: 2, isDefault: true }),
     consumeRestart: async () => false,
     consumeUpdateNow: async () => false,
     getDefaultAiEngine: async () => "claude",

@@ -137,3 +137,73 @@ export function AppSlotsView({
     </div>
   );
 }
+
+export const PER_APP_CHOICES = [1, 2, 3, 4] as const;
+
+/**
+ * 통제실 [설정] '같은 앱에서 같이 돌릴 수'(병행 그룹 일감 기준, 1~4, 기본 2). 서버가 일감을 내줄 때 바로 쓴다(감독 프로그램 재시작 필요 없음).
+ * 공장 전체 동시 실행 수는 위의 '동시에 만들 앱 수'(기본 3)가 정한다. 병행 일감도 그 수에 하나씩 센다.
+ */
+export function ParallelPerAppSettings() {
+  const [current, setCurrent] = useState<{ value: number; isDefault: boolean } | null>(null);
+  const [pick, setPick] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/factory/control", { cache: "no-store" });
+
+      if (!res.ok) throw new Error();
+      const data = (await res.json()) as { parallelPerApp?: number; parallelPerAppDefault?: boolean };
+
+      if (typeof data.parallelPerApp === "number") {
+        setCurrent({ value: data.parallelPerApp, isDefault: data.parallelPerAppDefault === true });
+        setPick((p) => p ?? data.parallelPerApp ?? null);
+      }
+    } catch {
+      /* 못 읽으면 그대로 둔다 */
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = async () => {
+    if (pick === null) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/factory/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parallelPerApp: pick }) });
+      const data = (await res.json().catch(() => ({}))) as { message?: string; parallelPerApp?: number; parallelPerAppDefault?: boolean };
+
+      setNotice(data.message ?? (res.ok ? "저장했어요." : "저장하지 못했어요."));
+      if (res.ok && typeof data.parallelPerApp === "number") setCurrent({ value: data.parallelPerApp, isDefault: data.parallelPerAppDefault === true });
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded-lg border border-default-200 p-4" data-title="settings · 같은 앱에서 같이 돌릴 수" data-per-app="">
+      <h2 className="font-semibold">같은 앱에서 같이 돌릴 수</h2>
+      <p className="text-sm text-default-500">앱 대기열에서 [같이 돌리기]로 묶은 수정 일감을 같은 앱에서 동시에 몇 개까지 돌릴지 정해요(1~4개, 기본 2개). 묶지 않은 일감은 지금처럼 앱당 1개예요. 병행 일감은 앱 폴더가 아니라 작업 사본(git worktree)에서 돌고, 끝난 순서대로 기본 브랜치에 합쳐요. 공장 전체 동시 실행 수는 위의 &lsquo;동시에 만들 앱 수&rsquo;가 정해요.</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <div aria-label="같은 앱에서 같이 돌릴 수" className="flex gap-2" role="group">
+          {PER_APP_CHOICES.map((n) => (
+            <Button key={n} aria-pressed={pick === n} className="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0" color={pick === n ? "primary" : "default"} data-per-app-choice={n} isDisabled={busy || current === null} size="sm" variant={pick === n ? "solid" : "flat"} onPress={() => setPick(n)}>
+              {n}개
+            </Button>
+          ))}
+        </div>
+        <Button data-per-app-save="" isDisabled={busy || pick === null || pick === current?.value} size="sm" variant="flat" onPress={save}>
+          저장
+        </Button>
+      </div>
+      {current && <p className="text-sm" data-per-app-current="">{`현재 ${current.value}개${current.isDefault ? " (정한 적 없어서 기본값)" : ""}`}</p>}
+      {notice && <p className="text-sm" role="status">{notice}</p>}
+    </div>
+  );
+}

@@ -110,7 +110,9 @@ function jobsWith(state, { defaultModel = null } = {}) {
     factoryJobLog: { createMany: async ({ data }) => calls.logs.push(...data) },
     $queryRaw: async () => [{ ...state, id: "job1", attempts: 1, priority: 0 }],
   };
+  prisma.factoryJob.findMany = async ({ where }) => (where.status === "approved" ? [{ id: "job1", appSlug: "x-app", kind: "new", priority: 0, approvedAt: null, createdAt: new Date(1), parallelGroup: null }] : []);
   const jobs = loadTs("lib/factory/jobs.ts", {
+    "@/lib/factory/parallel": loadTs("lib/factory/parallel.ts", { "@/lib/prisma": { __esModule: true, default: prisma } }),
     "@/lib/prisma": { __esModule: true, default: prisma },
     "@/lib/factory/ai": ai,
     "@/lib/factory/settings": { getDefaultClaudeModel: async () => defaultModel },

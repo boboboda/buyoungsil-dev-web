@@ -21,6 +21,10 @@ function loadTs(relative, dependencies = {}) {
   return module.exports;
 }
 
+
+// 병행 실행(lib/factory/parallel.ts): jobs.ts·queue.ts 가 불러오는 모듈을 시험용 가짜 DB 로 실제 코드 그대로 적재한다
+const parallelFor = (prisma) => loadTs("lib/factory/parallel.ts", { "@/lib/prisma": { __esModule: true, default: prisma } });
+
 // ── 가짜 DB ──
 const match = (r, where = {}) =>
   Object.entries(where).every(([k, v]) => {
@@ -65,7 +69,7 @@ function fakeDb() {
 
 function setup() {
   const db = fakeDb();
-  const queue = loadTs("lib/factory/queue.ts", { "@/lib/prisma": { __esModule: true, default: db.prisma } });
+  const queue = loadTs("lib/factory/queue.ts", { "@/lib/prisma": { __esModule: true, default: db.prisma }, "@/lib/factory/parallel": parallelFor(db.prisma) });
   const jobsMod = loadTs("lib/factory/jobs.ts", {
     "@/lib/prisma": { __esModule: true, default: db.prisma },
     "@/lib/factory/reviewVideo": { deleteReviewVideo: async () => {} },
@@ -74,6 +78,7 @@ function setup() {
     "@/lib/factory/settings": { getDefaultClaudeModel: async () => null },
     "@/lib/factory/toolBroker": { cleanToolRequests: () => null },
     "@/lib/factory/handoff": { cleanHandoff: () => null },
+    "@/lib/factory/parallel": parallelFor(db.prisma),
   });
   const mcp = loadTs("lib/factory/mcp.ts", {
     "@/lib/prisma": { __esModule: true, default: db.prisma },
@@ -166,12 +171,24 @@ test("순서 규칙: priority 큰 값 → 먼저 승인 → 먼저 등록, 미�
   assert.deepEqual(queue.numberQueue(rows.filter((r) => r.id !== "run")).map((q) => q.position), [1, 2, 3, 4, 5]);
 });
 
-test("서버 가져가기 SQL: 앱마다 하나(실행 중이면 건너뜀), priority DESC → approvedAt → createdAt", () => {
+test("서버 가져가기: 앱마다 하나(실행 중이면 건너뜀), priority DESC → approvedAt → createdAt (병행 그룹이 없으면 예전과 같음)", async () => {
+  const ctx = setup();
+  const par = parallelFor(ctx.prisma);
+  const at = (n) => new Date(n);
+  const approved = [
+    { id: "low", appSlug: "app-a", kind: "revision", priority: 0, approvedAt: at(1), createdAt: at(1), parallelGroup: null },
+    { id: "hi", appSlug: "app-a", kind: "revision", priority: 5, approvedAt: at(9), createdAt: at(9), parallelGroup: null },
+    { id: "other", appSlug: "app-b", kind: "new", priority: 1, approvedAt: at(2), createdAt: at(2), parallelGroup: null },
+    { id: "busy", appSlug: "app-c", kind: "revision", priority: 9, approvedAt: at(3), createdAt: at(3), parallelGroup: null },
+  ];
+  const running = [{ appSlug: "app-c", kind: "revision", parallelGroup: null }];
+  // 앱마다 하나: app-a 는 priority 높은 hi, app-c 는 이미 돌고 있어 건너뜀. 전체 순서는 priority 큰 값 먼저
+  assert.deepEqual(par.pickClaims({ approved, running, slots: 4 }), ["hi", "other"]);
+  assert.deepEqual(par.pickClaims({ approved, running, slots: 1 }), ["hi"], "slots 만큼만");
+  // 서버 가져가기는 한 문장으로, UPDATE 에서 승인 상태를 다시 확인한다
   const src = fs.readFileSync(path.join(repo, "lib/factory/jobs.ts"), "utf8");
-  assert.match(src, /PARTITION BY j\."appSlug" ORDER BY j\."priority" DESC, j\."approvedAt" ASC NULLS LAST, j\."createdAt" ASC/);
-  assert.match(src, /ORDER BY c\."priority" DESC, c\."approvedAt" ASC NULLS LAST, c\."createdAt" ASC/);
-  assert.match(src, /NOT EXISTS \(SELECT 1 FROM "factory_jobs" r WHERE r\."appSlug" = j\."appSlug" AND r\."status" = 'running'\)/);
-  assert.match(src, /WHERE c\."rn" = 1/);
+  assert.match(src, /WHERE "status" = 'approved' AND "id" IN \(\$\{Prisma\.join\(ids\)\}\)/);
+  assert.match(src, /pickClaims\(/);
 });
 
 test("시작 시점 부모 재지정: 가장 최근 완료 지시로, 직접 적은 parentJobId 는 그대로", async () => {
@@ -183,6 +200,8 @@ test("시작 시점 부모 재지정: 가장 최근 완료 지시로, 직접 적
     { id: "r3", appSlug: "alpha-app", title: "셋째 수정(직접 지정)", kind: "revision", status: "running", parentJobId: "d1", parentExplicit: true, planHash: "3", createdAt: new Date(4) },
   );
   const claim = (id) => {
+    // 가져가기 후보 계산(findMany)용 상태: 고른 일감만 승인 상태, 나머지는 끝난 것으로
+    for (const j of ctx.jobs) if (j.id === "r2" || j.id === "r3") Object.assign(j, { status: j.id === id ? "approved" : "done", aiEngine: "codex" });
     ctx.prisma.$queryRaw = async () => [{ id, appSlug: "alpha-app", kind: "revision", parentJobId: "d1", aiEngine: "codex", aiModel: null, priority: 0, attempts: 1 }];
 
     return ctx.jobsMod.claimJobs("pc", 1, ["claude", "codex"]);

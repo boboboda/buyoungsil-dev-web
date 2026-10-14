@@ -222,6 +222,34 @@ export async function setAppSlots(n: number): Promise<void> {
   await prisma.factorySetting.upsert({ where: { key: APP_SLOTS_KEY }, create: { key: APP_SLOTS_KEY, value }, update: { value } });
 }
 
+const PER_APP_KEY = "parallelPerApp";
+export const MIN_PER_APP = 1;
+export const MAX_PER_APP = 4;
+export const DEFAULT_PER_APP = 2;
+
+/** 같은 앱에서 같이 돌릴 수로 받아들이는 값: 1~4 정수(숫자 또는 정수 문자열)만. 그 밖은 null (lib/factory/parallel.ts cleanPerApp 과 같은 규칙) */
+export function cleanPerApp(v: unknown): number | null {
+  if (typeof v === "string" && !/^\s*\d{1,3}\s*$/.test(v)) return null;
+  if (typeof v !== "number" && typeof v !== "string") return null;
+  const n = Number(v);
+
+  return Number.isInteger(n) && n >= MIN_PER_APP && n <= MAX_PER_APP ? n : null;
+}
+
+/** 통제실에서 정한 '같은 앱에서 같이 돌릴 수'(병행 그룹 일감 기준, 1~4). 정한 적 없거나 값이 이상하면 기본 2(isDefault: true). */
+export async function getParallelPerApp(): Promise<{ value: number; isDefault: boolean }> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: PER_APP_KEY } });
+  const n = cleanPerApp(row?.value);
+
+  return n === null ? { value: DEFAULT_PER_APP, isDefault: true } : { value: n, isDefault: false };
+}
+
+export async function setParallelPerApp(n: number): Promise<void> {
+  const value = String(n);
+
+  await prisma.factorySetting.upsert({ where: { key: PER_APP_KEY }, create: { key: PER_APP_KEY, value }, update: { value } });
+}
+
 const AUTO_DEPLOY_KEY = "maintenanceAutoDeploy";
 
 /** 정비 대기열이 모두 끝나면 자동 배포할지. 값이 없으면 꺼짐. */
