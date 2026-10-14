@@ -562,6 +562,7 @@ async function supervisorControl(args: Record<string, unknown>): Promise<ToolRes
     시작시각: s.startedAt,
     재시작으로켜짐: s.restartedBoot,
     재시작: s.restartNote,
+    대기상태: s.drainNote, // 업데이트·배포를 진행 중 일감이 끝나길 기다리는 중이면 문구(정비 중에도 앱 일감은 돈다)
     재시작요청대기: s.restartRequestedAt,
     ffmpeg: s.ffmpeg ?? "알 수 없음(예전 감독 프로그램)",
     ffprobe: s.ffprobe ?? "알 수 없음(예전 감독 프로그램)",

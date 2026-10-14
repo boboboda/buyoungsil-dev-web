@@ -19,7 +19,8 @@ import { maskSecrets } from "@/lib/factory/mask";
 import { MAX_LOGS_PER_JOB, MAX_LOG_MESSAGE } from "@/lib/factory/jobs";
 import { cleanHandoff } from "@/lib/factory/handoff";
 import { notifyDeployReady, notifyMaintenance, notifyText } from "@/lib/factory/telegram";
-import { getDefaultAiEngine, getDefaultClaudeModel, getSettingValue, isAutoDeployEnabled, setSettingValue } from "@/lib/factory/settings";
+import { getDefaultAiEngine, getDefaultClaudeModel, getSettingValue, getSupervisorRuntime, isAutoDeployEnabled, setSettingValue, type SupervisorRuntime } from "@/lib/factory/settings";
+import { drainNote } from "@/lib/factory/supervisorDrain";
 
 export const TURN_ACTIVE = ["queued", "running"] as const;
 const QUEUE_STATES = ["awaiting_approval", "queued", "running"];
@@ -709,10 +710,15 @@ export async function maintenanceOverview(opts: { threadId?: string; limit?: num
     take: opts.threadId ? 1 : (opts.limit ?? 20),
     include: { messages: { orderBy: { createdAt: "asc" }, ...(opts.withLogs === false ? { where: { role: { not: "log" } } } : {}) } },
   });
-  const [hold, queue, deploy, autoDeploy] = await Promise.all([maintenanceHold(), maintenanceQueue(), deployBundle(), isAutoDeployEnabled()]);
+  const [active, queue, deploy, autoDeploy, rt] = await Promise.all([maintenanceHold(), maintenanceQueue(), deployBundle(), isAutoDeployEnabled(), getSupervisorRuntime().catch(() => ({}) as SupervisorRuntime)]);
+  const drain = rt.drain ?? null;
 
   return {
-    hold, // true 면 새 앱 일감이 멈춰 있다
+    active, // 정비 지시가 대기·진행 중(이래도 앱 일감은 계속 돈다)
+    hold: !!drain, // true 면 새 앱 일감이 멈춰 있다: 감독 프로그램이 업데이트·배포를 진행 중 일감이 끝나길 기다리는 동안만
+    drain, // null | update | deploy
+    drainJobs: drain ? (rt.drainJobs ?? 0) : null,
+    drainNote: drain ? drainNote(drain, rt.drainJobs ?? 0) : null,
     queue, // 대기열(모든 정비 대화, 보낸 순서)
     deploy, // 다음 배포 묶음
     autoDeploy, // 대기열이 끝나면 자동 배포(설정)

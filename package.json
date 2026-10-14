@@ -7,6 +7,7 @@
     "dev": "next dev --turbo",
     "build": "prisma generate && next build",
     "start": "next start",
+    "test:parallel": "node tests/factory-parallel.test.mjs && node tools/factory-supervisor/tests/parallel.test.mjs",
     "test:ai-harness": "node tools/factory-supervisor/tests/ai-harness.test.mjs && node tools/factory-supervisor/tests/toolbroker.test.mjs && node tools/factory-supervisor/tests/secrets.test.mjs && node tools/factory-supervisor/tests/keyprovision.test.mjs && node tools/factory-supervisor/tests/assetupload.test.mjs && node tools/factory-supervisor/tests/artregister.test.mjs && node tools/factory-supervisor/tests/importhancut.test.mjs && node tools/factory-supervisor/tests/publicprojects.test.mjs && node tools/factory-supervisor/tests/storetarget.test.mjs && node tools/factory-supervisor/tests/projectlink.test.mjs && node tools/factory-supervisor/tests/compact.test.mjs && node tools/factory-supervisor/tests/testapk.test.mjs && node tools/factory-supervisor/tests/uploadauth.test.mjs && node tools/factory-supervisor/tests/reviewstatus.test.mjs && node tools/factory-supervisor/tests/handoff.test.mjs && node tools/factory-supervisor/tests/memory.test.mjs && node tools/factory-supervisor/tests/serveraccess.test.mjs",
     "test:access-control": "node tests/access-control.test.mjs && node tests/admin-users.test.mjs",
     "test:redirects": "node tests/redirects.test.mjs",

@@ -1,9 +1,12 @@
 // 앱 공장 감독 프로그램: 공장 정비(공장 자체 = 홈페이지·감독 프로그램 코드를 고치는 대화형 스레드)
-// - /next 의 maintenance 를 받으면(돌던 앱 일감이 없을 때) 정비 전용 체크아웃(~/dev/factory/selfdev)에서 Claude 를 돌린다.
+// - /next 의 maintenance 를 받으면 정비 전용 체크아웃(~/dev/factory/selfdev)에서 Claude 를 돌린다. 앱·실험 일감이 돌고 있어도 같이 돈다
+//   (정비는 앱 폴더를 건드리지 않는다. 겹치면 안 되는 건 감독 프로그램 업데이트·재시작·서버 배포 순간뿐이라 아래처럼 드레인으로 비킨다).
 //   같은 정비의 이어지는 지시는 같은 Claude 세션에 이어서(--resume).
 // - Claude 는 커밋만 하고, 올리기는 감독 프로그램이 검사(node --check, tsc 0 오류)를 통과했을 때만 한다(GitHub main).
 // - /next 의 maintenanceDeploy 는 사람이 [배포]를 누른 것. 정해진 명령 하나(서버 배포 저장소로 그 커밋 push)만 실행한다.
 //   서버가 보낸 것은 커밋 해시뿐이고, 그 커밋이 GitHub main 에 있는지 확인한 뒤에만 올린다.
+//   배포는 진행 중인 앱·실험 일감과 정비 지시가 모두 끝난 뒤에 시작한다(배포 대기 = 드레인: 그동안 새 일감·새 정비 지시를 시작하지 않는다).
+//   배포 중에는 홈페이지 컨테이너가 바뀌어 일감의 보고·업로드가 끊기므로, 보고를 다시 보내는 것보다 겹치지 않게 비키는 쪽이 안전하다.
 // - 정비 대기열(서버가 maintenance.deployBundling 을 보낼 때): 서버가 보낸 순서대로 하나씩 준다. 앞 지시가 검사 실패 등으로
 //   로컬에만 남긴 커밋은 같은 정비 대화가 이어갈 때만 그 위에서 하고, 다른 대화의 지시면 백업 브랜치로 옮긴 뒤 origin/main 에서 시작한다.
 //   배포 안내도 서버가 대기열 끝에 묶어서 하므로 결과 문구를 그에 맞춘다. 이 필드가 없으면(예전 서버) 예전 방식 그대로.
@@ -67,7 +70,11 @@ function permissionSettings() {
 let current = null; // 진행 중인 정비 지시
 let deploying = false;
 
+let deployWait = false; // [배포]를 받았지만 진행 중인 일감이 끝나길 기다리는 중
+
 export const maintenanceBusy = () => !!current || deploying; // 정비 지시나 배포가 도는 중(자동 업데이트·재시작 보류)
+export const deployWaiting = () => deployWait && !deploying; // 배포 대기(드레인): 새 일감을 받지 않는다
+export const deployHold = () => deployWait || deploying; // 배포를 기다리거나 하는 중: 새 일감·새 정비 지시를 시작하지 않는다
 
 const tail = (s, n) => String(s ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim().slice(-n);
 const short = (h) => (h ? h.slice(0, 7) : "?");
@@ -92,10 +99,21 @@ function run(cmd, args, dir, timeout = 600_000) {
 /** /next 응답(200)마다 부른다. 기다리지 않는다. */
 export function onNext(data, ctx) {
   if (data?.maintenanceDeploy && !deploying) {
-    deploying = true;
-    deploy(data.maintenanceDeploy, ctx).finally(() => (deploying = false));
+    // 앱·실험 일감이나 정비 지시가 돌고 있으면 다 끝날 때까지 기다린다(서버 응답은 배포를 시작하기 전까지 계속 같은 요청을 준다)
+    if (ctx.runningApps() > 0 || current) {
+      if (!deployWait) ctx.log(`[정비 배포] 대기: 진행 중인 일감 ${ctx.runningApps() + (current ? 1 : 0)}개가 모두 끝나면 배포해요(그동안 새 일감은 받지 않아요).`);
+      deployWait = true;
+    } else {
+      deployWait = false;
+      deploying = true;
+      deploy(data.maintenanceDeploy, ctx).finally(() => (deploying = false));
+    }
+  } else if (!data?.maintenanceDeploy && deployWait) {
+    ctx.log("[정비 배포] 대기 취소: 서버에 배포 요청이 더 없어요.");
+    deployWait = false;
   }
-  if (data?.maintenance && !current && ctx.runningApps() === 0) {
+  // 새 지시는 배포 대기·배포 중, 감독 프로그램 업데이트·재시작 대기 중에는 시작하지 않는다(앱 일감은 상관없이 같이 돈다)
+  if (data?.maintenance && !current && !deployHold() && !(ctx.updateDraining?.())) {
     current = data.maintenance;
     runTurn(data.maintenance, ctx)
       .catch((e) => ctx.log(`[정비] 예기치 못한 오류: ${e.stack || e.message}`))

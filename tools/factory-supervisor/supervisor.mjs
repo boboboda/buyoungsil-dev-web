@@ -14,7 +14,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { Readable } from "node:stream";
 import { createInterface } from "node:readline/promises";
-import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard } from "./update.mjs";
+import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard, updateWaiting } from "./update.mjs";
 import {
   maskText,
   prepareReleaseKey,
@@ -29,7 +29,7 @@ import {
   sentRelease,
   syncKeyPasswords,
 } from "./release.mjs";
-import { maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
+import { deployHold, deployWaiting, maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
 import { expectedSigner, gitCommitOf, judgeSignature, readApkInfo, sha256File, uploadTestApk, verifyApk } from "./apk.mjs";
 import { compactSession } from "./compact.mjs";
 import { runKeyTasks } from "./keyvault.mjs";
@@ -1545,7 +1545,7 @@ async function loop() {
   let delay = cfg.pollSec * 1000;
   while (!shuttingDown) {
     try {
-      maybeUpdate({ running: running.size + (maintenanceBusy() ? 1 : 0), autoUpdate }); // 일감·정비가 없을 때만 10분마다. 받으면 여기서 exit(0)
+      maybeUpdate({ running: running.size + (maintenanceBusy() ? 1 : 0), autoUpdate }); // 10분마다 확인(일감이 돌면 업데이트 대기=드레인). 일감·정비가 모두 끝나면 받고 여기서 exit(0)
     } catch (e) {
       log(`자동 업데이트 확인 중 오류: ${e.message}`);
     }
@@ -1559,11 +1559,14 @@ async function loop() {
         const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), ...(aiTools ?? {}), ...memoryQuery() });
         const sentTools = aiTools;
         const sentMemory = extra.get("memory");
-        // 정비 지시나 정비 배포가 도는 동안에는 새 앱 일감을 받지 않는다(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌)
-        const take = planTake({ limit: appLimit(), running: running.size, maintenanceBusy: maintenanceBusy() });
+        // 정비가 진행 중이어도 앱·실험 일감은 계속 받는다. 새 일감을 멈추는 건 위험한 순간을 앞둔 드레인뿐이다:
+        // 감독 프로그램 업데이트 대기·서버 배포 대기·배포 중(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌)
+        const drain = updateWaiting() ? "update" : deployWaiting() ? "deploy" : "";
+        const take = planTake({ limit: appLimit(), running: running.size, draining: !!drain || deployHold() });
+        const drainQuery = drain ? new URLSearchParams({ drain, drainJobs: String(running.size + (maintenanceBusy() ? 1 : 0)) }).toString() : "";
         const r = await api(
           "GET",
-          `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${take}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}&subject=${encodeURIComponent(info.subject ?? "")}&${extra}`,
+          `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${take}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}&subject=${encodeURIComponent(info.subject ?? "")}&${drainQuery ? drainQuery + "&" : ""}${extra}`,
         );
         notePoll(r.status === 200); // 새 버전 건강 확인(200 이면 확인됨)
         if (r.status === 200) {
@@ -1625,9 +1628,11 @@ async function loop() {
           // 통제실 '업로드 시험'(한 번): 운영과 같은 함수로 시험 파일을 올리고 결과를 보낸다. 던지지 않는다
           if (r.data?.uploadTest) runUploadTest({ test: r.data.uploadTest, api, log }).catch(() => {});
           if (r.data?.keyScan === true) runKeyScan({ api, log, workDir: cfg.workDir, only: Array.isArray(r.data?.keyScanApps) ? r.data.keyScanApps : null }).catch(() => {});
-          // 공장 정비 지시·[배포] 요청(앱 일감과 따로. 정비는 돌던 앱 일감이 없을 때만 시작)
+          // 공장 정비 지시·[배포] 요청(앱 일감과 따로, 앱·실험 일감이 돌아도 정비 지시는 같이 돈다. [배포]는 진행 중 일감이 끝난 뒤)
           if (Array.isArray(r.data?.labCleanup)) void runLabCleanups(r.data.labCleanup).catch(() => {});
-          onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) });
+          // 이번 응답으로 방금 받은 일감도 '진행 중'으로 센다(배포가 그 일감과 겹쳐 시작하지 않게). 아래에서 시작되는 만큼만
+          const incoming = r.data?.paused === true ? 0 : Math.min((r.data?.jobs ?? []).length, Math.max(0, free));
+          onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size + incoming, updateDraining: () => updateWaiting() || restartPending(), requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) });
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
           if (nowPaused !== paused) {

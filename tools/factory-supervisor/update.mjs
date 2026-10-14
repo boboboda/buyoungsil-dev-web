@@ -1,6 +1,8 @@
 // 앱 공장 감독 프로그램 자동 업데이트
-// - 일감이 하나도 돌지 않을 때만 10분마다 origin/main 을 확인해서, 이 폴더(tools/factory-supervisor/) 파일이 바뀌었으면
-//   git pull --ff-only → node --check → 정상 종료(exit 0)한다. 실행기(~/dev/factory/run-supervisor.sh)가 30초 뒤 새 코드로 다시 띄운다.
+// - 10분마다 origin/main 을 확인해서(일감이 돌고 있어도 확인은 한다), 이 폴더(tools/factory-supervisor/) 파일이 바뀌었으면
+//   일감·정비가 하나도 돌지 않을 때 git pull --ff-only → node --check → 정상 종료(exit 0)한다.
+//   일감이 돌고 있으면 "업데이트 대기"(드레인)가 된다: updateWaiting() 이 true 인 동안 감독 프로그램은 새 일감을 받지 않고,
+//   진행 중인 것이 모두 끝나면 받는다(돌던 일감을 끊지 않는다). 실행기(~/dev/factory/run-supervisor.sh)가 30초 뒤 새 코드로 다시 띄운다.
 // - 새 버전은 홈페이지 대기열 확인(/next 200)에 성공해야 확인된다. 그 전에 꺼지면 다음 시작 때, 3분 동안 오류 응답만 받으면 그 자리에서
 //   이전 커밋으로 되돌리고 그 커밋은 다시 받지 않는다(건너뛸 목록).
 // - 실행기 밖(FACTORY_LAUNCHER=1 이 없음)에서 돌 때는 다시 띄워 줄 장치가 없으므로 업데이트하지 않는다.
@@ -142,6 +144,8 @@ function filesToCheck(entry = path.join(HERE, "supervisor.mjs"), seen = new Set(
 let lastCheck = Date.now(); // 시작 직후에는 확인하지 않는다
 let lastNote = "";
 let warnedNoLauncher = false;
+let waiting = null; // 새 버전이 있어서 진행 중 일감이 끝나길 기다리는 중: { to, manual }. 이 동안 새 일감을 받지 않는다(드레인)
+export const updateWaiting = () => !!waiting;
 let forced = false; // 통제실·커넥터의 "지금 업데이트" 요청(/next 의 updateNow). 일감이 끝나는 대로 한 번 확인한다
 
 // /next 응답에 updateNow: true 가 오면 부른다. 다음 루프(15초 안)에서 주기·자동 업데이트 스위치와 상관없이 확인한다.
@@ -159,11 +163,16 @@ function note(m) {
 
 // 대기열 확인 루프에서 매번 부른다. 업데이트를 받으면 프로세스를 끝낸다(exit 0).
 export function maybeUpdate({ running, autoUpdate }) {
-  if (running > 0) return;
+  if (waiting && !waiting.manual && autoUpdate === false) {
+    log("자동 업데이트 대기 취소: 자동 업데이트가 꺼졌어요. 새 일감을 다시 받아요.");
+    waiting = null;
+  }
+  if (running > 0 && waiting) return; // 드레인 중: 진행 중인 것이 끝나길 기다린다
   const now0 = Date.now();
-  if (!forced && (autoUpdate === false || now0 - lastCheck < CHECK_EVERY_MS)) return;
-  const manual = forced;
+  if (!forced && !waiting && (autoUpdate === false || now0 - lastCheck < CHECK_EVERY_MS)) return;
+  const manual = forced || !!waiting?.manual;
   forced = false;
+  waiting = null; // 아래에서 다시 확인해 필요하면 다시 건다(그 사이 origin/main 이 또 바뀌었을 수 있다)
   lastCheck = now0;
   // 직접 요청한 확인은 결과를 매번 남긴다(상태 조회에서 보이게). 주기 확인은 같은 사유를 한 번만.
   const say = manual ? (m) => { lastNote = m; log(m); } : note;
@@ -190,6 +199,12 @@ export function maybeUpdate({ running, autoUpdate }) {
   const changed = out(git(["diff", "--name-only", cur, remote, "--", "."]));
   if (!changed) return say(`자동 업데이트 건너뜀: 새 커밋(${short(remote)})에 감독 프로그램 변경이 없어요.`);
 
+  if (running > 0) {
+    // 일감·정비가 돌고 있다: 지금은 받지 않고 대기(새 일감 받기를 멈춰 진행 중인 것만 끝나게 한다)
+    waiting = { to: remote, manual };
+    say(`자동 업데이트 대기: 새 버전(${short(remote)})이 있어요. 진행 중 일감 ${running}개가 모두 끝나면 받고 다시 시작해요(그동안 새 일감은 받지 않아요).`);
+    return;
+  }
   log(`자동 업데이트 시작: ${short(cur)} → ${short(remote)} (${changed.split("\n").join(", ")})`);
   const p = git(["pull", "--ff-only", "-q", "origin", "main"], 120_000);
   if (p.status !== 0) {

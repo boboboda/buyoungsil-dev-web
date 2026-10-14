@@ -27,6 +27,8 @@ interface State {
   restartRequestedAt?: string | null;
   restartState?: "requested" | "waiting" | "restarting" | "failed" | null;
   restartNote?: string | null;
+  drainState?: "update" | "deploy" | null; // 업데이트·배포를 진행 중 일감이 끝나길 기다리는 중(새 일감은 받지 않음). 예전 서버에는 없다
+  drainNote?: string | null;
   online: boolean;
   lastSeenAt: string | null;
   workerName: string | null;
@@ -326,6 +328,7 @@ export default function SupervisorControl() {
             </div>
           </div>
         )}
+        {s?.drainNote && <p className="text-xs text-warning-600">⏳ {s.drainNote}</p>}
         {s && s.restartState !== undefined && (
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span>

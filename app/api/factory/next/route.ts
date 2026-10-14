@@ -18,7 +18,9 @@
 //   감독 프로그램은 이 값이 없으면 자기 코드 안 기본값을 쓴다.
 //   공장 정비: 대기열 맨 앞 지시가 승인돼 있으면 maintenance: { turnId, threadId, title, text, sessionId, deployBundling: true, queueLeft } 가 붙고
 //   (진행 중인 게 없고 실패로 멈추지 않았을 때. 보낸 순서대로 하나씩),
-//   사람이 [배포]를 눌렀으면 maintenanceDeploy: { threadId, commit } 이 붙는다. 정비가 대기·진행 중이면 새 앱 일감은 내주지 않는다(maintenanceHold: true).
+//   사람이 [배포]를 눌렀으면 maintenanceDeploy: { threadId, commit } 이 붙는다.
+//   정비가 대기·진행 중이어도 앱·실험 일감은 계속 내준다(병렬화 단계 A). 일감을 멈추는 건 감독 프로그램이 스스로 slots=0 으로 요청할 때뿐이다
+//   (감독 프로그램 업데이트·서버 배포를 진행 중 일감이 끝나길 기다리는 동안 = 드레인). 그때 drain=update|deploy 와 drainJobs(끝나길 기다리는 일감 수)를 함께 보낸다(통제실 표시용).
 //   배포 계정의 키 파일 경로가 등록돼 있으면 pcPaths: [{ key, path }] 가 붙는다. 감독 프로그램은 "있는지"만 확인해 /api/factory/pc-status 로 알린다.
 //   통제실에서 키 비밀번호를 등록했고 아직 안 가져갔으면 keyPasswordsPending: true(값은 /api/factory/key-passwords 에서 따로).
 //   통제실에서 외부 서비스 키를 등록·삭제했고 PC 가 아직 반영하지 않았으면 secretsPending: true(할 일은 /api/factory/secrets 에서 따로).
@@ -44,7 +46,7 @@ import { secretEntriesPending } from "@/lib/factory/secretEntries";
 import { keyTasksForNext } from "@/lib/factory/keyVault";
 import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
-import { maintenanceForNext, maintenanceHold } from "@/lib/factory/maintenance";
+import { maintenanceForNext } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
 import { consumeRestart, consumeUpdateNow, getAppSlots, getDefaultAiEngine, getToolBrokerSettings, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
@@ -78,6 +80,10 @@ export async function GET(req: NextRequest) {
   const startedRaw = param("started", 40);
   const started = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(startedRaw) ? startedRaw : "";
   const hold = req.nextUrl.searchParams.get("hold") === "1";
+  // 드레인(업데이트·배포를 진행 중 일감이 끝나길 기다리는 중, 새 일감은 받지 않음). 표시용이라 모양이 이상하면 무시한다
+  const drainRaw = param("drain", 10);
+  const drain = drainRaw === "update" || drainRaw === "deploy" ? drainRaw : undefined;
+  const drainJobs = drain ? Math.min(99, Math.max(0, Math.floor(Number(param("drainJobs", 4))) || 0)) : undefined;
   // AI 도구 상태(읽기 전용). PC 가 확인한 때만 온다
   const aiToolsAtRaw = param("aiToolsAt", 40);
   const aiTools = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(aiToolsAtRaw)
@@ -107,6 +113,8 @@ export async function GET(req: NextRequest) {
           ...aiTools,
           ...(memory ? { memory } : {}),
           restartWait: hold || undefined,
+          drain,
+          drainJobs,
           restartFail: param("restartFail", 300) || undefined,
         },
         restart,
@@ -155,10 +163,8 @@ export async function GET(req: NextRequest) {
     }
 
     await releaseExpiredLeases();
-    // 공장 정비가 대기·진행 중이면 새 앱 일감은 내주지 않는다(진행 중인 앱 일감은 끝까지)
-    if (await maintenanceHold().catch(() => false)) {
-      return NextResponse.json({ jobs: [], maintenanceHold: true, autoUpdate, ...extra });
-    }
+    // 공장 정비가 대기·진행 중이어도 일감은 내준다(정비는 정비 전용 폴더에서 돌아 앱 폴더와 겹치지 않는다).
+    // 감독 프로그램이 업데이트·배포를 기다리는 동안에는 스스로 slots=0 으로 요청한다.
     const claimed = slots > 0 ? await claimJobs(worker, slots, engines) : [];
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
     const overrides = claimed.length ? await getRuleOverrides().catch(() => ({})) : {};

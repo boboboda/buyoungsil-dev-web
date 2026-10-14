@@ -36,10 +36,11 @@ export function effectiveSlots({ server, serverIsDefault = false, pc }) {
 }
 
 /**
- * /next 에 slots 로 요청할 개수 = 비어 있는 자리. 정비가 대기·진행 중이면 0(신호·설정만 받음).
+ * /next 에 slots 로 요청할 개수 = 비어 있는 자리. 정비가 대기·진행 중이어도 자리는 그대로다(정비와 앱·실험 일감은 동시에 돈다).
+ * draining = 감독 프로그램 업데이트·서버 배포를 진행 중 일감이 끝나길 기다리는 중이면 0(신호·설정만 받음).
  * 값을 줄여서 돌던 일감이 한도보다 많아져도 음수 없이 0 이다(돌던 일감은 끊지 않고 끝나면서 줄어든다).
  */
-export function planTake({ limit, running, maintenanceBusy = false }) {
-  if (maintenanceBusy) return 0;
+export function planTake({ limit, running, draining = false }) {
+  if (draining) return 0;
   return Math.max(0, Math.floor(limit) - Math.floor(running));
 }

@@ -95,7 +95,7 @@ export function AppSlotsView({
   return (
     <div className="space-y-3 rounded-lg border border-default-200 p-4" data-title="settings · 동시에 만들 앱 수" data-app-slots="">
       <h2 className="font-semibold">동시에 만들 앱 수</h2>
-      <p className="text-sm text-default-500">승인된 앱 일감을 한 번에 몇 개까지 같이 만들지 정해요(1~4개). 같은 앱의 일감은 개수가 남아도 하나씩만 돌고, 공장 정비가 대기·진행 중이면 새 앱 일감은 멈춰요.</p>
+      <p className="text-sm text-default-500">승인된 앱 일감을 한 번에 몇 개까지 같이 만들지 정해요(1~4개). 같은 앱의 일감은 개수가 남아도 하나씩만 돌고, 공장 정비가 대기·진행 중이어도 앱 일감은 계속 돌아요(감독 프로그램 업데이트·서버 배포를 앞두고 진행 중 일감이 끝나길 기다릴 때만 새 일감을 받지 않아요).</p>
       <div className="flex flex-wrap items-center gap-3">
         <div aria-label="동시에 만들 앱 수" className="flex gap-2" role="group">
           {APP_SLOT_CHOICES.map((n) => (

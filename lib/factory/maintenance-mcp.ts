@@ -38,7 +38,7 @@ export const MAINTENANCE_INSTRUCTIONS =
   " 공장 정비(공장 자체 = 홈페이지·감독 프로그램 코드를 고치는 일)는 앱 일감과 따로예요: maintenance_list 로 정비 대화 목록을, " +
   "maintenance_get(threadId) 로 대화·결과·배포 상태를 보고, maintenance_send(text, threadId?) 로 지시해요(threadId 를 주면 선택한 AI의 독립 세션에 이어서). " +
   "처리 중이어도 지시는 대기열에 쌓이고(응답에 몇 번째인지 나와요), 감독 프로그램이 보낸 순서대로 하나씩 처리해요. 앞 지시가 실패하면 대기열이 멈추고 관리자가 다음을 정해요. " +
-  "채팅에서 보낸 지시는 관리자가 승인해야 시작하고(미리 승인 가능), 정비가 대기·진행 중이면 새 앱 일감은 멈춰요. 결과는 검사를 통과해야 GitHub 에 올라가고, " +
+  "채팅에서 보낸 지시는 관리자가 승인해야 시작하고(미리 승인 가능), 정비가 대기·진행 중이어도 앱·실험 일감은 계속 돌아요(감독 프로그램 업데이트·서버 배포를 앞두고 진행 중 일감이 끝나길 기다릴 때만 새 일감을 받지 않아요). 결과는 검사를 통과해야 GitHub 에 올라가고, " +
   "서버 배포는 대기열이 다 끝난 뒤 관리자가 통제실·텔레그램에서 [배포]를 눌러야 해요(채팅에서는 배포 못 함). 앱 만들기·고치기는 enqueue_app_job 을 쓰세요.";
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
@@ -96,6 +96,8 @@ export async function callMaintenanceTool(name: string, args: Record<string, unk
       JSON.stringify(
         {
           새앱일감멈춤: o.hold,
+          정비진행중: o.active,
+          대기상태: o.drainNote,
           ...queueView(o),
           정비: o.threads.map((t) => ({
             id: t.id,

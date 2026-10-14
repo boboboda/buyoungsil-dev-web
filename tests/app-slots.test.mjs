@@ -183,15 +183,17 @@ test("/next: 슬롯 3 이면 3개까지만, 요청이 4 보다 커도 4개까지
   assert.deepEqual(claimCalls.map((c) => c.n), [3, 4], "slots=0 은 일감을 가져가지 않음");
 });
 
-test("/next: 정비가 대기·진행 중이면 슬롯이 남아도 새 앱 일감을 내주지 않고 값은 계속 전달", async () => {
+test("/next: 정비가 대기·진행 중이어도 앱 일감을 내준다(병렬화 단계 A). 멈추는 건 감독 프로그램이 slots=0 으로 요청할 때뿐", async () => {
   claimCalls.length = 0;
   maintHold = true;
   const body = await (await next("slots=3")).json();
+  const drained = await (await next("slots=0&drain=update&drainJobs=2")).json();
   maintHold = false;
-  assert.deepEqual(body.jobs, []);
-  assert.equal(body.maintenanceHold, true);
-  assert.equal(body.appSlots, 3, "정비 중에도 설정 값은 받아 감");
-  assert.equal(claimCalls.length, 0);
+  assert.equal(body.jobs.length, 3, "정비 중에도 일감을 가져감");
+  assert.equal("maintenanceHold" in body, false);
+  assert.equal(body.appSlots, 3);
+  assert.deepEqual(claimCalls.map((c) => c.n), [3]);
+  assert.deepEqual(drained.jobs, [], "드레인(slots=0)이면 일감 없음, 신호·설정은 계속");
 });
 
 // ── 같은 앱 동시 실행 금지(서버 SQL) ──
@@ -247,7 +249,7 @@ test("감독 프로그램: 서버가 '정한 적 없음(기본 3)'이면 PC 에 
 });
 
 test("감독 프로그램: 요청할 자리 수 — 3개까지만, 줄이면 돌던 일감 유지(0), 늘리면 더 가져감, 정비 중 0", () => {
-  const take = (limit, running, maintenanceBusy = false) => slots.planTake({ limit, running, maintenanceBusy });
+  const take = (limit, running, draining = false) => slots.planTake({ limit, running, draining });
   assert.equal(take(3, 0), 3);
   assert.equal(take(3, 1), 2);
   assert.equal(take(3, 3), 0, "꽉 참 → 일감은 안 받고 확인만");
@@ -256,7 +258,8 @@ test("감독 프로그램: 요청할 자리 수 — 3개까지만, 줄이면 돌
   assert.equal(take(2, 1), 1, "끝나면서 줄어든 뒤에는 2개 한도에 맞게");
   assert.equal(take(3, 2), 1, "2→3 으로 늘리면 다음 확인에 1개 더");
   assert.equal(take(4, 1), 3);
-  assert.equal(take(3, 0, true), 0, "정비 중에는 자리가 남아도 0");
+  assert.equal(take(3, 0, true), 0, "업데이트·배포 대기(드레인) 중에는 자리가 남아도 0");
+  assert.equal(slots.planTake({ limit: 3, running: 1, maintenanceBusy: true }), 2, "정비 중이라는 이유만으로는 줄이지 않음(예전 인자는 무시)");
   assert.equal(take(3, 5), 0);
 });
 
@@ -293,7 +296,7 @@ test("감독 프로그램 연결: 서버 값 적용·꽉 차도 확인·같은 �
   const src = read("tools/factory-supervisor/supervisor.mjs");
   assert.match(src, /import \{ DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake \} from "\.\/slots\.mjs"/);
   assert.match(src, /effectiveSlots\(\{ server: r\.data\?\.appSlots, serverIsDefault: r\.data\?\.appSlotsDefault === true, pc: cfg\.pcSlots \}\)/);
-  assert.match(src, /planTake\(\{ limit: appLimit\(\), running: running\.size, maintenanceBusy: maintenanceBusy\(\) \}\)/);
+  assert.match(src, /planTake\(\{ limit: appLimit\(\), running: running\.size, draining: !!drain \|\| deployHold\(\) \}\)/);
   assert.doesNotMatch(src, /if \(free > 0\) \{/, "꽉 차면 확인을 건너뛰던 예전 코드가 남아 있지 않음");
   assert.doesNotMatch(src, /cfg\.slots - running\.size/);
   assert.match(src, /slots=\$\{take\}/);

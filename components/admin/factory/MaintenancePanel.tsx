@@ -69,7 +69,10 @@ interface Bundle {
 }
 
 interface Data {
-  hold: boolean;
+  hold: boolean; // 업데이트·배포를 기다리느라 새 앱 일감이 멈춘 상태(정비 중이라는 뜻이 아니다)
+  active?: boolean; // 정비 지시가 대기·진행 중(앱 일감은 계속 돈다). 예전 서버에는 없다
+  drain?: "update" | "deploy" | null;
+  drainNote?: string | null;
   queue?: Queue; // 예전 서버에는 없다
   deploy?: Bundle;
   autoDeploy?: boolean;
@@ -206,8 +209,8 @@ export default function MaintenancePanel({ initialThreadId = null }: { initialTh
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <span className="font-semibold">공장 정비</span>
         <span className="text-xs text-default-500">
-          홈페이지·감독 프로그램 코드를 고치는 대화예요. 정비가 대기·진행 중이면 새 앱 일감은 멈춰요.
-          {data?.hold ? " (지금 앱 일감 멈춤)" : ""}
+          홈페이지·감독 프로그램 코드를 고치는 대화예요. 정비가 진행 중이어도 앱·실험 일감은 계속 돌아요.
+          {data?.drainNote ? ` (${data.drainNote})` : ""}
         </span>
       </div>
 
@@ -303,7 +306,7 @@ export default function MaintenancePanel({ initialThreadId = null }: { initialTh
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-medium">
               {bundle.inProgress
-                ? `🚀 ${bundle.inProgress.started ? "배포 중(빌드 3~4분)" : "배포 요청됨(PC가 받아 가는 중)"} · ${bundle.inProgress.commit?.slice(0, 7) ?? ""}`
+                ? `🚀 ${bundle.inProgress.started ? "배포 중(빌드 3~4분)" : data?.drain === "deploy" && data.drainNote ? `배포 요청됨 · ${data.drainNote}` : "배포 요청됨(PC가 받아 가는 중)"} · ${bundle.inProgress.commit?.slice(0, 7) ?? ""}`
                 : bundle.queueLeft
                   ? `⏳ 배포 대기: 대기열 ${bundle.queueLeft}개 처리 후 배포할 수 있어요`
                   : `⏳ 배포 필요 · 커밋 ${bundle.commit?.slice(0, 7) ?? ""}`}
