@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard, updateWaiting } from "./update.mjs";
 import {
@@ -51,12 +52,16 @@ import { startDeviceStats } from "./devicestats.mjs";
 import { startToolkitReport } from "./toolkitinfo.mjs";
 import { DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake } from "./slots.mjs";
 import { DEFAULT_MEMORY_REMOTE, memoryReport, setMemoryConfig } from "./memory.mjs";
+import { acquireLock, clearLocks, clearWait, LOCK_LABELS, lockRules, readWait } from "./applock.mjs";
+import { branchName, cleanupLeftovers, createWorktree, defaultBranch, currentBranch, dirtyCount, removeWorktree, savePatch, worktreePath } from "./worktree.mjs";
+import { MAX_REBASES, mergeJob } from "./merge.mjs";
 import { LAB_SLUG, compareSnapshots, createLabGuard, deleteLabFolder, discoverRepos, labCodexOptions, labPrompt, prepareLab, snapshotRepos, uploadLabOutputs, writeLabClaudeSettings } from "./lab.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
 
 const IS_WIN = process.platform === "win32";
+const SUPERVISOR_DIR = path.dirname(fileURLToPath(import.meta.url));
 const expand = (p) => (typeof p === "string" && (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) ? path.join(os.homedir(), p.slice(1)) : p);
 const CONFIG_PATH = expand(process.env.FACTORY_CONFIG || "~/dev/factory/supervisor.config.json");
 
@@ -375,8 +380,9 @@ function safeCommit(dir, job, message) {
 }
 
 function prepareDir(job) {
-  const dir = path.resolve(cfg.workDir, job.appSlug);
-  if (!dir.startsWith(cfg.workDir + path.sep)) throw new Error("앱 폴더 경로가 올바르지 않아요.");
+  const wt = job.worktree ?? null; // 병행 일감: 앱 폴더가 아니라 작업 사본(git worktree)에서 돈다
+  const dir = wt ? wt.wtDir : path.resolve(cfg.workDir, job.appSlug);
+  if (!wt && !dir.startsWith(cfg.workDir + path.sep)) throw new Error("앱 폴더 경로가 올바르지 않아요.");
 
   const existed = fs.existsSync(dir);
   const onExisting = job.kind === "revision" || job.kind === "release"; // 수정·출시 준비는 기존 폴더에서
@@ -436,6 +442,8 @@ function prepareDir(job) {
   if (toolNote) block = block.replace(RULES_END, `${toolNote}${RULES_END}`);
   // 서버 접근 규칙은 홈페이지 작업 규칙과 상관없이 늘 붙인다(훅이 막는 목록과 같은 문서)
   block = block.replace(RULES_END, `\n${SERVER_ACCESS_RULES}\n${RULES_END}`);
+  // 병행 일감: 같은 앱 안에서 한 번에 하나만 되는 일(빌드·에뮬레이터·고정 포트)을 잠금 명령으로 감싸게 한다
+  if (wt) block = block.replace(RULES_END, lockRules(path.join(SUPERVISOR_DIR, "applock.mjs")) + RULES_END);
   job.rulesSource = fromServer ? "홈페이지" : "기본값(감독 프로그램 코드)";
   let text = fs.existsSync(claudeMd) ? fs.readFileSync(claudeMd, "utf8") : "";
   const b = text.indexOf(RULES_BEGIN);
@@ -445,7 +453,7 @@ function prepareDir(job) {
 
   ensureGitignore(dir);
   if (!fs.existsSync(path.join(dir, ".git"))) git(dir, ["init", "-q"]);
-  if (onExisting && !external) safeCommit(dir, job, `${job.kind === "release" ? "출시 준비 전 저장" : "수정 전 저장"}: ${job.title}`);
+  if (onExisting && !external && !wt) safeCommit(dir, job, `${job.kind === "release" ? "출시 준비 전 저장" : "수정 전 저장"}: ${job.title}`);
   return dir;
 }
 
@@ -506,6 +514,7 @@ function stop(st, why) {
   if (st.stopped) return;
   st.stopped = why;
   log(`[${st.job.appSlug}] 중지: ${why}`);
+  st.abort?.abort(); // 앱 단위 잠금을 기다리는 중이면 기다림을 끝낸다
   killTree(st.child);
 }
 
@@ -638,7 +647,8 @@ async function flush(st, extra = {}) {
       if (!st.reportable) return false;
       const batch = st.logs.splice(0, 50);
       const toolDirty = st.toolDirty;
-      const body = { jobId: st.job.id, logs: batch, ...(st.phaseDirty ? { phase: st.phase } : {}), ...(toolDirty && st.broker ? { toolRequests: st.broker.list() } : {}), ...extra };
+      const sentParallel = st.parallelDirty && st.parallel ? { ...st.parallel } : null;
+      const body = { jobId: st.job.id, logs: batch, ...(st.phaseDirty ? { phase: st.phase } : {}), ...(toolDirty && st.broker ? { toolRequests: st.broker.list() } : {}), ...(sentParallel ? { parallel: sentParallel } : {}), ...extra };
       let r;
       try {
         r = await api("POST", "/api/factory/report", body);
@@ -650,6 +660,7 @@ async function flush(st, extra = {}) {
       if (r.status === 200) {
         st.phaseDirty = false;
         if (toolDirty) st.toolDirty = false;
+        if (sentParallel && JSON.stringify(sentParallel) === JSON.stringify(st.parallel)) st.parallelDirty = false;
         return true;
       }
       if (r.status === 409) {
@@ -668,7 +679,7 @@ async function flush(st, extra = {}) {
 
 async function finish(st, status, fields) {
   st.job.aiOutcome = { ...st.job.aiOutcome, status, summary: fields?.summary, failReason: fields?.failReason, sessionId: st.sessionId };
-  if (st.dir !== cfg.workDir && !st.lab) recordLifecycle(st.dir, st.job.aiEngine, status, st.job.id);
+  if (st.dir !== cfg.workDir && !st.lab) recordLifecycle(st.home ?? st.dir, st.job.aiEngine, status, st.job.id);
   // 인계 기록 항목: Git·변경 파일·검사 같은 사실은 여기서 직접 채우고, 요청·남은 작업·주의는 AI 최종 답변의 '## 인계' 블록에서 읽는다.
   // 실패한 일감도 남긴다. 같은 항목을 통제실에 보고하고(일감 상세 '인계 기록'), 폴더의 .factory/handoff.json 에도 쓴다
   if (st.dir !== cfg.workDir && !st.lab) {
@@ -678,7 +689,7 @@ async function finish(st, status, fields) {
       const reason = String(fields?.failReason ?? "");
       const verification = o.verification ?? (failed && /^필수 검증 실패/.test(reason) ? { ok: false, reason: reason.replace(/^필수 검증 실패:\s*/, "") } : null);
       const checks = verification ? checksFromVerification(verification, "필수 검증") : [{ name: "필수 검증", result: "건너뜀", detail: failed ? "검증 전에 실패" : "해당 없음" }];
-      o.handoffEntry = makeHandoffEntry(st.dir, { ...o.handoff, engine: st.job.aiEngine, taskId: st.job.id, status: failed ? "failed" : "done", summary: st.handoffText ?? fields?.summary, failReason: failed ? reason : undefined, checks }, st.redact);
+      o.handoffEntry = makeHandoffEntry(st.home ?? st.dir, { ...o.handoff, engine: st.job.aiEngine, taskId: st.job.id, status: failed ? "failed" : "done", summary: st.handoffText ?? fields?.summary, failReason: failed ? reason : undefined, checks }, st.redact);
       fields = { ...fields, handoff: o.handoffEntry };
     } catch (e) { addLog(st, "warn", `인계 기록 만들기 실패: ${maskText(e.message)}`); }
   }
@@ -702,7 +713,7 @@ async function finish(st, status, fields) {
     try {
       readPhase(st);
       const tools = st.broker?.list() ?? [];
-      const r = await api("POST", "/api/factory/report", { jobId: st.job.id, logs: st.logs.splice(0, 50), phase: status === "done" ? "done" : st.phase, status, ...(tools.length ? { toolRequests: tools } : {}), ...fields });
+      const r = await api("POST", "/api/factory/report", { jobId: st.job.id, logs: st.logs.splice(0, 50), phase: status === "done" ? "done" : st.phase, status, ...(tools.length ? { toolRequests: tools } : {}), ...(st.parallel ? { parallel: st.parallel } : {}), ...fields });
       if (r.status === 200) return log(`[${st.job.appSlug}] 보고 완료: ${status}`);
       if (r.status === 409) return log(`[${st.job.appSlug}] 최종 보고가 거부됨(이미 ${r.data?.status ?? "다른 상태"})`);
       log(`[${st.job.appSlug}] 최종 보고 거부: ${r.status}`);
@@ -723,14 +734,110 @@ async function failEarly(job, reason) {
 const labGuard = createLabGuard(); // 실험 사후 검사용: 앱 일감이 시작·끝날 때 그 앱 폴더를 기억한다
 const labCleaning = new Set(); // [폴더 지우기] 처리 중인 실험 id
 
+// 병행 일감: 같은 앱의 수정 일감이 병행 그룹을 가지면 앱 폴더가 아니라 작업 사본(git worktree)에서 돈다
+const isWorktreeJob = (job) => job.kind === "revision" && typeof job.parallelGroup === "string" && job.parallelGroup.length > 0;
+const lockDir = () => path.join(cfg.workDir, ".locks");
+
+// 작업 사본 만들기: 기본 브랜치의 지금 커밋에서 로컬 임시 브랜치(factory/job-<id>)를 딴다. 원격에는 아무것도 보내지 않는다.
+// 앱 폴더에 커밋 안 된 변경이 있으면 단독 일감과 똑같이 '수정 전 저장'으로 먼저 커밋한다. 잠깐 실패하면(기본 브랜치를 다른 일감이 합치는 중) 몇 번 다시 해 본다
+async function setupWorktree(job, repoDir) {
+  if (!fs.existsSync(path.join(repoDir, ".git"))) throw new Error("병행 실행은 git 저장소인 앱 폴더에서만 돼요. 통제실에서 이 일감의 '같이 돌리기'를 풀고 다시 시도하세요.");
+  if (isExternalRepo(repoDir)) throw new Error("외부 저장소(prod 원격)는 병행 실행을 지원하지 않아요. 통제실에서 이 일감의 '같이 돌리기'를 풀고 다시 시도하세요.");
+  const base = defaultBranch(repoDir);
+
+  if (!base) throw new Error("앱 폴더에 기본 브랜치(main 또는 master)가 없어요.");
+  const cur = currentBranch(repoDir);
+
+  if (cur !== base) throw new Error(`앱 폴더가 기본 브랜치(${base})에 있지 않아요(지금: ${cur || "분리된 HEAD"}). 사람이 정리해야 병행 실행을 할 수 있어요.`);
+  ensureGitignore(repoDir);
+  if (dirtyCount(repoDir)) safeCommit(repoDir, job, `수정 전 저장: ${job.title}`);
+  const left = dirtyCount(repoDir);
+
+  if (left) throw new Error(`앱 폴더에 커밋하지 못한 변경 ${left}개가 남아 있어 작업 사본을 만들 수 없어요(키 파일 차단 등). 사람이 정리해야 해요.`);
+  const wtDir = worktreePath(cfg.workDir, job.appSlug, job.id);
+  const branch = branchName(job.id);
+  let last;
+
+  for (let i = 0; i < 3; i++) {
+    try {
+      const made = createWorktree({ repoDir, wtDir, branch, base, log: (m) => log(`[${job.appSlug}] ${m}`) });
+
+      log(`[${job.appSlug}] 작업 사본 만듦: ${branch} (기준 ${base} ${made.startCommit.slice(0, 7)})`);
+
+      return { repoDir, wtDir, branch, base };
+    } catch (e) {
+      last = e;
+      await sleep(1500);
+    }
+  }
+  throw last;
+}
+
+// 끝났거나 실패한 병행 일감의 사본·임시 브랜치 정리: git worktree remove + git branch -D(로컬). rm -rf 는 쓰지 않는다
+function cleanupWorktree(job) {
+  const wt = job.worktree;
+
+  if (!wt) return;
+  const r = removeWorktree({ repoDir: wt.repoDir, wtDir: wt.wtDir, branch: wt.branch, log: (m) => log(`[${job.appSlug}] ${m}`) });
+
+  log(`[${job.appSlug}] 작업 사본 정리: 사본 ${r.dirRemoved ? "지움" : "남음(다음 시작 때 다시)"}, 임시 브랜치 ${r.branchRemoved ? "지움" : "남음(다음 시작 때 다시)"}`);
+}
+
+// 앱 단위 잠금 안에서 fn 실행. 기다리는 동안은 일감 로그와 통제실에 '잠금 대기'로 보인다
+async function withAppLock(st, name, fn) {
+  const label = LOCK_LABELS[name] ?? name;
+  const lock = await acquireLock({
+    dir: lockDir(),
+    app: st.job.appSlug,
+    name,
+    owner: st.job.id,
+    signal: st.abort?.signal,
+    onWait: (holder) => {
+      setLockWait(st, "own", name);
+      addLog(st, "info", `⏳ 잠금 대기: ${label} — 같은 앱의 다른 일감${holder?.owner ? `(${holder.owner})` : ""}이 쓰는 중이라 순서를 기다려요.`);
+      void flush(st);
+    },
+    onAcquired: (ms) => {
+      setLockWait(st, "own", null);
+      addLog(st, "info", `▶ 잠금 얻음: ${label} (${Math.round(ms / 1000)}초 기다림)`);
+      void flush(st);
+    },
+  });
+
+  try {
+    return await fn();
+  } finally {
+    lock.release();
+  }
+}
+
+// 잠금 대기 표시: 감독 프로그램 자신의 대기(own)와 AI 명령(applock.mjs)의 대기(ai) 중 하나라도 있으면 보인다
+function setLockWait(st, source, name, since) {
+  if (!st.parallel) return;
+  st.lockWaits = st.lockWaits ?? {};
+  st.lockWaits[source] = name ? { name, since: since ?? new Date().toISOString() } : null;
+  const cur = st.lockWaits.own ?? st.lockWaits.ai ?? null;
+
+  if ((st.parallel.lockWait?.name ?? null) !== (cur?.name ?? null)) {
+    st.parallel.lockWait = cur;
+    st.parallelDirty = true;
+  }
+}
+
 async function runJob(job) {
   let lock;
   let dir;
+  let home;
   try {
     job.aiEngine = engineOf(job.aiEngine);
     if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(job.appSlug)) throw new Error("앱 폴더 이름이 올바르지 않습니다.");
-    dir = path.join(cfg.workDir, job.appSlug);
-    labGuard.touch(dir);
+    home = path.join(cfg.workDir, job.appSlug); // 인계 기록·작업 메모리는 늘 앱 폴더에 남긴다(병행 일감의 사본은 끝나면 사라진다)
+    dir = home;
+    if (isWorktreeJob(job)) {
+      job.worktree = await setupWorktree(job, home);
+      dir = job.worktree.wtDir;
+    }
+    labGuard.touch(home);
     lock = acquireWorkspace(dir, { engine: job.aiEngine, taskId: job.id });
     // 인계 기록에 쓸 일감 정보(요청은 앞부분만, 기획서 전문은 넣지 않음)
     job.aiOutcome = { handoff: { kind: "job", appSlug: job.appSlug, title: job.title, request: `${job.kind === "new" ? "새 앱" : job.kind === "release" ? "출시 준비" : "수정"}: ${String(job.planMarkdown ?? job.prompt ?? "").replace(/^#.*$/gm, " ").slice(0, 600)}`, model: job.aiEngine === "claude" ? job.aiModel || "기본" : cfg.codexModel || "기본" } };
@@ -739,12 +846,13 @@ async function runJob(job) {
     await failEarly(job, e.message);
   } finally {
     running.delete(job.id);
-    labGuard.touch(dir);
+    labGuard.touch(home);
     if (lock) {
-      try { if (fs.existsSync(dir)) saveHandoff(dir, { engine: job.aiEngine, taskId: job.id, status: "interrupted", ...job.aiOutcome }, (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s))); }
+      try { if (fs.existsSync(home)) saveHandoff(home, { engine: job.aiEngine, taskId: job.id, status: "interrupted", ...job.aiOutcome }, (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s))); }
       catch (e) { log(`[${job.appSlug}] 상태 인계 기록 실패: ${maskText(e.message)}`); }
       lock.release();
     }
+    cleanupWorktree(job); // 병행 일감: 사본·임시 브랜치 정리(성공·실패 모두)
   }
 }
 
@@ -919,107 +1027,28 @@ async function runLabCleanups(ids) {
   }
 }
 
-async function runJobUnlocked(job, lock) {
-  log(`[${job.appSlug}] 시작 (${job.kind === "new" ? "새 앱" : "수정"}, 시도 ${job.attempts}): ${job.title}`);
+// AI 한 턴: 지시문(prompt)을 AI 에 주고 끝날 때까지 기다린다. 처음 실행과 병행 일감의 '다시 맞추기' 요청이 같이 쓴다.
+// 끝나면 st.result·st.stderrTail·st.killedAfterResult 가 이번 턴의 값으로 채워지고 종료 코드를 돌려준다.
+async function runAiTurn(st, prompt) {
+  const { job, dir } = st;
+  const { appSettings, aiSecrets, model, reqSecrets, secrets, lock } = st.turnCfg;
 
-  const secrets = readSecrets();
-  const missing = (job.requiredSecrets ?? []).filter((n) => !secrets[n]);
-  if (missing.length) {
-    return failEarly(job, `이 PC의 키 파일에 없는 키: ${missing.join(", ")} (${cfg.secretsFile}). 값을 넣고 통제실에서 '다시 시도'를 누르세요.`);
-  }
-
-  let dir;
-  try {
-    dir = prepareDir(job);
-  } catch (e) {
-    return failEarly(job, e.message);
-  }
-  if (job.aiOutcome?.handoff) job.aiOutcome.handoff.startHead = headOf(dir) || undefined;
-
-  const allowed = Object.fromEntries((job.requiredSecrets ?? []).map((n) => [n, secrets[n]]));
-  const rel = job.kind === "release" ? (job.release ?? null) : null; // 서버가 준 출시 정보(종류·단계·outbox·키). 예전 서버면 없음
-  const st = {
-    job, dir, child: null, logs: [], phase: "scaffold", phaseDirty: true, shots: new Set(), shotHashes: new Set(), shotTries: new Map(),
-    reportable: true, stopped: null, result: null, stderrTail: "", lastText: "", started: Date.now(),
-    redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets)])(s)),
-  };
-  running.set(job.id, st);
-  readPhase(st);
-  seedShots(st);
-  // 도구 중계 결과 이미지: 시작 때 이미 있던 파일(이전 일감 것)은 올리지 않는다
-  st.assets = createAssetUploader({ appDir: dir, jobId: job.id, post: (form) => api("POST", "/api/factory/screenshot", form), log: (level, m) => addLog(st, level, m) });
-  st.assets.seed();
-  // 도트 그림 저장소: pixel-art 결과를 '후보'로 올린다(승인은 부영실이 스튜디오에서)
-  st.arts = createArtRegistrar({ appDir: dir, jobId: job.id, appSlug: job.appSlug, post: (form) => api("POST", "/api/factory/art", form), log: (level, m) => addLog(st, level, m) });
-  addLog(st, "info", `앱 폴더 준비 완료: ${dir} (작업 규칙: ${job.rulesSource})`);
-  if (job.projectSettingsState === "written") addLog(st, "info", `프로젝트 도구 설정을 내려 줬어요(버전 ${job.projectToolSettings?.version ?? "?"}): .factory/project-settings.json`);
-  else if (job.projectSettingsState === "invalid") addLog(st, "warn", "프로젝트 도구 설정을 내려 주지 못했어요(형식 오류·너무 큼). 도구 기본값을 써요.");
-  if (Array.isArray(job.approvedArts) && job.approvedArts.length) addLog(st, "info", `승인된 그림 ${job.approvedArts.length}장을 자동 참고 목록으로 내려 줬어요(후보·반려는 제외).`);
-  if (job.pickedArtsCount) addLog(st, "info", `이번 일감에서 참고로 고른 승인 그림 ${job.pickedArtsCount}장을 pixel-art 호출에 먼저 붙여요.`);
-
-  if (rel) {
-    addLog(st, "info", `출시 일감 종류: ${rel.kindLabel ?? rel.kind}${rel.resumeFrom ? ` · 재시도: '${rel.resumeFrom}' 단계부터` : ""}`);
-    // 검토 승인 뒤 반영·업로드·홈페이지 반영 단계만 다시, 검토 자료만 다시 올리기: Claude 없이 감독 프로그램이 한다(남아 있던 outbox·스토어 자료로).
-    // 검토가 필요한데 승인 전이면 finishRelease 가 검토 대기로만 보낸다(업로드하지 않음)
-    if (["homepage", "upload", "review", "videolink"].includes(rel.resumeFrom)) {
-      try {
-        const what =
-          rel.resumeFrom === "videolink"
-            ? "YouTube 링크를 Play 등록정보 영상에 넣었어요"
-            : rel.review?.required && rel.review.approved && rel.resumeFrom !== "review"
-            ? `검토 승인 뒤 ${rel.resumeFrom === "upload" ? "Play 업로드·홈페이지 반영" : "홈페이지 반영"}을 했어요`
-            : rel.resumeFrom === "review"
-              ? "검토 자료를 다시 올렸어요"
-              : rel.resumeFrom === "upload"
-                ? "Play 업로드부터 다시 했어요"
-                : "홈페이지 반영 단계만 다시 했어요";
-        return await finishRelease(st, { summary: `${what}(Claude 없이 남아 있던 결과로).`, from: rel.resumeFrom });
-      } finally {
-        running.delete(job.id);
-      }
-    }
-    // 첫 출시: 업로드 키 준비(앱 자체 key.properties 가 있으면 그대로)
-    let key;
-    try {
-      key = prepareReleaseKey({ job, dir, secrets, log: (m) => log(`[${job.appSlug}] ${m}`) });
-    } catch (e) {
-      key = { ok: false, reason: `키 준비 중 오류: ${e.message}` };
-    }
-    if (!key.ok) {
-      try {
-        return await finish(st, "failed", { failReason: st.redact(key.reason), failStage: "key" });
-      } finally {
-        running.delete(job.id);
-      }
-    }
-    Object.assign(allowed, key.env);
-    st.keyEnv = key.env; // 시험용 APK: 서명 인증서 비교에 쓴다(값은 보고하지 않음)
-    st.redact = (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets).filter((v) => !key.secrets.includes(v))], key.secrets)(s));
-    if (key.note) addLog(st, "info", key.note);
-  }
-
-  const appSettings = appPermissionSettings();
-  // 도구 요청 중계가 켜져 있으면 툴킷 도구에 선언된 키는 AI 환경에서 빼고 도구 프로세스에만 준다(꺼짐이면 예전 그대로)
-  const toolOnly = toolBroker.mode === "off" ? [] : toolkitSecretNames(cfg.toolkitDir);
-  const aiSecrets = Object.fromEntries(Object.entries(allowed).filter(([k]) => !toolOnly.includes(k)));
-  if (toolOnly.some((k) => k in allowed)) addLog(st, "info", `도구 전용 키는 AI 환경에 넣지 않았어요: ${toolOnly.filter((k) => k in allowed).join(", ")}`);
-  recordLifecycle(dir, job.aiEngine, "session-start", job.id);
-  // 승인 때 고른 모델(Claude Code 만). 허용 목록 밖이면 startAi 가 던져 일감이 실패로 보인다(다른 모델로 바꿔 돌리지 않음)
-  const model = job.aiEngine === "claude" ? job.aiModel || null : null;
-  if (job.aiEngine === "claude") addLog(st, "info", `모델: ${model ?? "기본 설정(--model 없음)"}`);
+  st.result = null;
+  st.resultTimer = null;
+  st.killedAfterResult = false;
+  st.stderrTail = "";
   const child = startAi(job.aiEngine, cfg, {
     model,
     settings: job.aiEngine === "claude" ? appSettings : undefined,
     cwd: dir,
-    env: { ...process.env, ...aiSecrets, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id },
+    env: { ...process.env, ...aiSecrets, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id, ...(job.worktree ? { FACTORY_LOCK_DIR: lockDir(), FACTORY_WAIT_FILE: st.waitFile } : {}) },
   });
   lock.setChild(child.pid || null);
   const decode = eventDecoder(job.aiEngine);
   st.child = child;
   child.stdin.on("error", () => {});
-  child.stdin.end(handoffPrompt(dir, promptFor(job), { appScope: true }));
+  child.stdin.end(handoffPrompt(dir, prompt, { appScope: true }));
   // 도구 요청 중계: AI 가 도는 동안만 몇 초마다 .factory/requests/ 를 본다(꺼짐 모드면 아무것도 하지 않음)
-  const reqSecrets = job.requiredSecrets ?? [];
   st.broker = createBroker({
     appDir: dir,
     jobId: job.id,
@@ -1109,6 +1138,124 @@ async function runJobUnlocked(job, lock) {
   clearInterval(beat);
   clearTimeout(timer);
   clearTimeout(st.resultTimer);
+  return code;
+}
+
+async function runJobUnlocked(job, lock) {
+  log(`[${job.appSlug}] 시작 (${job.kind === "new" ? "새 앱" : "수정"}, 시도 ${job.attempts}): ${job.title}`);
+
+  const secrets = readSecrets();
+  const missing = (job.requiredSecrets ?? []).filter((n) => !secrets[n]);
+  if (missing.length) {
+    return failEarly(job, `이 PC의 키 파일에 없는 키: ${missing.join(", ")} (${cfg.secretsFile}). 값을 넣고 통제실에서 '다시 시도'를 누르세요.`);
+  }
+
+  let dir;
+  try {
+    dir = prepareDir(job);
+  } catch (e) {
+    return failEarly(job, e.message);
+  }
+  const home = job.worktree ? job.worktree.repoDir : dir;
+  if (job.aiOutcome?.handoff) job.aiOutcome.handoff.startHead = headOf(home) || undefined;
+
+  const allowed = Object.fromEntries((job.requiredSecrets ?? []).map((n) => [n, secrets[n]]));
+  const rel = job.kind === "release" ? (job.release ?? null) : null; // 서버가 준 출시 정보(종류·단계·outbox·키). 예전 서버면 없음
+  const st = {
+    job, dir, child: null, logs: [], phase: "scaffold", phaseDirty: true, shots: new Set(), shotHashes: new Set(), shotTries: new Map(),
+    reportable: true, stopped: null, result: null, stderrTail: "", lastText: "", started: Date.now(),
+    redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets)])(s)),
+    home, abort: new AbortController(),
+    // 병행 상태(통제실 일감 카드): worktree 실행·잠금 대기·합치는 중·다시 맞추기 횟수·합친 시각·검사 결과
+    parallel: job.worktree ? { worktree: true, lockWait: null, merging: false, rebases: 0, mergedAt: null, checks: null } : null,
+    parallelDirty: !!job.worktree,
+  };
+  running.set(job.id, st);
+  if (job.worktree) {
+    // AI 가 applock.mjs 로 잠금을 기다리는 동안 남기는 표시 파일을 몇 초마다 읽어 일감 로그·통제실에 올린다
+    st.waitFile = path.join(dir, ".factory", "lock-wait.json");
+    clearWait(st.waitFile);
+    st.waitTimer = setInterval(() => {
+      const w = readWait(st.waitFile);
+      const had = st.lockWaits?.ai ?? null;
+
+      if (w && !had) {
+        setLockWait(st, "ai", w.name, w.since);
+        addLog(st, "info", `⏳ 잠금 대기: ${LOCK_LABELS[w.name] ?? w.name} — 같은 앱의 다른 일감이 쓰는 중이라 AI 의 명령이 순서를 기다려요.`);
+        void flush(st);
+      } else if (!w && had) {
+        setLockWait(st, "ai", null);
+        addLog(st, "info", `▶ 잠금 얻음: ${LOCK_LABELS[had.name] ?? had.name}`);
+        void flush(st);
+      }
+    }, 3000);
+    addLog(st, "info", `병행 일감: 작업 사본 ${job.worktree.branch} 에서 실행해요(기준 ${job.worktree.base}). 끝나면 기본 브랜치에 합치고 검사해요.`);
+  }
+  readPhase(st);
+  seedShots(st);
+  // 도구 중계 결과 이미지: 시작 때 이미 있던 파일(이전 일감 것)은 올리지 않는다
+  st.assets = createAssetUploader({ appDir: dir, jobId: job.id, post: (form) => api("POST", "/api/factory/screenshot", form), log: (level, m) => addLog(st, level, m) });
+  st.assets.seed();
+  // 도트 그림 저장소: pixel-art 결과를 '후보'로 올린다(승인은 부영실이 스튜디오에서)
+  st.arts = createArtRegistrar({ appDir: dir, jobId: job.id, appSlug: job.appSlug, post: (form) => api("POST", "/api/factory/art", form), log: (level, m) => addLog(st, level, m) });
+  addLog(st, "info", `앱 폴더 준비 완료: ${dir} (작업 규칙: ${job.rulesSource})`);
+  if (job.projectSettingsState === "written") addLog(st, "info", `프로젝트 도구 설정을 내려 줬어요(버전 ${job.projectToolSettings?.version ?? "?"}): .factory/project-settings.json`);
+  else if (job.projectSettingsState === "invalid") addLog(st, "warn", "프로젝트 도구 설정을 내려 주지 못했어요(형식 오류·너무 큼). 도구 기본값을 써요.");
+  if (Array.isArray(job.approvedArts) && job.approvedArts.length) addLog(st, "info", `승인된 그림 ${job.approvedArts.length}장을 자동 참고 목록으로 내려 줬어요(후보·반려는 제외).`);
+  if (job.pickedArtsCount) addLog(st, "info", `이번 일감에서 참고로 고른 승인 그림 ${job.pickedArtsCount}장을 pixel-art 호출에 먼저 붙여요.`);
+
+  if (rel) {
+    addLog(st, "info", `출시 일감 종류: ${rel.kindLabel ?? rel.kind}${rel.resumeFrom ? ` · 재시도: '${rel.resumeFrom}' 단계부터` : ""}`);
+    // 검토 승인 뒤 반영·업로드·홈페이지 반영 단계만 다시, 검토 자료만 다시 올리기: Claude 없이 감독 프로그램이 한다(남아 있던 outbox·스토어 자료로).
+    // 검토가 필요한데 승인 전이면 finishRelease 가 검토 대기로만 보낸다(업로드하지 않음)
+    if (["homepage", "upload", "review", "videolink"].includes(rel.resumeFrom)) {
+      try {
+        const what =
+          rel.resumeFrom === "videolink"
+            ? "YouTube 링크를 Play 등록정보 영상에 넣었어요"
+            : rel.review?.required && rel.review.approved && rel.resumeFrom !== "review"
+            ? `검토 승인 뒤 ${rel.resumeFrom === "upload" ? "Play 업로드·홈페이지 반영" : "홈페이지 반영"}을 했어요`
+            : rel.resumeFrom === "review"
+              ? "검토 자료를 다시 올렸어요"
+              : rel.resumeFrom === "upload"
+                ? "Play 업로드부터 다시 했어요"
+                : "홈페이지 반영 단계만 다시 했어요";
+        return await finishRelease(st, { summary: `${what}(Claude 없이 남아 있던 결과로).`, from: rel.resumeFrom });
+      } finally {
+        running.delete(job.id);
+      }
+    }
+    // 첫 출시: 업로드 키 준비(앱 자체 key.properties 가 있으면 그대로)
+    let key;
+    try {
+      key = prepareReleaseKey({ job, dir, secrets, log: (m) => log(`[${job.appSlug}] ${m}`) });
+    } catch (e) {
+      key = { ok: false, reason: `키 준비 중 오류: ${e.message}` };
+    }
+    if (!key.ok) {
+      try {
+        return await finish(st, "failed", { failReason: st.redact(key.reason), failStage: "key" });
+      } finally {
+        running.delete(job.id);
+      }
+    }
+    Object.assign(allowed, key.env);
+    st.keyEnv = key.env; // 시험용 APK: 서명 인증서 비교에 쓴다(값은 보고하지 않음)
+    st.redact = (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets).filter((v) => !key.secrets.includes(v))], key.secrets)(s));
+    if (key.note) addLog(st, "info", key.note);
+  }
+
+  const appSettings = appPermissionSettings();
+  // 도구 요청 중계가 켜져 있으면 툴킷 도구에 선언된 키는 AI 환경에서 빼고 도구 프로세스에만 준다(꺼짐이면 예전 그대로)
+  const toolOnly = toolBroker.mode === "off" ? [] : toolkitSecretNames(cfg.toolkitDir);
+  const aiSecrets = Object.fromEntries(Object.entries(allowed).filter(([k]) => !toolOnly.includes(k)));
+  if (toolOnly.some((k) => k in allowed)) addLog(st, "info", `도구 전용 키는 AI 환경에 넣지 않았어요: ${toolOnly.filter((k) => k in allowed).join(", ")}`);
+  recordLifecycle(home, job.aiEngine, "session-start", job.id);
+  // 승인 때 고른 모델(Claude Code 만). 허용 목록 밖이면 startAi 가 던져 일감이 실패로 보인다(다른 모델로 바꿔 돌리지 않음)
+  const model = job.aiEngine === "claude" ? job.aiModel || null : null;
+  if (job.aiEngine === "claude") addLog(st, "info", `모델: ${model ?? "기본 설정(--model 없음)"}`);
+  st.turnCfg = { appSettings, aiSecrets, model, reqSecrets: job.requiredSecrets ?? [], secrets, lock };
+  const code = await runAiTurn(st, promptFor(job));
 
   try {
     if (st.stopped) {
@@ -1120,6 +1267,8 @@ async function runJobUnlocked(job, lock) {
       const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result.num_turns ? `, ${st.result.num_turns}턴` : ""})`;
       st.handoffText = text;
       await finishRelease(st, { summary: (text || "완료(요약 없음)").slice(0, 3700) + footer, checkFail: true });
+    } else if (job.worktree && st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
+      await finishWorktree(st);
     } else if (st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
       const checkBeat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
       recordLifecycle(dir, job.aiEngine, "verification-start", job.id);
@@ -1157,9 +1306,92 @@ async function runJobUnlocked(job, lock) {
     }
   } finally {
     running.delete(job.id);
+    if (st.waitTimer) clearInterval(st.waitTimer);
     // 일감이 끝나면(성공·실패 모두) AI 한도를 한 번 새로 읽는다. 던지지 않고 15초 넘으면 기다리지 않음, 로그 한 줄
     void refreshAfterTask({ log });
   }
+}
+
+// 병행 일감의 마무리: 끝난 순서대로 하나씩 기본 브랜치에 합치고(앱 단위 merge 잠금), 합칠 때마다 그 앱의 기존 검사를 돌린다.
+// 글자 충돌·검사 실패면 이 일감 AI 에게 '최신 기본 브랜치 기준으로 다시 맞추기'를 되돌려 보내고(최대 MAX_REBASES 회),
+// 그래도 안 되면 이 일감만 '합치기 실패'(failStage=merge)로 멈추고 보고한다(텔레그램·통제실). 이미 합쳐진 다른 일감은 그대로다.
+// 합쳐진 뒤의 outbox 전송·컨텍스트 정리·완료 보고는 단독 일감과 같은 절차를 따른다(이 파일에는 push 가 없다).
+async function finishWorktree(st) {
+  const { job, dir } = st;
+  const wt = job.worktree;
+  const { lock } = st.turnCfg;
+  let verification = null;
+
+  recordLifecycle(st.home, job.aiEngine, "verification-start", job.id);
+  const checkBeat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
+  let result;
+
+  try {
+    result = await mergeJob({
+      job: { id: job.id, title: job.title },
+      repoDir: wt.repoDir,
+      wtDir: wt.wtDir,
+      branch: wt.branch,
+      base: wt.base,
+      request: job.planMarkdown,
+      maxRebases: MAX_REBASES,
+      log: (level, m) => addLog(st, level, m),
+      report: (patch) => {
+        Object.assign(st.parallel, patch);
+        st.parallelDirty = true;
+        void flush(st);
+      },
+      withLock: (name, fn) => withAppLock(st, name, fn),
+      verify: (d) =>
+        withAppLock(st, "build", async () => {
+          const v = await verifyWorkspace(d, job.stack, (m) => addLog(st, "info", m), 15 * 60_000, (child) => { st.child = child; lock.setChild(child.pid || null); });
+
+          verification = v;
+
+          return v;
+        }),
+      commit: (message) => safeCommit(dir, job, message),
+      askFix: async (prompt) => {
+        const code = await runAiTurn(st, prompt);
+
+        if (st.stopped) return { ok: false, reason: st.stopped };
+        if (st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) return { ok: true };
+
+        return { ok: false, reason: st.redact(String(st.result?.is_error ? st.result.result : "") || st.stderrTail.trim() || `AI 가 비정상 종료(코드 ${code})`).slice(-300) };
+      },
+    });
+  } catch (e) {
+    if (st.stopped) return; // 취소·종료로 잠금 대기가 끊긴 것
+    throw e;
+  } finally {
+    clearInterval(checkBeat);
+  }
+  if (st.stopped) return;
+
+  if (!result.ok) {
+    const patch = savePatch({ repoDir: wt.repoDir, base: wt.base, branch: wt.branch, jobId: job.id });
+    const note = patch ? ` 작업 내용은 앱 폴더의 .factory/history/${job.id}.merge-failed.patch 에 남겼어요.` : "";
+
+    st.parallel.checks = "합치기 실패";
+    addLog(st, "error", `합치기 실패: ${result.reason}${note}`);
+
+    return finish(st, "failed", { failReason: st.redact(`합치기 실패(다시 맞추기 ${result.rebases}회): ${result.reason}${note}`).slice(-1800), failStage: "merge" });
+  }
+  if (job.keyBlocked?.length) return finish(st, "failed", { failReason: `키 파일 커밋 차단: ${job.keyBlocked.join(", ")}`, failStage: "merge" });
+
+  addLog(st, "info", `기본 브랜치(${wt.base})에 합쳤어요 (다시 맞추기 ${result.rebases}회). 검사: ${result.checks}`);
+  recordLifecycle(st.home, job.aiEngine, "verification-passed", job.id);
+  job.aiOutcome = { ...job.aiOutcome, status: "verified", verification: verification ?? { ok: true } };
+  // outbox 는 일감이 아직 실행 중일 때 보내야 서버가 받는다(사본 폴더의 .factory/outbox)
+  await sendOutbox({ dir, job, api, addLog: (level, m) => addLog(st, level, m) });
+  const compacted = await compactSession({ engine: job.aiEngine, sessionId: st.sessionId, reusable: false, enabled: compactAfterJob, cwd: dir, cfg, settings: job.aiEngine === "claude" ? st.turnCfg.appSettings : undefined });
+
+  addLog(st, "info", compacted.line);
+  const text = st.redact(String(st.result?.result ?? st.lastText ?? "").trim());
+  const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result?.num_turns ? `, ${st.result.num_turns}턴` : ""}, 기본 브랜치(${wt.base})에 합침${result.rebases ? `, 다시 맞추기 ${result.rebases}회` : ""})`;
+
+  st.handoffText = text;
+  await finish(st, "done", { summary: (text || "완료(요약 없음)").slice(0, 3800) + footer });
 }
 
 const MARK = { ok: "✅", skipped: "⏭", failed: "❌" };
@@ -1642,7 +1874,9 @@ async function loop() {
           const offered = paused ? [] : r.data.jobs ?? [];
           if (offered.length > Math.max(0, free)) log(`서버가 자리(${Math.max(0, free)}개)보다 많은 일감 ${offered.length}개를 줬어요. 넘친 ${offered.length - Math.max(0, free)}개는 시작하지 않아요(10분 안에 서버가 대기열로 되돌려요).`);
           for (const job of offered.slice(0, Math.max(0, free))) {
-            if ([...running.values()].some((s) => s.job.appSlug === job.appSlug)) {
+            // 같은 앱 이름이 이미 돌고 있으면 시작하지 않는다. 단 서로 다른 작업 사본에서 도는 병행 일감끼리는 같이 돈다
+            const sameApp = [...running.values()].filter((s) => s.job.appSlug === job.appSlug);
+            if (sameApp.length && !(isWorktreeJob(job) && sameApp.every((s) => isWorktreeJob(s.job)))) {
               failEarly(job, "이 PC에서 같은 앱 이름의 작업이 이미 돌고 있어요.");
               continue;
             }
@@ -1696,6 +1930,15 @@ if (command === "init") {
     log(`ffmpeg: ${toolLabel("ffmpeg")} · ffprobe: ${toolLabel("ffprobe")}`);
     log(`감독 프로그램 시작: ${cfg.worker} → ${cfg.serverUrl} (동시 ${appLimit()}개, ${cfg.pollSec}초마다 확인)`);
     log(`앱 폴더: ${cfg.workDir}`);
+    // 병행 실행의 흔적 정리: 지난 실행이 남긴 작업 사본·임시 브랜치(이어받지 않고 정리, 서버가 그 일감을 대기열로 되돌려 처음부터 다시 실행)와 앱 단위 잠금 파일
+    try {
+      cleanupLeftovers({ workDir: cfg.workDir, log });
+      const cleared = clearLocks(lockDir());
+
+      if (cleared) log(`지난 실행이 남긴 앱 잠금 ${cleared}개를 치웠어요.`);
+    } catch (e) {
+      log(`지난 병행 실행 정리 중 오류: ${e.message}`);
+    }
     // 통제실 '장비 상태'(메인PC CPU·RAM·GPU·디스크, 숫자만): 폴링과 따로 1분마다. 실패해도 폴링·일감에 영향 없음
     try {
       startDeviceStats({ api, log });

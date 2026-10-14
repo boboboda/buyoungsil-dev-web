@@ -47,6 +47,7 @@ function jobModule(prisma) {
     "@/lib/factory/toolBroker": toolBroker,
     "@/lib/factory/handoff": { cleanHandoff: () => null },
     "@/lib/factory/settings": { getDefaultClaudeModel: async () => null },
+    "@/lib/factory/parallel": loadTs("lib/factory/parallel.ts", { "@/lib/prisma": { __esModule: true, default: prisma } }),
   });
 }
 function maintenanceModule(prisma) {
@@ -66,15 +67,21 @@ test("legacy workers only claim Claude jobs; malformed capabilities never grant 
   assert.deepEqual(ai.workerEngines("codex;DROP TABLE jobs"), []);
   assert.deepEqual(ai.workerEngines(""), []);
 });
-test("claim SQL filters capabilities and binds values", async () => {
+test("claim filters capabilities and binds values", async () => {
+  // 후보는 findMany(aiEngine 조건)로 고르고, 고른 id 만 값으로 묶어 UPDATE 한다
   let query;
-  const jobs = jobModule({ $queryRaw: async (q) => { query = q; return []; } });
+  let where;
+  const candidate = { id: "job-a", appSlug: "some-app", kind: "revision", priority: 0, approvedAt: null, createdAt: new Date(1), parallelGroup: null };
+  const jobs = jobModule({
+    factoryJob: { findMany: async ({ where: w }) => { if (w.status === "approved") { where = w; return [candidate]; } return []; } },
+    $queryRaw: async (q) => { query = q; return []; },
+  });
   await jobs.claimJobs("worker", 2);
-  assert.ok(query.sql.includes('"aiEngine" IN'));
-  assert.ok(query.values.includes("claude"));
+  assert.deepEqual(where.aiEngine.in, ["claude"]);
+  assert.ok(query.values.includes("job-a"));
   assert.ok(!query.values.includes("codex"));
   await jobs.claimJobs("worker", 2, ["codex"]);
-  assert.ok(query.values.includes("codex"));
+  assert.deepEqual(where.aiEngine.in, ["codex"]);
   query = null;
   assert.deepEqual(await jobs.claimJobs("worker", 2, []), []);
   assert.equal(query, null);

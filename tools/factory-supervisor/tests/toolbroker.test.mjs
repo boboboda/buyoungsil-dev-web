@@ -511,6 +511,7 @@ test("report parsing carries the cleaned tool list and ignores it when absent", 
     "@/lib/factory/toolBroker": serverBroker,
     "@/lib/factory/handoff": { cleanHandoff: () => null },
     "@/lib/factory/settings": { getDefaultClaudeModel: async () => null },
+    "@/lib/factory/parallel": loadTs("lib/factory/parallel.ts", { "@/lib/prisma": { __esModule: true, default: {} } }),
   });
   const at = new Date().toISOString();
   const withTools = jobs.parseReport({ jobId: "job1", toolRequests: [{ id: "r1", tool: "echo", status: "ok", at, ms: 1 }] });
