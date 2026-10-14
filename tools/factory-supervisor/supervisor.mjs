@@ -533,6 +533,7 @@ function stop(st, why) {
   st.stopped = why;
   log(`[${st.job.appSlug}] 중지: ${why}`);
   st.abort?.abort(); // 앱 단위 잠금을 기다리는 중이면 기다림을 끝낸다
+  st.unit?.cancel(); // 업데이트로 멈춘 채 기다리는 중이었다면(취소됨 등) 기다림을 끝내고 일감을 정리하게 한다
   killTree(st.child);
 }
 
@@ -1070,7 +1071,7 @@ function appSnapshot(st) {
   const { job } = st;
   return {
     jobId: job.id, appSlug: job.appSlug, job, engine: job.aiEngine, sessionId: st.sessionId ?? null, dir: st.dir, home: st.home,
-    worktree: job.worktree ?? null, phase: st.phase, timeLeftMs: Math.max(60_000, Math.round(st.timeLeftMs ?? 0)), started: st.started, rulesSource: job.rulesSource ?? null,
+    worktree: job.worktree ?? null, phase: st.phase, timeLeftMs: Math.max(5000, Math.round(st.timeLeftMs ?? 0)), started: st.started, rulesSource: job.rulesSource ?? null,
     savedAt: Date.now(),
   };
 }
@@ -1104,6 +1105,11 @@ async function waitWhilePausing(st) {
   if (pauser.mode() !== "pausing") return;
   const beat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
   try {
+    // 멈추기 직전까지의 로그(끊은 명령 등)를 먼저 보낸다: 업데이트로 꺼지면 보내지 못한 로그는 사라진다. 이미 도는 보고가 있으면 그 뒤에 한 번 더
+    for (let i = 0; i < 3; i++) {
+      await flush(st);
+      if (st.logs.length === 0) break;
+    }
     await pauser.gate(st.unit);
   } finally {
     clearInterval(beat);
@@ -2031,7 +2037,7 @@ async function loop() {
   while (!shuttingDown) {
     try {
       // 새 버전 확인(10분마다): 공장이 비었으면 바로, 일감이 돌면 새 커밋을 모았다가(묶기) 받는다. 받기로 하면 진행 중인 AI 를 안전한 지점에서 멈추고(저장) 받아 여기서 exit(0), 새 감독이 이어 준다
-      maybeUpdate({ running: running.size + (maintenanceBusy() ? 1 : 0), autoUpdate, pauser });
+      maybeUpdate({ running: running.size + (maintenanceBusy() ? 1 : 0), autoUpdate, pauser, pendingReports: outbox.size() });
     } catch (e) {
       log(`자동 업데이트 확인 중 오류: ${e.message}`);
     }

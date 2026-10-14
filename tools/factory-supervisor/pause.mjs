@@ -153,11 +153,12 @@ export function createPauser({ now = Date.now, log = () => {}, stateFile = pause
   const lastCut = [];
 
   const softCount = () => [...units.values()].filter((u) => u.state === "running" && u.child && !u.hold?.()).length; // 지금 안전한 지점에서 멈출 수 있는 AI 실행
-  const pausedCount = () => [...units.values()].filter((u) => u.state === "paused" || u.state === "parked").length;
+  // 멈춤이 끝난 단위 = 일감 흐름이 gate 에서 기다리는 것(parked). 프로세스를 끊은 직후(pausing)는 아직 정리(마지막 로그 보내기·남은 시간 계산) 중이라 세지 않는다
+  const pausedCount = () => [...units.values()].filter((u) => u.state === "parked").length;
 
   function pauseUnit(u, decision) {
     u.paused = true;
-    u.state = "paused";
+    u.state = "pausing"; // 프로세스를 끊는 중. 일감 흐름이 정리하고 gate 에 들어서면 parked(멈춤 완료)가 된다
     u.pausedAt = now();
     if (decision.cut?.length) {
       const msg = `${u.label}: 끝나지 않은 명령을 끊고 멈췄어요(${decision.reason === "long-command" ? "남은 시간이 5분을 넘을 것 같음" : "5분 안에 끝나지 않음"}): ${decision.cut.join(" | ")}`;
@@ -173,14 +174,16 @@ export function createPauser({ now = Date.now, log = () => {}, stateFile = pause
     }
   }
 
-  function tick() {
+  // 이 단위를 지금 멈춰도 되는지 보고, 되면 멈춘다
+  function check(u) {
     if (mode !== "pausing") return;
-    for (const u of units.values()) {
-      if (u.state !== "running" || !u.child) continue; // 프로세스가 없으면(검증·합치기 같은 AI 아닌 단계) 멈출 것이 없다. 끝나고 gate 에서 멈춘다
-      if (u.hold?.()) continue; // 합치기 잠금 중 등: 풀린 뒤에 멈춘다
-      const d = pauseDecision(u.tracker, now() - requestedAt);
-      if (d.action === "pause") pauseUnit(u, d);
-    }
+    if (u.state !== "running" || !u.child) return; // 프로세스가 없으면(검증·합치기 같은 AI 아닌 단계) 멈출 것이 없다. 끝나고 gate 에서 멈춘다
+    if (u.hold?.()) return; // 합치기 잠금 중 등: 풀린 뒤에 멈춘다
+    const d = pauseDecision(u.tracker, now() - requestedAt);
+    if (d.action === "pause") pauseUnit(u, d);
+  }
+  function tick() {
+    for (const u of units.values()) check(u);
   }
 
   const pauser = {
@@ -196,7 +199,7 @@ export function createPauser({ now = Date.now, log = () => {}, stateFile = pause
         kind: opts.kind, // app | lab | maint
         engine: opts.engine || "claude",
         label: opts.label || opts.key,
-        state: "running", // running | paused(프로세스를 끊고 기다림) | parked(AI 를 띄우기 전에 기다림)
+        state: "running", // running | pausing(프로세스를 끊는 중) | parked(멈춤 완료: AI 를 띄우기 전 gate 에서 기다림)
         paused: false,
         child: null,
         kill: null,
@@ -212,7 +215,10 @@ export function createPauser({ now = Date.now, log = () => {}, stateFile = pause
           u.paused = false;
           u.tracker = createToolTracker(u.engine, now);
         },
-        feed: (ev) => u.tracker.feed(ev),
+        feed(ev) {
+          u.tracker.feed(ev);
+          check(u); // 명령이 끝난 바로 그 순간(안전한 지점)에 멈춘다. 1초 점검(tick)은 시간이 지나서 끊을 때를 위한 것
+        },
         detach() {
           u.child = null;
           u.kill = null;
@@ -260,7 +266,7 @@ export function createPauser({ now = Date.now, log = () => {}, stateFile = pause
     },
     /** 멈춘 단위들의 저장용 기록 */
     snapshot() {
-      return [...units.values()].filter((u) => u.state === "paused" || u.state === "parked").map((u) => ({ key: u.key, kind: u.kind, engine: u.engine, ...u.snapshot() }));
+      return [...units.values()].filter((u) => u.state === "parked").map((u) => ({ key: u.key, kind: u.kind, engine: u.engine, ...u.snapshot() }));
     },
     persist() {
       const entries = pauser.snapshot();
@@ -275,10 +281,10 @@ export function createPauser({ now = Date.now, log = () => {}, stateFile = pause
       timer = null;
       let n = 0;
       for (const u of units.values()) {
-        if (u.state === "paused" || u.state === "parked") {
+        if (u.state === "parked") {
           n++;
           u.cancel();
-        }
+        } else if (u.state === "pausing") u.state = "running"; // 정리 중이던 것은 gate 에서 바로 지나가게 둔다
       }
       clearSavedState(stateFile);
       return n;

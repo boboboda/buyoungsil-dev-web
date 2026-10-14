@@ -506,11 +506,11 @@ test("감독 프로그램 연결: 병행 그룹 수정 일감만 사본에서 �
   const sup = fs.readFileSync(path.join(SUP, "supervisor.mjs"), "utf8").replace(/\r\n/g, "\n");
 
   assert.match(sup, /const isWorktreeJob = \(job\) => job\.kind === "revision" && typeof job\.parallelGroup === "string"/);
-  assert.match(sup, /job\.worktree = await setupWorktree\(job, home\)/);
+  assert.match(sup, /job\.worktree = resume\?\.worktree \?\? \(await setupWorktree\(job, home\)\)/); // 업데이트로 멈춘 일감은 멈추기 전 작업 사본을 그대로 쓴다(1-2 D-2)
   assert.match(sup, /else if \(job\.worktree && st\.result && !st\.result\.is_error/);
   assert.match(sup, /await finishWorktree\(st\)/);
   assert.match(sup, /failStage: "merge"/, "합치기 실패는 failStage=merge 로 보고");
-  assert.match(sup, /cleanupLeftovers\(\{ workDir: cfg\.workDir, log \}\)/, "시작 때 남은 사본 정리");
+  assert.match(sup, /cleanupLeftovers\(\{ workDir: cfg\.workDir, log, skip: \(branch\) => keepBranches\.has\(branch\) \}\)/, "시작 때 남은 사본 정리(업데이트로 멈춘 일감의 사본은 남긴다, 1-2 D-2)");
   assert.match(sup, /clearLocks\(lockDir\(\)\)/);
   // 같은 앱 이름 검사는 병행 일감끼리만 통과
   assert.match(sup, /!\(isWorktreeJob\(job\) && sameApp\.every\(\(s\) => isWorktreeJob\(s\.job\)\)\)/);

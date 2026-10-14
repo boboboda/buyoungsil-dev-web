@@ -183,12 +183,14 @@ test("멈춤: 안전한 지점(명령이 끝난 직후)에서만 AI 를 끊고, 
   pauser.requestPause();
   assert.equal(a.child.killed, false, "명령이 도는 중이면 끊지 않는다");
   assert.equal(pauser.pausedCount(), 0);
-  a.unit.feed(done("t1"));
-  pauser.tick();
+  a.unit.feed(done("t1")); // 명령이 끝난 바로 그 순간(안전한 지점)에 멈춘다
   assert.equal(a.child.killed, true, "명령이 끝난 직후 멈춘다");
   assert.equal(a.unit.paused, true);
-  assert.equal(pauser.pausedCount(), 1);
   assert.equal(pauser.softCount(), 0);
+  assert.equal(pauser.pausedCount(), 0, "프로세스를 끊은 직후는 아직 정리 중이라 멈춤 완료로 세지 않는다");
+  a.unit.detach();
+  void pauser.gate(a.unit); // 일감 흐름이 정리를 마치고 gate 에서 기다리면 멈춤 완료
+  assert.equal(pauser.pausedCount(), 1);
 });
 
 test("긴 명령은 끊고 멈춘다(재개 후 다시 실행하게): 남은 시간이 5분을 넘으면 바로, 모르면 5분 뒤", () => {
@@ -206,7 +208,7 @@ test("긴 명령은 끊고 멈춘다(재개 후 다시 실행하게): 남은 시
   setNow(LONG_COMMAND_MS + 1000);
   pauser.tick();
   assert.equal(b.child.killed, true, "멈추라고 한 지 5분이 지나면 끊는다");
-  assert.equal(pauser.pausedCount(), 2);
+  assert.equal(pauser.units().filter((u) => u.paused).length, 2);
 });
 
 test("합치기 잠금 안(hold)이면 풀릴 때까지 멈추지 않는다", () => {
@@ -251,6 +253,8 @@ test("저장: 멈춘 단위만 세션 id·작업 폴더·단계·남은 시간�
   b.unit.hold = () => true; // 합치는 중이라 멈추지 못한 일감
   pauser.requestPause();
   pauser.tick();
+  a.unit.detach();
+  void pauser.gate(a.unit); // A 는 정리를 마치고 멈춤 완료
   const saved = pauser.persist();
   assert.equal(saved.length, 1);
   assert.deepEqual({ key: saved[0].key, sessionId: saved[0].sessionId, dir: saved[0].dir, phase: saved[0].phase, timeLeftMs: saved[0].timeLeftMs }, { key: "A", sessionId: "sess-A", dir: "/w/A", phase: "build", timeLeftMs: 100_000 });
@@ -266,8 +270,9 @@ test("멈추라고 한 순간 이미 결과를 낸 턴은 멈춘 것으로 세�
   const a = mk("A");
   pauser.requestPause();
   pauser.tick();
-  assert.equal(pauser.pausedCount(), 1);
+  assert.equal(a.unit.paused, true);
   a.unit.resetPaused();
   assert.equal(pauser.pausedCount(), 0);
   assert.equal(a.unit.paused, false);
+  assert.equal(a.unit.state, "running");
 });

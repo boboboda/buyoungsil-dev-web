@@ -102,7 +102,9 @@ test("/next: 감독 프로그램이 slots=0 으로 요청하면(드레인) 일�
 // ── 표시 문구·화면 ──
 test("드레인 문구: 업데이트 대기·배포 대기(진행 중 일감 N개 끝나면)", () => {
   const { drainNote } = loadTs("lib/factory/supervisorDrain.ts");
-  assert.match(drainNote("update", 2), /업데이트 대기\(진행 중 일감 2개 끝나면/);
+  // 1-2 D-2: 감독 업데이트는 일감이 끝나길 기다리지 않고 AI 를 안전한 지점에서 멈췄다가 새 버전에서 같은 세션으로 이어 준다
+  assert.match(drainNote("update", 2), /업데이트 중\(진행 중인 AI 일감 2개를 안전한 지점에서 잠깐 멈추고/);
+  assert.match(drainNote("update", 2), /같은 세션으로 이어 줘요/);
   assert.match(drainNote("deploy", 1), /배포 대기\(진행 중 일감 1개 끝나면/);
   assert.match(drainNote("deploy", 0), /배포 대기\(곧/);
 });

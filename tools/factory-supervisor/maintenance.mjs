@@ -276,8 +276,8 @@ async function runTurn(m, ctx, resume = null) {
     await post(ctx, { action: "report", turnId: m.turnId, done: { ok: false, text: resume ? `다시 시작 필요: 업데이트로 멈춘 정비를 이어 주다 오류가 났어요. ${message}` : message } });
     ctx.log(`[정비] 실행 실패: ${message}`);
   } finally {
-    ctx.pauser?.remove(`maint:${m.turnId}`);
     lock?.release();
+    ctx.pauser?.remove(`maint:${m.turnId}`);
     // 정비가 끝나면(성공·실패 모두) AI 한도를 한 번 새로 읽는다. 던지지 않고 15초 넘으면 기다리지 않음
     void refreshAfterTask({ log: (line) => ctx.log(`[정비] ${line}`) });
   }
@@ -366,12 +366,12 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
     kind: "maint",
     engine: m.aiEngine,
     label: "[정비]",
-    snapshot: () => ({ turn: m, title: m.title, dir, sessionId, startHead, notes: prepNotes, timeLeftMs: Math.max(60_000, Math.round(timeLeftMs)), savedAt: Date.now() }),
+    snapshot: () => ({ turn: m, title: m.title, dir, sessionId, startHead, notes: prepNotes, timeLeftMs: Math.max(5000, Math.round(timeLeftMs)), savedAt: Date.now() }),
     onCut: (cut) => addLog(`업데이트로 멈추면서 끝나지 않은 명령을 끊었어요. 이어 줄 때 다시 실행해요: ${cut.join(" | ")}`),
   });
   const beat = setInterval(() => flush(), 20_000); // 멈춰 있는 동안에도 보고(임대·20분 보고 없음 판정)를 이어 간다
   let code = -1;
-  let promptText = firstPrompt;
+  let promptText = resume?.sessionId ? RESUME_MESSAGE : firstPrompt;
   let resumeId = resume?.sessionId || null;
   for (;;) {
     if (unit && ctx.pauser.mode() === "pausing") await ctx.pauser.gate(unit); // 업데이트하려고 멈추는 중이면 AI 를 띄우지 않고 기다린다

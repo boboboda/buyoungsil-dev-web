@@ -162,6 +162,7 @@ test("감독 프로그램 업데이트: 일감이 돌면 받지 않고 대기(�
   const dir = path.join(host, "tools", "factory-supervisor");
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(path.join(SUP, "update.mjs"), path.join(dir, "update.mjs"));
+  fs.copyFileSync(path.join(SUP, "pause.mjs"), path.join(dir, "pause.mjs")); // update.mjs 가 묶기 판단을 pause.mjs 에서 가져온다(1-2 D-2)
   fs.writeFileSync(path.join(dir, "supervisor.mjs"), 'import "./update.mjs";\nexport const v = 1;\n');
   git(host, "checkout", "-q", "-b", "main");
   git(host, "add", "-A");
@@ -205,7 +206,7 @@ say({ step: "NOT-EXITED" });
   assert.equal(steps[0].head, before, "대기 중에는 받지 않음");
   assert.equal(steps[1].waiting, true, "일감 1개 남아도 대기");
   assert.equal(steps[1].head, before);
-  assert.match(r.stdout, /자동 업데이트 대기: 새 버전/);
+  assert.match(r.stdout, /자동 업데이트 시작 준비: 새 버전/); // 멈춤 조정자 없이(예전 방식) 부르면 일감이 모두 끝나길 기다린다
   assert.match(r.stdout, /자동 업데이트 완료/);
   assert.equal(git(host, "rev-parse", "HEAD"), after, "일감이 모두 끝난 뒤 새 버전을 받음");
 });
@@ -228,6 +229,7 @@ test("감독 프로그램 업데이트: 직접 요청한(지금 업데이트) �
   const dir = path.join(host, "tools", "factory-supervisor");
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(path.join(SUP, "update.mjs"), path.join(dir, "update.mjs"));
+  fs.copyFileSync(path.join(SUP, "pause.mjs"), path.join(dir, "pause.mjs")); // update.mjs 가 묶기 판단을 pause.mjs 에서 가져온다(1-2 D-2)
   fs.writeFileSync(path.join(dir, "supervisor.mjs"), 'import "./update.mjs";\nexport const v = 1;\n');
   git(host, "checkout", "-q", "-b", "main");
   git(host, "add", "-A");

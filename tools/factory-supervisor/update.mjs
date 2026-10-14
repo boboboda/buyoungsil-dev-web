@@ -151,6 +151,7 @@ let lastNote = "";
 let warnedNoLauncher = false;
 let waiting = null; // 새 버전을 받으려고 일감을 멈추는 중: { to, manual }. 이 동안 새 일감을 받지 않는다
 let pending = null; // 새 버전이 있지만 일감이 돌고 있어 모으는 중(묶기): { to, firstSeenAt }. 이 동안은 아무것도 막지 않는다
+const OUTBOX_WAIT_MAX_MS = 5 * 60_000; // 못 보낸 보고가 전달되길 기다리는 최대 시간(받고 다시 켜면 메모리 대기열이 사라진다)
 let bundleMin = 60; // 묶는 시간(분). 서버 설정(updateBundleMin)이 오면 바뀐다
 export const updateWaiting = () => !!waiting;
 export function setUpdateBundle(v) {
@@ -195,7 +196,7 @@ function cancelWaiting(pauser, why) {
  *  running: 지금 돌고 있는 일감·정비의 수(멈춘 것 포함). pauser: pause.mjs 의 멈춤 조정자(없으면 예전처럼 모두 끝나길 기다린다)
  *  now: 시험에서 시계를 바꿀 수 있다
  */
-export function maybeUpdate({ running, autoUpdate, pauser = null, now: now0 = Date.now() }) {
+export function maybeUpdate({ running, autoUpdate, pauser = null, pendingReports = 0, now: now0 = Date.now() }) {
   if (waiting && !waiting.manual && autoUpdate === false) cancelWaiting(pauser, "자동 업데이트가 꺼졌어요. 새 일감을 다시 받아요.");
   if (autoUpdate === false && pending && !pending.manual) pending = null;
 
@@ -217,22 +218,37 @@ export function maybeUpdate({ running, autoUpdate, pauser = null, now: now0 = Da
         return;
       }
       if (soft > 0 || paused > 0) pauser.requestPause();
-      const stillRunning = pauser.softCount(); // 안전한 지점에 있던 AI 는 requestPause 에서 바로 멈췄다. 명령이 도는 중인 것만 남는다
-      if (stillRunning > 0) {
+      // 안전한 지점에 있던 AI 는 requestPause 에서 바로 프로세스를 끊었다. 명령이 도는 중인 것은 끝나길, 끊은 것은 마지막 정리(로그 보내기 등)를 마치고 멈춤 상태가 되길 기다린다
+      const left = Math.max(0, running - pauser.pausedCount());
+      if (left > 0) {
+        const stillRunning = pauser.softCount();
+        const stuck = Math.max(0, left - stillRunning);
         if (now0 - (waiting.noteAt ?? 0) > 60_000) {
           waiting.noteAt = now0;
-          log(`자동 업데이트: 진행 중인 AI ${stillRunning}개를 안전한 지점(명령이 끝난 직후)에서 멈추는 중이에요.`);
+          if (stillRunning > 0) log(`자동 업데이트: 진행 중인 AI ${stillRunning}개를 안전한 지점(명령이 끝난 직후)에서 멈추는 중이에요.`);
+          else if (stuck > 0 && waiting.manual) log(`자동 업데이트 대기: 합치기·검증처럼 멈출 수 없는 단계 ${stuck}개가 끝나길 기다려요(멈출 수 있는 AI 는 멈췄어요).`);
         }
         return;
       }
-      if (hard > 0) return; // 지금 업데이트: 멈출 수 있는 건 멈췄고 합치기 등이 끝나길 기다린다
+    }
+    // 아직 못 보낸 보고(재전송 대기열은 메모리뿐이라 다시 켜지면 사라진다)가 있으면 잠깐 기다린다. 홈페이지가 오래 안 돌아오면(최대 5분) 그대로 받는다
+    if (pendingReports > 0) {
+      waiting.outboxSince ??= now0;
+      if (now0 - waiting.outboxSince < OUTBOX_WAIT_MAX_MS) {
+        if (now0 - (waiting.noteAt ?? 0) > 60_000) {
+          waiting.noteAt = now0;
+          log(`자동 업데이트 대기: 아직 못 보낸 보고 ${pendingReports}개가 홈페이지에 전달되길 기다려요(최대 5분).`);
+        }
+        return;
+      }
+      log(`자동 업데이트: 못 보낸 보고 ${pendingReports}개가 5분 넘게 전달되지 않아 그대로 받아요(대기열은 다시 켜지면 사라져요).`);
     }
     // 모두 멈췄거나 돌던 것이 없다 → 받는다
     return applyUpdate({ pauser, manual: waiting.manual });
   }
 
   const sinceCheck = now0 - lastCheck;
-  const bundleDue = pending && bundleDecision({ firstSeenAt: pending.firstSeenAt, now: now0, bundleMin, idle: running === 0, forced: false }).action === "now";
+  const bundleDue = pending && sinceCheck >= 30_000 && bundleDecision({ firstSeenAt: pending.firstSeenAt, now: now0, bundleMin, idle: running === 0, forced: false }).action === "now";
   if (!forced && (autoUpdate === false || (sinceCheck < CHECK_EVERY_MS && !bundleDue))) return;
   const manual = forced;
   forced = false;

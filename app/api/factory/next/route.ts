@@ -161,7 +161,7 @@ export async function GET(req: NextRequest) {
     const labCleanup = await labCleanupForNext().catch(() => []);
     const uploadTest = await consumeUploadTest(); // 통제실 '업로드 시험'(한 번)
     void sweepReviewVideos(); // 7일 지난 검토 영상 정리(가끔)
-    const updateBundleMin = (await getUpdateBundleMin().catch(() => null))?.value;
+    const updateBundleMin = (await Promise.resolve().then(() => getUpdateBundleMin()).catch(() => null))?.value;
     const extra = {
       defaultAiEngine,
       ...(updateBundleMin === undefined ? {} : { updateBundleMin }), // 감독 프로그램 업데이트 때 새 커밋을 모으는 시간(분, 0~180, 0 = 바로 받음)
