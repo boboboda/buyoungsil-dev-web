@@ -609,6 +609,8 @@ model FactoryJob {
   parallelSource  String? // 병행 그룹을 정한 쪽: manual(사람이 묶거나 푼 일감: 지휘자는 건드리지 않음) | conductor(지휘자가 자동으로 묶음). lib/factory/conductor.ts
   conductorInfo   Json? // 지휘자 판단(결정·이유·예상 파일·영역·확신도·판단 키). 비밀값 없음
   cardId          String? // 결과물 카드(factory_cards.id): 있으면 이 카드의 도구·방법·옵션·참고 규칙으로 실행한다(2-2). NULL = 예전 방식(프로젝트 도구 설정)
+  toolInput       Json? // 도구 일감(kind=tool) 입력: { count, subjects, extra, refArtIds, estimatedCost, confirmed } (lib/factory/toolJobs.ts). 키 값 없음
+  toolResult      Json? // 도구 일감 결과: { cost, arts:[{url,subject,kind}], message, needsConfirmation }. 키 값 없음
   handoff         Json? // 인계 기록 마지막 항목(Claude Code ↔ Codex 공유 인계, 읽기 전용 표시용). lib/factory/handoff.ts 가 정리해서 저장. 비밀값·기획서·diff 없음
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?

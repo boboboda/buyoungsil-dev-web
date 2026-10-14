@@ -88,7 +88,7 @@ const cut = (v: string | null | undefined, max: number) => {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 };
 
-export type JobEvent = "pending" | "done" | "failed" | "review" | "linkwait";
+export type JobEvent = "pending" | "done" | "failed" | "review" | "linkwait" | "needs_confirmation";
 
 // 일감 상태가 바뀐 것을 알린다. 절대 던지지 않는다.
 export async function notifyJobEvent(
@@ -129,6 +129,12 @@ export async function notifyJobEvent(
     } else if (event === "review") {
       text = `👀 검토 대기: ${name} (${job.appSlug}) 스토어 자료가 준비됐어요
 통제실 출시 패키지에서 확인하고 [이대로 진행]·[다시 만들기]·[취소] 중에 골라 주세요.`;
+    } else if (event === "needs_confirmation") {
+      // 도구 일감(2-3): PixelLab 비용 한도에 걸려 멈춤. 통제실 [그대로 진행]·[취소]로 정한다
+      text = `⚠️ 확인 필요(비용 한도)
+${name} (${job.appSlug}) · ${kind}
+${cut(maskSecrets(job.failReason), 200) || "비용 한도를 넘었어요."}
+통제실 할 일에서 [그대로 진행] 또는 [취소]를 눌러 주세요.`;
     } else if (event === "linkwait") {
       text = `🎬 영상 링크 대기: ${name} (${job.appSlug})\n이미지·문구는 반영했어요. 홍보 영상을 YouTube 에 올린 뒤 출시 카드에서 링크를 붙여 넣어 주세요(링크 없이 마칠 수도 있어요).`;
     } else if (event === "done") {

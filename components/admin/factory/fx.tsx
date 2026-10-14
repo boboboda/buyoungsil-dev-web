@@ -11,6 +11,7 @@ export const JOB_TONE: Record<string, Tone> = {
   running: "run",
   review: "warn",
   linkwait: "warn",
+  needs_confirmation: "warn",
   done: "ok",
   failed: "bad",
   cancelled: "bad",
@@ -82,6 +83,7 @@ export function jobStepState(job: {
       return { reached: 1, current: 2, tone: "run" };
     case "review":
     case "linkwait":
+    case "needs_confirmation":
       return { reached: 2, current: 3, tone: "warn" };
     case "done":
       return { reached: 3, current: null, tone: "ok" };
@@ -192,6 +194,8 @@ export function jobStatusInfo(status: string): StatusInfo {
       return { kind: "approval", label: "검토 필요" };
     case "linkwait":
       return { kind: "approval", label: "영상 링크 필요" };
+    case "needs_confirmation":
+      return { kind: "approval", label: "확인 필요(비용 한도)" };
     case "done":
       return { kind: "done", label: "완료" };
     case "failed":

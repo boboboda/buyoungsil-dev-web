@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
       createdAt: text("createdAt"),
       decidedAt: text("decidedAt"),
       cardId: text("cardId") || undefined,
-      cardVersion: /^d{1,6}$/.test(text("cardVersion")) ? Number(text("cardVersion")) : undefined,
+      cardVersion: /^\d{1,6}$/.test(text("cardVersion")) ? Number(text("cardVersion")) : undefined,
     });
 
     if (registered.ok === false) return fail(registered.status, registered.message);

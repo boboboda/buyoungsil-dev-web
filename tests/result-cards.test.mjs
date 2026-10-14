@@ -355,7 +355,7 @@ test("배선: 일감 받기·등록·커넥터·화면·마이그레이션이 �
   assert.match(next, /projectToolSettings = cardRun \? \{ version: cardRun\.version, settings: cardRun\.settings \} : toolSettings\.get/, "카드 일감은 카드로 만든 설정을 내려 준다");
   assert.match(next, /cardRun\?\.pinned/, "기본 그림 고정은 picked 맨 앞");
   assert.match(next, /cardMissing/, "카드를 못 쓰면 감독이 알 수 있게");
-  assert.match(read("lib/factory/jobs.ts"), /"parallelGroup", "cardId"`/, "일감 가져올 때 cardId 도 돌려받는다");
+  assert.match(read("lib/factory/jobs.ts"), /"parallelGroup", "cardId"/, "일감 가져올 때 cardId 도 돌려받는다");
   assert.match(read("app/api/factory/art/route.ts"), /cardId: text\("cardId"\)/);
   const mcp = read("lib/factory/mcp.ts");
   for (const name of ["list_cards", "get_card", "create_card", "update_card"]) {

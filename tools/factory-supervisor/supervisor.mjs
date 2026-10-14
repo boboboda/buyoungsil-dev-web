@@ -52,6 +52,7 @@ import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./servera
 import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
 import { createAssetUploader } from "./assetupload.mjs";
 import { createArtRegistrar } from "./artregister.mjs";
+import { deleteToolJobFolder, runToolJob } from "./tooljob.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { startDeviceStats } from "./devicestats.mjs";
 import { startToolkitReport } from "./toolkitinfo.mjs";
@@ -708,10 +709,10 @@ async function flush(st, extra = {}) {
 
 async function finish(st, status, fields) {
   st.job.aiOutcome = { ...st.job.aiOutcome, status, summary: fields?.summary, failReason: fields?.failReason, sessionId: st.sessionId };
-  if (st.dir !== cfg.workDir && !st.lab) recordLifecycle(st.home ?? st.dir, st.job.aiEngine, status, st.job.id);
+  if (st.dir !== cfg.workDir && !st.lab && !st.tool) recordLifecycle(st.home ?? st.dir, st.job.aiEngine, status, st.job.id);
   // 인계 기록 항목: Git·변경 파일·검사 같은 사실은 여기서 직접 채우고, 요청·남은 작업·주의는 AI 최종 답변의 '## 인계' 블록에서 읽는다.
   // 실패한 일감도 남긴다. 같은 항목을 통제실에 보고하고(일감 상세 '인계 기록'), 폴더의 .factory/handoff.json 에도 쓴다
-  if (st.dir !== cfg.workDir && !st.lab) {
+  if (st.dir !== cfg.workDir && !st.lab && !st.tool) {
     try {
       const o = st.job.aiOutcome;
       const failed = status === "failed";
@@ -893,6 +894,48 @@ async function runJob(job, resume = null) {
       lock.release();
     }
     cleanupWorktree(job); // 병행 일감: 사본·임시 브랜치 정리(성공·실패 모두)
+  }
+}
+
+// ───────────── 도구 일감 (AI 없이 카드로 바로 생성, 2-3) ─────────────
+// 앱 슬롯과 따로 센다(toolRunning, 서버 설정 동시 실행 수). AI 턴이 없고 앱 폴더도 열지 않는다: 도구 중계를 직접 불러 factory/tooljobs/<id> 에서만 돈다(tooljob.mjs).
+const toolRunning = new Map(); // jobId -> state
+let toolConcurrency = 2; // 서버 /next 의 toolJobs.concurrency (1~4)
+
+async function runToolJobEntry(job) {
+  const secrets = readSecrets();
+  const st = {
+    job, dir: cfg.workDir, tool: true, child: null, logs: [], phase: "tool", phaseDirty: true, shots: new Set(), shotHashes: new Set(), shotTries: new Map(),
+    reportable: true, stopped: null, result: null, started: Date.now(),
+    redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets)])(s)),
+  };
+  toolRunning.set(job.id, st);
+  log(`[${job.appSlug}] 도구 일감 시작 (AI 없이 카드로 바로 실행, 시도 ${job.attempts}): ${job.title}`);
+  const beat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
+  const timer = setTimeout(() => stop(st, `시간 초과(${cfg.jobTimeoutMin}분)`), cfg.jobTimeoutMin * 60 * 1000);
+  try {
+    const out = await runToolJob(job, {
+      workDir: cfg.workDir,
+      toolkitDir: cfg.toolkitDir,
+      pythonCmd: cfg.pythonCmd,
+      secrets,
+      post: (form) => outbox.send({ kind: "art", path: "/api/factory/art", body: form, jobId: job.id, bytes: [...form.values()].reduce((n, v) => n + (typeof v === "object" ? v.size ?? 0 : 0), 0) }),
+      log: (level, m) => addLog(st, level, m),
+      redact: st.redact,
+      isStopped: () => !!st.stopped,
+      onChild: (c) => { st.child = c; },
+    });
+    // 취소·종료·서버 쪽 상태 변경이면 서버가 이미 정리했으므로 보고하지 않는다(시간 초과만 실패로 보고)
+    if (st.stopped && !/^시간 초과/.test(st.stopped)) return;
+    const fields = out.status === "done" ? { summary: st.redact(out.summary).slice(0, 3800) } : { failReason: st.redact(out.failReason).slice(-1800), failStage: out.status === "needs_confirmation" ? "cost-limit" : "tool" };
+    await finish(st, out.status, { ...fields, toolResult: out.toolResult });
+  } catch (e) {
+    await finish(st, "failed", { failReason: st.redact(`도구 일감 실행 중 오류: ${e.message}`).slice(0, 1800), failStage: "tool" });
+  } finally {
+    clearInterval(beat);
+    clearTimeout(timer);
+    if (st.stopped) { try { deleteToolJobFolder(cfg.workDir, job.id); } catch { /* 이미 없거나 지우지 못함: 다음 시도가 새로 만든다 */ } }
+    toolRunning.delete(job.id);
   }
 }
 
@@ -2120,12 +2163,12 @@ async function loop() {
   while (!shuttingDown) {
     try {
       // 새 버전 확인(10분마다): 공장이 비었으면 바로, 일감이 돌면 새 커밋을 모았다가(묶기) 받는다. 받기로 하면 진행 중인 AI 를 안전한 지점에서 멈추고(저장) 받아 여기서 exit(0), 새 감독이 이어 준다
-      maybeUpdate({ running: running.size + (maintenanceBusy() ? 1 : 0), autoUpdate, pauser, pendingReports: outbox.size() });
+      maybeUpdate({ running: running.size + toolRunning.size + (maintenanceBusy() ? 1 : 0), autoUpdate, pauser, pendingReports: outbox.size() });
     } catch (e) {
       log(`자동 업데이트 확인 중 오류: ${e.message}`);
     }
     // 통제실 [감독 재시작]: 일감·정비가 다 끝났으면 여기서 종료(실행기가 다시 띄움)
-    if (maybeRestart({ busy: running.size > 0 || maintenanceBusy(), shutdown, log })) break;
+    if (maybeRestart({ busy: running.size > 0 || toolRunning.size > 0 || maintenanceBusy(), shutdown, log })) break;
     try {
       const free = appLimit() - running.size - pendingApps(); // 이어 줄 일감 자리도 비워 둔다
       { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
@@ -2139,7 +2182,8 @@ async function loop() {
         // 배포 중 보고는 재전송 대기열(outbox)이 지키고, 새 일감도 계속 가져간다(1-1 D-1)
         const drain = updateWaiting() ? "update" : "";
         const take = planTake({ limit: appLimit(), running: running.size + pendingApps(), draining: !!drain });
-        const drainQuery = drain ? new URLSearchParams({ drain, drainJobs: String(running.size + (maintenanceBusy() ? 1 : 0)) }).toString() : "";
+        extra.set("toolSlots", String(drain || shuttingDown ? 0 : Math.max(0, toolConcurrency - toolRunning.size))); // 도구 일감 자리(앱 슬롯과 따로)
+        const drainQuery = drain ? new URLSearchParams({ drain, drainJobs: String(running.size + toolRunning.size + (maintenanceBusy() ? 1 : 0)) }).toString() : "";
         const r = await api(
           "GET",
           `/api/factory/next?worker=${encodeURIComponent(cfg.worker)}&slots=${take}&commit=${encodeURIComponent(info.commit)}&note=${encodeURIComponent(info.note)}&subject=${encodeURIComponent(info.subject ?? "")}&${drainQuery ? drainQuery + "&" : ""}${extra}`,
@@ -2166,6 +2210,10 @@ async function loop() {
           if (["claude", "codex"].includes(r.data?.defaultAiEngine) && defaultAiEngine !== r.data.defaultAiEngine) {
             defaultAiEngine = r.data.defaultAiEngine;
             log(`주사용 AI: ${ENGINE_LABELS[defaultAiEngine]} (새 지시 기본값, 개별 AI 선택 유지)`);
+          }
+          if (Number.isInteger(r.data?.toolJobs?.concurrency) && r.data.toolJobs.concurrency >= 1 && r.data.toolJobs.concurrency <= 4 && r.data.toolJobs.concurrency !== toolConcurrency) {
+            log(`도구 일감 동시 실행: ${toolConcurrency}개 → ${r.data.toolJobs.concurrency}개`);
+            toolConcurrency = r.data.toolJobs.concurrency;
           }
           const nextBroker = brokerSettings(r.data?.toolBroker);
           if (nextBroker.mode !== toolBroker.mode) log(`도구 요청 중계: ${TOOL_MODE_LABELS[nextBroker.mode]}`);
@@ -2220,7 +2268,13 @@ async function loop() {
             log(paused ? "일시 정지됨 (홈페이지)" : "다시 시작됨");
           }
           if (!paused && r.data?.conductor && !conductorBusy() && Array.isArray(r.data.conductor.jobs)) void runConductorTask(r.data.conductor); // 지휘자 판단(기다리지 않음)
-          const offered = paused ? [] : r.data.jobs ?? [];
+          // 도구 일감(kind=tool)은 앱 슬롯과 따로 센다: 서버가 toolSlots 만큼만 내준다
+          const offeredAll = paused ? [] : r.data.jobs ?? [];
+          for (const job of offeredAll.filter((j) => j.kind === "tool")) {
+            if (toolRunning.has(job.id)) continue;
+            runToolJobEntry(job).catch((e) => log(`[${job.appSlug}] 도구 일감 예기치 못한 오류: ${e.stack || e.message}`));
+          }
+          const offered = offeredAll.filter((j) => j.kind !== "tool");
           if (offered.length > Math.max(0, free)) log(`서버가 자리(${Math.max(0, free)}개)보다 많은 일감 ${offered.length}개를 줬어요. 넘친 ${offered.length - Math.max(0, free)}개는 시작하지 않아요(10분 안에 서버가 대기열로 되돌려요).`);
           for (const job of offered.slice(0, Math.max(0, free))) {
             if (running.has(job.id) || starting.has(job.id)) continue; // 이어 주는 중인 일감이 같은 id 로 다시 내려온 것(임대가 만료됐다 되돌아온 경우)은 시작하지 않는다
@@ -2253,6 +2307,10 @@ function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   log(running.size ? "종료합니다. 돌던 작업은 멈추고, 서버가 10분 안에 대기열로 되돌려요." : "종료합니다.");
+  for (const st of toolRunning.values()) {
+    st.stopped = "감독 프로그램 종료";
+    killTree(st.child);
+  }
   for (const st of running.values()) {
     st.stopped = "감독 프로그램 종료";
     killTree(st.child);

@@ -30,6 +30,8 @@ import {
 import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import { NOT_TARGET_MESSAGE, isStoreTarget } from "@/lib/factory/storeTarget";
 import { appQueue, allAppQueues, numberQueue } from "@/lib/factory/queue";
+import { enqueueToolJob } from "@/lib/factory/toolJobsDb";
+import { TOOL_KIND, toolResultView } from "@/lib/factory/toolJobs";
 import { MAX_GROUP_SIZE, newGroupId, PARALLEL_KIND, SOURCE_MANUAL } from "@/lib/factory/parallel";
 import {
   ACTIVE_STATUSES,
@@ -86,7 +88,8 @@ export const FACTORY_INSTRUCTIONS =
   + "enqueue_release_job(appSlug, kind) 으로 출시 일감을 등록해요(kind: first=첫 출시, store=스토어 자료 수정, project=프로젝트 업데이트. 지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
   + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 앱별 git 원격·배포 서버·도메인·컨테이너는 get_project_links 로 읽어요(읽기 전용). 결과물 카드(프로젝트마다 이런 결과물을 이렇게 만든다는 뜻: 도구·방법·옵션·참고 규칙)는 list_cards·get_card 로 읽고 create_card·update_card 로 만들고 고쳐요(설명서 한계 검사를 통과해야 저장, 키는 저장하지 않고 방법에 맞게 자동). 카드로 일을 시키려면 enqueue_app_job 의 card 에 카드 이름을 적어요. 게임 툴킷 도구의 방법·필요한 키·한계는 list_tools 와 get_tool_manifest 로 읽어요(읽기 전용, 지시문이 설명서 한계를 넘으면 등록이 거절되고 필요한 키는 자동으로 들어가요). 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
   + "실험: 도구·방식이 되는지 확인하는 테스트는 앱 수정 일감이 아니라 enqueue_lab_job(title, planMarkdown, aiEngine?, keep?)으로 보내요(앱 이름 없이, 작업 PC 의 실험 폴더에서 무인 실행. 승인은 관리자). "
-  + "끝나면 get_factory_job 의 실험_결과에 올라온 이미지·mp4 주소(몇 시간 뒤 만료)와 report.md 본문이 나와요. 이미지 주소를 열어 직접 보고 검수할 수 있어요.";
+  + "끝나면 get_factory_job 의 실험_결과에 올라온 이미지·mp4 주소(몇 시간 뒤 만료)와 report.md 본문이 나와요. 이미지 주소를 열어 직접 보고 검수할 수 있어요. "
+  + "그림 만들기(결과물 카드): AI 에이전트 없이 카드로 바로 만들려면 앱 수정 일감 대신 generate_with_card(appSlug, card, subject, count, extra?)를 쓰세요. 도구 일감 id 를 돌려주고, get_factory_job 의 도구_결과에 상태·비용·만든 그림 주소가 나와요(비용 한도를 넘으면 확인 대기로 멈춰요).";
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -134,7 +137,7 @@ export const FACTORY_TOOLS = [
     name: "get_factory_job",
     description:
       "지시 하나의 상세를 돌려줍니다: 상태, 완료 요약, 실패 이유, 최근 로그, 스크린샷 주소. includePlan=true 면 등록했던 기획서 본문도 같이 줘요. " +
-      "실험(lab) 일감이면 실험_결과(올라온 이미지·mp4·report.md 파일 주소와 report.md 본문, 올리지 못한 파일 목록, 기존 저장소 변경 사후 검사)도 같이 줘요. " +
+      "도구 일감(kind=tool)이면 도구_결과(상태·비용·만든 그림 주소)도 같이 줘요. 실험(lab) 일감이면 실험_결과(올라온 이미지·mp4·report.md 파일 주소와 report.md 본문, 올리지 못한 파일 목록, 기존 저장소 변경 사후 검사)도 같이 줘요. " +
       "수정 지시를 쓰기 전에 원래 기획과 결과 요약을 확인할 때 쓰세요.",
     inputSchema: {
       type: "object",
@@ -287,6 +290,30 @@ export const FACTORY_TOOLS = [
         source: { type: "string", description: "어느 기획 대화에서 온 건지 짧게 (선택, 100자 이내)" },
       },
       required: ["title", "planMarkdown"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "generate_with_card",
+    description:
+      "결과물 카드로 AI 없이 바로 그림을 만드는 '도구 일감'을 등록합니다(2-3). 작업 PC 의 감독 프로그램이 도구 중계로 카드의 도구·방법·옵션을 그대로 실행하고(임시 폴더, 앱 폴더는 열지 않음), " +
+      "만든 그림을 그림 저장소에 '후보'로 올려요(카드 id·판 번호·참고 그림·비용 기록). 앱 수정 일감(enqueue_app_job)보다 가볍고 권한·경로 문제가 적어요. " +
+      "승인은 기존과 같이 관리자가 통제실·텔레그램에서 해요(설정에서 '비용 한도 안이면 자동 승인'을 켠 경우만 자동). PixelLab 비용 한도(일·월)를 넘으면 확인 대기(needs_confirmation)로 멈추고 통제실 할 일과 텔레그램으로 알려요. " +
+      "결과로 도구 일감 id 를 돌려주고, get_factory_job(id) 의 도구_결과에서 상태·비용·만든 그림 주소를 볼 수 있어요. 카드는 list_cards 로 확인하세요. 앱 데이터를 바꾸는 일(배치 등)은 이 도구가 아니라 enqueue_app_job 으로.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appSlug: { type: "string", description: "카드가 있는 프로젝트(앱) 이름. 예: one-tiny-frame" },
+        card: { type: "string", description: "결과물 카드 이름 또는 id (list_cards)" },
+        subject: { type: "string", description: "대상 이름 하나. 예: 싹이 (subjects 와 둘 중 하나)" },
+        subjects: { type: "array", items: { type: "string" }, maxItems: 8, description: "대상 이름 여러 개(최대 8). 대상마다 count 장씩 만들어요" },
+        count: { type: "integer", minimum: 1, maximum: 8, description: "대상마다 만들 장 수 (기본 1). 한 일감은 전체 16장까지" },
+        extra: { type: "string", description: "추가 지시 (선택, 500자 이내). 그릴 내용에 덧붙어요" },
+        refArtIds: { type: "array", items: { type: "string" }, maxItems: 4, description: "참고로 고를 승인 그림 id (선택, 최대 4장, 그림 저장소의 id)" },
+        source: { type: "string", description: "어느 기획 대화에서 온 건지 짧게 (선택, 100자 이내)" },
+      },
+      required: ["appSlug", "card"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -521,6 +548,8 @@ export async function callFactoryTool(
       return setJobPriority(args);
     case "enqueue_lab_job":
       return enqueueLabJob(args);
+    case "generate_with_card":
+      return generateWithCard(args);
     case "supervisor_control":
       return supervisorControl(args);
     case "get_release_status":
@@ -1031,6 +1060,7 @@ async function getJob(args: Record<string, unknown>): Promise<ToolResult> {
       .reverse()
       .map((l) => `${iso(l.at)} [${l.level}] ${l.message}`),
     ...(job.kind === LAB_KIND ? { 실험_결과: await labResultView(job.id, job.labResult, { signed: true }) } : {}),
+    ...(job.kind === TOOL_KIND ? { 도구_결과: toolResultView(job.toolInput, job.toolResult, job.status, job.cardId) } : {}),
     ...(args.includePlan === true ? { planMarkdown: job.planMarkdown } : {}),
   });
 }
@@ -1403,6 +1433,13 @@ async function setJobPriority(args: Record<string, unknown>): Promise<ToolResult
 }
 
 // 실험(lab) 일감 등록. 앱 이름 없이(appSlug 는 고정 "lab") 승인 대기로 쌓는다. 같은 내용이 이미 대기·진행 중이면 중복으로 거절한다.
+async function generateWithCard(args: Record<string, unknown>): Promise<ToolResult & { jobId?: string }> {
+  const source = clean(args.source, 100) || null;
+  const r = await enqueueToolJob(args, { source });
+
+  return r.ok ? { ...text(`${r.message}\n끝나면 get_factory_job(${r.id}) 의 도구_결과로 상태·비용·만든 그림 주소를 보세요.`), jobId: r.id } : text(r.message, true);
+}
+
 export async function enqueueLabJob(args: Record<string, unknown>): Promise<ToolResult & { jobId?: string }> {
   if (args.aiEngine !== undefined && !isAiEngine(args.aiEngine)) return text("작업 AI는 claude 또는 codex만 쓸 수 있어요.", true);
   const aiEngine = isAiEngine(args.aiEngine) ? args.aiEngine : await getDefaultAiEngine();

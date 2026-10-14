@@ -104,6 +104,8 @@ test("관리자 API: 비관리자는 막히고, 관리자는 0~180 정수만 저
 const runtimeCalls = [];
 let bundleSetting = { value: 60, isDefault: true };
 const nextRoute = loadTs("app/api/factory/next/route.ts", {
+  "@/lib/factory/toolJobsDb": { claimToolJobs: async () => [], getToolSettings: async () => ({ autoApprove: false, concurrency: 2 }) },
+  "@/lib/factory/toolJobs": { TOOL_KIND: "tool" },
   "@/lib/factory/jobs": { MAX_SLOTS: 4, WORKER_RE: /^[A-Za-z0-9._-]{1,60}$/, releaseExpiredLeases: async () => {}, claimJobs: async () => [] },
   "@/lib/factory/http": { fail: (status, message) => NextResponse.json({ message }, { status }), guardWorker: async () => null },
   "@/lib/factory/settings": {

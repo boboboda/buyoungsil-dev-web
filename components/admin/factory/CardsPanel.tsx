@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CardHistoryItem, CardView } from "@/lib/factory/cardsDb";
 import type { CardField, CardOptions, RefRules } from "@/lib/factory/cards";
 import type { LinkRow } from "@/lib/factory/projectLinks";
+import ToolJobsPanel from "@/components/admin/factory/ToolJobsPanel";
 
 interface ToolChoice {
   name: string;
@@ -421,6 +422,7 @@ export default function CardsPanel({ appSlug }: { appSlug: string }) {
           </div>
         </fieldset>
       ) : null}
+      <ToolJobsPanel appSlug={appSlug} cards={snap?.cards ?? []} />
       {notice ? (
         <p className="text-sm fx-muted" role="status">
           {notice}

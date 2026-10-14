@@ -228,7 +228,7 @@ function enqueueCtx(names) {
     "@/lib/factory/projectLinksDb": {},
     "@/lib/factory/toolManifest": lib,
     "@/lib/factory/toolManifestDb": db,
-    "@/lib/factory/cardsDb": {},
+    "@/lib/factory/toolJobsDb": { enqueueToolJob: async () => { throw new Error("시험에 없음"); }, claimToolJobs: async () => [], getToolSettings: async () => ({ autoApprove: false, concurrency: 2 }) }, "@/lib/factory/toolJobs": { TOOL_KIND: "tool", toolResultView: () => null, cleanToolResult: (v) => v }, "@/lib/factory/cardsDb": {},
     "@/lib/factory/cards": {},
     "@/lib/factory/supervisor": { runSupervisorAction: async () => ({}), SUPERVISOR_ACTIONS: [] },
     "@/lib/factory/release": {},

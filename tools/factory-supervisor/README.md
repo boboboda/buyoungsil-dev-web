@@ -398,3 +398,11 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
 - **그림에 카드 붙이기**: 후보 그림을 올릴 때 `cardId`·`cardVersion` 을 같이 보낸다(호출에 `card` 를 줬으면 그 카드, 아니면 일감의 카드). 카드 없이 만든 그림은 비어 있다.
 - **실험 일감**: 카드를 불렀으면 실험 폴더에 `card-settings.json` 을 쓰고 지시문 머리말에 카드 안내(+고정 그림 주소)를 넣는다.
 - 시험: `npm run test:result-cards`.
+
+## 도구 일감: AI 없이 카드로 바로 생성 (2-3: `tooljob.mjs`, 일감 종류 `tool`)
+- 서버 `/next?toolSlots=N` 이 앱 슬롯(`slots`)과 따로 도구 일감을 내준다. 동시 실행 수는 서버 설정(기본 2, 응답의 `toolJobs.concurrency`). 같은 카드는 동시에 하나. 업데이트 대기(드레인) 중에는 `toolSlots=0`.
+- AI 턴이 없다. `factory/tooljobs/<id>` 임시 폴더에서만 `toolkit.run` 어댑터(`toolbroker.mjs`)로 카드의 도구·방법·옵션을 그대로 부른다. 앱 폴더·정비 폴더는 열지 않는다.
+- 키는 일감의 `requiredSecrets` 이면서 설명서가 정한 이 방법의 키만, 도구를 부르는 순간의 환경변수로만. 감독 프로그램 환경(토큰 등)은 물려주지 않고 값은 로그·보고·파일에 남기지 않는다.
+- 만든 그림은 `/api/factory/art` 에 후보로(카드 id·판 번호 포함). 업로드 확인 뒤 `deleteToolJobFolder`(그 폴더 하나만, `rm -rf` 아님)로 정리. 못 올리면 폴더를 남기고 실패 보고.
+- 비용 한도에 걸리면 `status: needs_confirmation` 으로 보고(`toolResult` 에 비용·그림·메시지). 사람이 확인한 일감(`toolInput.confirmed`)은 카드 설정의 비용 한도를 건너뛴다.
+- AI 턴이 필요한 방법(`AI_TURN_METHODS`)은 「지원 안 함」으로 거절한다. 자세한 규칙: `docs/tool-jobs.md`. 시험: `npm run test:tool-jobs`.

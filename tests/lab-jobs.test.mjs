@@ -189,8 +189,8 @@ function loadJobs() {
 
 test("일감 종류: lab 은 '실험', 기존 종류 이름은 그대로", () => {
   const { jobs } = loadJobs();
-  assert.deepEqual(jobs.JOB_KINDS, ["new", "revision", "release", "lab"]);
-  assert.deepEqual(jobs.KIND_LABELS, { new: "새 앱", revision: "수정", release: "출시 준비", lab: "실험" });
+  assert.deepEqual(jobs.JOB_KINDS, ["new", "revision", "release", "lab", "tool"]);
+  assert.deepEqual(jobs.KIND_LABELS, { new: "새 앱", revision: "수정", release: "출시 준비", lab: "실험", tool: "도구" });
 });
 
 test("보고: lab 필드를 읽고 정리한다(없으면 null)", () => {

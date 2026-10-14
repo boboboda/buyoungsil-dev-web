@@ -8,6 +8,8 @@ import prisma from "@/lib/prisma";
 import { enqueueWithId } from "@/lib/factory/mcp";
 import { APP_SLUG_RE } from "@/lib/factory/jobs";
 import { isManualTool } from "@/lib/factory/studioProjects";
+import { DEFAULT_CARD_NAME, readCardData } from "@/lib/factory/cards";
+import { enqueueToolJob } from "@/lib/factory/toolJobsDb";
 
 export const STUDIO_REQUEST_APP = "studio"; // Studio 접근 키의 앱 이름
 export const STUDIO_REQUEST_SOURCE = "Studio 요청";
@@ -504,7 +506,7 @@ function buildTitle(appTitle: string, v: StudioRequest): string {
 export type StudioRequestResult =
   | {
       status: 201;
-      body: { ok: true; jobId: string; status: "승인 대기" };
+      body: { ok: true; jobId: string; status: "승인 대기"; jobKind?: "tool"; autoApproved?: boolean };
       result: "created";
       jobId: string;
     }
@@ -514,7 +516,44 @@ export type StudioRequestResult =
       result: "invalid" | "conflict";
     };
 
-/** 검사한 요청으로 '승인 대기' 수정 일감을 만든다. */
+/**
+ * 카드로 표현할 수 있는 요청(재생성 regen, 다시 그리는 쪼개기 split/redraw)은 AI 턴 없는 도구 일감(2-3)으로 보낸다.
+ * 그 앱에 켜진 pixel-art 카드 중 요청한 방식(engine)과 같은 방법을 가진 것이 있어야 한다(없으면 null → 예전처럼 앱 수정 일감).
+ * 배치(layout)·자유 지시·자르기(cut)는 앱 데이터를 바꾸는 일이라 늘 앱 일감.
+ */
+export async function tryStudioToolJob(v: StudioRequest): Promise<{ jobId: string; autoApproved: boolean } | null> {
+  const redraw = v.kind === "split" && v.method === "redraw";
+
+  if (v.kind !== "regen" && !redraw) return null;
+  const engine = v.kind === "regen" || v.kind === "split" ? v.engine : undefined;
+  const toolName = v.tool?.name ?? "pixel-art";
+
+  if (!engine) return null;
+  const rows = await prisma.factoryCard.findMany({ where: { appSlug: v.appSlug, enabled: true, tool: toolName, method: engine }, orderBy: { createdAt: "asc" }, take: 30 });
+  const fits = rows.filter((r) => {
+    const kind = readCardData(r).options.kind;
+
+    return kind === undefined || kind === "image-prop" || kind === "image-scene";
+  });
+  const card = fits.find((r) => r.name === DEFAULT_CARD_NAME) ?? fits[0];
+
+  if (!card) return null;
+  const subjects = v.kind === "split" ? v.parts : [v.propName];
+  let refArtIds: string[] = [];
+
+  if (v.kind === "split") {
+    // 쪼갤 원본 소품의 승인 그림을 참고로(없으면 참고 없이)
+    const art = await prisma.factoryArt.findFirst({ where: { appSlug: v.appSlug, subject: v.propName, status: "approved" }, orderBy: { decidedAt: "desc" }, select: { id: true } });
+
+    if (art) refArtIds = [art.id];
+  }
+  const extra = [v.kind === "split" ? `'${v.propName}' 한 그림에서 쪼갠 부분을 각각 따로 놓을 소품으로 그린다.` : "", v.note].filter(Boolean).join(" ");
+  const r = await enqueueToolJob({ appSlug: v.appSlug, card: card.id, count: 1, subjects, extra, refArtIds }, { source: STUDIO_REQUEST_SOURCE });
+
+  return r.ok ? { jobId: r.id, autoApproved: r.autoApproved } : null;
+}
+
+/** 검사한 요청으로 '승인 대기' 수정 일감을 만든다. 카드로 표현할 수 있는 요청은 도구 일감으로. */
 export async function createStudioRequestJob(
   v: StudioRequest,
 ): Promise<StudioRequestResult> {
@@ -547,6 +586,15 @@ export async function createStudioRequestJob(
       409,
       `승인 대기 중인 Studio 요청이 ${pending}개예요. 통제실에서 정리한 뒤에 다시 보내세요.`,
     );
+  const tool = await tryStudioToolJob(v).catch(() => null);
+
+  if (tool)
+    return {
+      status: 201,
+      body: { ok: true, jobId: tool.jobId, status: "승인 대기", jobKind: "tool", ...(tool.autoApproved ? { autoApproved: true } : {}) },
+      result: "created",
+      jobId: tool.jobId,
+    };
   const aiEngine =
     (v.kind === "regen" || v.kind === "split") && v.engine === "codex"
       ? "codex"

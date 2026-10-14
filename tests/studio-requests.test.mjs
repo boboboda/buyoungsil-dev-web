@@ -100,7 +100,7 @@ function setup() {
     "@/lib/factory/ai": { isAiEngine: (v) => v === "claude" || v === "codex" },
     "@/lib/factory/settings": { getDefaultAiEngine: async () => "claude" },
     "@/lib/factory/secretEntries": { knownSecretNames: async () => [] },
-    "@/lib/factory/toolManifest": {}, "@/lib/factory/cardsDb": {}, "@/lib/factory/cards": {}, "@/lib/factory/toolManifestDb": { inspectPlan: async () => ({ violations: [], autoSecrets: [] }) },
+    "@/lib/factory/toolManifest": {}, "@/lib/factory/toolJobsDb": { enqueueToolJob: async () => { throw new Error("시험에 없음"); }, claimToolJobs: async () => [], getToolSettings: async () => ({ autoApprove: false, concurrency: 2 }) }, "@/lib/factory/toolJobs": { TOOL_KIND: "tool", toolResultView: () => null, cleanToolResult: (v) => v }, "@/lib/factory/cardsDb": {}, "@/lib/factory/cards": {}, "@/lib/factory/toolManifestDb": { inspectPlan: async () => ({ violations: [], autoSecrets: [] }) },
     "@/lib/factory/telegram": { notifyJobEvent: async (id, what) => notified.push([id, what]) },
     "@/lib/factory/supervisor": { runSupervisorAction: async () => ({}), SUPERVISOR_ACTIONS: [] },
     "@/lib/factory/lab": { LAB_KIND: "lab", LAB_SLUG: "factory-lab", labResultView: async () => null },

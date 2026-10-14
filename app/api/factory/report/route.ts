@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     await markRequest(requestId);
 
     // 끝났거나 실패했으면 텔레그램으로 알린다. (실패해도 보고 응답에는 영향 없음)
-    if (out.status === "done" || out.status === "failed" || out.status === "review" || out.status === "linkwait") void notifyJobEvent(parsed.value.jobId, out.status);
+    if (out.status === "done" || out.status === "failed" || out.status === "review" || out.status === "linkwait" || out.status === "needs_confirmation") void notifyJobEvent(parsed.value.jobId, out.status);
 
     return NextResponse.json({ ok: true, status: out.status, leaseUntil: out.leaseUntil, ...(out.finalCheck ? { finalCheck: out.finalCheck } : {}) });
   } catch (error) {

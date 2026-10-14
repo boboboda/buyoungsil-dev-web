@@ -263,7 +263,7 @@ test("연결: 감독 루프가 업데이트·배포 대기를 새 일감 멈춤�
   assert.match(src, /const drain = updateWaiting\(\) \? "update" : ""/);
   assert.match(src, /draining: !!drain \}\)/);
   assert.doesNotMatch(src, /deployHold\(\)/, "서버 배포는 새 일감 가져가기를 막지 않음(1-1 D-1)");
-  assert.match(src, /drain, drainJobs: String\(running\.size \+ \(maintenanceBusy\(\) \? 1 : 0\)\)/);
+  assert.match(src, /drain, drainJobs: String\(running\.size \+ toolRunning\.size \+ \(maintenanceBusy\(\) \? 1 : 0\)\)/);
   assert.match(src, /updateDraining: \(\) => updateWaiting\(\) \|\| restartPending\(\)/);
   assert.doesNotMatch(src, /maintenanceBusy: maintenanceBusy\(\) \}\)/, "정비 중이라서 새 일감을 멈추던 예전 코드가 없음");
   const maint = fs.readFileSync(path.join(SUP, "maintenance.mjs"), "utf8");

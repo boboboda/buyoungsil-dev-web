@@ -38,6 +38,8 @@ interface Overview {
       source: string | null;
       createdAt: string;
     }[];
+    // 도구 일감(2-3)이 PixelLab 비용 한도에 걸려 확인을 기다리는 것(예전 서버에는 없다)
+    confirmations?: { id: string; appSlug: string; title: string; reason: string; source: string | null; at: string }[];
     turns: {
       id: string;
       threadId: string;
@@ -387,6 +389,22 @@ export default function FactoryOverview({
     setBusy(null);
   };
 
+  // 도구 일감 확인 대기: [그대로 진행]·[취소] (통제실 지시 동작과 같은 주소)
+  const jobAction = async (action: "confirm" | "cancel", id: string, confirmText?: string) => {
+    if (confirmText && !window.confirm(confirmText)) return;
+    setBusy(`${action}:${id}`);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/admin/factory/jobs/${encodeURIComponent(id)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      const d = (await res.json().catch(() => ({}))) as { message?: string };
+
+      setNotice(d.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."));
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    }
+    setBusy(null);
+    load();
+  };
   const inbox = data?.inbox;
   const sup = data?.supervisor;
   const modelDefaults = {
@@ -395,6 +413,7 @@ export default function FactoryOverview({
   };
   const todo = inbox
     ? inbox.jobs.length +
+      (inbox.confirmations?.length ?? 0) +
       inbox.turns.length +
       inbox.deploys.filter((d) => !d.inProgress && d.canDeploy !== false).length
     : 0;
@@ -418,7 +437,7 @@ export default function FactoryOverview({
           </div>
           {!inbox && <p className="text-sm text-default-500">읽는 중…</p>}
           {inbox &&
-            inbox.jobs.length + inbox.turns.length + inbox.deploys.length ===
+            inbox.jobs.length + (inbox.confirmations?.length ?? 0) + inbox.turns.length + inbox.deploys.length ===
               0 && (
               <p className="text-sm text-default-500">
                 기다리는 승인·배포가 없어요.
@@ -543,6 +562,34 @@ export default function FactoryOverview({
             </div>
           ))}
 
+          {inbox?.confirmations?.map((c) => (
+            <div
+              key={`c-${c.id}`}
+              className="fx-row flex flex-col gap-2 rounded-lg border border-warning-300 p-2 sm:flex-row sm:items-center sm:justify-between"
+              data-confirm={c.id}
+              data-st="approval"
+            >
+              <div className="min-w-0 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusChip kind="approval" label="확인 필요(비용 한도)" />
+                  <KindChip label="🛠 도구" />
+                  <span className="font-medium">{c.title}</span>
+                  <span className="font-mono text-xs text-default-500">
+                    {c.appSlug} · {when(c.at)}
+                  </span>
+                </div>
+                {c.reason && <div className="mt-1 text-xs text-default-600">{c.reason}</div>}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button className="min-h-11 sm:min-h-0" color="warning" isDisabled={!!busy} size="sm" onPress={() => jobAction("confirm", c.id, "비용 한도를 넘지만 그대로 진행할까요?")}>
+                  그대로 진행
+                </Button>
+                <Button className="min-h-11 sm:min-h-0" isDisabled={!!busy} size="sm" variant="flat" onPress={() => jobAction("cancel", c.id)}>
+                  취소
+                </Button>
+              </div>
+            </div>
+          ))}
           {inbox?.jobs.map((j) => (
             <div
               key={`j-${j.id}`}
@@ -552,7 +599,7 @@ export default function FactoryOverview({
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip kind="approval" />
-                  <KindChip label={`${j.kind === "release" ? "📦 " : j.kind === "lab" ? "🧪 " : "📱 "}${j.kindLabel}`} />
+                  <KindChip label={`${j.kind === "release" ? "📦 " : j.kind === "lab" ? "🧪 " : j.kind === "tool" ? "🛠 " : "📱 "}${j.kindLabel}`} />
                   <span className="font-medium">{j.title}</span>
                   <span className="font-mono text-xs text-default-500">
                     {j.appSlug} · {j.stack} · {when(j.createdAt)}
@@ -565,7 +612,7 @@ export default function FactoryOverview({
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2" data-approve={j.id}>
-                {j.aiEngine && (
+                {j.aiEngine && j.kind !== "tool" && (
                   <ClaudeModelSelect
                     defaults={modelDefaults}
                     disabled={!!busy}

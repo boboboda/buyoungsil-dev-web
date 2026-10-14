@@ -91,7 +91,7 @@ const excerpt = (v: string | null | undefined, max: number) => {
 
 /** 승인·배포를 기다리는 것들(통제실 맨 위 "할 일" 목록) */
 export async function approvalInbox() {
-  const [jobs, turns, bundle] = await Promise.all([
+  const [jobs, turns, bundle, confirmJobs] = await Promise.all([
     prisma.factoryJob.findMany({
       where: { status: "pending" },
       orderBy: { createdAt: "asc" },
@@ -114,6 +114,13 @@ export async function approvalInbox() {
       include: { maintenance: { select: { id: true, title: true } } },
     }),
     deployBundle(),
+    // 도구 일감(2-3)이 PixelLab 비용 한도에 걸려 사람의 확인을 기다리는 것
+    prisma.factoryJob.findMany({
+      where: { status: "needs_confirmation" },
+      orderBy: { updatedAt: "asc" },
+      take: 50,
+      select: { id: true, appSlug: true, title: true, failReason: true, source: true, updatedAt: true },
+    }),
   ]);
   // 서버 배포는 정비 대기열 단위로 하나로 묶는다(배포 안 된 지시 목록 + 가장 최근 정비 커밋)
   const ip = bundle.inProgress;
@@ -137,6 +144,7 @@ export async function approvalInbox() {
 
   return {
     jobs: jobs.map((j) => ({ ...j, kindLabel: KIND_LABELS[j.kind] ?? j.kind })),
+    confirmations: confirmJobs.map((j) => ({ id: j.id, appSlug: j.appSlug, title: j.title, reason: excerpt(j.failReason, 300), source: j.source, at: j.updatedAt })),
     turns: turns.map((t) => ({
       id: t.id,
       threadId: t.maintenance.id,

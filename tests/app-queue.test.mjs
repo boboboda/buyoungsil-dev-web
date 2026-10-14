@@ -31,6 +31,7 @@ const match = (r, where = {}) =>
     if (k === "OR") return v.some((w) => match(r, w));
     if (v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {
       if ("in" in v) return v.in.includes(r[k]);
+      if ("notIn" in v) return !v.notIn.includes(r[k]);
       if ("not" in v) return r[k] !== v.not;
     }
     return r[k] === v;
@@ -87,7 +88,7 @@ function setup() {
     "@/lib/factory/secretEntries": { knownSecretNames: async () => [] },
     "@/lib/factory/telegram": { notifyJobEvent: async () => {} },
     "@/lib/factory/projectLinks": {}, "@/lib/factory/projectLinksDb": {}, // get_project_links 는 이 시험에서 쓰지 않는다
-    "@/lib/factory/toolManifest": {}, "@/lib/factory/cardsDb": {}, "@/lib/factory/cards": {}, "@/lib/factory/toolManifestDb": { inspectPlan: async () => ({ violations: [], autoSecrets: [] }) }, // 도구 설명서는 이 시험에서 쓰지 않는다
+    "@/lib/factory/toolManifest": {}, "@/lib/factory/toolJobsDb": { enqueueToolJob: async () => { throw new Error("시험에 없음"); }, claimToolJobs: async () => [], getToolSettings: async () => ({ autoApprove: false, concurrency: 2 }) }, "@/lib/factory/toolJobs": { TOOL_KIND: "tool", toolResultView: () => null, cleanToolResult: (v) => v }, "@/lib/factory/cardsDb": {}, "@/lib/factory/cards": {}, "@/lib/factory/toolManifestDb": { inspectPlan: async () => ({ violations: [], autoSecrets: [] }) }, // 도구 설명서는 이 시험에서 쓰지 않는다
     "@/lib/factory/supervisor": { runSupervisorAction: async () => ({}), SUPERVISOR_ACTIONS: [] },
     "@/lib/factory/release": {},
     "@/lib/factory/storeAssets": {},

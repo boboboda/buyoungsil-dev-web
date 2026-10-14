@@ -17,6 +17,7 @@ import { cleanParallelInfo, DEFAULT_PER_APP, pickClaims, finishGroupIfDone, PARA
 
 // 실험 일감 종류 이름. 실험 결과 처리(lib/factory/lab.ts)는 보고에 lab 값이 있을 때만 불러온다(앱 일감 경로는 그 파일을 읽지 않는다)
 const LAB_KIND = "lab";
+const TOOL_KIND = "tool"; // 도구 일감(lib/factory/toolJobs.ts). 순환 불러오기를 피하려고 이름만 여기 다시 둔다
 
 export const LEASE_MS = 10 * 60 * 1000;
 export const MAX_LOGS_PER_JOB = 500;
@@ -48,13 +49,13 @@ export const STACK_LABELS: Record<(typeof STACKS)[number], string> = {
 
 // 일감 종류. release = 출시 준비(완성된 앱만, 수정 지시처럼 기존 폴더에서 출시 자료를 만든다)
 // lab = 실험(도구·방식이 되는지 확인하는 테스트. 앱 폴더가 아니라 lab<id> 에서 돈다. lib/factory/lab.ts)
-export const JOB_KINDS = ["new", "revision", "release", "lab"] as const;
-export const KIND_LABELS: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비", lab: "실험" };
+export const JOB_KINDS = ["new", "revision", "release", "lab", "tool"] as const;
+export const KIND_LABELS: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비", lab: "실험", tool: "도구" };
 
 export const ACTIVE_STATUSES = ["pending", "approved", "running"] as const;
 // review = 출시 일감(첫 출시·스토어 수정)이 자료를 만든 뒤 사람의 검토를 기다리는 중. 작업 PC 를 붙잡지 않는다(ACTIVE 아님, 임대 없음, 자동 취소 없음)
 // linkwait = 스토어 수정에서 홍보 영상을 만든 뒤, 사람이 YouTube 에 올린 링크를 기다리는 중(이미지·문구는 이미 반영). 다른 일감을 막지 않는다
-export const JOB_STATUSES = ["pending", "approved", "running", "review", "linkwait", "done", "failed", "cancelled"] as const;
+export const JOB_STATUSES = ["pending", "approved", "running", "review", "linkwait", "needs_confirmation", "done", "failed", "cancelled"] as const;
 export const LOG_LEVELS = ["info", "warn", "error"] as const;
 
 // 제어문자를 지우고(줄바꿈·탭은 둔다) 길이를 자른다.
@@ -129,6 +130,7 @@ export interface ClaimedJob {
   planMarkdown: string;
   attempts: number;
   parallelGroup: string | null; // 병행 그룹(수정 일감만 의미 있음). 있으면 감독 프로그램이 git worktree 에서 실행한다
+  toolInput?: unknown; // 도구 일감(kind=tool) 입력(lib/factory/toolJobs.ts). 다른 종류는 없음
   cardId?: string | null; // 결과물 카드(2-2). 있으면 /next 가 그 카드로 만든 설정·카드 정보를 붙인다
 }
 
@@ -144,10 +146,10 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
 
   const [approvedAll, running, pendingGrouped] = await Promise.all([
     prisma.factoryJob.findMany({
-      where: { status: "approved", aiEngine: { in: [...engines] } },
+      where: { status: "approved", kind: { not: TOOL_KIND }, aiEngine: { in: [...engines] } }, // 도구 일감(tool)은 앱 슬롯과 따로 claimToolJobs 가 가져간다
       select: { id: true, appSlug: true, kind: true, priority: true, approvedAt: true, createdAt: true, parallelGroup: true },
     }),
-    prisma.factoryJob.findMany({ where: { status: "running" }, select: { appSlug: true, kind: true, parallelGroup: true } }),
+    prisma.factoryJob.findMany({ where: { status: "running", kind: { not: TOOL_KIND } }, select: { appSlug: true, kind: true, parallelGroup: true } }),
     prisma.factoryJob.findMany({ where: { status: "pending", kind: PARALLEL_KIND, parallelGroup: { not: null } }, select: { appSlug: true, kind: true, parallelGroup: true } }),
   ]);
   // 묶음 중 일부만 승인된 상태에서는 그 묶음 일감을 가져가지 않는다(승인 대기 일감이 남아 있는 동안). 모두 승인되면 같이 내준다
@@ -164,7 +166,7 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
         "phase" = NULL, "failReason" = NULL, "failStage" = NULL, "parallelInfo" = NULL, "updatedAt" = ${ts(now)}
     WHERE "status" = 'approved' AND "id" IN (${Prisma.join(ids)})
     RETURNING "id", "appSlug", "title", "kind", "parentJobId", "stack", "priority",
-              "requiredSecrets", "planMarkdown", "attempts", "aiEngine", "aiModel", "parallelGroup", "cardId"`);
+              "requiredSecrets", "planMarkdown", "attempts", "aiEngine", "aiModel", "parallelGroup", "cardId", "toolInput"`);
 
   rows.sort((a, b) => b.priority - a.priority);
   await reassignParents(rows);
@@ -227,7 +229,7 @@ export interface ReportInput {
   jobId: string;
   phase?: string | null; // undefined 이면 그대로 둔다
   logs: { level: string; message: string }[];
-  status?: "done" | "failed" | "review" | "linkwait";
+  status?: "done" | "failed" | "review" | "linkwait" | "needs_confirmation";
   summary?: string | null;
   build?: Prisma.InputJsonObject | null; // 앱 업데이트 빌드 결과(완료 때)
   failReason?: string | null;
@@ -235,6 +237,7 @@ export interface ReportInput {
   toolRequests?: ToolRequestRecord[] | null; // 도구 요청 중계 목록(감독 프로그램이 전체를 보냄. null 이면 그대로 둔다)
   handoff?: HandoffEntry | null; // 인계 기록 항목(일감이 끝날 때만. null 이면 그대로 둔다)
   parallel?: ParallelInfo | null; // 병행 상태(worktree 실행·잠금 대기·합치는 중·다시 맞추기·합친 시각·검사). lib/factory/parallel.ts. null·없음이면 그대로 둔다
+  toolResult?: Record<string, unknown> | null; // 도구 일감 결과(비용·만든 그림·메시지). 아직 정리 전 값: 저장할 때 lib/factory/toolJobs.ts cleanToolResult 로 정리하고, 도구 일감에만 저장한다
   lab?: Record<string, unknown> | null; // 실험 일감 결과(건너뛴 파일·사후 검사). 아직 정리 전 값: 저장할 때 lib/factory/lab.ts cleanLabResult 로 정리하고, 실험 일감에만 저장한다
 }
 
@@ -249,10 +252,10 @@ export function parseReport(body: unknown): ParseResult {
   const jobId = typeof b.jobId === "string" ? b.jobId : "";
   if (!ID_RE.test(jobId)) return { ok: false, reason: "jobId 형식이 올바르지 않습니다." };
 
-  let status: "done" | "failed" | "review" | "linkwait" | undefined;
+  let status: "done" | "failed" | "review" | "linkwait" | "needs_confirmation" | undefined;
   if (b.status !== undefined) {
-    if (b.status !== "done" && b.status !== "failed" && b.status !== "review" && b.status !== "linkwait") {
-      return { ok: false, reason: "status 는 done, failed, review, linkwait 만 보낼 수 있습니다." };
+    if (b.status !== "done" && b.status !== "failed" && b.status !== "review" && b.status !== "linkwait" && b.status !== "needs_confirmation") {
+      return { ok: false, reason: "status 는 done, failed, review, linkwait, needs_confirmation 만 보낼 수 있습니다." };
     }
     status = b.status;
   }
@@ -291,6 +294,7 @@ export function parseReport(body: unknown): ParseResult {
       toolRequests: cleanToolRequests(b.toolRequests),
       handoff: cleanHandoff(b.handoff),
       parallel: cleanParallelInfo(b.parallel),
+      toolResult: b.toolResult && typeof b.toolResult === "object" && !Array.isArray(b.toolResult) ? (b.toolResult as Record<string, unknown>) : null,
       lab: b.lab && typeof b.lab === "object" && !Array.isArray(b.lab) ? (b.lab as Record<string, unknown>) : null,
     },
   };
@@ -355,7 +359,24 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
     else if (status === "linkwait" && job?.kind !== "release") status = "done"; // 영상 링크 대기는 출시 일감만
   }
 
-  if (status === "linkwait") {
+  if (status === "needs_confirmation") {
+    // 도구 일감(2-3): 비용 한도 때문에 사람의 확인을 기다린다(임대 없음). 도구 일감이 아닌 일감은 이 상태를 쓸 수 없어 실패로 둔다
+    const job = await prisma.factoryJob.findUnique({ where: { id: input.jobId }, select: { kind: true } });
+
+    if (job?.kind === TOOL_KIND) {
+      data.status = "needs_confirmation";
+      data.summary = input.summary ?? null;
+      data.failReason = input.failReason ?? "비용 한도를 넘어 확인이 필요해요.";
+      data.phase = "needs_confirmation";
+      data.leaseUntil = null;
+    } else {
+      status = "failed";
+      data.status = "failed";
+      data.failReason = input.failReason ?? "확인 대기는 도구 일감만 쓸 수 있어요.";
+      data.finishedAt = now;
+      data.leaseUntil = null;
+    }
+  } else if (status === "linkwait") {
     // 이미지·문구 반영은 끝났고 영상 링크만 기다린다(임대 없음, 자동 취소 없음)
     data.status = "linkwait";
     data.summary = input.summary ?? null;
@@ -388,6 +409,18 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   // 병행 그룹의 마지막 일감이 합쳐져 완료되면 그룹 요약을 통제실에 남긴다(던지지 않음)
   // 지휘자가 묶은 그룹이면 마지막 전체 점검을 감독 프로그램에 맡긴다(finalCheck)
   const group = status === "done" ? await finishGroupIfDone(input.jobId) : null;
+
+  if (input.toolResult) {
+    // 도구 일감만 저장한다(다른 종류가 toolResult 를 보내도 무시). 비용은 한도 계산에 쓴다
+    const isTool = await prisma.factoryJob.count({ where: { id: input.jobId, kind: TOOL_KIND } });
+
+    if (isTool) {
+      const { cleanToolResult } = await import("@/lib/factory/toolJobs");
+      const clean = cleanToolResult(input.toolResult);
+
+      if (clean) await prisma.factoryJob.update({ where: { id: input.jobId }, data: { toolResult: clean as unknown as Prisma.InputJsonObject } }).catch(() => undefined);
+    }
+  }
 
   if (input.lab) {
     // 실험 일감만 저장한다(다른 종류가 lab 필드를 보내도 무시)
@@ -477,7 +510,7 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
     case "cancel": {
       // 검토 대기(review) 일감도 취소할 수 있다(검토 영상은 지운다. PC 의 자료는 그대로)
       const res = await prisma.factoryJob.updateMany({
-        where: { id, status: { in: [...ACTIVE_STATUSES, "review", "linkwait"] } },
+        where: { id, status: { in: [...ACTIVE_STATUSES, "review", "linkwait", "needs_confirmation"] } },
         data: { status: "cancelled", finishedAt: now, leaseUntil: null },
       });
       if (res.count > 0) await deleteReviewVideo(id).catch(() => {});
@@ -510,6 +543,22 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
         },
       });
       return res.count > 0 ? done("재시도하도록 승인했어요.") : explainNoChange(id, "재시도");
+    }
+
+    case "confirm": {
+      // 도구 일감(2-3): 비용 한도로 멈춘 일감을 [그대로 진행]. 한 번 확인된 일감은 한도 검사 없이 다시 대기열에 들어간다
+      const job = await prisma.factoryJob.findUnique({ where: { id }, select: { kind: true, status: true, toolInput: true } });
+
+      if (!job) return refuse(404, "없는 지시예요.");
+      if (job.kind !== TOOL_KIND) return refuse(409, "도구 일감만 확인할 수 있어요.");
+      if (job.status !== "needs_confirmation") return refuse(409, `지금 상태(${job.status})에서는 확인할 수 없어요. 확인 대기 일감만 돼요.`);
+      const input = job.toolInput && typeof job.toolInput === "object" && !Array.isArray(job.toolInput) ? (job.toolInput as Prisma.InputJsonObject) : {};
+      const res = await prisma.factoryJob.updateMany({
+        where: { id, status: "needs_confirmation" },
+        data: { status: "approved", approvedAt: now, attempts: 0, failReason: null, failStage: null, phase: null, workerId: null, leaseUntil: null, finishedAt: null, toolInput: { ...input, confirmed: true } },
+      });
+
+      return res.count > 0 ? done("한도를 확인하고 진행하도록 승인했어요.") : explainNoChange(id, "확인");
     }
 
     case "lab-delete-folder": {

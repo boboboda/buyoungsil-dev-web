@@ -101,12 +101,12 @@ export function numberQueue(rows: Row[], opts: NumberOptions = {}): QueueItem[] 
 
 /** 한 앱의 대기열(running·approved·pending). */
 export async function appQueue(appSlug: string, opts: NumberOptions = {}): Promise<QueueItem[]> {
-  return numberQueue(await prisma.factoryJob.findMany({ where: { appSlug, ...listWhere() }, select: SELECT }), opts);
+  return numberQueue(await prisma.factoryJob.findMany({ where: { appSlug, kind: { not: "tool" }, ...listWhere() }, select: SELECT }), opts);
 }
 
-/** 여러 앱의 대기열을 한 번에(앱 이름 → 목록). 실행 중·대기가 없는 앱은 빠진다. 실험(lab)은 앱이 아니라 뺀다. */
+/** 여러 앱의 대기열을 한 번에(앱 이름 → 목록). 실행 중·대기가 없는 앱은 빠진다. 실험(lab)·도구 일감(tool)은 앱 슬롯과 따로 돌아서 뺀다. */
 export async function allAppQueues(opts: NumberOptions = {}): Promise<Record<string, QueueItem[]>> {
-  const rows = await prisma.factoryJob.findMany({ where: { ...listWhere(), kind: { not: "lab" } }, select: SELECT });
+  const rows = await prisma.factoryJob.findMany({ where: { ...listWhere(), kind: { notIn: ["lab", "tool"] } }, select: SELECT });
   const bySlug = new Map<string, Row[]>();
 
   for (const r of rows) bySlug.set(r.appSlug, [...(bySlug.get(r.appSlug) ?? []), r]);

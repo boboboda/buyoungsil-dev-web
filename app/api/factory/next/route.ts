@@ -33,6 +33,8 @@
 //   실험 일감(kind=lab, appSlug=lab)은 앱 폴더가 아니라 lab<id> 에서 돈다(rules·prompt 없음). 통제실 [폴더 지우기]가 눌렸으면 labCleanup: [jobId, ...] 가 붙는다
 //   (감독 프로그램이 해당 lab<id> 만 지우고 /api/factory/lab 으로 알린다. shared 는 지우지 않는다).
 //   출시 일감(kind=release)에는 release: { kind, stages, outbox, resumeFrom, resumeNote, key } 가 붙는다(lib/factory/release.ts releaseJobExtras).
+//   도구 일감(kind=tool, 2-3): 감독 프로그램이 toolSlots=N(지금 더 받을 수 있는 도구 일감 수, 0~4)을 보내면 앱 슬롯과 따로 N개까지 내준다. 각 job 에 toolInput({ count, subjects, extra, refArtIds, estimatedCost, confirmed })·card·projectToolSettings·approvedArts·pickedArts 가 붙는다(작업 규칙·첫 지시문은 없음: AI 턴이 없다).
+//     응답에는 toolJobs: { concurrency, autoApprove } 도 붙어 감독 프로그램이 도구 슬롯 수를 정한다. toolSlots 를 안 보내는 예전 감독 프로그램은 도구 일감을 받지 않는다.
 //   병행 실행(단계 C-1): 각 job 에 parallelGroup(문자열 또는 null)이 붙는다. 수정(revision) 일감이 그룹을 가지면 감독 프로그램은 앱 폴더가 아니라 git worktree 에서 실행하고
 //   끝난 순서대로 기본 브랜치에 합친다. 같은 앱·같은 그룹의 승인된 수정 일감은 설정 '같은 앱에서 같이 돌릴 수'(parallelPerApp, 기본 2)개까지 같이 내준다. 그룹이 없으면 앱당 1개.
 //   지휘자(단계 C-2): 감독 프로그램이 conductor=1(지금 판단을 맡을 수 있음) 또는 conductor=busy(판단 중)를 보내면, 같은 앱의 승인된 수정 일감이 그룹 없이 2개 이상일 때 응답에
@@ -67,6 +69,8 @@ import { getAppChecks } from "@/lib/factory/appChecks";
 import { projectSettingsForNext, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
 import { approvedForNext, pickedForJobs, type ArtDb, type PickDb } from "@/lib/factory/arts";
 import { cardRunForJobs, type CardRun } from "@/lib/factory/cardsDb";
+import { TOOL_KIND } from "@/lib/factory/toolJobs";
+import { claimToolJobs, getToolSettings } from "@/lib/factory/toolJobsDb";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -92,6 +96,8 @@ export async function GET(req: NextRequest) {
   const startedRaw = param("started", 40);
   const started = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(startedRaw) ? startedRaw : "";
   const hold = req.nextUrl.searchParams.get("hold") === "1";
+  const toolSlotsRaw = Math.floor(Number(param("toolSlots", 3)));
+  const toolSlots = Number.isFinite(toolSlotsRaw) ? Math.min(4, Math.max(0, toolSlotsRaw)) : 0; // 도구 일감 자리(앱 슬롯과 따로). 안 보내면 0
   // 드레인(업데이트·배포를 진행 중 일감이 끝나길 기다리는 중, 새 일감은 받지 않음). 표시용이라 모양이 이상하면 무시한다
   const drainRaw = param("drain", 10);
   const drain = drainRaw === "update" || drainRaw === "deploy" ? drainRaw : undefined;
@@ -209,7 +215,11 @@ export async function GET(req: NextRequest) {
     // 승인 직후 혼자 가져가기 막기: 같은 앱에 승인 대기 수정 일감이 또 있으면 마지막 승인 뒤 잠깐(설정 approvalWaitSec, 기본 60초) 기다린다. 0이면 기다리지 않는다
     const approvalWaitSec = (await getApprovalWaitSec().catch(() => null))?.value ?? 0;
     for (const slug of (await appsWaitingForApproval(cs, capable, approvalWaitSec).catch(() => new Map<string, number>())).keys()) holdApps.add(slug);
-    const claimed = slots > 0 ? await claimJobs(worker, slots, engines, { ...(perApp === undefined ? {} : { perApp }), holdApps }) : [];
+    const claimedApps = slots > 0 ? await claimJobs(worker, slots, engines, { ...(perApp === undefined ? {} : { perApp }), holdApps }) : [];
+    // 도구 일감: 앱 슬롯과 따로(AI 가 없어서 앱 폴더·병행 그룹과 상관없음). 드레인(slots=0 으로 신호만 받는 중)이면 감독 프로그램이 toolSlots=0 을 보낸다
+    const claimedTools = toolSlots > 0 && !drain ? await claimToolJobs(worker, toolSlots).catch(() => []) : [];
+    const claimed = [...claimedApps, ...claimedTools];
+    const toolJobsInfo = await getToolSettings().then((s) => ({ concurrency: s.concurrency, autoApprove: s.autoApprove })).catch(() => undefined);
     const conductor = conductorParam === "1" && !drain ? await conductorTaskForNext(cs).catch(() => null) : null;
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
     const overrides = claimed.length ? await getRuleOverrides().catch(() => ({})) : {};
@@ -233,6 +243,7 @@ export async function GET(req: NextRequest) {
       const arts = { ...checks, ...(approvedArts.has(j.appSlug) ? { approvedArts: approvedArts.get(j.appSlug) } : {}), ...(picked.length ? { pickedArts: picked } : {}) };
       const card = cardRun ? { card: { id: cardRun.id, name: cardRun.name, version: cardRun.version, tool: cardRun.tool, method: cardRun.method, rules: cardRun.rules, pinnedUrl: cardRun.pinned?.url ?? null } } : j.cardId ? { cardMissing: j.cardId } : {};
 
+      if (j.kind === TOOL_KIND) return { ...j, ...card, ...(cardRun ? { projectToolSettings } : {}), ...(approvedArts.has(j.appSlug) ? { approvedArts: approvedArts.get(j.appSlug) } : {}), ...(picked.length ? { pickedArts: picked } : {}) }; // 도구 일감은 AI 턴이 없어서 작업 규칙·첫 지시문이 없다
       if (j.kind === LAB_KIND) return { ...j, ...card, ...(cardRun ? { projectToolSettings } : {}) }; // 실험은 앱 작업 규칙·첫 지시문을 붙이지 않는다(감독 프로그램이 머리말을 만든다). 카드를 불렀으면 카드 정보와 설정만
 
       try {
@@ -242,7 +253,7 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    return NextResponse.json({ jobs, autoUpdate, ...(conductor ? { conductor } : {}), ...extra });
+    return NextResponse.json({ jobs, autoUpdate, ...(conductor ? { conductor } : {}), ...(toolJobsInfo ? { toolJobs: toolJobsInfo } : {}), ...extra });
   } catch (error) {
     console.error("[factory] next 실패:", error);
     return fail(500, "처리에 실패했습니다.");
