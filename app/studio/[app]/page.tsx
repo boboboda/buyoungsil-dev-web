@@ -1,5 +1,5 @@
 // app/studio/[app]/page.tsx
-// 공용 스튜디오 프로젝트 화면: 탭 [구성] [제작] [운영]. [구성](3-1)·[제작](3-2)을 채웠고 [운영]은 '준비 중' 자리(운영 하위 메뉴는 프로젝트 연결 설정의 기능 스위치를 따른다).
+// 공용 스튜디오 프로젝트 화면: 탭 [구성] [제작] [운영]. [구성](3-1)·[제작](3-2)·[운영](3-3: 검수함·보관함·생성 일정·서비스 운영·내보내기, 하위 메뉴는 프로젝트 연결 설정의 기능 스위치를 따른다).
 // 접근: 관리자 또는 이 앱의 Studio 접근 키(읽기 전용). 안 되면 같은 거부 화면.
 import Link from "next/link";
 
@@ -7,14 +7,16 @@ import { readStudioProject, type StudioProjectData } from "@/lib/studio/data";
 import { parseStudioTab, STUDIO_TABS, visibleOpsMenu } from "@/lib/studio/dashboard";
 import { resolveViewer } from "@/lib/studio/pageAccess";
 import { readMakeData, type MakeData } from "@/lib/studio/makeData";
+import { readOpsData, tickSchedules, type OpsData } from "@/lib/studio/opsData";
 import ConfigTab from "@/components/studio/ConfigTab";
 import MakeTab from "@/components/studio/MakeTab";
+import OpsTab from "@/components/studio/OpsTab";
 import StudioDenied from "@/components/studio/StudioDenied";
 
 export const dynamic = "force-dynamic";
 
 type Params = { app: string };
-type Search = { tab?: string | string[]; sub?: string | string[] };
+type Search = { tab?: string | string[]; sub?: string | string[]; art?: string | string[] };
 
 export default async function StudioProjectPage({ params, searchParams }: { params: Promise<Params>; searchParams: Promise<Search> }) {
   const { app } = await params;
@@ -59,6 +61,17 @@ export default async function StudioProjectPage({ params, searchParams }: { para
     }
   }
   const opsNow = ops.find((o) => o.key === sub) ?? ops[0];
+  const art = Array.isArray(search.art) ? search.art[0] : search.art;
+  let opsData: OpsData | null = null;
+
+  if (tab === "ops") {
+    if (viewer.kind === "admin") void tickSchedules(); // 열 때도 한 번 확인(1분에 한 번만)
+    try {
+      opsData = await readOpsData(app);
+    } catch (error) {
+      console.error("[studio] 운영 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
+    }
+  }
 
   return (
     <main className="mx-auto w-full max-w-6xl min-w-0 space-y-3 p-3 sm:p-4" data-studio-app={data.appSlug}>
@@ -99,7 +112,7 @@ export default async function StudioProjectPage({ params, searchParams }: { para
         )
       ) : null}
       {tab === "ops" ? (
-        <section className="fx-panel min-w-0 space-y-2 p-4" data-studio-pending="ops">
+        <section className="fx-panel min-w-0 space-y-3 p-4" data-studio-ops>
           <h2 className="fx-label">운영</h2>
           <ul aria-label="운영 하위 메뉴" className="flex flex-wrap gap-2" data-ops-menu>
             {ops.map((o) => (
@@ -115,8 +128,14 @@ export default async function StudioProjectPage({ params, searchParams }: { para
               </li>
             ))}
           </ul>
-          <p className="text-sm fx-muted">{opsNow?.label} — 준비 중이에요.</p>
-          {ops.length < 4 ? <p className="text-xs fx-muted">꺼진 기능의 메뉴는 숨겨요. 켜려면 구성 탭이 아니라 통제실의 프로젝트 연결 설정(스튜디오 기능)에서 바꿔요.</p> : null}
+          {opsData && opsNow ? (
+            <OpsTab canEdit={viewer.kind === "admin"} data={opsData} focusArt={art} sub={opsNow.key} />
+          ) : (
+            <p className="text-sm fx-muted" data-ops-failed role="status">
+              ○ 확인 못 함 — 운영 자료를 읽지 못했어요. 잠시 뒤 다시 열어 주세요.
+            </p>
+          )}
+          {ops.length < 5 ? <p className="text-xs fx-muted">꺼진 기능의 메뉴는 숨겨요. 켜려면 구성 탭이 아니라 통제실의 프로젝트 연결 설정(스튜디오 기능)에서 바꿔요.</p> : null}
         </section>
       ) : null}
     </main>

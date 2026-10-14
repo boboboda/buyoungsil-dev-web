@@ -23,7 +23,8 @@ export interface StudioFeatureFlags {
 
 /** [운영] 하위 메뉴. feature 가 있으면 프로젝트 연결 설정에서 그 기능이 켜져 있을 때만 보인다 */
 export const OPS_MENU = [
-  { key: "review", label: "검수" },
+  { key: "review", label: "검수함" },
+  { key: "archive", label: "보관함" },
   { key: "schedule", label: "생성 일정", feature: "studioBatch" },
   { key: "service", label: "서비스 운영", feature: "studioService" },
   { key: "export", label: "내보내기" },

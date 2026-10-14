@@ -21,7 +21,7 @@ interface Confirm {
 }
 
 /** 도트 그림을 정수배로 키워서 보여 준다(뭉개지지 않게). 크기를 알기 전에는 칸 안에 맞춰 둔다 */
-function PixelImg({ src, alt, box, className, dataAttr }: { src: string; alt: string; box: number; className?: string; dataAttr?: string }) {
+export function PixelImg({ src, alt, box, className, dataAttr }: { src: string; alt: string; box: number; className?: string; dataAttr?: string }) {
   const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
   const ref = useRef<HTMLImageElement>(null);
   const scale = nat ? pixelScale(nat.w, nat.h, box, box) : 1;

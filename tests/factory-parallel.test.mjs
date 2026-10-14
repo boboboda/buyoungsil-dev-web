@@ -47,6 +47,7 @@ const nextRoute = loadTs("app/api/factory/next/route.ts", {
   "@/lib/factory/keyVault": { keyTasksForNext: async () => [] },
   "@/lib/factory/reviewVideo": { sweepReviewVideos: async () => {} },
   "@/lib/factory/uploadTest": { consumeUploadTest: async () => null },
+  "@/lib/studio/opsData": { tickSchedules: async () => {} },
   // 정비가 진행 중이어도(maintActive) 서버는 일감을 막지 않는다: maintenanceHold 는 더 이상 /next 가 쓰지 않는다
   "@/lib/factory/maintenance": { maintenanceForNext: async () => (maintActive ? { maintenance: { turnId: "t1", threadId: "m1" } } : {}) },
   "@/lib/factory/rules": { getRuleOverrides: async () => ({}), renderRules: () => ({}) },

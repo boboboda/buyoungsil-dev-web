@@ -252,6 +252,7 @@ test("/next 는 outbox·deploying 값을 걸러 받는다(양의 정수만, 9999
     "@/lib/factory/keyVault": { keyTasksForNext: async () => [] },
     "@/lib/factory/reviewVideo": { sweepReviewVideos: async () => {} },
     "@/lib/factory/uploadTest": { consumeUploadTest: async () => null },
+    "@/lib/studio/opsData": { tickSchedules: async () => {} },
     "@/lib/factory/projectToolSettingsDb": { projectSettingsForNext: async () => new Map() },
     "@/lib/factory/arts": { approvedForNext: async () => new Map(), pickedForJobs: async () => new Map() },
   });

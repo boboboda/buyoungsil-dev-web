@@ -1212,3 +1212,43 @@ model FactoryCardHistory {
   @@index([cardId, version])
   @@map("factory_card_history")
 }
+
+// 스튜디오 운영(3-3): 승인 그림을 내보낸 기록(그림마다 여러 줄 가능). kind = folder(앱 폴더에 넣기 일감) | upload(서비스 업로드).
+// status = requested(일감 등록됨) | done(보냄) | failed | unsupported(서비스 업로드 미지원)
+model FactoryArtExport {
+  id        String   @id
+  artId     String
+  appSlug   String
+  kind      String
+  status    String
+  jobId     String? // 앱 수정 일감 id (folder)
+  dest      String   @default("") // 보낸 곳: 앱 폴더 안 경로/파일 이름 또는 서비스 이름
+  note      String   @default("")
+  who       String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([artId])
+  @@index([appSlug, createdAt])
+  @@map("factory_art_exports")
+}
+
+// 스튜디오 운영(3-3): 카드별 자동 생성 일정(기본 꺼짐). 정해진 시각(한국 시간 hour 시)이 되면 도구 일감을 만든다. 하루 한 번(lastRunKey = 날짜).
+model FactoryGenSchedule {
+  id          String    @id
+  appSlug     String
+  cardId      String
+  enabled     Boolean   @default(false)
+  hour        Int       @default(9) // 한국 시간 0~23
+  count       Int       @default(1) // 대상마다 장 수
+  subjects    String    @default("") // 대상 이름(쉼표)
+  extra       String    @default("")
+  lastRunKey  String    @default("") // 마지막으로 만든 날짜(KST YYYY-MM-DD)
+  lastRunAt   DateTime?
+  lastJobId   String?
+  lastMessage String    @default("")
+  updatedAt   DateTime  @default(now())
+  updatedBy   String    @default("")
+
+  @@unique([appSlug, cardId])
+  @@map("factory_gen_schedules")
+}

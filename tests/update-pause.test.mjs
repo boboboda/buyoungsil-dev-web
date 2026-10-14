@@ -137,6 +137,7 @@ const nextRoute = loadTs("app/api/factory/next/route.ts", {
   "@/lib/factory/keyVault": { keyTasksForNext: async () => [] },
   "@/lib/factory/reviewVideo": { sweepReviewVideos: async () => {} },
   "@/lib/factory/uploadTest": { consumeUploadTest: async () => null },
+  "@/lib/studio/opsData": { tickSchedules: async () => {} },
   "@/lib/factory/projectToolSettingsDb": { projectSettingsForNext: async () => new Map() },
   "@/lib/factory/arts": { approvedForNext: async () => new Map(), pickedForJobs: async () => new Map() },
 });

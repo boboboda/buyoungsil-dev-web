@@ -27,9 +27,9 @@ const RESERVED_NAMES = new Set([
 
 export const isReservedSecretName = (name: string) => RESERVED_NAMES.has(name) || RESERVED_PREFIXES.some((p) => name.startsWith(p));
 
-// 서버 보관 키: 홈페이지 서버가 직접 쓰는 키(예: 검수 상태 토큰 REVIEW_STATUS_TOKEN_<앱>). PC 로 보내지 않고 암호문을 서버에 남긴다.
+// 서버 보관 키: 홈페이지 서버가 직접 쓰는 키(예: 검수 상태 토큰 REVIEW_STATUS_TOKEN_<앱>, 스튜디오 서비스 운영 관리자 키 SERVICE_ADMIN_TOKEN_<앱>). PC 로 보내지 않고 암호문을 서버에 남긴다.
 // 값은 readServerSecret 으로 서버 안에서만 풀고, 목록·응답·로그에는 나오지 않는다. 앱 일감용 이름 목록(knownSecretNames)에서도 뺀다.
-const SERVER_SECRET_PREFIXES = ["REVIEW_STATUS_TOKEN_"];
+const SERVER_SECRET_PREFIXES = ["REVIEW_STATUS_TOKEN_", "SERVICE_ADMIN_TOKEN_"];
 // 이름 그대로 서버 보관: STUDIO_KEY_PEPPER = Studio 접근 키 해시용 서버 비밀값(lib/studio/access.ts)
 const SERVER_SECRET_NAMES = new Set(["STUDIO_KEY_PEPPER"]);
 
