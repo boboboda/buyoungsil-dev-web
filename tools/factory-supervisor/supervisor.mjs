@@ -17,7 +17,8 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { enforceTestMode } from "./testmode.mjs";
 import { BIG_UPLOAD_BYTES, createOutbox, trackUpload, uploadBusy } from "./outbox.mjs";
-import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard, updateWaiting } from "./update.mjs";
+import { bundleStatus, maybeUpdate, notePoll, reportInfo, requestUpdateNow, setUpdateBundle, startupGuard, updateWaiting } from "./update.mjs";
+import { RESUME_MESSAGE, clearSavedState, createPauser, readSavedState, resumeFailed } from "./pause.mjs";
 import {
   maskText,
   prepareReleaseKey,
@@ -32,7 +33,7 @@ import {
   sentRelease,
   syncKeyPasswords,
 } from "./release.mjs";
-import { deployRunning, deployWaiting, maintenanceBusy, onNext as onMaintenance } from "./maintenance.mjs";
+import { deployRunning, deployWaiting, maintenanceBusy, onNext as onMaintenance, resumeMaintenance } from "./maintenance.mjs";
 import { expectedSigner, gitCommitOf, judgeSignature, readApkInfo, sha256File, uploadTestApk, verifyApk } from "./apk.mjs";
 import { compactSession } from "./compact.mjs";
 import { runKeyTasks } from "./keyvault.mjs";
@@ -41,7 +42,7 @@ import { refreshPathFromRegistry, toolLabel } from "./pcenv.mjs";
 import { maybeRestart, onRestartSignal, readRestartMark, restartPending, restartQuery } from "./restart.mjs";
 import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
-import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, makeHandoffEntry, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
+import { acquireWorkspace, advertisedEngines, recoverWorkspace, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, makeHandoffEntry, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 import { checksFromVerification, headOf } from "./handoff.mjs";
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames, writeArtRefs, writeProjectSettings } from "./toolbroker.mjs";
 import { findBash, reportProvisionNames, syncProvisions } from "./keyprovision.mjs";
@@ -125,6 +126,8 @@ function loadConfig() {
   c.pollSec = Math.max(5, Number(c.pollSec) || 15);
   c.heartbeatSec = Math.min(120, Math.max(5, Number(c.heartbeatSec) || 20));
   c.jobTimeoutMin = Math.max(5, Number(c.jobTimeoutMin) || 120);
+  // 시험 모드에서만: 시간 한도를 초 단위로 줄여 "멈춰 있던 시간은 빼고 센다"를 짧게 시험한다(진짜 운영에서는 쓰이지 않는다)
+  if (process.env.FACTORY_TEST_MODE === "1" && Number(process.env.FACTORY_TEST_JOB_TIMEOUT_SEC) > 0) c.jobTimeoutMin = Number(process.env.FACTORY_TEST_JOB_TIMEOUT_SEC) / 60;
   if (!c.token || String(c.token).length < 16) {
     console.error("설정 파일에 token 이 없어요. 통제실의 '작업 PC 연결'에서 발급한 토큰을 넣으세요.");
     process.exit(1);
@@ -497,6 +500,8 @@ function promptFor(job) {
 const RESULT_GRACE_SEC = 90; // 결과(result)를 낸 뒤 Claude 가 스스로 끝나기를 기다리는 시간
 const running = new Map(); // jobId -> state
 let shuttingDown = false;
+// 감독 프로그램 업데이트 때 진행 중인 AI 일감·정비 턴을 잠깐 멈췄다가 새 버전에서 이어 주는 조정자(1-2 D-2). 멈춘 상태는 파일에 저장한다(pause.mjs)
+const pauser = createPauser({ log });
 
 function killTree(child) {
   if (!child || child.exitCode !== null) return;
@@ -747,10 +752,10 @@ async function finish(st, status, fields) {
   log(`[${st.job.appSlug}] 최종 보고를 못 했어요. 임대가 끝나면 서버가 알아서 정리해요.`);
 }
 
-async function failEarly(job, reason) {
+async function failEarly(job, reason, extra = {}) {
   log(`[${job.appSlug}] 시작하지 못함: ${reason}`);
   const st = { job, logs: [], phase: null, phaseDirty: false, shots: new Set(), shotHashes: new Set(), shotTries: new Map(), reportable: true, redact: maskText, dir: cfg.workDir };
-  await finish(st, "failed", { failReason: reason });
+  await finish(st, "failed", { failReason: reason, ...extra });
 }
 
 const labGuard = createLabGuard(); // 실험 사후 검사용: 앱 일감이 시작·끝날 때 그 앱 폴더를 기억한다
@@ -846,7 +851,7 @@ function setLockWait(st, source, name, since) {
   }
 }
 
-async function runJob(job) {
+async function runJob(job, resume = null) {
   let lock;
   let dir;
   let home;
@@ -857,19 +862,21 @@ async function runJob(job) {
     home = path.join(cfg.workDir, job.appSlug); // 인계 기록·작업 메모리는 늘 앱 폴더에 남긴다(병행 일감의 사본은 끝나면 사라진다)
     dir = home;
     if (isWorktreeJob(job)) {
-      job.worktree = await setupWorktree(job, home);
+      job.worktree = resume?.worktree ?? (await setupWorktree(job, home)); // 이어 주는 일감은 멈추기 전 작업 사본을 그대로 쓴다
       dir = job.worktree.wtDir;
     }
+    if (resume && !fs.existsSync(dir)) return await failEarly(job, `다시 시작 필요: 업데이트로 멈춘 일감의 작업 폴더가 없어졌어요(${path.basename(dir)}). 통제실에서 [다시 시도]를 눌러 주세요.`, { failStage: "resume" });
     labGuard.begin(home, dir);
     guardDirs = [home, dir];
     lock = acquireWorkspace(dir, { engine: job.aiEngine, taskId: job.id });
     // 인계 기록에 쓸 일감 정보(요청은 앞부분만, 기획서 전문은 넣지 않음)
     job.aiOutcome = { handoff: { kind: "job", appSlug: job.appSlug, title: job.title, request: `${job.kind === "new" ? "새 앱" : job.kind === "release" ? "출시 준비" : "수정"}: ${String(job.planMarkdown ?? job.prompt ?? "").replace(/^#.*$/gm, " ").slice(0, 600)}`, model: job.aiEngine === "claude" ? job.aiModel || "기본" : cfg.codexModel || "기본" } };
-    await runJobUnlocked(job, lock);
+    await runJobUnlocked(job, lock, resume);
   } catch (e) {
-    await failEarly(job, e.message);
+    await failEarly(job, resume ? `다시 시작 필요: 멈춘 일감을 이어 주다 오류가 났어요(${e.message})` : e.message, resume ? { failStage: "resume" } : {});
   } finally {
     running.delete(job.id);
+    pauser.remove(`app:${job.id}`);
     if (guardDirs) labGuard.end(...guardDirs);
     else labGuard.touch(home);
     if (lock) {
@@ -1054,7 +1061,56 @@ async function runLabCleanups(ids) {
 
 // AI 한 턴: 지시문(prompt)을 AI 에 주고 끝날 때까지 기다린다. 처음 실행과 병행 일감의 '다시 맞추기' 요청이 같이 쓴다.
 // 끝나면 st.result·st.stderrTail·st.killedAfterResult 가 이번 턴의 값으로 채워지고 종료 코드를 돌려준다.
+//
+// 감독 프로그램 업데이트(1-2 D-2): 업데이트하려고 멈추라고 하면 AI 를 안전한 지점에서 끊고(pause.mjs), 업데이트를 하지 않기로 하면 같은 프로세스에서,
+// 업데이트로 다시 켜졌으면 새 감독이 저장된 세션(st.resumeSession)으로 이어서 돈다. 이어 줄 때 AI 에게 하는 말은 RESUME_MESSAGE.
+// 합치기(다시 맞추기) 턴은 합치기 잠금 안이라 멈추지 않는다(st.inMerge): 잠금이 풀리고 일감이 끝날 때까지 업데이트가 기다린다.
+const fmtLeft = (ms) => (ms >= 600_000 ? `${Math.round(ms / 60000)}분` : `${Math.round(ms / 1000)}초`);
+function appSnapshot(st) {
+  const { job } = st;
+  return {
+    jobId: job.id, appSlug: job.appSlug, job, engine: job.aiEngine, sessionId: st.sessionId ?? null, dir: st.dir, home: st.home,
+    worktree: job.worktree ?? null, phase: st.phase, timeLeftMs: Math.max(60_000, Math.round(st.timeLeftMs ?? 0)), started: st.started, rulesSource: job.rulesSource ?? null,
+    savedAt: Date.now(),
+  };
+}
+
 async function runAiTurn(st, prompt) {
+  const { job } = st;
+  if (!st.unit && !st.inMerge && ["new", "revision"].includes(job.kind)) {
+    st.unit = pauser.createUnit({ key: `app:${job.id}`, kind: "app", engine: job.aiEngine, label: `[${job.appSlug}]`, hold: () => !!st.inMerge, snapshot: () => appSnapshot(st), onCut: (cut) => addLog(st, "warn", `업데이트로 멈추면서 끝나지 않은 명령을 끊었어요. 이어 줄 때 다시 실행해요: ${cut.join(" | ")}`) });
+  }
+  st.timeLeftMs = st.resumeTimeLeftMs ?? cfg.jobTimeoutMin * 60 * 1000; // 멈춰 있던 시간은 일감 시간 한도에서 뺀다
+  let text = prompt;
+  let sessionId = st.resumeSession ?? null;
+  st.resumeSession = null;
+  st.resumeTimeLeftMs = null;
+  let code = -1;
+  for (;;) {
+    if (st.unit && !st.inMerge) await waitWhilePausing(st); // 업데이트하려고 멈추는 중이면 AI 를 띄우지 않고 기다린다
+    if (st.stopped) return code;
+    code = await runAiProcess(st, text, sessionId);
+    if (!st.unit?.paused || st.stopped || st.resumeProblem) return code;
+    // 업데이트 때문에 멈춘 것: 세션을 기억해 두고 풀리면 같은 세션으로 이어 간다
+    sessionId = st.sessionId ?? sessionId;
+    text = RESUME_MESSAGE;
+    st.result = null;
+    if (!sessionId) text = prompt; // 세션이 시작되기 전에 멈췄다면 처음부터
+  }
+}
+
+// 멈추는 중이면 풀릴 때까지 기다린다. 기다리는 동안에도 임대를 이어 가려고 하트비트는 계속 보낸다
+async function waitWhilePausing(st) {
+  if (pauser.mode() !== "pausing") return;
+  const beat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
+  try {
+    await pauser.gate(st.unit);
+  } finally {
+    clearInterval(beat);
+  }
+}
+
+async function runAiProcess(st, prompt, resumeSession) {
   const { job, dir } = st;
   const { appSettings, aiSecrets, model, reqSecrets, secrets, lock } = st.turnCfg;
 
@@ -1062,17 +1118,21 @@ async function runAiTurn(st, prompt) {
   st.resultTimer = null;
   st.killedAfterResult = false;
   st.stderrTail = "";
+  st.resumeProblem = null;
+  const segStart = Date.now();
   const child = startAi(job.aiEngine, cfg, {
     model,
     settings: job.aiEngine === "claude" ? appSettings : undefined,
+    sessionId: resumeSession || undefined,
     cwd: dir,
     env: { ...process.env, ...aiSecrets, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id, ...(job.worktree ? { FACTORY_LOCK_DIR: lockDir(), FACTORY_WAIT_FILE: st.waitFile } : {}) },
   });
   lock.setChild(child.pid || null);
   const decode = eventDecoder(job.aiEngine);
   st.child = child;
+  st.unit?.attach(child, () => killTree(child));
   child.stdin.on("error", () => {});
-  child.stdin.end(handoffPrompt(dir, prompt, { appScope: true }));
+  child.stdin.end(resumeSession ? prompt : handoffPrompt(dir, prompt, { appScope: true }));
   // 도구 요청 중계: AI 가 도는 동안만 몇 초마다 .factory/requests/ 를 본다(꺼짐 모드면 아무것도 하지 않음)
   st.broker = createBroker({
     appDir: dir,
@@ -1111,7 +1171,9 @@ async function runAiTurn(st, prompt) {
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
     let ev;
     try {
-      ev = decode(JSON.parse(line));
+      const raw = JSON.parse(line);
+      st.unit?.feed(raw); // 끝나지 않은 도구 호출 추적(업데이트로 멈출 안전한 지점을 찾는 데 쓴다)
+      ev = decode(raw);
     } catch {
       return addLog(st, "info", line);
     }
@@ -1149,7 +1211,8 @@ async function runAiTurn(st, prompt) {
   });
 
   const beat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
-  const timer = setTimeout(() => stop(st, `시간 초과(${cfg.jobTimeoutMin}분)`), cfg.jobTimeoutMin * 60 * 1000);
+  // 시간 한도는 이 일감이 실제로 돈 시간만 센다: 업데이트로 멈춰 있던 시간은 남은 시간(st.timeLeftMs)에서 빠지지 않는다
+  const timer = setTimeout(() => stop(st, `시간 초과(${cfg.jobTimeoutMin}분)`), Math.max(1000, st.timeLeftMs));
 
   const code = await new Promise((resolve) => {
     child.on("error", (e) => {
@@ -1163,11 +1226,22 @@ async function runAiTurn(st, prompt) {
   clearInterval(beat);
   clearTimeout(timer);
   clearTimeout(st.resultTimer);
+  st.timeLeftMs = Math.max(0, st.timeLeftMs - (Date.now() - segStart));
+  st.unit?.detach();
+  if (st.unit?.paused && st.result && !st.result.is_error) {
+    // 멈추라고 한 순간 이미 결과를 낸 턴이었다: 멈춘 게 아니라 끝난 것으로 본다(검증·완료 보고는 정상으로)
+    st.killedAfterResult = true;
+    st.unit.resetPaused();
+  }
+  // 이어 준 턴이 아무 일도 못 하고 바로 오류로 끝났으면(세션을 못 찾음 등) 실패가 아니라 '다시 시작 필요'로 다룬다
+  if (!st.unit?.paused && resumeFailed({ resumed: !!resumeSession, events: st.unit?.tracker.events() ?? 0, result: st.result, code, ms: Date.now() - segStart, stopped: !!st.stopped })) {
+    st.resumeProblem = st.redact(String(st.result?.result ?? "") || st.stderrTail.trim() || `코드 ${code}`).replace(/\s+/g, " ").slice(-300);
+  }
   return code;
 }
 
-async function runJobUnlocked(job, lock) {
-  log(`[${job.appSlug}] 시작 (${job.kind === "new" ? "새 앱" : "수정"}, 시도 ${job.attempts}): ${job.title}`);
+async function runJobUnlocked(job, lock, resume = null) {
+  log(`[${job.appSlug}] ${resume ? "업데이트 뒤 이어서 시작" : "시작"} (${job.kind === "new" ? "새 앱" : "수정"}, 시도 ${job.attempts}): ${job.title}`);
 
   const secrets = readSecrets();
   const missing = (job.requiredSecrets ?? []).filter((n) => !secrets[n]);
@@ -1177,7 +1251,10 @@ async function runJobUnlocked(job, lock) {
 
   let dir;
   try {
-    dir = prepareDir(job);
+    if (resume) {
+      dir = resume.dir; // 폴더·규칙 파일은 멈추기 전 그대로다(다시 만들면 진행 중이던 작업을 건드린다)
+      job.rulesSource = resume.rulesSource || "이전 실행";
+    } else dir = prepareDir(job);
   } catch (e) {
     return failEarly(job, e.message);
   }
@@ -1188,9 +1265,10 @@ async function runJobUnlocked(job, lock) {
   const rel = job.kind === "release" ? (job.release ?? null) : null; // 서버가 준 출시 정보(종류·단계·outbox·키). 예전 서버면 없음
   const st = {
     job, dir, child: null, logs: [], phase: "scaffold", phaseDirty: true, shots: new Set(), shotHashes: new Set(), shotTries: new Map(),
-    reportable: true, stopped: null, result: null, stderrTail: "", lastText: "", started: Date.now(),
+    reportable: true, stopped: null, result: null, stderrTail: "", lastText: "", started: resume?.started ?? Date.now(),
     redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets)])(s)),
     home, abort: new AbortController(),
+    resumeSession: resume?.sessionId ?? null, resumeTimeLeftMs: resume ? resume.timeLeftMs : null, // 업데이트로 멈춘 일감: 같은 세션으로 이어 주고, 남은 시간 한도만 센다
     // 병행 상태(통제실 일감 카드): worktree 실행·잠금 대기·합치는 중·다시 맞추기 횟수·합친 시각·검사 결과
     parallel: job.worktree ? { worktree: true, lockWait: null, merging: false, rebases: 0, mergedAt: null, checks: null } : null,
     parallelDirty: !!job.worktree,
@@ -1280,10 +1358,15 @@ async function runJobUnlocked(job, lock) {
   const model = job.aiEngine === "claude" ? job.aiModel || null : null;
   if (job.aiEngine === "claude") addLog(st, "info", `모델: ${model ?? "기본 설정(--model 없음)"}`);
   st.turnCfg = { appSettings, aiSecrets, model, reqSecrets: job.requiredSecrets ?? [], secrets, lock };
-  const code = await runAiTurn(st, promptFor(job));
+  if (resume) addLog(st, "info", `업데이트 뒤 이어서 시작: ${resume.sessionId ? "같은 세션으로 이어 줘요" : "AI 를 띄우기 전에 멈췄어서 처음부터 시작해요"} (남은 시간 한도 ${fmtLeft(resume.timeLeftMs ?? 0)})`);
+  const code = await runAiTurn(st, resume?.sessionId ? RESUME_MESSAGE : promptFor(job));
 
   try {
-    if (st.stopped) {
+    if (st.resumeProblem) {
+      // 이어서 하기가 바로 오류로 끝났다(세션을 못 찾음 등): 실패가 아니라 '다시 시작 필요'. 서버가 통제실·텔레그램에 한 번 알린다
+      addLog(st, "error", `이어서 하기 실패: ${st.resumeProblem}`);
+      await finish(st, "failed", { failReason: st.redact(`다시 시작 필요: 업데이트로 멈춘 일감을 같은 세션으로 이어 주지 못했어요(${st.resumeProblem}). 파일은 그대로예요. 통제실에서 [다시 시도]를 눌러 주세요.`).slice(-1800), failStage: "resume" });
+    } else if (st.stopped) {
       if (/^시간 초과/.test(st.stopped)) await finish(st, "failed", { failReason: st.stopped, ...(rel ? { failStage: st.phase } : {}) });
       // 취소·종료·서버 쪽 상태 변경이면 서버가 이미 정리했거나(또는 곧 정리) 하므로 보고하지 않는다
     } else if (rel && st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
@@ -1331,6 +1414,7 @@ async function runJobUnlocked(job, lock) {
     }
   } finally {
     running.delete(job.id);
+    pauser.remove(`app:${job.id}`);
     if (st.waitTimer) clearInterval(st.waitTimer);
     // 일감이 끝나면(성공·실패 모두) AI 한도를 한 번 새로 읽는다. 던지지 않고 15초 넘으면 기다리지 않음, 로그 한 줄
     void refreshAfterTask({ log });
@@ -1343,6 +1427,7 @@ async function runJobUnlocked(job, lock) {
 // 합쳐진 뒤의 outbox 전송·컨텍스트 정리·완료 보고는 단독 일감과 같은 절차를 따른다(이 파일에는 push 가 없다).
 async function finishWorktree(st) {
   const { job, dir } = st;
+  st.inMerge = true; // 합치기 잠금 안: 이 동안은 업데이트로 멈추지 않는다(끝나길 기다린다)
   const wt = job.worktree;
   const { lock } = st.turnCfg;
   let verification = null;
@@ -1883,29 +1968,88 @@ function memoryQuery() {
   } catch { return {}; }
 }
 
+// ───────────── 업데이트로 멈췄던 일감 이어 주기 (1-2 D-2) ─────────────
+let pendingResume = []; // 시작할 때 읽은 멈춘 일감·정비 턴. 새 버전이 첫 대기열 확인에 성공하면 이어 준다(성공 전에 되돌려지면 이전 버전이 다시 읽을 수 있게 파일을 그대로 둔다)
+const starting = new Set(); // 이어 주려고 시작하는 중인 일감 id(그 사이 서버가 같은 일감을 다시 내줘도 시작하지 않게)
+const pendingApps = () => pendingResume.filter((e) => e.kind === "app").length;
+
+function loadPausedState() {
+  const { entries, stale } = readSavedState(pauser.stateFile());
+  if (stale.length) {
+    log(`멈춰 있던 일감 ${stale.length}개의 저장 기록이 너무 오래돼서(30분 넘음) 이어 주지 않아요. 서버가 임대 만료로 대기열에 되돌렸을 수 있어요.`);
+    clearSavedState(pauser.stateFile());
+  }
+  pendingResume = entries;
+  if (entries.length) log(`업데이트로 멈췄던 일감 ${entries.length}개를 찾았어요. 홈페이지 연결이 확인되면 같은 세션으로 이어 줘요: ${entries.map((e) => e.appSlug || e.title || e.key).join(", ")}`);
+  return entries;
+}
+
+// 첫 대기열 확인이 성공한 뒤 한 번: 저장된 일감을 이어 준다
+function startResumed(mctx) {
+  if (!pendingResume.length) return;
+  const list = pendingResume;
+  pendingResume = [];
+  clearSavedState(pauser.stateFile());
+  for (const e of list) {
+    try {
+      if (e.dir) {
+        try {
+          log(`[이어서] 이전 감독이 남긴 작업 잠금: ${recoverWorkspace(e.dir)}`);
+        } catch (err) {
+          log(`[이어서] 작업 잠금 확인: ${err.message}`);
+        }
+      }
+      if (e.kind === "app") {
+        const job = e.job;
+        starting.add(job.id);
+        log(`[${job.appSlug}] 업데이트 뒤 이어서 시작해요(세션 ${e.sessionId ? "이어받기" : "없음, 처음부터"}, 단계 ${e.phase ?? "?"})`);
+        runJob(job, e)
+          .catch((err) => log(`[${job.appSlug}] 예기치 못한 오류: ${err.stack || err.message}`))
+          .finally(() => starting.delete(job.id));
+      } else if (e.kind === "maint") {
+        resumeMaintenance(e, mctx);
+      }
+    } catch (err) {
+      log(`[이어서] 시작하지 못했어요(${e.key}): ${err.message}`);
+    }
+  }
+}
+
+// 통제실 표시: 업데이트로 일시 중지된 일감 수, 새 커밋을 모으는 중이면 남은 분
+function updateExtra() {
+  const bs = bundleStatus();
+  const paused = pauser.pausedCount() + pendingResume.length;
+  return { ...(paused > 0 ? { pausedJobs: String(paused) } : {}), ...(bs.state === "bundling" ? { bundleLeft: String(bs.leftMin) } : {}) };
+}
+
+function maintCtx(incoming = 0) {
+  return { api, outbox, uploadBusy, log, cfg, pauser, runningApps: () => running.size + incoming, updateDraining: () => updateWaiting() || restartPending(), requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) };
+}
+
 async function loop() {
   let delay = cfg.pollSec * 1000;
   while (!shuttingDown) {
     try {
-      maybeUpdate({ running: running.size + (maintenanceBusy() ? 1 : 0), autoUpdate }); // 10분마다 확인(일감이 돌면 업데이트 대기=드레인). 일감·정비가 모두 끝나면 받고 여기서 exit(0)
+      // 새 버전 확인(10분마다): 공장이 비었으면 바로, 일감이 돌면 새 커밋을 모았다가(묶기) 받는다. 받기로 하면 진행 중인 AI 를 안전한 지점에서 멈추고(저장) 받아 여기서 exit(0), 새 감독이 이어 준다
+      maybeUpdate({ running: running.size + (maintenanceBusy() ? 1 : 0), autoUpdate, pauser });
     } catch (e) {
       log(`자동 업데이트 확인 중 오류: ${e.message}`);
     }
     // 통제실 [감독 재시작]: 일감·정비가 다 끝났으면 여기서 종료(실행기가 다시 띄움)
     if (maybeRestart({ busy: running.size > 0 || maintenanceBusy(), shutdown, log })) break;
     try {
-      const free = appLimit() - running.size;
+      const free = appLimit() - running.size - pendingApps(); // 이어 줄 일감 자리도 비워 둔다
       { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
-        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery(), ...(outbox.size() > 0 ? { outbox: String(outbox.size()) } : {}), ...(deployRunning() ? { deploying: "1" } : {}) });
+        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery(), ...(outbox.size() > 0 ? { outbox: String(outbox.size()) } : {}), ...(deployRunning() ? { deploying: "1" } : {}), ...updateExtra() });
         const sentTools = aiTools;
         const sentMemory = extra.get("memory");
         // 정비가 진행 중이어도 앱·실험 일감은 계속 받는다. 새 일감을 멈추는 건 위험한 순간을 앞둔 드레인뿐이다:
         // 감독 프로그램 업데이트 대기(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌). 서버 배포는 일감을 막지 않는다:
         // 배포 중 보고는 재전송 대기열(outbox)이 지키고, 새 일감도 계속 가져간다(1-1 D-1)
         const drain = updateWaiting() ? "update" : "";
-        const take = planTake({ limit: appLimit(), running: running.size, draining: !!drain });
+        const take = planTake({ limit: appLimit(), running: running.size + pendingApps(), draining: !!drain });
         const drainQuery = drain ? new URLSearchParams({ drain, drainJobs: String(running.size + (maintenanceBusy() ? 1 : 0)) }).toString() : "";
         const r = await api(
           "GET",
@@ -1913,6 +2057,7 @@ async function loop() {
         );
         notePoll(r.status === 200); // 새 버전 건강 확인(200 이면 확인됨)
         if (r.status === 200) {
+          startResumed(maintCtx()); // 업데이트로 멈췄던 일감을 같은 세션으로 이어 준다(연결이 확인된 뒤)
           delay = cfg.pollSec * 1000;
           if (aiTools === sentTools) aiTools = null; // 받았으니 다음 확인(1시간 뒤)까지 보내지 않는다
           if (sentMemory) { memoryLine = sentMemory; memorySentAt = Date.now(); }
@@ -1922,6 +2067,7 @@ async function loop() {
             aiToolStatus(cfg).then((v) => (aiTools = v), () => {});
           }
           autoUpdate = r.data?.autoUpdate !== false;
+          if (r.data && r.data.updateBundleMin !== undefined) setUpdateBundle(r.data.updateBundleMin); // 새 커밋을 모으는 시간(분, 0~180)
           compactAfterJob = r.data?.compactAfterJob !== false;
           // 동시에 만들 앱 수: 서버 값(1~4)이 우선, 없거나 범위 밖이면 PC 값. 줄이면 돌던 일감은 그대로 두고 끝나면서 줄어든다
           const nextLimit = effectiveSlots({ server: r.data?.appSlots, serverIsDefault: r.data?.appSlotsDefault === true, pc: cfg.pcSlots });
@@ -1975,7 +2121,7 @@ async function loop() {
           if (Array.isArray(r.data?.labCleanup)) void runLabCleanups(r.data.labCleanup).catch(() => {});
           // 이번 응답으로 방금 받은 일감도 '진행 중'으로 센다(배포가 그 일감과 겹쳐 시작하지 않게). 아래에서 시작되는 만큼만
           const incoming = r.data?.paused === true ? 0 : Math.min((r.data?.jobs ?? []).length, Math.max(0, free));
-          onMaintenance(r.data, { api, outbox, uploadBusy, log, cfg, runningApps: () => running.size + incoming, updateDraining: () => updateWaiting() || restartPending(), requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) });
+          onMaintenance(r.data, maintCtx(incoming));
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
           if (nowPaused !== paused) {
@@ -1986,6 +2132,7 @@ async function loop() {
           const offered = paused ? [] : r.data.jobs ?? [];
           if (offered.length > Math.max(0, free)) log(`서버가 자리(${Math.max(0, free)}개)보다 많은 일감 ${offered.length}개를 줬어요. 넘친 ${offered.length - Math.max(0, free)}개는 시작하지 않아요(10분 안에 서버가 대기열로 되돌려요).`);
           for (const job of offered.slice(0, Math.max(0, free))) {
+            if (running.has(job.id) || starting.has(job.id)) continue; // 이어 주는 중인 일감이 같은 id 로 다시 내려온 것(임대가 만료됐다 되돌아온 경우)은 시작하지 않는다
             // 같은 앱 이름이 이미 돌고 있으면 시작하지 않는다. 단 서로 다른 작업 사본에서 도는 병행 일감끼리는 같이 돈다
             const sameApp = [...running.values()].filter((s) => s.job.appSlug === job.appSlug);
             if (sameApp.length && !(isWorktreeJob(job) && sameApp.every((s) => isWorktreeJob(s.job)))) {
@@ -2043,8 +2190,10 @@ if (command === "init") {
     log(`감독 프로그램 시작: ${cfg.worker} → ${cfg.serverUrl} (동시 ${appLimit()}개, ${cfg.pollSec}초마다 확인)`);
     log(`앱 폴더: ${cfg.workDir}`);
     // 병행 실행의 흔적 정리: 지난 실행이 남긴 작업 사본·임시 브랜치(이어받지 않고 정리, 서버가 그 일감을 대기열로 되돌려 처음부터 다시 실행)와 앱 단위 잠금 파일
+    const resumable = loadPausedState(); // 업데이트로 멈췄던 일감: 작업 사본·잠금은 지우지 않는다
+    const keepBranches = new Set(resumable.map((e) => e.worktree?.branch).filter(Boolean));
     try {
-      cleanupLeftovers({ workDir: cfg.workDir, log });
+      cleanupLeftovers({ workDir: cfg.workDir, log, skip: (branch) => keepBranches.has(branch) });
       const cleared = clearLocks(lockDir());
 
       if (cleared) log(`지난 실행이 남긴 앱 잠금 ${cleared}개를 치웠어요.`);

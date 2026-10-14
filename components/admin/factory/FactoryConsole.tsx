@@ -7,7 +7,7 @@ import { Card, CardBody } from "@heroui/react";
 
 import AppProjectLinks from "./AppProjectLinks";
 import AppChecksSettings from "./AppChecksSettings";
-import AppSlotsSettings, { ApprovalWaitSettings, ConductorSettings, ParallelPerAppSettings } from "./AppSlotsSettings";
+import AppSlotsSettings, { ApprovalWaitSettings, ConductorSettings, ParallelPerAppSettings, UpdateBundleSettings } from "./AppSlotsSettings";
 import DefaultAiSettings from "./DefaultAiSettings";
 import DevicePanel from "./DevicePanel";
 import FactoryControl from "./FactoryControl";
@@ -136,6 +136,9 @@ export default async function FactoryConsole({
               <SettingsGroup hint="새 지시에 쓸 AI와 동시에 돌릴 앱 수" id="settings-run" title="실행·동시성">
                 <DefaultAiSettings />
                 <AppSlotsSettings />
+              </SettingsGroup>
+              <SettingsGroup hint="새 버전을 받을 때 일감을 잠깐 멈췄다가 이어서 하는 방식" id="settings-update" title="감독 업데이트">
+                <UpdateBundleSettings />
               </SettingsGroup>
               <SettingsGroup hint="같은 앱의 수정 일감을 같이 돌리는 방식" id="settings-parallel" title="병렬화·지휘자">
                 <ParallelPerAppSettings />

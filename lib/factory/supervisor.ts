@@ -14,6 +14,7 @@ import {
   getSupervisorInfo,
   getSupervisorRuntime,
   getToolBrokerSettings,
+  getUpdateBundleMin,
   isAutoDeployEnabled,
   isAutoUpdateEnabled,
   isCompactAfterJobEnabled,
@@ -26,7 +27,7 @@ import {
   setSupervisorEnabled,
   type SupervisorRuntime,
 } from "@/lib/factory/settings";
-import { deployNote, drainNote } from "@/lib/factory/supervisorDrain";
+import { bundleNote, deployNote, drainNote, pausedNote } from "@/lib/factory/supervisorDrain";
 import { addSupervisorLog, type SupervisorLogKind } from "@/lib/factory/supervisorLog";
 import { notifyText } from "@/lib/factory/telegram";
 import { getAppChecks } from "@/lib/factory/appChecks";
@@ -40,7 +41,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp, approvalWait, appChecks, conductor] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp, approvalWait, appChecks, conductor, updateBundle] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -65,6 +66,7 @@ export async function supervisorSnapshot() {
     getApprovalWaitSec(),
     getAppChecks(),
     import("@/lib/factory/conductor").then((m) => m.conductorSnapshot()).catch(() => null), // 지휘자(C-2) 설정·최근 판단 기록
+    getUpdateBundleMin(),
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
@@ -111,6 +113,12 @@ export async function supervisorSnapshot() {
     deploying, // 서버 배포 중(이 사이 홈페이지가 잠깐 응답하지 않는다)
     outboxCount: outbox, // 감독 프로그램이 못 보내고 쌓아 둔 보고 수
     deployNote: deployNote(deploying, outbox), // "배포 중 · 재전송 대기 N개" 또는 null
+    updateBundleMin: updateBundle.value, // 감독 프로그램 업데이트 때 새 커밋을 모으는 시간(분, 0~180, 기본 60, 0 = 바로 받음)
+    updateBundleMinDefault: updateBundle.isDefault,
+    pausedJobs: online ? (rt.pausedJobs ?? 0) : 0, // 업데이트로 일시 중지된 AI 일감·정비 턴 수(새 버전이 켜지면 같은 세션으로 이어 줌)
+    pausedNote: online ? pausedNote(rt.pausedJobs ?? 0) : null, // "업데이트로 일시 중지 N개"
+    bundleLeftMin: online && rt.bundleLeft ? rt.bundleLeft : null, // 새 커밋을 모으는 중이면 남은 분
+    bundleNote: online ? bundleNote(rt.bundleLeft) : null, // "업데이트 대기(묶는 중, 남은 n분)"
     online,
     lastSeenAt: lastSeen,
     workerName: last?.name ?? null,
@@ -149,7 +157,7 @@ async function restartStatus(rt: SupervisorRuntime, requestedAt: string | null, 
 /** /next 에서 부른다. 감독 프로그램이 알려 준 실행 정보를 저장하고, 재시작이 끝났거나 실패했으면 텔레그램으로 알린다.
  *  tookRestart: 이번 응답으로 재시작 요청을 넘겨줬는지. */
 export async function noteSupervisorRuntime(
-  pc: Pick<SupervisorRuntime, "startedAt" | "boot" | "ffmpeg" | "ffprobe" | "claudeTool" | "codexTool" | "aiToolsAt" | "memory" | "restartWait" | "restartFail" | "drain" | "drainJobs" | "outbox" | "deployingPc">,
+  pc: Pick<SupervisorRuntime, "startedAt" | "boot" | "ffmpeg" | "ffprobe" | "claudeTool" | "codexTool" | "aiToolsAt" | "memory" | "restartWait" | "restartFail" | "drain" | "drainJobs" | "outbox" | "deployingPc" | "pausedJobs" | "bundleLeft">,
   tookRestart: boolean,
 ): Promise<void> {
   const cur = await getSupervisorRuntime();

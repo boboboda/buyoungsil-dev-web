@@ -278,6 +278,35 @@ export async function setApprovalWaitSec(n: number): Promise<void> {
   await prisma.factorySetting.upsert({ where: { key: APPROVAL_WAIT_KEY }, create: { key: APPROVAL_WAIT_KEY, value }, update: { value } });
 }
 
+const UPDATE_BUNDLE_KEY = "updateBundleMin";
+export const MIN_UPDATE_BUNDLE = 0;
+export const MAX_UPDATE_BUNDLE = 180;
+export const DEFAULT_UPDATE_BUNDLE = 60;
+
+/** 감독 프로그램 업데이트를 모으는 시간(분)으로 받아들이는 값: 0~180 정수(숫자 또는 정수 문자열)만. 그 밖은 null */
+export function cleanUpdateBundle(v: unknown): number | null {
+  if (typeof v === "string" && !/^\s*\d{1,4}\s*$/.test(v)) return null;
+  if (typeof v !== "number" && typeof v !== "string") return null;
+  const n = Number(v);
+
+  return Number.isInteger(n) && n >= MIN_UPDATE_BUNDLE && n <= MAX_UPDATE_BUNDLE ? n : null;
+}
+
+/** 통제실에서 정한 '감독 프로그램 업데이트 묶는 시간'(분, 0~180). 정한 적 없거나 값이 이상하면 기본 60(isDefault: true). 0 = 묶지 않고 바로 받음.
+ *  일감이 돌고 있을 때 새 커밋을 이 시간까지 모았다가 한 번에 받는다(공장이 비어 있으면 바로). 통제실 [지금 업데이트]는 기다리지 않는다. */
+export async function getUpdateBundleMin(): Promise<{ value: number; isDefault: boolean }> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: UPDATE_BUNDLE_KEY } });
+  const n = cleanUpdateBundle(row?.value);
+
+  return n === null ? { value: DEFAULT_UPDATE_BUNDLE, isDefault: true } : { value: n, isDefault: false };
+}
+
+export async function setUpdateBundleMin(n: number): Promise<void> {
+  const value = String(n);
+
+  await prisma.factorySetting.upsert({ where: { key: UPDATE_BUNDLE_KEY }, create: { key: UPDATE_BUNDLE_KEY, value }, update: { value } });
+}
+
 const AUTO_DEPLOY_KEY = "maintenanceAutoDeploy";
 
 /** 정비 대기열이 모두 끝나면 자동 배포할지. 값이 없으면 꺼짐. */
@@ -354,6 +383,8 @@ export interface SupervisorRuntime {
   drainJobs?: number; // 그때 끝나길 기다리는 일감 수(정비 지시 포함)
   outbox?: number; // 감독 프로그램의 재전송 대기열에 남은 보고 수(배포 중 홈페이지가 응답하지 않는 동안 쌓임). 없으면 0
   deployingPc?: boolean; // 감독 프로그램이 서버 배포(git push)를 하는 중
+  pausedJobs?: number; // 감독 프로그램 업데이트 때문에 일시 중지된 AI 일감·정비 턴 수(업데이트 후 이어 줌). 없으면 0
+  bundleLeft?: number; // 새 감독 프로그램 커밋을 모으는 중(묶기)일 때 남은 분. 없으면 모으는 중이 아님
   restartTakenAt?: string; // 감독 프로그램이 재시작 요청을 받아 간 시각(새로 켜지면 지운다)
   restartedAt?: string; // 마지막으로 재시작이 끝난 시각
   restartFailNotified?: string; // 텔레그램으로 알린 실패 이유(같은 이유를 두 번 보내지 않게)

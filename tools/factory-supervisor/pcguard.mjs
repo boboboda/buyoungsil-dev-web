@@ -18,7 +18,7 @@ const LAUNCHER_RE = /(^|[\\/])run-supervisor\.(sh|cmd|ps1|bat)$/i;
 const norm = (w) => String(w).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
 // 진짜 감독의 파일. 이름만으로 확실한 것은 어디에 있든, 흔한 이름은 공장 폴더(dev/factory/, ../) 아래일 때만 본다.
-const UNIQUE_NAMES = "run-supervisor\\.(pid|sh|cmd|ps1|bat)|supervisor-update\\.json|serverctl-state\\.json|supervisor-restart\\.json";
+const UNIQUE_NAMES = "run-supervisor\\.(pid|sh|cmd|ps1|bat)|supervisor-update\\.json|supervisor-paused\\.json|serverctl-state\\.json|supervisor-restart\\.json";
 const ROOT_CHILDREN = "supervisor-src|\\.locks|\\.ai-locks|lock|supervisor\\.config\\.json|supervisor(\\.prev)?\\.log|secrets\\.env(\\.bak)?|app-claude-settings\\.json|maintenance-claude-settings\\.json|\\.deploy-push\\.log";
 const PROTECTED = [
   new RegExp(`(^|/)(${UNIQUE_NAMES})(/|$)`),

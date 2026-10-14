@@ -9,8 +9,23 @@ export function drainNote(kind: DrainKind, jobs: number): string {
   const left = jobs > 0 ? `진행 중 일감 ${jobs}개 끝나면` : "곧";
 
   return kind === "update"
-    ? `업데이트 대기(${left} 감독 프로그램을 새 버전으로 다시 켜요. 그동안 새 일감은 받지 않아요)`
+    ? `업데이트 중(진행 중인 AI 일감 ${jobs}개를 안전한 지점에서 잠깐 멈추고 새 버전으로 다시 켜요. 멈춘 일감은 같은 세션으로 이어 줘요. 그동안 새 일감은 받지 않아요)`
     : `배포 대기(${left} 서버에 배포해요. 그동안 새 일감은 받지 않아요)`;
+}
+
+/** 감독 프로그램 업데이트 때문에 일시 중지된 일감 문구("업데이트로 일시 중지 N개"). 없으면 null */
+export function pausedNote(n: number): string | null {
+  const c = Math.max(0, Math.floor(n) || 0);
+
+  return c > 0 ? `업데이트로 일시 중지 ${c}개(새 버전이 켜지면 같은 세션으로 이어서 해요)` : null;
+}
+
+/** 새 감독 프로그램 커밋을 모으는 중(묶기) 문구("업데이트 대기(묶는 중, 남은 n분)"). 모으는 중이 아니면 null.
+ *  모으는 동안은 일감을 막지 않는다. 시간이 다 되거나 공장이 비면 바로 받고, 통제실 [지금 업데이트]는 기다리지 않는다. */
+export function bundleNote(leftMin: number | null | undefined): string | null {
+  const m = Math.floor(Number(leftMin));
+
+  return Number.isFinite(m) && m > 0 ? `업데이트 대기(묶는 중, 남은 ${m}분 · 그동안 일감은 계속 돌아요)` : null;
 }
 
 /** 서버 배포 중 표시 문구("배포 중 · 재전송 대기 N개"). 배포 중도 아니고 대기 보고도 없으면 null.

@@ -31,6 +31,8 @@ interface State {
   drainState?: "update" | "deploy" | null; // 업데이트·배포를 진행 중 일감이 끝나길 기다리는 중(새 일감은 받지 않음). 예전 서버에는 없다
   drainNote?: string | null;
   deployNote?: string | null; // "배포 중 · 재전송 대기 N개". 예전 서버에는 없다
+  pausedNote?: string | null; // "업데이트로 일시 중지 N개". 예전 서버에는 없다
+  bundleNote?: string | null; // "업데이트 대기(묶는 중, 남은 n분)". 예전 서버에는 없다
   online: boolean;
   lastSeenAt: string | null;
   workerName: string | null;
@@ -313,6 +315,8 @@ export default function SupervisorControl() {
         )}
         {s?.drainNote && <p className="text-xs text-warning-600">⏳ {s.drainNote}</p>}
         {s?.deployNote && <p className="text-xs text-warning-600">🚀 {s.deployNote}</p>}
+        {s?.pausedNote && <p className="text-xs text-warning-600" data-update-paused="">⏸ {s.pausedNote}</p>}
+        {s?.bundleNote && <p className="text-xs text-default-500" data-update-bundle="">⏳ {s.bundleNote}</p>}
         {s && s.restartState !== undefined && (
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span>

@@ -244,6 +244,70 @@ export function ApprovalWaitSettings() {
   );
 }
 
+export const UPDATE_BUNDLE_CHOICES = [0, 15, 30, 60, 120, 180] as const;
+
+/**
+ * 통제실 [설정] '감독 업데이트 묶는 시간'(0~180분, 기본 60분). 감독 프로그램 새 버전이 있어도 일감이 돌고 있으면 새 커밋을 이 시간까지 모았다가 한 번에 받아요
+ * (그동안 일감은 막지 않아요). 공장이 비어 있으면 바로 받고, 받을 때는 진행 중인 AI 를 안전한 지점에서 잠깐 멈췄다가 새 버전에서 같은 세션으로 이어서 해요.
+ * 0이면 묶지 않고 바로 받아요. 통제실 [지금 업데이트]는 이 시간을 기다리지 않아요.
+ */
+export function UpdateBundleSettings() {
+  const { data } = useFactoryControl<{ updateBundleMin?: number; updateBundleMinDefault?: boolean }>();
+  const current = typeof data?.updateBundleMin === "number" ? { value: data.updateBundleMin, isDefault: data.updateBundleMinDefault === true } : null;
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    if (typeof data?.updateBundleMin === "number") setText((t) => (t === "" ? String(data.updateBundleMin) : t));
+  }, [data]);
+
+  const n = /^d{1,3}$/.test(text.trim()) ? Number(text.trim()) : NaN;
+  const valid = Number.isInteger(n) && n >= 0 && n <= 180;
+
+  const save = async () => {
+    if (!valid) return;
+    setBusy(true);
+    try {
+      const { ok, data: d } = await postControl({ updateBundleMin: n });
+
+      setNotice(d.message ?? (ok ? "저장했어요." : "저장하지 못했어요."));
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SettingsCard
+      attrs={{ "data-title": "settings · 감독 업데이트 묶는 시간", "data-update-bundle-settings": "" }}
+      description="감독 프로그램 새 버전이 있어도 일감이 돌고 있으면 새 커밋을 이 시간까지 모았다가 한 번에 받아요(0~180분, 기본 60분). 모으는 동안 일감은 막지 않아요. 공장이 비어 있으면 바로 받고, 받을 때는 진행 중인 AI 를 안전한 지점에서 잠깐 멈췄다가 새 버전에서 같은 세션으로 이어서 해요. 0이면 묶지 않고 바로 받아요. [지금 업데이트]는 기다리지 않아요."
+      notice={notice}
+      title="감독 업데이트 묶는 시간"
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <ChoiceRow label="묶는 시간">
+          {UPDATE_BUNDLE_CHOICES.map((c) => (
+            <Button key={c} aria-pressed={text.trim() === String(c)} className="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0" color={text.trim() === String(c) ? "primary" : "default"} data-update-bundle-choice={c} isDisabled={busy || current === null} size="sm" variant={text.trim() === String(c) ? "solid" : "flat"} onPress={() => setText(String(c))}>
+              {c === 0 ? "바로 받기" : `${c}분`}
+            </Button>
+          ))}
+        </ChoiceRow>
+        <label className="flex items-center gap-1 text-sm">
+          직접 입력
+          <input aria-label="업데이트 묶는 시간(분)" className="w-20 rounded border border-default-300 px-2 py-1" data-update-bundle-input="" inputMode="numeric" value={text} onChange={(e) => setText(e.target.value)} />분
+        </label>
+        <Button data-update-bundle-save="" isDisabled={busy || !valid || n === current?.value} size="sm" variant="flat" onPress={save}>
+          저장
+        </Button>
+      </div>
+      {current && <p className="text-sm" data-update-bundle-current="">{current.value === 0 ? "현재: 묶지 않고 바로 받기" : `현재 최대 ${current.value}분 모음`}{current.isDefault ? " (정한 적 없어서 기본값)" : ""}</p>}
+      {text !== "" && !valid && <p className="text-sm text-danger-600">0~180 사이 정수로 적어 주세요.</p>}
+    </SettingsCard>
+  );
+}
+
 interface ConductorState {
   autoGroup: boolean;
   model: string;

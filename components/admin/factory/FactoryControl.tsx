@@ -609,11 +609,19 @@ function JobDetailView({
           </div>
         )}
 
-        {job.failReason && (
-          <div className="rounded-lg bg-danger-50 p-3 text-sm text-danger-700 dark:bg-danger-50/10">
-            <b>실패 이유</b>
-            <p className="mt-1 whitespace-pre-wrap">{job.failReason}</p>
+        {job.failReason && job.failReason.startsWith("다시 시작 필요") ? (
+          // 감독 프로그램 업데이트로 멈췄다가 이어 주지 못한 일감: 실패가 아니라 사람이 [다시 시도]를 눌러야 하는 상태
+          <div className="rounded-lg bg-warning-50 p-3 text-sm text-warning-700 dark:bg-warning-50/10">
+            <b>⏸ 다시 시작 필요</b>
+            <p className="mt-1 whitespace-pre-wrap">{job.failReason.replace(/^다시 시작 필요:?s*/, "")}</p>
           </div>
+        ) : (
+          job.failReason && (
+            <div className="rounded-lg bg-danger-50 p-3 text-sm text-danger-700 dark:bg-danger-50/10">
+              <b>실패 이유</b>
+              <p className="mt-1 whitespace-pre-wrap">{job.failReason}</p>
+            </div>
+          )
         )}
 
         {job.summary && (

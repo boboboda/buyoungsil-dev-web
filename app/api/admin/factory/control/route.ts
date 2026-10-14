@@ -7,7 +7,7 @@ import { requireAdmin } from "@/lib/factory/admin";
 import { CLAUDE_MODELS, isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
 import { applyAppChecksPatch, getAppChecks, saveAppChecks } from "@/lib/factory/appChecks";
 import { cleanSharedPatterns, conductorSnapshot, setAutoGroupEnabled, setConductorModel, setSharedFiles } from "@/lib/factory/conductor";
-import { cleanAppSlots, cleanApprovalWait, cleanPerApp, MAX_APP_SLOTS, MAX_APPROVAL_WAIT, MAX_PER_APP, MIN_APP_SLOTS, MIN_APPROVAL_WAIT, MIN_PER_APP, setAppSlots, setApprovalWaitSec, setParallelPerApp, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
+import { cleanAppSlots, cleanApprovalWait, cleanPerApp, cleanUpdateBundle, MAX_APP_SLOTS, MAX_APPROVAL_WAIT, MAX_PER_APP, MAX_UPDATE_BUNDLE, MIN_APP_SLOTS, MIN_APPROVAL_WAIT, MIN_PER_APP, MIN_UPDATE_BUNDLE, setAppSlots, setApprovalWaitSec, setUpdateBundleMin, setParallelPerApp, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
 import { allowedStudioToolIds, isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
 import { APP_ROLES_KEY, applyAppRolePatch, readAppRoles } from "@/lib/factory/appRoles";
 import { applyStudioPatch, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
     appSlots?: unknown;
     parallelPerApp?: unknown;
     approvalWaitSec?: unknown;
+    updateBundleMin?: unknown;
     appChecks?: unknown;
     conductorAutoGroup?: unknown;
     conductorModel?: unknown;
@@ -134,6 +135,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ...(await supervisorSnapshot()),
       message: n === 0 ? "승인 직후 기다리지 않도록 저장했어요(승인하면 바로 시작해요)." : `승인 직후 ${n}초 동안 다른 승인을 기다리도록 저장했어요. 같은 앱에 승인 대기 수정 일감이 또 있을 때만 기다려요.`,
+    });
+  }
+
+  // 감독 프로그램 업데이트 묶는 시간(분): { updateBundleMin: 0~180 정수 }. 0 = 묶지 않고 바로 받음. 일감이 돌고 있을 때만 모은다(공장이 비어 있으면 바로, 통제실 [지금 업데이트]는 기다리지 않음)
+  if (body && Object.hasOwn(body, "updateBundleMin")) {
+    const n = cleanUpdateBundle(body.updateBundleMin);
+
+    if (n === null) return NextResponse.json({ message: `업데이트 묶는 시간은 ${MIN_UPDATE_BUNDLE}~${MAX_UPDATE_BUNDLE}분 사이 정수여야 해요.` }, { status: 400 });
+    await setUpdateBundleMin(n);
+
+    return NextResponse.json({
+      ...(await supervisorSnapshot()),
+      message: n === 0 ? "업데이트를 묶지 않고 바로 받도록 저장했어요(새 버전이 있으면 진행 중인 AI 를 잠깐 멈췄다가 이어서 해요)." : `일감이 돌고 있으면 감독 프로그램 새 커밋을 최대 ${n}분 모았다가 한 번에 받도록 저장했어요. 공장이 비어 있으면 바로 받아요.`,
     });
   }
 

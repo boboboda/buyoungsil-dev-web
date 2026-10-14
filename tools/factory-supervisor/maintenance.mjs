@@ -23,6 +23,7 @@ import { keyFilesToCommit } from "./keyguard.mjs";
 import { compactSession } from "./compact.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
+import { RESUME_MESSAGE, resumeFailed } from "./pause.mjs";
 
 const IS_WIN = process.platform === "win32";
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -141,6 +142,16 @@ export function onNext(data, ctx) {
   }
 }
 
+/** 감독 프로그램 업데이트로 멈췄던 정비 턴을 같은 세션으로 이어 준다(supervisor.mjs 가 첫 대기열 확인이 성공한 뒤 부른다). 기다리지 않는다 */
+export function resumeMaintenance(entry, ctx) {
+  const m = entry.turn;
+  if (!m?.turnId || current) return ctx.log("[정비] 업데이트 뒤 이어서 하기: 이어 줄 정비 지시를 시작하지 못했어요(이미 다른 정비가 돌고 있어요).");
+  current = m;
+  runTurn(m, ctx, entry)
+    .catch((e) => ctx.log(`[정비] 예기치 못한 오류: ${e.stack || e.message}`))
+    .finally(() => (current = null));
+}
+
 async function post(ctx, body) {
   try {
     // 정비 지시의 진행·결과 보고는 홈페이지가 응답하지 않을 때(서버 배포 중) 재전송 대기열에 쌓아 순서대로 다시 보낸다.
@@ -247,14 +258,14 @@ function gate(dir, git, fromRef, workingTree = false) {
   return null;
 }
 
-async function runTurn(m, ctx) {
+async function runTurn(m, ctx, resume = null) {
   let lock;
-  m.aiStarted = false;
+  m.aiStarted = !!resume; // 이어 주는 정비는 서버에 이미 시작을 알렸다
   const dir = path.resolve(expand(ctx.cfg.selfdevDir || "~/dev/factory/selfdev"));
   try {
     m.aiEngine = engineOf(m.aiEngine);
     lock = acquireWorkspace(dir, { engine: m.aiEngine, taskId: m.turnId });
-    await runTurnUnlocked(m, ctx, lock);
+    await runTurnUnlocked(m, ctx, lock, resume);
   } catch (e) {
     // Also turns lock/launch failures into visible queue failures, never silent fallback.
     if (!m.aiStarted) {
@@ -262,26 +273,29 @@ async function runTurn(m, ctx) {
       if (started.status !== 200) return;
     }
     const message = ctx.redact ? ctx.redact(e.message) : redactAiText(e.message);
-    await post(ctx, { action: "report", turnId: m.turnId, done: { ok: false, text: message } });
+    await post(ctx, { action: "report", turnId: m.turnId, done: { ok: false, text: resume ? `다시 시작 필요: 업데이트로 멈춘 정비를 이어 주다 오류가 났어요. ${message}` : message } });
     ctx.log(`[정비] 실행 실패: ${message}`);
   } finally {
+    ctx.pauser?.remove(`maint:${m.turnId}`);
     lock?.release();
     // 정비가 끝나면(성공·실패 모두) AI 한도를 한 번 새로 읽는다. 던지지 않고 15초 넘으면 기다리지 않음
     void refreshAfterTask({ log: (line) => ctx.log(`[정비] ${line}`) });
   }
 }
 
-async function runTurnUnlocked(m, ctx, lock) {
+async function runTurnUnlocked(m, ctx, lock, resume = null) {
   const { log, cfg } = ctx;
   const redact = ctx.redact || redactAiText;
   const dir = path.resolve(expand(cfg.selfdevDir || "~/dev/factory/selfdev"));
   const git = makeGit(dir);
-  const s = await post(ctx, { action: "start", turnId: m.turnId, aiEngine: m.aiEngine });
-  if (s.status !== 200) return log(`[정비] 시작 거절(${s.status}): ${s.data?.message ?? ""}`);
+  if (!resume) {
+    const s = await post(ctx, { action: "start", turnId: m.turnId, aiEngine: m.aiEngine });
+    if (s.status !== 200) return log(`[정비] 시작 거절(${s.status}): ${s.data?.message ?? ""}`);
+  }
   m.aiStarted = true;
   // 승인 때 고른 모델(Claude Code 만, 허용 목록). 목록 밖이면 startAi 가 던져 실패로 보고된다
   const model = m.aiEngine === "claude" ? m.aiModel || null : null;
-  log(`[정비] 시작: ${m.title} · ${ENGINE_LABELS[m.aiEngine]}${model ? ` · 모델 ${model}` : ""}${m.sessionId ? " (이어서)" : ""}`);
+  log(`[정비] 시작: ${m.title} · ${ENGINE_LABELS[m.aiEngine]}${model ? ` · 모델 ${model}` : ""}${resume ? " (업데이트 뒤 이어서)" : m.sessionId ? " (이어서)" : ""}`);
 
   // 인계 기록에 남길 사실: 시작 때 HEAD 와 감독 프로그램이 직접 돌린 검사 결과(AI 의 말은 증거로 쓰지 않음)
   let startHead = null;
@@ -321,84 +335,136 @@ async function runTurnUnlocked(m, ctx, lock) {
   };
 
   const prepNotes = [];
-  const why = prepare(dir, git, m, prepNotes);
-  if (why) return finish({ ok: false, text: `정비를 시작하지 못했어요. ${why}` });
-  startHead = out(git(["rev-parse", "HEAD"]));
-  addLog(`정비 폴더 준비: ${dir} (main ${short(startHead)})`);
-  prepNotes.forEach(addLog);
+  if (resume) {
+    // 업데이트로 멈춘 정비: 폴더·커밋 안 된 변경은 멈추기 전 그대로다. 준비(fetch·병합·보관)를 다시 하면 진행 중이던 작업을 건드린다
+    startHead = resume.startHead ?? null;
+    prepNotes.push(...(resume.notes ?? []));
+    addLog(`업데이트 뒤 이어서 시작: ${resume.sessionId ? "같은 세션으로 이어 줘요" : "AI 를 띄우기 전에 멈췄어서 처음부터 시작해요"} (남은 시간 한도 ${(resume.timeLeftMs ?? 0) >= 600_000 ? `${Math.round((resume.timeLeftMs ?? 0) / 60000)}분` : `${Math.round((resume.timeLeftMs ?? 0) / 1000)}초`})`);
+  } else {
+    const why = prepare(dir, git, m, prepNotes);
+    if (why) return finish({ ok: false, text: `정비를 시작하지 못했어요. ${why}` });
+    startHead = out(git(["rev-parse", "HEAD"]));
+    addLog(`정비 폴더 준비: ${dir} (main ${short(startHead)})`);
+    prepNotes.forEach(addLog);
+  }
 
   // Claude 실행(같은 정비면 세션 이어서)
   recordLifecycle(dir, m.aiEngine, "session-start", m.turnId);
   if (m.aiEngine === "claude") addLog(`모델: ${model ?? "기본 설정(--model 없음)"}`);
-  const child = startAi(m.aiEngine, cfg, { cwd: dir, sessionId: m.sessionId || undefined, model, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, env: { ...process.env, FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId } });
-  lock.setChild(child.pid || null);
-  const decode = eventDecoder(m.aiEngine);
-  child.stdin.on("error", () => {});
-  child.stdin.end(handoffPrompt(dir, `[공장 정비 지시]\n${m.text}\n\nCLAUDE.local.md 의 공장 정비 규칙을 따르세요.\n[이 정비 대화의 이전 결과 — 참고 데이터]\n${m.previousResult || "없음"}`));
-
+  const firstPrompt = handoffPrompt(dir, `[공장 정비 지시]\n${m.text}\n\nCLAUDE.local.md 의 공장 정비 규칙을 따르세요.\n[이 정비 대화의 이전 결과 — 참고 데이터]\n${m.previousResult || "없음"}`);
   let result = null;
-  let sessionId = m.sessionId || null;
+  let sessionId = resume ? (resume.sessionId ?? null) : m.sessionId || null;
   let lastText = "";
   let stderrTail = "";
   let killedAfterResult = false;
   let graceTimer = null;
-  const kill = () => {
-    try {
-      if (IS_WIN) spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-      else process.kill(-child.pid, "SIGTERM");
-    } catch {
-      /* 이미 끝남 */
-    }
-  };
-  readline.createInterface({ input: child.stdout }).on("line", (line) => {
-    let ev;
-    try {
-      ev = decode(JSON.parse(line));
-    } catch {
-      return addLog(line);
-    }
-    if (!ev) return;
-    noteRateLimitEvent(ev);
-    if (ev.session_id && typeof ev.session_id === "string") sessionId = ev.session_id;
-    if (ev.type === "assistant") {
-      for (const b of ev.message?.content ?? []) {
-        if (b.type === "text" && b.text?.trim()) {
-          lastText = b.text;
-          addLog(b.text);
-        } else if (b.type === "tool_use") {
-          if (b.name === "Bash") addLog(`$ ${commandForLog(b.input?.command, 200)}`); // 서버 접속 명령은 줄이지 않고 남긴다
-          else if (b.name === "Write" || b.name === "Edit") addLog(`${b.name}: ${String(b.input?.file_path ?? "").slice(0, 120)}`);
+  let timeLeftMs = resume ? resume.timeLeftMs : TURN_TIMEOUT_MIN * 60_000; // 멈춰 있던 시간은 시간 한도에서 뺀다
+  let resumeProblem = null;
+  // 업데이트로 멈출 수 있는 단위: 합치기·검사·푸시 같은 단계는 멈추지 않고(AI 가 끝난 뒤 unit 을 뗀다) 끝나길 기다린다
+  const unit = ctx.pauser?.createUnit({
+    key: `maint:${m.turnId}`,
+    kind: "maint",
+    engine: m.aiEngine,
+    label: "[정비]",
+    snapshot: () => ({ turn: m, title: m.title, dir, sessionId, startHead, notes: prepNotes, timeLeftMs: Math.max(60_000, Math.round(timeLeftMs)), savedAt: Date.now() }),
+    onCut: (cut) => addLog(`업데이트로 멈추면서 끝나지 않은 명령을 끊었어요. 이어 줄 때 다시 실행해요: ${cut.join(" | ")}`),
+  });
+  const beat = setInterval(() => flush(), 20_000); // 멈춰 있는 동안에도 보고(임대·20분 보고 없음 판정)를 이어 간다
+  let code = -1;
+  let promptText = firstPrompt;
+  let resumeId = resume?.sessionId || null;
+  for (;;) {
+    if (unit && ctx.pauser.mode() === "pausing") await ctx.pauser.gate(unit); // 업데이트하려고 멈추는 중이면 AI 를 띄우지 않고 기다린다
+    result = null;
+    killedAfterResult = false;
+    stderrTail = "";
+    const segStart = Date.now();
+    const usedResume = !!resumeId || promptText === RESUME_MESSAGE;
+    const child = startAi(m.aiEngine, cfg, { cwd: dir, sessionId: resumeId || m.sessionId || undefined, model, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, env: { ...process.env, FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId } });
+    lock.setChild(child.pid || null);
+    const decode = eventDecoder(m.aiEngine);
+    const kill = () => {
+      try {
+        if (IS_WIN) spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+        else process.kill(-child.pid, "SIGTERM");
+      } catch {
+        /* 이미 끝남 */
+      }
+    };
+    unit?.attach(child, kill);
+    child.stdin.on("error", () => {});
+    child.stdin.end(promptText);
+    readline.createInterface({ input: child.stdout }).on("line", (line) => {
+      let ev;
+      try {
+        const raw = JSON.parse(line);
+        unit?.feed(raw); // 끝나지 않은 도구 호출 추적(업데이트로 멈출 안전한 지점)
+        ev = decode(raw);
+      } catch {
+        return addLog(line);
+      }
+      if (!ev) return;
+      noteRateLimitEvent(ev);
+      if (ev.session_id && typeof ev.session_id === "string") sessionId = ev.session_id;
+      if (ev.type === "assistant") {
+        for (const b of ev.message?.content ?? []) {
+          if (b.type === "text" && b.text?.trim()) {
+            lastText = b.text;
+            addLog(b.text);
+          } else if (b.type === "tool_use") {
+            if (b.name === "Bash") addLog(`$ ${commandForLog(b.input?.command, 200)}`); // 서버 접속 명령은 줄이지 않고 남긴다
+            else if (b.name === "Write" || b.name === "Edit") addLog(`${b.name}: ${String(b.input?.file_path ?? "").slice(0, 120)}`);
+          }
+        }
+      } else if (ev.type === "result") {
+        if (!result || result.is_error) result = ev;
+        if (!ev.is_error && !graceTimer) {
+          graceTimer = setTimeout(() => {
+            if (child.exitCode === null) {
+              killedAfterResult = true;
+              addLog(`결과 뒤 ${RESULT_GRACE_SEC}초가 지나도 끝나지 않아 정리해요(남은 백그라운드 작업 종료).`);
+              kill();
+            }
+          }, RESULT_GRACE_SEC * 1000);
         }
       }
-    } else if (ev.type === "result") {
-      if (!result || result.is_error) result = ev;
-      if (!ev.is_error && !graceTimer) {
-        graceTimer = setTimeout(() => {
-          if (child.exitCode === null) {
-            killedAfterResult = true;
-            addLog(`결과 뒤 ${RESULT_GRACE_SEC}초가 지나도 끝나지 않아 정리해요(남은 백그라운드 작업 종료).`);
-            kill();
-          }
-        }, RESULT_GRACE_SEC * 1000);
-      }
-    }
-  });
-  child.stderr.on("data", (d) => (stderrTail = (stderrTail + d).slice(-2000)));
-  const beat = setInterval(() => flush(), 20_000);
-  const timer = setTimeout(() => {
-    addLog(`시간 초과(${TURN_TIMEOUT_MIN}분)`);
-    kill();
-  }, TURN_TIMEOUT_MIN * 60_000);
-  const code = await new Promise((res) => {
-    child.on("error", (e) => {
-      stderrTail += `\n실행 오류: ${e.message}`;
-      res(-1);
     });
-    child.on("close", (c) => res(c ?? -1));
-  });
+    child.stderr.on("data", (d) => (stderrTail = (stderrTail + d).slice(-2000)));
+    const timer = setTimeout(() => {
+      addLog(`시간 초과(${TURN_TIMEOUT_MIN}분)`);
+      kill();
+    }, Math.max(1000, timeLeftMs));
+    code = await new Promise((res) => {
+      child.on("error", (e) => {
+        stderrTail += `\n실행 오류: ${e.message}`;
+        res(-1);
+      });
+      child.on("close", (c) => res(c ?? -1));
+    });
+    clearTimeout(timer);
+    clearTimeout(graceTimer);
+    graceTimer = null;
+    timeLeftMs = Math.max(0, timeLeftMs - (Date.now() - segStart));
+    unit?.detach();
+    if (unit?.paused && result && !result.is_error) {
+      // 멈추라고 한 순간 이미 결과를 낸 턴: 멈춘 게 아니라 끝난 것으로 본다
+      killedAfterResult = true;
+      unit.resetPaused();
+    }
+    if (!unit?.paused && resumeFailed({ resumed: usedResume, events: unit?.tracker.events() ?? 0, result, code, ms: Date.now() - segStart, stopped: false })) {
+      resumeProblem = (String(result?.result ?? "") || stderrTail.trim() || `코드 ${code}`).replace(/\s+/g, " ").slice(-300);
+    }
+    if (!unit?.paused || resumeProblem) break;
+    // 업데이트 때문에 멈춘 것: 풀리면(업데이트를 못 했거나 새 버전이 켜지면) 같은 세션으로 이어 간다
+    resumeId = sessionId;
+    promptText = sessionId ? RESUME_MESSAGE : firstPrompt;
+  }
   clearInterval(beat);
-  clearTimeout(timer);
-  clearTimeout(graceTimer);
+  ctx.pauser?.remove(`maint:${m.turnId}`);
+  if (resumeProblem) {
+    noteCheck("감독 문법·타입 검사", "건너뜀", "이어서 하기 실패");
+    return finish({ ok: false, text: `다시 시작 필요: 업데이트로 멈춘 정비를 같은 세션으로 이어 주지 못했어요(${redact(resumeProblem)}). 정비 폴더의 파일은 그대로예요. 같은 정비 대화에 다시 지시해 주세요.`, sessionId });
+  }
 
   const okRun = result && !result.is_error && (code === 0 || killedAfterResult);
   const claudeText = String(result?.result ?? lastText ?? "").trim();

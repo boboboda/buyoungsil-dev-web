@@ -44,6 +44,7 @@ export function testModeProblems({ env, config, configPath, homedir, realHome, r
     appKitDir: config.appKitDir ?? "~/dev/factory/app-kit",
     FACTORY_UPDATE_STATE: env.FACTORY_UPDATE_STATE || "~/dev/factory/supervisor-update.json",
     FACTORY_RESTART_STATE: env.FACTORY_RESTART_STATE || "~/dev/factory/supervisor-restart.json",
+    FACTORY_PAUSE_STATE: env.FACTORY_PAUSE_STATE || "~/dev/factory/supervisor-paused.json",
     FACTORY_LAUNCHER_LOCK: env.FACTORY_LAUNCHER_LOCK || "~/dev/factory/run-supervisor.pid",
   };
   for (const [name, p] of Object.entries(paths)) {

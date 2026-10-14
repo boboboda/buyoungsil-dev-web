@@ -20,7 +20,7 @@ import { MAX_LOGS_PER_JOB, MAX_LOG_MESSAGE } from "@/lib/factory/jobs";
 import { cleanHandoff } from "@/lib/factory/handoff";
 import { notifyDeployReady, notifyMaintenance, notifyText } from "@/lib/factory/telegram";
 import { getDefaultAiEngine, getDefaultClaudeModel, getSettingValue, getSupervisorRuntime, isAutoDeployEnabled, setSettingValue, type SupervisorRuntime } from "@/lib/factory/settings";
-import { deployNote, drainNote } from "@/lib/factory/supervisorDrain";
+import { bundleNote, deployNote, drainNote, pausedNote } from "@/lib/factory/supervisorDrain";
 
 export const TURN_ACTIVE = ["queued", "running"] as const;
 const QUEUE_STATES = ["awaiting_approval", "queued", "running"];
@@ -728,6 +728,8 @@ export async function maintenanceOverview(opts: { threadId?: string; limit?: num
     drainJobs: drain ? (rt.drainJobs ?? 0) : null,
     drainNote: drain ? drainNote(drain, rt.drainJobs ?? 0) : null,
     deployNote: deployNote(!!rt.deployingPc || (await deployingNow()), rt.outbox ?? 0), // "배포 중 · 재전송 대기 N개" 또는 null
+    pausedNote: pausedNote(rt.pausedJobs ?? 0), // "업데이트로 일시 중지 N개" 또는 null
+    bundleNote: bundleNote(rt.bundleLeft), // "업데이트 대기(묶는 중, 남은 n분)" 또는 null
     queue, // 대기열(모든 정비 대화, 보낸 순서)
     deploy, // 다음 배포 묶음
     autoDeploy, // 대기열이 끝나면 자동 배포(설정)

@@ -57,7 +57,7 @@ import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
 import { maintenanceForNext } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
-import { consumeRestart, consumeUpdateNow, getAppSlots, getApprovalWaitSec, getDefaultAiEngine, getParallelPerApp, getToolBrokerSettings, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
+import { consumeRestart, consumeUpdateNow, getAppSlots, getApprovalWaitSec, getDefaultAiEngine, getParallelPerApp, getToolBrokerSettings, getUpdateBundleMin, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
 import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
@@ -98,6 +98,11 @@ export async function GET(req: NextRequest) {
   const outbox = Number.isFinite(outboxRaw) && outboxRaw > 0 ? Math.min(9999, outboxRaw) : undefined;
   const deployingPc = param("deploying", 1) === "1" ? true : undefined;
   const drainJobs = drain ? Math.min(99, Math.max(0, Math.floor(Number(param("drainJobs", 4))) || 0)) : undefined;
+  // 감독 프로그램 업데이트(1-2 D-2): 업데이트로 일시 중지된 일감 수, 새 커밋을 모으는 중(묶기)이면 남은 분. 표시용
+  const pausedRaw = Math.floor(Number(param("pausedJobs", 4)));
+  const pausedJobs = Number.isFinite(pausedRaw) && pausedRaw > 0 ? Math.min(99, pausedRaw) : undefined;
+  const bundleRaw = Math.floor(Number(param("bundleLeft", 5)));
+  const bundleLeft = Number.isFinite(bundleRaw) && bundleRaw > 0 ? Math.min(180, bundleRaw) : undefined;
   // AI 도구 상태(읽기 전용). PC 가 확인한 때만 온다
   const aiToolsAtRaw = param("aiToolsAt", 40);
   const aiTools = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(aiToolsAtRaw)
@@ -131,6 +136,8 @@ export async function GET(req: NextRequest) {
           drainJobs,
           outbox,
           deployingPc,
+          pausedJobs,
+          bundleLeft,
           restartFail: param("restartFail", 300) || undefined,
         },
         restart,
@@ -154,8 +161,10 @@ export async function GET(req: NextRequest) {
     const labCleanup = await labCleanupForNext().catch(() => []);
     const uploadTest = await consumeUploadTest(); // 통제실 '업로드 시험'(한 번)
     void sweepReviewVideos(); // 7일 지난 검토 영상 정리(가끔)
+    const updateBundleMin = (await getUpdateBundleMin().catch(() => null))?.value;
     const extra = {
       defaultAiEngine,
+      ...(updateBundleMin === undefined ? {} : { updateBundleMin }), // 감독 프로그램 업데이트 때 새 커밋을 모으는 시간(분, 0~180, 0 = 바로 받음)
       compactAfterJob, // 작업 후 컨텍스트 정리(/compact). false 면 감독 프로그램이 하지 않는다
       // 동시에 만들 앱 수(1~4). appSlotsDefault: true 면 통제실에서 정한 적 없는 기본값(PC 에 따로 정한 값이 있으면 감독 프로그램이 그걸 쓴다)
       ...(appSlotsSetting ? { appSlots: appSlotsSetting.value, appSlotsDefault: appSlotsSetting.isDefault } : {}),

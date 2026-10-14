@@ -1,8 +1,12 @@
 // 앱 공장 감독 프로그램 자동 업데이트
-// - 10분마다 origin/main 을 확인해서(일감이 돌고 있어도 확인은 한다), 이 폴더(tools/factory-supervisor/) 파일이 바뀌었으면
-//   일감·정비가 하나도 돌지 않을 때 git pull --ff-only → node --check → 정상 종료(exit 0)한다.
-//   일감이 돌고 있으면 "업데이트 대기"(드레인)가 된다: updateWaiting() 이 true 인 동안 감독 프로그램은 새 일감을 받지 않고,
-//   진행 중인 것이 모두 끝나면 받는다(돌던 일감을 끊지 않는다). 실행기(~/dev/factory/run-supervisor.sh)가 30초 뒤 새 코드로 다시 띄운다.
+// - 10분마다 origin/main 을 확인해서(일감이 돌고 있어도 확인은 한다), 이 폴더(tools/factory-supervisor/) 파일이 바뀌었으면 받는다:
+//   git pull --ff-only → node --check → 정상 종료(exit 0). 실행기가 30초 뒤 새 코드로 다시 띄운다.
+// - 1-2 D-2: 일감이 끝나길 기다리지 않고 "잠깐 멈췄다가 이어서" 한다(pause.mjs).
+//   · 공장이 비어 있으면 새 버전을 바로 받는다. 일감이 돌고 있으면 새 커밋을 최대 bundleMin 분(설정 0~180, 기본 60, 0 = 바로) 모았다가 한 번에 받는다.
+//     모으는 동안은 아무것도 막지 않는다. 통제실 [지금 업데이트]는 기다리지 않고 바로 진행한다.
+//   · 받기로 하면 updateWaiting() 이 true 가 되어 새 일감은 받지 않고, 합치기·검증처럼 멈출 수 없는 단계가 끝나길 기다린 뒤(지금 업데이트는 기다리지 않고 바로 멈추기 시작)
+//     진행 중인 AI 일감·정비 턴을 안전한 지점에서 멈춘다. 모두 멈추면(세션·폴더·단계·남은 시간을 파일에 저장) 받고 다시 시작한다. 새 감독이 저장된 일감을 같은 세션으로 이어 준다.
+//   · 받지 못하면(pull·문법 검사 실패, 자동 업데이트를 끔) 멈춘 일감을 이 프로세스에서 그대로 이어 준다.
 // - 새 버전은 홈페이지 대기열 확인(/next 200)에 성공해야 확인된다. 그 전에 꺼지면 다음 시작 때, 3분 동안 오류 응답만 받으면 그 자리에서
 //   이전 커밋으로 되돌리고 그 커밋은 다시 받지 않는다(건너뛸 목록).
 // - 실행기 밖(FACTORY_LAUNCHER=1 이 없음)에서 돌 때는 다시 띄워 줄 장치가 없으므로 업데이트하지 않는다.
@@ -11,6 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { bundleDecision, bundleMinutes } from "./pause.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -144,8 +149,20 @@ function filesToCheck(entry = path.join(HERE, "supervisor.mjs"), seen = new Set(
 let lastCheck = Date.now(); // 시작 직후에는 확인하지 않는다
 let lastNote = "";
 let warnedNoLauncher = false;
-let waiting = null; // 새 버전이 있어서 진행 중 일감이 끝나길 기다리는 중: { to, manual }. 이 동안 새 일감을 받지 않는다(드레인)
+let waiting = null; // 새 버전을 받으려고 일감을 멈추는 중: { to, manual }. 이 동안 새 일감을 받지 않는다
+let pending = null; // 새 버전이 있지만 일감이 돌고 있어 모으는 중(묶기): { to, firstSeenAt }. 이 동안은 아무것도 막지 않는다
+let bundleMin = 60; // 묶는 시간(분). 서버 설정(updateBundleMin)이 오면 바뀐다
 export const updateWaiting = () => !!waiting;
+export function setUpdateBundle(v) {
+  bundleMin = bundleMinutes(v);
+}
+/** 통제실 표시용: 묶는 중이면 남은 분, 멈추는 중이면 pausing */
+export function bundleStatus(now = Date.now()) {
+  if (waiting) return { state: "pausing", leftMin: 0 };
+  if (!pending) return { state: "none", leftMin: 0 };
+  const d = bundleDecision({ firstSeenAt: pending.firstSeenAt, now, bundleMin, idle: false, forced: false });
+  return d.action === "wait" ? { state: "bundling", leftMin: d.leftMin } : { state: "none", leftMin: 0 };
+}
 let forced = false; // 통제실·커넥터의 "지금 업데이트" 요청(/next 의 updateNow). 일감이 끝나는 대로 한 번 확인한다
 
 // /next 응답에 updateNow: true 가 오면 부른다. 다음 루프(15초 안)에서 주기·자동 업데이트 스위치와 상관없이 확인한다.
@@ -161,23 +178,69 @@ function note(m) {
   log(m);
 }
 
-// 대기열 확인 루프에서 매번 부른다. 업데이트를 받으면 프로세스를 끝낸다(exit 0).
-export function maybeUpdate({ running, autoUpdate }) {
-  if (waiting && !waiting.manual && autoUpdate === false) {
-    log("자동 업데이트 대기 취소: 자동 업데이트가 꺼졌어요. 새 일감을 다시 받아요.");
-    waiting = null;
+// 테스트용: process.exit 를 바꿀 수 있게 한다(운영은 그대로 process.exit)
+let exitFn = (code) => process.exit(code);
+export const _setExitForTest = (fn) => { exitFn = fn; };
+
+function cancelWaiting(pauser, why) {
+  if (!waiting) return;
+  log(`자동 업데이트 대기 취소: ${why}`);
+  waiting = null;
+  const n = pauser?.resumeAll?.() ?? 0;
+  if (n) log(`자동 업데이트: 멈췄던 일감 ${n}개를 이 프로세스에서 그대로 이어 줘요.`);
+}
+
+/**
+ * 대기열 확인 루프에서 매번 부른다. 새 버전을 받으면 프로세스를 끝낸다(exit 0).
+ *  running: 지금 돌고 있는 일감·정비의 수(멈춘 것 포함). pauser: pause.mjs 의 멈춤 조정자(없으면 예전처럼 모두 끝나길 기다린다)
+ *  now: 시험에서 시계를 바꿀 수 있다
+ */
+export function maybeUpdate({ running, autoUpdate, pauser = null, now: now0 = Date.now() }) {
+  if (waiting && !waiting.manual && autoUpdate === false) cancelWaiting(pauser, "자동 업데이트가 꺼졌어요. 새 일감을 다시 받아요.");
+  if (autoUpdate === false && pending && !pending.manual) pending = null;
+
+  // ───── 받기로 한 뒤: 멈출 수 없는 단계가 끝나길 기다리고 → 일감을 멈추고 → 받는다
+  if (waiting) {
+    if (forced) { waiting.manual = true; forced = false; log("자동 업데이트 요청 받음(지금 업데이트): 기다리지 않고 바로 멈추기 시작해요."); }
+    const paused = pauser?.pausedCount() ?? 0;
+    const soft = pauser?.softCount() ?? 0;
+    const hard = Math.max(0, running - paused - soft); // 합치기·검증·정비 배포·멈출 수 없는 일감 등
+    if (!pauser) {
+      if (running > 0) return;
+    } else {
+      if (hard > 0 && !waiting.manual) {
+        // 멈출 수 있는 일감은 계속 일하게 두고, 멈출 수 없는 단계가 끝나길 먼저 기다린다
+        if (now0 - (waiting.noteAt ?? 0) > 60_000) {
+          waiting.noteAt = now0;
+          log(`자동 업데이트 대기: 합치기·검증처럼 멈출 수 없는 단계 ${hard}개가 끝나길 기다려요(AI 일감 ${soft}개는 계속 일해요).`);
+        }
+        return;
+      }
+      if (soft > 0 || paused > 0) pauser.requestPause();
+      const stillRunning = pauser.softCount(); // 안전한 지점에 있던 AI 는 requestPause 에서 바로 멈췄다. 명령이 도는 중인 것만 남는다
+      if (stillRunning > 0) {
+        if (now0 - (waiting.noteAt ?? 0) > 60_000) {
+          waiting.noteAt = now0;
+          log(`자동 업데이트: 진행 중인 AI ${stillRunning}개를 안전한 지점(명령이 끝난 직후)에서 멈추는 중이에요.`);
+        }
+        return;
+      }
+      if (hard > 0) return; // 지금 업데이트: 멈출 수 있는 건 멈췄고 합치기 등이 끝나길 기다린다
+    }
+    // 모두 멈췄거나 돌던 것이 없다 → 받는다
+    return applyUpdate({ pauser, manual: waiting.manual });
   }
-  if (running > 0 && waiting) return; // 드레인 중: 진행 중인 것이 끝나길 기다린다
-  const now0 = Date.now();
-  if (!forced && !waiting && (autoUpdate === false || now0 - lastCheck < CHECK_EVERY_MS)) return;
-  const manual = forced || !!waiting?.manual;
+
+  const sinceCheck = now0 - lastCheck;
+  const bundleDue = pending && bundleDecision({ firstSeenAt: pending.firstSeenAt, now: now0, bundleMin, idle: running === 0, forced: false }).action === "now";
+  if (!forced && (autoUpdate === false || (sinceCheck < CHECK_EVERY_MS && !bundleDue))) return;
+  const manual = forced;
   forced = false;
-  waiting = null; // 아래에서 다시 확인해 필요하면 다시 건다(그 사이 origin/main 이 또 바뀌었을 수 있다)
   lastCheck = now0;
   // 직접 요청한 확인은 결과를 매번 남긴다(상태 조회에서 보이게). 주기 확인은 같은 사유를 한 번만.
   const say = manual ? (m) => { lastNote = m; log(m); } : note;
   if (!UNDER_LAUNCHER) {
-    if (!warnedNoLauncher) log("자동 업데이트 건너뜀: 실행기(run-supervisor.sh) 밖에서 돌고 있어서 다시 띄워 줄 장치가 없어요.");
+    if (!warnedNoLauncher) log("자동 업데이트 건너뜀: 실행기 밖에서 돌고 있어서 다시 띄워 줄 장치가 없어요.");
     warnedNoLauncher = true;
     return;
   }
@@ -191,41 +254,76 @@ export function maybeUpdate({ running, autoUpdate }) {
   const f = git(["fetch", "-q", "origin", "main"], 120_000);
   if (f.status !== 0) return say(`자동 업데이트 확인 실패(git fetch): ${errText(f)}`);
   const remote = out(git(["rev-parse", "origin/main"]));
-  if (!remote || remote === cur) return manual ? say(`자동 업데이트 확인: 이미 최신 버전(${short(cur)})이에요.`) : undefined;
+  if (!remote || remote === cur) {
+    pending = null;
+    return manual ? say(`자동 업데이트 확인: 이미 최신 버전(${short(cur)})이에요.`) : undefined;
+  }
   if (git(["merge-base", "--is-ancestor", cur, remote]).status !== 0) {
+    pending = null;
     return say(`자동 업데이트 건너뜀: 이 PC의 main(${short(cur)})이 origin/main(${short(remote)})과 갈라져 있어요.`);
   }
-  if ((readState().skip ?? []).includes(remote)) return say(`자동 업데이트 건너뜀: ${short(remote)} 는 전에 실패한 커밋이에요.`);
+  if ((readState().skip ?? []).includes(remote)) {
+    pending = null;
+    return say(`자동 업데이트 건너뜀: ${short(remote)} 는 전에 실패한 커밋이에요.`);
+  }
   const changed = out(git(["diff", "--name-only", cur, remote, "--", "."]));
-  if (!changed) return say(`자동 업데이트 건너뜀: 새 커밋(${short(remote)})에 감독 프로그램 변경이 없어요.`);
+  if (!changed) {
+    pending = null;
+    return say(`자동 업데이트 건너뜀: 새 커밋(${short(remote)})에 감독 프로그램 변경이 없어요.`);
+  }
 
-  if (running > 0) {
-    // 일감·정비가 돌고 있다: 지금은 받지 않고 대기(새 일감 받기를 멈춰 진행 중인 것만 끝나게 한다)
-    waiting = { to: remote, manual };
-    say(`자동 업데이트 대기: 새 버전(${short(remote)})이 있어요. 진행 중 일감 ${running}개가 모두 끝나면 받고 다시 시작해요(그동안 새 일감은 받지 않아요).`);
+  // 받을 때를 정한다: 공장이 비었거나 지금 업데이트거나 묶기 0분이면 바로, 아니면 처음 본 때부터 bundleMin 분 모은다
+  if (!pending) pending = { firstSeenAt: now0 };
+  pending.to = remote;
+  const d = bundleDecision({ firstSeenAt: pending.firstSeenAt, now: now0, bundleMin, idle: running === 0, forced: manual });
+  if (d.action === "wait") {
+    say(`자동 업데이트 묶는 중: 새 버전(${short(remote)})이 있어요. 일감이 돌고 있어서 최대 ${bundleMinutes(bundleMin)}분 모았다가 한 번에 받아요(남은 ${d.leftMin}분, 그동안 일감은 막지 않아요).`);
     return;
   }
+  pending = null;
+  waiting = { to: remote, manual, reason: d.reason, noteAt: 0 };
+  say(`자동 업데이트 시작 준비: 새 버전(${short(remote)}) — ${{ idle: "공장이 비어 있어서 바로", "no-bundle": "묶기 0분이라 바로", "bundle-elapsed": "모으는 시간이 끝나서", forced: "지금 업데이트 요청이라 바로" }[d.reason]} 받아요. 진행 중인 AI 는 잠깐 멈췄다가 새 버전에서 이어 줘요(그동안 새 일감은 받지 않아요).`);
+  return maybeUpdate({ running, autoUpdate, pauser, now: now0 }); // 바로 다음 단계(멈추기)로
+}
+
+// 모두 멈춘(또는 돌던 것이 없는) 상태에서 새 버전을 받는다. 실패하면 멈췄던 일감을 이 프로세스에서 그대로 이어 준다.
+function applyUpdate({ pauser, manual }) {
+  const cur = head();
+  const remote = waiting?.to ?? out(git(["rev-parse", "origin/main"]));
+  const fail = (why) => {
+    log(why);
+    waiting = null;
+    const n = pauser?.resumeAll?.() ?? 0;
+    if (n) log(`자동 업데이트: 멈췄던 일감 ${n}개를 이 프로세스에서 그대로 이어 줘요.`);
+  };
+  const changed = out(git(["diff", "--name-only", cur, remote, "--", "."])) ?? "";
   log(`자동 업데이트 시작: ${short(cur)} → ${short(remote)} (${changed.split("\n").join(", ")})`);
   const p = git(["pull", "--ff-only", "-q", "origin", "main"], 120_000);
   if (p.status !== 0) {
-    log(`자동 업데이트 실패(git pull): ${errText(p)}`);
     git(["reset", "--hard", cur]);
-    return;
+    return fail(`자동 업데이트 실패(git pull): ${errText(p)}`);
   }
   const now = head();
   for (const file of filesToCheck()) {
     const c = spawnSync(process.execPath, ["--check", file], { encoding: "utf8", windowsHide: true });
     if (c.status !== 0) {
-      log(`자동 업데이트 실패: 문법 검사 통과 못 함(${path.basename(file)}). 이전 커밋(${short(cur)})으로 되돌려요.\n${errText(c)}`);
       const r = git(["reset", "--hard", cur]);
       if (r.status !== 0) log(`되돌리기 실패(git reset): ${errText(r)}`);
       const s = readState();
       s.skip = [...new Set([...(s.skip ?? []), now])].slice(-20);
       writeState(s);
-      return;
+      return fail(`자동 업데이트 실패: 문법 검사 통과 못 함(${path.basename(file)}). 이전 커밋(${short(cur)})으로 되돌려요.\n${errText(c)}`);
     }
   }
+  // 멈춘 일감을 저장한다(새 감독이 시작할 때 읽어 이어 준다). 저장하지 못하면 받지 않고 이 프로세스에서 이어 준다
+  let saved = [];
+  try {
+    saved = pauser?.persist() ?? [];
+  } catch (e) {
+    git(["reset", "--hard", cur]);
+    return fail(`자동 업데이트 실패: 멈춘 일감의 상태를 저장하지 못했어요(${e.message}). 이전 커밋(${short(cur)})으로 되돌려요.`);
+  }
   writeState({ ...readState(), trial: { from: cur, to: now, starts: 0, at: new Date().toISOString() } });
-  log(`자동 업데이트 완료: ${short(now)} 를 받았어요. 다시 시작합니다(실행기가 30초 뒤 새 코드로 띄움).`);
-  process.exit(0);
+  log(`자동 업데이트 완료: ${short(now)} 를 받았어요.${saved.length ? ` 멈춘 일감 ${saved.length}개는 새 버전이 켜지면 같은 세션으로 이어 줘요.` : ""} 다시 시작합니다(실행기가 30초 뒤 새 코드로 띄움).`);
+  exitFn(0);
 }

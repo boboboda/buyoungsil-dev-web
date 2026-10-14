@@ -74,6 +74,8 @@ interface Data {
   drain?: "update" | "deploy" | null;
   drainNote?: string | null;
   deployNote?: string | null; // "배포 중 · 재전송 대기 N개". 예전 서버에는 없다
+  pausedNote?: string | null; // "업데이트로 일시 중지 N개". 예전 서버에는 없다
+  bundleNote?: string | null; // "업데이트 대기(묶는 중, 남은 n분)". 예전 서버에는 없다
   queue?: Queue; // 예전 서버에는 없다
   deploy?: Bundle;
   autoDeploy?: boolean;
@@ -214,6 +216,8 @@ export default function MaintenancePanel({ initialThreadId = null }: { initialTh
           {data?.drainNote ? ` (${data.drainNote})` : ""}
         </span>
         {data?.deployNote && <span className="text-xs font-semibold text-warning-600">🚀 {data.deployNote}</span>}
+        {data?.pausedNote && <span className="text-xs font-semibold text-warning-600">⏸ {data.pausedNote}</span>}
+        {data?.bundleNote && <span className="text-xs text-default-500">⏳ {data.bundleNote}</span>}
       </div>
 
       {queue?.halted && (
