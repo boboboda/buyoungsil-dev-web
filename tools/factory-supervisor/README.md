@@ -368,3 +368,8 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
 - **설정**: 통제실 [설정] → 실행·동시성 → '일감 시간 낭비 막기'(켜기/끄기, 판정 any·result·count, 반복 횟수 2~20, 바뀐 파일 0~50개, 스크린샷 상한 1~120분). 서버가 `/next` 의 `loopGuard` 로 내려 주고, 값이 없으면(예전 서버) 설정 파일의 `loopGuard` 객체, 그것도 없으면 기본값을 쓴다.
 - **승인 화면**: 지시문 길이(수정 2500자·새 앱 7500자 이상)·항목 수(12개 이상)·측정/스크린샷 요구로 '예상 큼'을 표시하고 "측정·조사는 실험 일감으로 나누기"를 안내한다(`lib/factory/jobSize.ts`). 안내만 하고 승인은 막지 않는다.
 - 시험: `npm run test:loop-guard`. 시험 모드에서만 `FACTORY_TEST_SCREENSHOT_SEC` 로 스크린샷 상한을 초 단위로 줄인다.
+
+## AI 환경·서버 접속 제한 (envfilter.mjs)
+- 정비·지휘자·앱 일감·실험이 AI 에게 넘기는 환경변수는 공통 함수 `safeEnv` 로 TOKEN·PASSWORD·SECRET·API_KEY·PRIVATE_KEY 모양 이름을 뺀다. 감독이 정한 FACTORY_* 허용 목록과 앱 일감 requiredSecrets 키만 더한다.
+- 앱 일감 권한 설정에 `Read(~/.ssh/**)`·`Read(~/.aws/**)` 금지가 있다(ssh 명령 자체는 서버 접근 훅 규칙대로).
+- Codex 는 ssh-guard 훅이 없어서 `startAi` 가 PATH 앞에 안내 스크립트(ssh·scp·rsync·sftp 등)를 둔다. 서버 작업은 "Claude Code 로 다시 보내세요"로 실패한다. 시험: `tests/envfilter.test.mjs`.

@@ -6,6 +6,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { HANDOFF_FILE, HANDOFF_INSTRUCTION, appendEntry, buildEntry, checksFromVerification, handoffContext, stripPaths } from "./handoff.mjs";
+import { withNossh } from "./envfilter.mjs";
 import { MEMORY_UPDATE_INSTRUCTION, memoryContext, updateMemory } from "./memory.mjs";
 
 export const ENGINE_LABELS = { claude: "Claude Code", codex: "Codex" };
@@ -70,7 +71,9 @@ export function startAi(engine, cfg, options = {}) {
     else throw new Error("Codex 실행 파일을 찾지 못했습니다. npm 설치 또는 codexCmd의 .exe 경로를 확인하세요.");
     shell = false; // Preserve TOML quoting and avoid PowerShell execution-policy/shim issues.
   }
-  return spawn(executable, launchArgs, { cwd: options.cwd, env: options.env || process.env, shell, detached: !IS_WIN, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  // Codex 에는 ssh-guard 훅이 없다: ssh·scp·rsync·sftp 가 안내 스크립트로 잡히게 PATH 앞에 둔다(못 만들면 시작하지 않는다)
+  const env = engine === "codex" ? withNossh(options.env || process.env) : options.env || process.env;
+  return spawn(executable, launchArgs, { cwd: options.cwd, env, shell, detached: !IS_WIN, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 export function eventDecoder(engine) {

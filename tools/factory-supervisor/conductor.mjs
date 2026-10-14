@@ -7,6 +7,7 @@
 import { spawn, spawnSync } from "node:child_process";
 
 import { CLAUDE_MODELS } from "./ai-runner.mjs";
+import { safeEnv } from "./envfilter.mjs";
 
 export const CONDUCTOR_TIMEOUT_MS = 4 * 60_000;
 export const MAX_FILE_LIST = 1500;
@@ -177,7 +178,7 @@ export async function runConductor(task, cwd, opts = {}) {
 
     if (IS_WIN && (/[&|<>^%\r\n]/.test(command) || args.some((a) => /[&|<>^%\r\n]/.test(a)))) return { ok: false, reason: "AI 실행 명령에 허용하지 않는 셸 문자가 있어요" };
     const run = await new Promise((resolve) => {
-      const child = (opts.spawnImpl ?? spawn)(command, args, { cwd, env: { ...process.env, ...(opts.env ?? {}), FACTORY_LAUNCHER: "1", FACTORY_ROLE: "conductor" }, shell: IS_WIN, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      const child = (opts.spawnImpl ?? spawn)(command, args, { cwd, env: safeEnv(process.env, { ...(opts.env ?? {}), FACTORY_LAUNCHER: "1", FACTORY_ROLE: "conductor" }), shell: IS_WIN, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
       let err = "";
       let done = false;

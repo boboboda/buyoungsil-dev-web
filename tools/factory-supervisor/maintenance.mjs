@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { acquireWorkspace, engineOf, ENGINE_LABELS, eventDecoder, excludeHarnessState, handoffPrompt, pendingChangesPolicy, recordLifecycle, redactAiText, saveHandoff, startAi } from "./ai-runner.mjs";
+import { safeEnv } from "./envfilter.mjs";
 import { keyFilesToCommit } from "./keyguard.mjs";
 import { compactSession } from "./compact.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
@@ -322,7 +323,7 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
     catch (e) { addLog(`상태 인계 기록 실패: ${e.message}`); }
     // 성공한 지시만: 이 정비 대화가 이어 쓸 Claude 세션을 /compact 로 정리한다(완료 보고 전이라 다음 지시보다 먼저 끝난다). 실패해도 결과는 그대로
     if (done.ok) {
-      const c = await compactSession({ engine: m.aiEngine, sessionId: done.sessionId, reusable: true, enabled: ctx.compactEnabled ? ctx.compactEnabled() : true, cwd: dir, cfg, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, childEnv: { ...process.env, FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId } });
+      const c = await compactSession({ engine: m.aiEngine, sessionId: done.sessionId, reusable: true, enabled: ctx.compactEnabled ? ctx.compactEnabled() : true, cwd: dir, cfg, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, childEnv: safeEnv(process.env, { FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId }) });
       log(`[정비] ${c.line}`);
       done.text = `${done.text}\n— ${c.line}`;
     }
@@ -380,7 +381,7 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
     stderrTail = "";
     const segStart = Date.now();
     const usedResume = !!resumeId || promptText === RESUME_MESSAGE;
-    const child = startAi(m.aiEngine, cfg, { cwd: dir, sessionId: resumeId || m.sessionId || undefined, model, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, env: { ...process.env, FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId } });
+    const child = startAi(m.aiEngine, cfg, { cwd: dir, sessionId: resumeId || m.sessionId || undefined, model, settings: m.aiEngine === "claude" ? permissionSettings() : undefined, env: safeEnv(process.env, { FACTORY_MAINTENANCE: m.threadId, FACTORY_MAINTENANCE_TURN: m.turnId }) });
     lock.setChild(child.pid || null);
     const decode = eventDecoder(m.aiEngine);
     const kill = () => {

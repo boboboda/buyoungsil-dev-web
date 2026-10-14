@@ -43,6 +43,7 @@ import { refreshPathFromRegistry, toolLabel } from "./pcenv.mjs";
 import { maybeRestart, onRestartSignal, readRestartMark, restartPending, restartQuery } from "./restart.mjs";
 import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
+import { safeEnv } from "./envfilter.mjs";
 import { acquireWorkspace, advertisedEngines, recoverWorkspace, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, makeHandoffEntry, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 import { checksFromVerification, headOf } from "./handoff.mjs";
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames, writeArtRefs, writeProjectSettings } from "./toolbroker.mjs";
@@ -332,7 +333,7 @@ function appPermissionSettings() {
     }
     const root = abs(cfg.workDir);
     deny.push(`Edit(//${root}/*.json)`, `Edit(//${root}/*.sh)`, `Edit(//${root}/secrets.env)`);
-    deny.push(`Read(//${root}/supervisor.config.json)`, `Read(//${root}/secrets.env)`);
+    deny.push(`Read(//${root}/supervisor.config.json)`, `Read(//${root}/secrets.env)`, "Read(~/.ssh/**)", "Read(~/.aws/**)"); // ssh 명령 자체는 서버 접근 훅 규칙대로 쓸 수 있다
     // 서버 접근 규칙: ssh·scp 는 우리 서버 두 대로만, 지우기·강제 push·서비스 중단·설정 수정은 훅이 막는다
     fs.writeFileSync(file, JSON.stringify({ permissions: { deny }, hooks: guardHookSettings() }, null, 2));
     return file.replace(/\\/g, "/");
@@ -913,9 +914,7 @@ async function runLabJob(job) {
 
 // AI 에게 넘길 환경: 키·토큰 모양 변수는 뺀다(인터넷이 열려 있는 무인 실행이라)
 function labEnv(job, dir, shared) {
-  const env = {};
-  for (const [k, v] of Object.entries(process.env)) if (!/(TOKEN|PASSWORD|SECRET|API_KEY|PRIVATE_KEY)/i.test(k)) env[k] = v;
-  return { ...env, FACTORY_JOB_ID: job.id, FACTORY_LAB_JOB_ID: job.id, FACTORY_LAB_DIR: dir, FACTORY_LAB_SHARED: shared };
+  return safeEnv(process.env, { FACTORY_JOB_ID: job.id, FACTORY_LAB_JOB_ID: job.id, FACTORY_LAB_DIR: dir, FACTORY_LAB_SHARED: shared });
 }
 
 async function runLabUnlocked(job, lock, { dir, shared }) {
@@ -1182,7 +1181,7 @@ async function runAiProcess(st, prompt, resumeSession) {
     settings: job.aiEngine === "claude" ? appSettings : undefined,
     sessionId: resumeSession || undefined,
     cwd: dir,
-    env: { ...process.env, ...aiSecrets, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id, ...(job.worktree ? { FACTORY_LOCK_DIR: lockDir(), FACTORY_WAIT_FILE: st.waitFile } : {}) },
+    env: safeEnv(process.env, { ...aiSecrets, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id, ...(job.worktree ? { FACTORY_LOCK_DIR: lockDir(), FACTORY_WAIT_FILE: st.waitFile } : {}) }),
   });
   lock.setChild(child.pid || null);
   const decode = eventDecoder(job.aiEngine);
