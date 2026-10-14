@@ -357,11 +357,11 @@ test("통제실 AppQueue: 병행 그룹·worktree 실행 중·잠금 대기·합
   const since = "2026-10-14T07:00:00.000Z";
   const base = { status: "running", parallelGroup: "g-ui111", parallel: { worktree: true, lockWait: null, merging: false, rebases: 0, mergedAt: null, checks: null }, mergeFailed: false };
 
-  assert.deepEqual(mod.parallelBadges(base), ["병행 그룹 g-ui111", "worktree 실행 중"]);
+  assert.deepEqual(mod.parallelBadges(base), ["같이 돌리기 g-ui111", "worktree 실행 중"]);
   assert.ok(mod.parallelBadges({ ...base, parallel: { ...base.parallel, lockWait: { name: "emulator", since } } }).includes("잠금 대기: 에뮬레이터"));
   assert.ok(mod.parallelBadges({ ...base, parallel: { ...base.parallel, merging: true, rebases: 2 } }).includes("합치는 중"));
   assert.ok(mod.parallelBadges({ ...base, parallel: { ...base.parallel, merging: true, rebases: 2 } }).includes("다시 맞추기 2회"));
-  assert.deepEqual(mod.parallelBadges({ status: "failed", parallelGroup: "g-ui111", parallel: null, mergeFailed: true }), ["합치기 실패", "병행 그룹 g-ui111"]);
+  assert.deepEqual(mod.parallelBadges({ status: "failed", parallelGroup: "g-ui111", parallel: null, mergeFailed: true }), ["합치기 실패", "같이 돌리기 g-ui111"]);
   assert.deepEqual(mod.parallelBadges({ status: "approved", parallelGroup: null, parallel: null, mergeFailed: false }), []);
   assert.equal(mod.groupable({ status: "approved", kind: "revision" }), true);
   assert.equal(mod.groupable({ status: "running", kind: "revision" }), false);

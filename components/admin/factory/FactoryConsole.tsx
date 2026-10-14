@@ -22,6 +22,7 @@ import AppQueue from "./AppQueue";
 import RevisionSender from "./RevisionSender";
 import SecretEntries from "./SecretEntries";
 import SecretNames from "./SecretNames";
+import { SettingsGroup } from "./SettingsCard";
 import StudioPanel from "./StudioPanel";
 import StudioAccessKeys from "./StudioAccessKeys";
 import SupervisorControl from "./SupervisorControl";
@@ -48,7 +49,7 @@ const INTRO: Record<FactoryTab, string> = {
   release:
     "앱마다 배포 계정을 고르고 종류(첫 출시·스토어 자료 수정·프로젝트 업데이트)를 골라 승인하면, 스토어 문구·데이터 보안·콘텐츠 등급·체크리스트·개인정보처리방침 초안과 AAB 정보가 여기 모여요. 최초 업로드와 프로덕션 출시는 사람이 Play Console 에서 해요.",
   settings:
-    "기본 AI, 동시에 만들 앱 수, 도구 중계, 텔레그램, 작업 PC 연결 토큰, 외부 서비스 키, Studio 접근 키, 키 보관함(서명 키), 배포 계정, 홈페이지 프로젝트 연결, 작업 규칙",
+    "주제별로 묶여 있어요: 실행·동시성 / 병렬화·지휘자 / 검사 / 도구 / 알림·연결 / 키·계정 / 프로젝트·규칙",
   usage:
     "서버1·서버2·메인PC 장비 상태와 배포된 프로젝트 수, 내 PC의 Claude Code가 지금 하는 일과 토큰 사용량 (앱별 사용량은 [일감] 상세에 있어요)",
   novels:
@@ -131,24 +132,38 @@ export default async function FactoryConsole({
           {tab === "release" && <ReleasePanel />}
 
           {tab === "settings" && (
-            <div className="space-y-6">
-              <ToolkitToolsPanel />
-              <ToolboxPanel />
-              <DefaultAiSettings />
-              <AppSlotsSettings />
-              <ParallelPerAppSettings />
-              <ApprovalWaitSettings />
-              <AppChecksSettings />
-              <ConductorSettings />
-              <ToolBrokerSettings />
-              <TelegramSetup />
-              <WorkerTokens />
-              <SecretEntries />
-              <SecretNames />
-              <StudioAccessKeys />
-              <ReleaseAccounts />
-              <AppProjectLinks />
-              <WorkRules />
+            <div className="space-y-8">
+              <SettingsGroup hint="새 지시에 쓸 AI와 동시에 돌릴 앱 수" id="settings-run" title="실행·동시성">
+                <DefaultAiSettings />
+                <AppSlotsSettings />
+              </SettingsGroup>
+              <SettingsGroup hint="같은 앱의 수정 일감을 같이 돌리는 방식" id="settings-parallel" title="병렬화·지휘자">
+                <ParallelPerAppSettings />
+                <ApprovalWaitSettings />
+                <ConductorSettings />
+              </SettingsGroup>
+              <SettingsGroup hint="합치기·최종 점검 때 더 돌릴 명령" id="settings-checks" title="검사">
+                <AppChecksSettings />
+              </SettingsGroup>
+              <SettingsGroup hint="도구 목록·접근 설정·요청 중계" id="settings-tools" title="도구">
+                <ToolkitToolsPanel />
+                <ToolboxPanel />
+                <ToolBrokerSettings />
+              </SettingsGroup>
+              <SettingsGroup hint="텔레그램 알림과 작업 PC 연결 토큰" id="settings-notify" title="알림·연결">
+                <TelegramSetup />
+                <WorkerTokens />
+              </SettingsGroup>
+              <SettingsGroup hint="외부 서비스 키, Studio 접근 키, 배포 계정" id="settings-keys" title="키·계정">
+                <SecretEntries />
+                <SecretNames />
+                <StudioAccessKeys />
+                <ReleaseAccounts />
+              </SettingsGroup>
+              <SettingsGroup hint="홈페이지 프로젝트 연결과 Claude 작업 규칙" id="settings-project" title="프로젝트·규칙">
+                <AppProjectLinks />
+                <WorkRules />
+              </SettingsGroup>
             </div>
           )}
 

@@ -36,7 +36,7 @@ function loadTs(relative, dependencies = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const module = { exports: {} };
-  new Function("require", "module", "exports", output)((name) => (Object.hasOwn(dependencies, name) ? dependencies[name] : require(name)), module, module.exports);
+  new Function("require", "module", "exports", output)((name) => (Object.hasOwn(dependencies, name) ? dependencies[name] : name === "./SettingsCard" || name === "./useFactoryControl" ? loadTs(`components/admin/factory/${name.slice(2)}.${name === "./SettingsCard" ? "tsx" : "ts"}`) : require(name)), module, module.exports);
   return module.exports;
 }
 
@@ -66,6 +66,7 @@ const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx", { "@/lib/fa
 const MemoryStatus = loadTs("components/admin/factory/MemoryStatus.tsx", { "@/lib/factory/memory-report": memoryReportLib }).default;
 const { TurnLogs } = loadTs("components/admin/factory/MaintenancePanel.tsx", { "./AiEngineSelect": () => null, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib, "./HandoffBox": { __esModule: true, default: () => null }, "@heroui/react": heroui });
 const slotsCard = loadTs("components/admin/factory/AppSlotsSettings.tsx");
+const settingsCard = loadTs("components/admin/factory/SettingsCard.tsx");
 const { HistoryPanelView, ActiveStrip } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
 const { default: DefaultAiSettings } = loadTs("components/admin/factory/DefaultAiSettings.tsx", {
   "@/lib/factory/ai": aiLib,
@@ -81,7 +82,7 @@ const runningPanel = loadTs("components/admin/factory/RunningPanel.tsx", { "@/co
 const { DevicePanelView } = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters, "./RunningPanel": runningPanel });
 const toolkitLib = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
 const studioLib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/appRoles": loadTs("lib/factory/appRoles.ts") });
-const { default: StudioWorkbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/studioProjects": studioLib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null }, "./StudioArtsCard": { __esModule: true, default: () => null } });
+const { default: StudioWorkbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/studioProjects": studioLib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null }, "./StudioArtsCard": { __esModule: true, default: () => null }, "./AppQueue": { __esModule: true, default: () => null } });
 const { ToolkitToolsView } = loadTs("components/admin/factory/ToolkitToolsPanel.tsx", {
   "@/lib/prisma": { __esModule: true, default: null },
   "@/lib/factory/toolkit": toolkitLib,
@@ -157,6 +158,7 @@ STATES.devices = { ...STATES.live, title: "장비 상태", devices: true, bar: {
 // 인계 기록 칸(일감 상세·정비 대화의 접이식, 읽기 전용): AI 블록이 있는 정비 항목 / 블록이 없고 실패한 앱 일감 항목 (하니스에서만 펼쳐서 찍는다)
 STATES["status-mix"] = { ...STATES.live, title: "[현황] 상태 체계", statusMix: true };
 STATES["app-slots"] = { ...STATES.live, title: "[설정] 동시에 만들 앱 수", appSlots: true };
+STATES["settings-groups"] = { ...STATES.live, title: "[설정] 주제별 묶음과 공용 카드 틀", settingsGroups: true };
 STATES.maintLog = { ...STATES.live, title: "정비 지시별 진행 로그", maintLog: true };
 STATES.handoff = { ...STATES.live, title: "인계 기록 칸", handoff: true };
 const handoffSample = {
@@ -253,6 +255,22 @@ const appSlotsPage = () => {
       h(slotsCard.AppSlotsView, { s: { appSlots: 2, appSlotsDefault: false, running: 3 }, pick: 2, notice: "동시에 만들 앱 수를 2개로 저장했어요. 감독 프로그램이 다음 확인 때 받아 가요. 줄여도 이미 도는 일감은 끊지 않고, 끝나면서 줄어들어요." }),
       h("h2", { className: "fx-label" }, "── [현황] 맨 위 띠: 동시에 3개 ──"),
       h(ActiveStrip, { now, active: { running: [1, 2, 3].map(mk), queued: 2, next: { type: "job", title: "타이머 새 앱" } } }),
+    ),
+  );
+};
+const settingsGroupsPage = () => {
+  const { SettingsGroup, default: Card } = settingsCard;
+  return h(
+    "div",
+    { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+    h(
+      "div",
+      { className: "fx-split-main space-y-8" },
+      h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+      h(FactoryTabs, { active: "settings" }),
+      h(SettingsGroup, { title: "실행·동시성", hint: "새 지시에 쓸 AI와 동시에 돌릴 앱 수", id: "settings-run" }, h(DefaultAiSettings), h(slotsCard.AppSlotsView, { s: { appSlots: 3, appSlotsDefault: true, running: 2 }, pick: 3 })),
+      h(SettingsGroup, { title: "병렬화·지휘자", hint: "같은 앱의 수정 일감을 같이 돌리는 방식" }, h(Card, { title: "같은 앱에서 같이 돌릴 수", description: "앱 대기열에서 [같이 돌리기]로 묶은 수정 일감을 같은 앱에서 동시에 몇 개까지 돌릴지 정해요.", notice: "동시에 2개로 저장했어요." })),
+      h(SettingsGroup, { title: "검사", hint: "합치기·최종 점검 때 더 돌릴 명령" }, h(Card, { title: "앱별 합치기·최종 점검 검사 명령", description: "python -m unittest discover -s tests -q 처럼 한 줄에 하나씩 적어요." })),
     ),
   );
 };
@@ -556,6 +574,7 @@ function page(state) {
   if (st.handoff) return h(AdminLayout, null, handoffPage());
   if (st.statusMix) return h(AdminLayout, null, statusMixPage());
   if (st.appSlots) return h(AdminLayout, null, appSlotsPage());
+  if (st.settingsGroups) return h(AdminLayout, null, settingsGroupsPage());
   if (st.devices)
     return h(
       AdminLayout,

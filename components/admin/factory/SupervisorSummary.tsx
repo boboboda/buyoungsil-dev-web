@@ -2,9 +2,8 @@
 // [현황] 탭의 감독 프로그램 한 줄 요약. 상세(연결·버전·재시작·일시 정지·감독 로그)는 [감독] 탭.
 "use client";
 
-import { useEffect, useState } from "react";
-
 import { StatusDot, type Tone } from "./fx";
+import { useFactoryControl } from "./useFactoryControl";
 
 interface Snap {
   enabled: boolean;
@@ -15,24 +14,7 @@ interface Snap {
 }
 
 export default function SupervisorSummary() {
-  const [s, setS] = useState<Snap | null>(null);
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await fetch("/api/admin/factory/control", { cache: "no-store" });
-
-        if (res.ok) setS((await res.json()) as Snap);
-      } catch {
-        /* 못 읽으면 그대로 둔다 */
-      }
-    };
-
-    load();
-    const t = setInterval(load, 5000);
-
-    return () => clearInterval(t);
-  }, []);
+  const { data: s } = useFactoryControl<Snap>();
 
   let badge = "읽는 중…";
   let tone: Tone = "idle";

@@ -22,7 +22,7 @@ function loadTs(relative, dependencies = {}) {
   const source = fs.readFileSync(path.join(repo, relative), "utf8");
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const module = { exports: {} };
-  new Function("require", "module", "exports", output)((name) => (Object.hasOwn(dependencies, name) ? dependencies[name] : require(name)), module, module.exports);
+  new Function("require", "module", "exports", output)((name) => (Object.hasOwn(dependencies, name) ? dependencies[name] : name === "./SettingsCard" || name === "./useFactoryControl" ? loadTs(`components/admin/factory/${name.slice(2)}.${name === "./SettingsCard" ? "tsx" : "ts"}`) : require(name)), module, module.exports);
   return module.exports;
 }
 

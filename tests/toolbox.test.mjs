@@ -223,9 +223,9 @@ test("허용 목록과 막힘을 나눠 그리고, 카드마다 이름·하는 �
   assert.doesNotMatch(html, /<(button|input|select|form)\b/, "읽기 전용");
 });
 
-test("통제실 [설정] 맨 위에 붙고(도구 목록 → 접근 설정 순서), 링크가 가리키는 앵커가 있다", () => {
+test("통제실 [설정] '도구' 묶음에 붙고(도구 목록 → 접근 설정 → 요청 중계 순서), 링크가 가리키는 앵커가 있다", () => {
   const consoleSrc = read("components/admin/factory/FactoryConsole.tsx");
-  assert.match(consoleSrc, /tab === "settings"[\s\S]*?<ToolkitToolsPanel \/>\s*<ToolboxPanel \/>\s*<DefaultAiSettings \/>/);
+  assert.match(consoleSrc, /tab === "settings"[\s\S]*?<ToolkitToolsPanel \/>\s*<ToolboxPanel \/>\s*<ToolBrokerSettings \/>/);
   assert.match(read("components/admin/factory/ToolBrokerSettings.tsx"), /id="tool-broker"/);
   assert.match(read("components/admin/factory/SecretEntries.tsx"), /id="ai-tools"/);
 });

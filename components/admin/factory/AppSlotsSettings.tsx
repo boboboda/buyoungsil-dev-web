@@ -3,8 +3,11 @@
 // '지금 진행 중 N / 최대 M' 은 감독 프로그램 카드와 같은 /api/admin/factory/control 값이다.
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@heroui/react";
+
+import SettingsCard, { ChoiceRow } from "./SettingsCard";
+import { postControl, useFactoryControl } from "./useFactoryControl";
 
 export const APP_SLOT_CHOICES = [1, 2, 3, 4] as const;
 export const SLOTS_WARNING =
@@ -28,41 +31,22 @@ export function slotsSummary(s: SlotsState) {
 }
 
 export default function AppSlotsSettings() {
-  const [s, setS] = useState<SlotsState | null>(null);
+  const { data: s } = useFactoryControl<SlotsState>();
   const [pick, setPick] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/factory/control", { cache: "no-store" });
-
-      if (!res.ok) throw new Error();
-      const data = (await res.json()) as SlotsState;
-
-      setS(data);
-      setPick((p) => p ?? data.appSlots ?? null);
-    } catch {
-      /* 못 읽으면 그대로 둔다 */
-    }
-  }, []);
-
   useEffect(() => {
-    load();
-    const t = setInterval(load, 5000);
-
-    return () => clearInterval(t);
-  }, [load]);
+    if (s) setPick((p) => p ?? s.appSlots ?? null);
+  }, [s]);
 
   const save = async () => {
     if (pick === null) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/admin/factory/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ appSlots: pick }) });
-      const data = (await res.json().catch(() => ({}))) as SlotsState & { message?: string };
+      const { ok, data } = await postControl<SlotsState>({ appSlots: pick });
 
-      setNotice(data.message ?? (res.ok ? "저장했어요." : "저장하지 못했어요."));
-      if (res.ok) setS(data);
+      setNotice(data.message ?? (ok ? "저장했어요." : "저장하지 못했어요."));
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     } finally {
@@ -93,11 +77,18 @@ export function AppSlotsView({
   const supported = s?.appSlots !== undefined;
 
   return (
-    <div className="space-y-3 rounded-lg border border-default-200 p-4" data-title="settings · 동시에 만들 앱 수" data-app-slots="">
-      <h2 className="font-semibold">동시에 만들 앱 수</h2>
-      <p className="text-sm text-default-500">승인된 앱 일감을 한 번에 몇 개까지 같이 만들지 정해요(1~4개). 같은 앱의 일감은 개수가 남아도 하나씩만 돌고, 공장 정비가 대기·진행 중이어도 앱 일감은 계속 돌아요(감독 프로그램 업데이트·서버 배포를 앞두고 진행 중 일감이 끝나길 기다릴 때만 새 일감을 받지 않아요).</p>
+    <SettingsCard
+      attrs={{ "data-title": "settings · 동시에 만들 앱 수", "data-app-slots": "" }}
+      description="승인된 앱 일감을 한 번에 몇 개까지 같이 만들지 정해요(1~4개). 같은 앱의 일감은 개수가 남아도 하나씩만 돌고, 공장 정비가 대기·진행 중이어도 앱 일감은 계속 돌아요(감독 프로그램 업데이트·서버 배포를 앞두고 진행 중 일감이 끝나길 기다릴 때만 새 일감을 받지 않아요)."
+      help={[
+        "이 값은 감독 프로그램이 다음 확인 때 받아 가요(보통 15초 안, 재시작은 필요 없어요). 줄여도 이미 도는 일감은 끊지 않고, 늘리면 대기 중인 승인된 일감을 다음 확인 때 더 가져가요.",
+        "통제실에서 정한 적이 없으면 3개로 돌아요. 단 이 PC 설정 파일에 slots 를 1이나 4처럼 따로 정해 둔 경우는 통제실에서 저장하기 전까지 그 값을 써요.",
+      ]}
+      notice={notice}
+      title="동시에 만들 앱 수"
+    >
       <div className="flex flex-wrap items-center gap-3">
-        <div aria-label="동시에 만들 앱 수" className="flex gap-2" role="group">
+        <ChoiceRow label="동시에 만들 앱 수">
           {APP_SLOT_CHOICES.map((n) => (
             <Button
               key={n}
@@ -113,7 +104,7 @@ export function AppSlotsView({
               {n}개
             </Button>
           ))}
-        </div>
+        </ChoiceRow>
         <Button data-slots-save="" isDisabled={!supported || busy || pick === null || pick === s?.appSlots} size="sm" variant="flat" onPress={onSave}>
           저장
         </Button>
@@ -125,16 +116,13 @@ export function AppSlotsView({
           {sum.over && <p className="text-default-500">{sum.over}</p>}
         </div>
       )}
-      <p className="text-sm text-default-500">이 값은 감독 프로그램이 다음 확인 때 받아 가요(보통 15초 안, 재시작은 필요 없어요). 줄여도 이미 도는 일감은 끊지 않고, 늘리면 대기 중인 승인된 일감을 다음 확인 때 더 가져가요.</p>
-      <p className="text-sm text-default-500">통제실에서 정한 적이 없으면 3개로 돌아요. 단 이 PC 설정 파일에 slots 를 1이나 4처럼 따로 정해 둔 경우는 통제실에서 저장하기 전까지 그 값을 써요.</p>
       <p className="text-sm font-medium text-warning-600" data-slots-warning="">{SLOTS_WARNING}</p>
       <p className="text-sm">
         <a className="underline" data-slots-usage-link="" href="/admin/factory?tab=usage">
           [사용량] 탭에서 한도 게이지와 장비 상태(RAM) 보기
         </a>
       </p>
-      {notice && <p className="text-sm" role="status">{notice}</p>}
-    </div>
+    </SettingsCard>
   );
 }
 
@@ -145,40 +133,23 @@ export const PER_APP_CHOICES = [1, 2, 3, 4] as const;
  * 공장 전체 동시 실행 수는 위의 '동시에 만들 앱 수'(기본 3)가 정한다. 병행 일감도 그 수에 하나씩 센다.
  */
 export function ParallelPerAppSettings() {
-  const [current, setCurrent] = useState<{ value: number; isDefault: boolean } | null>(null);
+  const { data } = useFactoryControl<{ parallelPerApp?: number; parallelPerAppDefault?: boolean }>();
+  const current = typeof data?.parallelPerApp === "number" ? { value: data.parallelPerApp, isDefault: data.parallelPerAppDefault === true } : null;
   const [pick, setPick] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/factory/control", { cache: "no-store" });
-
-      if (!res.ok) throw new Error();
-      const data = (await res.json()) as { parallelPerApp?: number; parallelPerAppDefault?: boolean };
-
-      if (typeof data.parallelPerApp === "number") {
-        setCurrent({ value: data.parallelPerApp, isDefault: data.parallelPerAppDefault === true });
-        setPick((p) => p ?? data.parallelPerApp ?? null);
-      }
-    } catch {
-      /* 못 읽으면 그대로 둔다 */
-    }
-  }, []);
-
   useEffect(() => {
-    load();
-  }, [load]);
+    if (typeof data?.parallelPerApp === "number") setPick((p) => p ?? data.parallelPerApp ?? null);
+  }, [data]);
 
   const save = async () => {
     if (pick === null) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/admin/factory/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parallelPerApp: pick }) });
-      const data = (await res.json().catch(() => ({}))) as { message?: string; parallelPerApp?: number; parallelPerAppDefault?: boolean };
+      const { ok, data: d } = await postControl({ parallelPerApp: pick });
 
-      setNotice(data.message ?? (res.ok ? "저장했어요." : "저장하지 못했어요."));
-      if (res.ok && typeof data.parallelPerApp === "number") setCurrent({ value: data.parallelPerApp, isDefault: data.parallelPerAppDefault === true });
+      setNotice(d.message ?? (ok ? "저장했어요." : "저장하지 못했어요."));
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     } finally {
@@ -187,24 +158,26 @@ export function ParallelPerAppSettings() {
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-default-200 p-4" data-title="settings · 같은 앱에서 같이 돌릴 수" data-per-app="">
-      <h2 className="font-semibold">같은 앱에서 같이 돌릴 수</h2>
-      <p className="text-sm text-default-500">앱 대기열에서 [같이 돌리기]로 묶은 수정 일감을 같은 앱에서 동시에 몇 개까지 돌릴지 정해요(1~4개, 기본 2개). 묶지 않은 일감은 지금처럼 앱당 1개예요. 병행 일감은 앱 폴더가 아니라 작업 사본(git worktree)에서 돌고, 끝난 순서대로 기본 브랜치에 합쳐요. 공장 전체 동시 실행 수는 위의 &lsquo;동시에 만들 앱 수&rsquo;가 정해요.</p>
+    <SettingsCard
+      attrs={{ "data-title": "settings · 같은 앱에서 같이 돌릴 수", "data-per-app": "" }}
+      description="앱 대기열에서 [같이 돌리기]로 묶은 수정 일감을 같은 앱에서 동시에 몇 개까지 돌릴지 정해요(1~4개, 기본 2개). 묶지 않은 일감은 지금처럼 앱당 1개예요. 병행 일감은 앱 폴더가 아니라 작업 사본(git worktree)에서 돌고, 끝난 순서대로 기본 브랜치에 합쳐요. 공장 전체 동시 실행 수는 위의 ‘동시에 만들 앱 수’가 정해요."
+      notice={notice}
+      title="같은 앱에서 같이 돌릴 수"
+    >
       <div className="flex flex-wrap items-center gap-3">
-        <div aria-label="같은 앱에서 같이 돌릴 수" className="flex gap-2" role="group">
+        <ChoiceRow label="같은 앱에서 같이 돌릴 수">
           {PER_APP_CHOICES.map((n) => (
             <Button key={n} aria-pressed={pick === n} className="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0" color={pick === n ? "primary" : "default"} data-per-app-choice={n} isDisabled={busy || current === null} size="sm" variant={pick === n ? "solid" : "flat"} onPress={() => setPick(n)}>
               {n}개
             </Button>
           ))}
-        </div>
+        </ChoiceRow>
         <Button data-per-app-save="" isDisabled={busy || pick === null || pick === current?.value} size="sm" variant="flat" onPress={save}>
           저장
         </Button>
       </div>
       {current && <p className="text-sm" data-per-app-current="">{`현재 ${current.value}개${current.isDefault ? " (정한 적 없어서 기본값)" : ""}`}</p>}
-      {notice && <p className="text-sm" role="status">{notice}</p>}
-    </div>
+    </SettingsCard>
   );
 }
 
@@ -215,30 +188,15 @@ export const APPROVAL_WAIT_CHOICES = [0, 30, 60, 120, 300] as const;
  * 마지막 승인 뒤 이 시간만큼 기다려요(연달아 승인하면 지휘자가 묶을 수 있게). 0이면 기다리지 않아요. 자동 묶기가 꺼져 있거나 같은 앱 동시 수가 1이면 기다리지 않아요.
  */
 export function ApprovalWaitSettings() {
-  const [current, setCurrent] = useState<{ value: number; isDefault: boolean } | null>(null);
+  const { data } = useFactoryControl<{ approvalWaitSec?: number; approvalWaitSecDefault?: boolean }>();
+  const current = typeof data?.approvalWaitSec === "number" ? { value: data.approvalWaitSec, isDefault: data.approvalWaitSecDefault === true } : null;
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/factory/control", { cache: "no-store" });
-
-      if (!res.ok) throw new Error();
-      const data = (await res.json()) as { approvalWaitSec?: number; approvalWaitSecDefault?: boolean };
-
-      if (typeof data.approvalWaitSec === "number") {
-        setCurrent({ value: data.approvalWaitSec, isDefault: data.approvalWaitSecDefault === true });
-        setText((t) => (t === "" ? String(data.approvalWaitSec) : t));
-      }
-    } catch {
-      /* 못 읽으면 그대로 둔다 */
-    }
-  }, []);
-
   useEffect(() => {
-    load();
-  }, [load]);
+    if (typeof data?.approvalWaitSec === "number") setText((t) => (t === "" ? String(data.approvalWaitSec) : t));
+  }, [data]);
 
   const n = /^\d{1,3}$/.test(text.trim()) ? Number(text.trim()) : NaN;
   const valid = Number.isInteger(n) && n >= 0 && n <= 300;
@@ -247,11 +205,9 @@ export function ApprovalWaitSettings() {
     if (!valid) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/admin/factory/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvalWaitSec: n }) });
-      const data = (await res.json().catch(() => ({}))) as { message?: string; approvalWaitSec?: number; approvalWaitSecDefault?: boolean };
+      const { ok, data: d } = await postControl({ approvalWaitSec: n });
 
-      setNotice(data.message ?? (res.ok ? "저장했어요." : "저장하지 못했어요."));
-      if (res.ok && typeof data.approvalWaitSec === "number") setCurrent({ value: data.approvalWaitSec, isDefault: data.approvalWaitSecDefault === true });
+      setNotice(d.message ?? (ok ? "저장했어요." : "저장하지 못했어요."));
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     } finally {
@@ -260,17 +216,20 @@ export function ApprovalWaitSettings() {
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-default-200 p-4" data-title="settings · 승인 직후 기다리는 시간" data-approval-wait="">
-      <h2 className="font-semibold">승인 직후 기다리는 시간</h2>
-      <p className="text-sm text-default-500">같은 앱에 승인 대기 중인 수정 일감이 또 있으면, 방금 승인한 일감을 바로 시작하지 않고 마지막 승인 뒤 이 시간만큼 기다려요(0~300초, 기본 60초). 그동안 연달아 승인하면 지휘자가 겹치는지 보고 같이 돌릴 수 있어요. 0이면 승인 즉시 시작해요. 자동 묶기가 꺼져 있거나 같은 앱에서 같이 돌릴 수가 1이면 기다리지 않아요.</p>
+    <SettingsCard
+      attrs={{ "data-title": "settings · 승인 직후 기다리는 시간", "data-approval-wait": "" }}
+      description="같은 앱에 승인 대기 중인 수정 일감이 또 있으면, 방금 승인한 일감을 바로 시작하지 않고 마지막 승인 뒤 이 시간만큼 기다려요(0~300초, 기본 60초). 그동안 연달아 승인하면 지휘자가 겹치는지 보고 같이 돌릴 수 있어요. 0이면 승인 즉시 시작해요. 자동 묶기가 꺼져 있거나 같은 앱에서 같이 돌릴 수가 1이면 기다리지 않아요."
+      notice={notice}
+      title="승인 직후 기다리는 시간"
+    >
       <div className="flex flex-wrap items-center gap-3">
-        <div aria-label="승인 직후 기다리는 시간" className="flex gap-2" role="group">
+        <ChoiceRow label="승인 직후 기다리는 시간">
           {APPROVAL_WAIT_CHOICES.map((c) => (
             <Button key={c} aria-pressed={text.trim() === String(c)} className="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0" color={text.trim() === String(c) ? "primary" : "default"} data-approval-wait-choice={c} isDisabled={busy || current === null} size="sm" variant={text.trim() === String(c) ? "solid" : "flat"} onPress={() => setText(String(c))}>
               {c === 0 ? "기다리지 않음" : `${c}초`}
             </Button>
           ))}
-        </div>
+        </ChoiceRow>
         <label className="flex items-center gap-1 text-sm">
           직접 입력
           <input aria-label="승인 직후 기다리는 시간(초)" className="w-20 rounded border border-default-300 px-2 py-1" data-approval-wait-input="" inputMode="numeric" value={text} onChange={(e) => setText(e.target.value)} />초
@@ -281,8 +240,7 @@ export function ApprovalWaitSettings() {
       </div>
       {current && <p className="text-sm" data-approval-wait-current="">{current.value === 0 ? "현재: 기다리지 않음" : `현재 ${current.value}초`}{current.isDefault ? " (정한 적 없어서 기본값)" : ""}</p>}
       {text !== "" && !valid && <p className="text-sm text-danger-600">0~300 사이 정수로 적어 주세요.</p>}
-      {notice && <p className="text-sm" role="status">{notice}</p>}
-    </div>
+    </SettingsCard>
   );
 }
 
@@ -302,40 +260,23 @@ export const CONDUCTOR_MODELS = ["haiku", "sonnet", "opus"] as const;
  * 켜기·끄기(기본 켜기), 모델(기본 haiku), 공용 파일 목록(건드리면 순서대로 두는 파일 패턴), 최근 판단 기록(지휘자 턴을 따로 표시).
  */
 export function ConductorSettings() {
-  const [s, setS] = useState<ConductorState | null>(null);
+  const { data } = useFactoryControl<{ conductor?: ConductorState }>();
+  const s = data?.conductor ?? null;
   const [files, setFiles] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/factory/control", { cache: "no-store" });
-      const data = (await res.json()) as { conductor?: ConductorState };
-
-      if (res.ok && data.conductor) {
-        setS(data.conductor);
-        setFiles((f) => f ?? data.conductor!.sharedFiles.join("\n"));
-      }
-    } catch {
-      /* 못 읽으면 그대로 둔다 */
-    }
-  }, []);
-
   useEffect(() => {
-    load();
-  }, [load]);
+    if (s) setFiles((f) => f ?? s.sharedFiles.join("\n"));
+  }, [s]);
 
   const send = async (body: Record<string, unknown>) => {
     setBusy(true);
     try {
-      const res = await fetch("/api/admin/factory/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const data = (await res.json().catch(() => ({}))) as { message?: string; conductor?: ConductorState };
+      const { ok, data: d } = await postControl<{ conductor?: ConductorState }>(body);
 
-      setNotice(data.message ?? (res.ok ? "저장했어요." : "저장하지 못했어요."));
-      if (res.ok && data.conductor) {
-        setS(data.conductor);
-        setFiles(data.conductor.sharedFiles.join("\n"));
-      }
+      setNotice(d.message ?? (ok ? "저장했어요." : "저장하지 못했어요."));
+      if (ok && d.conductor) setFiles(d.conductor.sharedFiles.join("\n"));
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     } finally {
@@ -344,22 +285,25 @@ export function ConductorSettings() {
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-default-200 p-4" data-title="settings · 지휘자(자동 묶기)" data-conductor="">
-      <h2 className="font-semibold">지휘자(자동 묶기)</h2>
-      <p className="text-sm text-default-500">같은 앱에 승인된 수정 일감이 2개 이상 쌓이면, 읽기 전용 AI 가 일감이 서로 겹치지 않는지 보고 안전할 때만 자동으로 &lsquo;같이 돌리기&rsquo;로 묶어요. 예상 파일이 겹치거나, 확신이 높지 않거나, 의존성·라우터·스키마·번역 같은 공용 파일을 건드리면 묶지 않고 순서대로 둬요. 끄면 사람이 묶은 것만 같이 돌아요. 사람이 직접 묶거나 푼 일감은 지휘자가 바꾸지 않아요.</p>
+    <SettingsCard
+      attrs={{ "data-title": "settings · 지휘자(자동 묶기)", "data-conductor": "" }}
+      description="같은 앱에 승인된 수정 일감이 2개 이상 쌓이면, 읽기 전용 AI 가 일감이 서로 겹치지 않는지 보고 안전할 때만 자동으로 ‘같이 돌리기’로 묶어요. 예상 파일이 겹치거나, 확신이 높지 않거나, 의존성·라우터·스키마·번역 같은 공용 파일을 건드리면 묶지 않고 순서대로 둬요. 끄면 사람이 묶은 것만 같이 돌아요. 사람이 직접 묶거나 푼 일감은 지휘자가 바꾸지 않아요."
+      notice={notice}
+      title="지휘자(자동 묶기)"
+    >
       {s ? (
         <>
           <div className="flex flex-wrap items-center gap-3">
             <Button aria-pressed={s.autoGroup} color={s.autoGroup ? "primary" : "default"} data-conductor-toggle="" isDisabled={busy} size="sm" variant={s.autoGroup ? "solid" : "flat"} onPress={() => send({ conductorAutoGroup: !s.autoGroup })}>
               {s.autoGroup ? "자동 묶기 켜짐" : "자동 묶기 꺼짐"}
             </Button>
-            <div aria-label="지휘자 모델" className="flex gap-2" role="group">
+            <ChoiceRow label="지휘자 모델">
               {CONDUCTOR_MODELS.map((m) => (
                 <Button key={m} aria-pressed={s.model === m} color={s.model === m ? "primary" : "default"} data-conductor-model={m} isDisabled={busy} size="sm" variant={s.model === m ? "solid" : "flat"} onPress={() => send({ conductorModel: m })}>
                   {m}
                 </Button>
               ))}
-            </div>
+            </ChoiceRow>
             <span className="text-sm" data-conductor-current="">{`모델 ${s.model}${s.modelIsDefault ? " (기본)" : ""}`}</span>
           </div>
           <label className="block text-sm">
@@ -375,8 +319,8 @@ export function ConductorSettings() {
             </Button>
           </div>
           {s.log.length ? (
-            <div className="space-y-1 text-xs text-default-500" data-conductor-log="">
-              <div className="font-semibold">최근 지휘자 판단(비용 기록에 &lsquo;지휘자&rsquo;로 따로 표시)</div>
+            <div className="min-w-0 space-y-1 break-words text-xs text-default-500" data-conductor-log="">
+              <div className="font-semibold">최근 지휘자 판단(비용 기록에 ‘지휘자’로 따로 표시)</div>
               {s.log.map((r) => (
                 <div key={`${r.at}-${r.appSlug}`}>{`[지휘자] ${r.at.slice(5, 16).replace("T", " ")} ${r.appSlug} · ${r.model ?? "?"} · ${r.outcome}${r.costUsd !== null ? ` · $${r.costUsd.toFixed(4)}` : ""}${r.ms !== null ? ` · ${Math.round(r.ms / 1000)}초` : ""}`}</div>
               ))}
@@ -384,7 +328,6 @@ export function ConductorSettings() {
           ) : null}
         </>
       ) : null}
-      {notice && <p className="text-sm" role="status">{notice}</p>}
-    </div>
+    </SettingsCard>
   );
 }

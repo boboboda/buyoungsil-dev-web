@@ -4,7 +4,9 @@
 // ModelTag: 이력·목록의 '모델: ○○' 표시(Codex 는 표시 안 함).
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+
+import { reloadControl, useFactoryControl } from "./useFactoryControl";
 
 import {
   CLAUDE_MODEL_LABELS,
@@ -90,34 +92,21 @@ export default function ClaudeModelSelect({
   label?: string;
   defaults?: ModelDefaults;
 }) {
-  const [loaded, setLoaded] = useState<ModelDefaults>({ model: null, engine: null });
+  const { data } = useFactoryControl<{ defaultClaudeModel?: unknown; defaultAiEngine?: unknown }>();
+  const loaded: ModelDefaults = {
+    model: isClaudeModel(data?.defaultClaudeModel) ? data.defaultClaudeModel : null,
+    engine: isAiEngine(data?.defaultAiEngine) ? data.defaultAiEngine : null,
+  };
   const d = defaults ?? loaded;
   const hidden = modelSelectHidden(engine, d.engine);
 
   useEffect(() => {
     if (defaults) return;
-    let alive = true;
-    const load = () =>
-      fetch("/api/admin/factory/control", { cache: "no-store" })
-        .then(async (res) => {
-          if (!res.ok) return;
-          const data = await res.json();
+    const load = () => void reloadControl();
 
-          if (alive)
-            setLoaded({
-              model: isClaudeModel(data.defaultClaudeModel) ? data.defaultClaudeModel : null,
-              engine: isAiEngine(data.defaultAiEngine) ? data.defaultAiEngine : null,
-            });
-        })
-        .catch(() => {});
-
-    void load();
     window.addEventListener("factory-default-ai-changed", load);
 
-    return () => {
-      alive = false;
-      window.removeEventListener("factory-default-ai-changed", load);
-    };
+    return () => window.removeEventListener("factory-default-ai-changed", load);
   }, [defaults]);
 
   // 숨겨지면(Codex) 고른 모델을 풀어 서버로 보내지 않게 한다

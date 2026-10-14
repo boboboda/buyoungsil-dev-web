@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { GroupReport } from "@/lib/factory/parallel";
 import type { QueueItem } from "@/lib/factory/queue";
 
-const STATUS_TEXT: Record<string, string> = { running: "제작 중", approved: "승인됨", pending: "승인 대기", failed: "멈춤" };
+const STATUS_TEXT: Record<string, string> = { running: "제작 중", approved: "승인됨", pending: "승인 대기", failed: "실패" };
 const LOCK_TEXT: Record<string, string> = { build: "빌드", emulator: "에뮬레이터", port: "고정 포트", merge: "합치기" };
 const KIND_TEXT: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비" };
 const REFRESH_MS = 5_000;
@@ -20,7 +20,7 @@ export function parallelBadges(q: Pick<QueueItem, "status" | "parallelGroup" | "
   const out: string[] = [];
 
   if (q.mergeFailed) out.push("합치기 실패");
-  if (q.parallelGroup) out.push(`병행 그룹 ${q.parallelGroup}`);
+  if (q.parallelGroup) out.push(`같이 돌리기 ${q.parallelGroup}`);
   if (q.status === "approved" && (q.groupPendingLeft ?? 0) > 0) out.push(`묶음 승인 기다림 (${q.groupPendingLeft}개 남음)`);
   if (q.status === "approved" && (q.approvalWait ?? 0) > 0) out.push(`다른 승인 기다림 ${q.approvalWait}초`);
   if (q.status === "running" && q.parallel?.worktree) out.push("worktree 실행 중");
@@ -190,7 +190,7 @@ export default function AppQueue({ appSlug }: { appSlug?: string }) {
                 ) : null}
                 {q.parallelGroup && q.status !== "running" ? (
                   <button className="rounded border border-default-300 px-2" data-queue-ungroup disabled={busy} type="button" onClick={() => void groupAct({ action: "ungroup", jobId: q.id })}>
-                    그룹 풀기
+                    묶음 풀기
                   </button>
                 ) : null}
                 {q.status !== "running" && q.status !== "failed" ? (
@@ -213,7 +213,7 @@ export default function AppQueue({ appSlug }: { appSlug?: string }) {
       ))}
       {reports.length ? (
         <div className="space-y-1 border-t border-default-200 pt-2" data-group-reports>
-          <h5 className="fx-label">병행 그룹 완료 요약</h5>
+          <h5 className="fx-label">같이 돌리기 묶음 완료 요약</h5>
           {reports.slice(0, appSlug ? 3 : 5).map((r) => (
             <pre key={`${r.appSlug}-${r.group}`} className="whitespace-pre-wrap text-xs fx-muted" data-group-report={r.group}>
               {r.text}

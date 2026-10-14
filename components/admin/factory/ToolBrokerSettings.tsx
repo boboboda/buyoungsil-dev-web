@@ -3,6 +3,8 @@
 // 도구 요청 중계 스위치: 꺼짐 / 보고만 / 허용 + 일감당 요청 수·도구 제한 시간. 감독 프로그램이 /api/factory/next 폴링 때 받아 간다.
 import { useEffect, useState } from "react";
 import { Button } from "@heroui/react";
+import SettingsCard from "./SettingsCard";
+import { postControl, useFactoryControl } from "./useFactoryControl";
 import {
   isToolBrokerMode,
   normalizeToolBroker,
@@ -20,42 +22,27 @@ const MODE_HELP: Record<Settings["mode"], string> = {
 };
 
 export default function ToolBrokerSettings() {
+  const { data } = useFactoryControl<{ toolBroker?: unknown }>();
   const [s, setS] = useState<Settings>(TOOL_BROKER_DEFAULTS);
-  const [loaded, setLoaded] = useState(false);
+  const loaded = data !== null;
+  const [filled, setFilled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
+  // 처음 한 번만 읽은 값으로 채운다(고치는 중인 값을 폴링이 덮어쓰지 않게)
   useEffect(() => {
-    let alive = true;
-    fetch("/api/admin/factory/control", { cache: "no-store" })
-      .then(async (res) => {
-        if (!res.ok) throw new Error("도구 요청 중계 설정을 읽지 못했어요.");
-        const data = await res.json();
-        if (alive) {
-          setS(normalizeToolBroker(data.toolBroker));
-          setLoaded(true);
-        }
-      })
-      .catch((e) => {
-        if (alive) setNotice(e.message);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
+    if (!data || filled) return;
+    setFilled(true);
+    setS(normalizeToolBroker(data.toolBroker));
+  }, [data, filled]);
 
   const save = async () => {
     if (s.mode === "allow" && !window.confirm("AI 의 도구 요청을 감독 프로그램이 실행하게 할까요? (허용 목록의 도구만)")) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/admin/factory/control", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ toolBroker: s }),
-      });
-      const data = await res.json();
-      setNotice(data.message || "저장하지 못했어요.");
-      if (res.ok) setS(normalizeToolBroker(data.toolBroker));
+      const { ok, data: d } = await postControl<{ toolBroker?: unknown }>({ toolBroker: s });
+      setNotice(d.message || "저장하지 못했어요.");
+      if (ok) setS(normalizeToolBroker(d.toolBroker));
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     } finally {
@@ -81,11 +68,12 @@ export default function ToolBrokerSettings() {
   );
 
   return (
-    <div className="scroll-mt-24 space-y-3 rounded-lg border border-default-200 p-4" id="tool-broker">
-      <h2 className="font-semibold">도구 요청 중계</h2>
-      <p className="text-sm text-default-500">
-        AI(Claude·Codex)는 앱 폴더에 요청서만 쓰고, 감독 프로그램이 허용된 도구만 대신 실행해 결과를 폴더에 돌려줘요. AI 의 샌드박스·네트워크 권한은 그대로예요.
-      </p>
+    <SettingsCard
+      description="AI(Claude·Codex)는 앱 폴더에 요청서만 쓰고, 감독 프로그램이 허용된 도구만 대신 실행해 결과를 폴더에 돌려줘요. AI 의 샌드박스·네트워크 권한은 그대로예요."
+      id="tool-broker"
+      notice={notice}
+      title="도구 요청 중계"
+    >
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-1 text-sm">
           <span className="text-default-500">모드</span>
@@ -112,11 +100,6 @@ export default function ToolBrokerSettings() {
       <p className="text-xs text-default-500">
         일감당 요청·제한 시간은 비워 두면 제한 없음이에요. 제한이 없어도 일감이 끝나거나 취소되거나 감독 프로그램이 꺼지면 돌던 도구는 정리돼요.
       </p>
-      {notice && (
-        <p className="text-sm" role="status">
-          {notice}
-        </p>
-      )}
-    </div>
+    </SettingsCard>
   );
 }

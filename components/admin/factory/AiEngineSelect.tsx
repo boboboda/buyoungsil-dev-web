@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { reloadControl, useFactoryControl } from "./useFactoryControl";
 import { AI_ENGINES, AI_LABELS, isAiEngine, type AiEngine, type TaskAiEngine } from "@/lib/factory/ai";
 
 export default function AiEngineSelect<T extends TaskAiEngine>({ value, onChange, disabled = false, allowDefault = false, label = "작업 AI" }: {
@@ -10,18 +11,14 @@ export default function AiEngineSelect<T extends TaskAiEngine>({ value, onChange
   allowDefault?: boolean;
   label?: string;
 }) {
-  const [primary, setPrimary] = useState<AiEngine | null>(null);
+  // 주사용 AI 는 통제실 공용 설정 읽기(한 번만 요청)에서 가져온다. 설정 카드에서 바꾸면 이벤트로 다시 읽는다
+  const { data } = useFactoryControl<{ defaultAiEngine?: unknown }>();
+  const primary: AiEngine | null = allowDefault && isAiEngine(data?.defaultAiEngine) ? data.defaultAiEngine : null;
   useEffect(() => {
     if (!allowDefault) return;
-    let alive = true;
-    const load = () => fetch("/api/admin/factory/control", { cache: "no-store" }).then(async (res) => {
-      if (!res.ok) return;
-      const data = await res.json();
-      if (alive && isAiEngine(data.defaultAiEngine)) setPrimary(data.defaultAiEngine);
-    }).catch(() => {});
-    void load();
+    const load = () => void reloadControl();
     window.addEventListener("factory-default-ai-changed", load);
-    return () => { alive = false; window.removeEventListener("factory-default-ai-changed", load); };
+    return () => window.removeEventListener("factory-default-ai-changed", load);
   }, [allowDefault]);
   return (
     <label className="flex flex-wrap items-center gap-2 text-sm">

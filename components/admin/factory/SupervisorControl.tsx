@@ -3,10 +3,11 @@
 // [감독] 탭의 상세 카드. 기본 AI·도구 중계 설정은 [설정] 탭, 공장 정비는 [정비] 탭에 있다. [현황]에는 SupervisorSummary 한 줄만 둔다.
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Button, Card, CardBody } from "@heroui/react";
 
 import { StatusDot, type Tone } from "./fx";
+import { useFactoryControl } from "./useFactoryControl";
 
 interface State {
   enabled: boolean;
@@ -38,28 +39,9 @@ interface State {
 }
 
 export default function SupervisorControl() {
-  const [s, setS] = useState<State | null>(null);
+  const { data: s, publish } = useFactoryControl<State>();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/factory/control", {
-        cache: "no-store",
-      });
-
-      if (res.ok) setS((await res.json()) as State);
-    } catch {
-      /* 못 읽으면 그대로 둔다 */
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 5000);
-
-    return () => clearInterval(t);
-  }, [load]);
 
   const toggleAuto = async (body: Record<string, boolean> = { autoUpdate: !s?.autoUpdate }) => {
     if (!s) return;
@@ -75,7 +57,7 @@ export default function SupervisorControl() {
         message?: string;
       };
 
-      if (res.ok) setS(data);
+      if (res.ok) publish(data);
       setNotice(
         data.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."),
       );
@@ -105,7 +87,7 @@ export default function SupervisorControl() {
         message?: string;
       };
 
-      if (res.ok) setS(data);
+      if (res.ok) publish(data);
       setNotice(
         data.message ?? (res.ok ? "요청했어요." : "요청하지 못했어요."),
       );
@@ -135,7 +117,7 @@ export default function SupervisorControl() {
         message?: string;
       };
 
-      if (res.ok) setS(data);
+      if (res.ok) publish(data);
       setNotice(
         data.message ?? (res.ok ? "요청했어요." : "요청하지 못했어요."),
       );
@@ -166,7 +148,7 @@ export default function SupervisorControl() {
         message?: string;
       };
 
-      if (res.ok) setS(data);
+      if (res.ok) publish(data);
       setNotice(
         data.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."),
       );
