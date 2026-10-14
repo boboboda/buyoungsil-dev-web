@@ -1107,3 +1107,24 @@ model FactoryProjectToolSettingHistory {
   @@index([appSlug, version])
   @@map("factory_project_tool_setting_history")
 }
+
+// 도트 그림 저장소(pixel-art 결과): AI 가 만든 그림은 '후보' → 관리자가 스튜디오에서 보고 승인/반려 → 승인된 것만 이후 참고 그림으로 자동 전달된다.
+model FactoryArt {
+  id         String    @id @default(cuid())
+  appSlug    String // 프로젝트(앱 이름)
+  subject    String // 대상 이름(별칭 묶음은 프로젝트 도구 설정 aliases)
+  kind       String // image-prop | image-scene | motion-game | motion-clip
+  status     String    @default("candidate") // candidate(후보) | approved(승인) | rejected(반려)
+  url        String // 업로드 서버 주소(추측 불가 파일 이름)
+  method     String    @default("") // 만든 방식(codex | claude | pixellab | manual …)
+  summary    String    @default("") // result.json 요약 JSON(steps·refs·cost). 프롬프트·키 없음
+  jobId      String? // 만든 일감 id (손으로 올린 처음 값은 없음)
+  srcKey     String    @unique // 같은 파일 중복 등록 방지: <jobId>:<경로> 또는 seed:<이름>
+  createdAt  DateTime  @default(now())
+  decidedBy  String    @default("") // 승인·반려한 사람
+  decidedAt  DateTime? // 승인·반려 시각
+  note       String    @default("")
+
+  @@index([appSlug, status])
+  @@map("factory_arts")
+}

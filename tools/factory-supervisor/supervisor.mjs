@@ -40,11 +40,12 @@ import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
 import { acquireWorkspace, advertisedEngines, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, makeHandoffEntry, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 import { checksFromVerification, headOf } from "./handoff.mjs";
-import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames, writeProjectSettings } from "./toolbroker.mjs";
+import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames, writeArtRefs, writeProjectSettings } from "./toolbroker.mjs";
 import { findBash, reportProvisionNames, syncProvisions } from "./keyprovision.mjs";
 import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
 import { aiToolStatus, reportSecretNames, syncSecretEntries } from "./secrets.mjs";
 import { createAssetUploader } from "./assetupload.mjs";
+import { createArtRegistrar } from "./artregister.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { startDeviceStats } from "./devicestats.mjs";
 import { startToolkitReport } from "./toolkitinfo.mjs";
@@ -386,7 +387,9 @@ function prepareDir(job) {
   fs.mkdirSync(path.join(dir, ".factory", "screenshots"), { recursive: true });
   fs.mkdirSync(path.join(dir, ".factory", "history"), { recursive: true });
   // 프로젝트 도구 설정(홈페이지 통제실의 값)을 .factory/project-settings.json 으로 내려 준다. 설정이 없으면 이전 일감이 남긴 파일을 지운다
-  job.projectSettingsState = writeProjectSettings(dir, job.projectToolSettings);
+  // 그림 저장소: 승인 그림 목록은 같은 파일의 references.approved 로 합치고, 이번 일감에서 '참고로 고른' 그림은 .factory/art-refs.json 으로 둔다(없으면 이전 일감 것을 지움)
+  job.projectSettingsState = writeProjectSettings(dir, job.projectToolSettings, job.approvedArts);
+  job.pickedArtsCount = writeArtRefs(dir, job.pickedArts, job.approvedArts);
 
   if (job.kind === "revision") {
     fs.writeFileSync(path.join(dir, "CHANGE_REQUEST.md"), `# 수정 요청 (${new Date().toISOString()})\n\n${job.planMarkdown}\n`);
@@ -946,9 +949,13 @@ async function runJobUnlocked(job, lock) {
   // 도구 중계 결과 이미지: 시작 때 이미 있던 파일(이전 일감 것)은 올리지 않는다
   st.assets = createAssetUploader({ appDir: dir, jobId: job.id, post: (form) => api("POST", "/api/factory/screenshot", form), log: (level, m) => addLog(st, level, m) });
   st.assets.seed();
+  // 도트 그림 저장소: pixel-art 결과를 '후보'로 올린다(승인은 부영실이 스튜디오에서)
+  st.arts = createArtRegistrar({ appDir: dir, jobId: job.id, appSlug: job.appSlug, post: (form) => api("POST", "/api/factory/art", form), log: (level, m) => addLog(st, level, m) });
   addLog(st, "info", `앱 폴더 준비 완료: ${dir} (작업 규칙: ${job.rulesSource})`);
   if (job.projectSettingsState === "written") addLog(st, "info", `프로젝트 도구 설정을 내려 줬어요(버전 ${job.projectToolSettings?.version ?? "?"}): .factory/project-settings.json`);
   else if (job.projectSettingsState === "invalid") addLog(st, "warn", "프로젝트 도구 설정을 내려 주지 못했어요(형식 오류·너무 큼). 도구 기본값을 써요.");
+  if (Array.isArray(job.approvedArts) && job.approvedArts.length) addLog(st, "info", `승인된 그림 ${job.approvedArts.length}장을 자동 참고 목록으로 내려 줬어요(후보·반려는 제외).`);
+  if (job.pickedArtsCount) addLog(st, "info", `이번 일감에서 참고로 고른 승인 그림 ${job.pickedArtsCount}장을 pixel-art 호출에 먼저 붙여요.`);
 
   if (rel) {
     addLog(st, "info", `출시 일감 종류: ${rel.kindLabel ?? rel.kind}${rel.resumeFrom ? ` · 재시도: '${rel.resumeFrom}' 단계부터` : ""}`);
@@ -1031,6 +1038,20 @@ async function runJobUnlocked(job, lock) {
     onResult: (rec) => {
       if (rec.status === "ok" && st.reportable) void st.assets.upload();
     },
+    // pixel-art 결과는 result.json 의 project·subject·kind·method 로 그림 후보로 등록한다(project 가 비면 이 일감의 앱 이름)
+    onArt: (source) => {
+      if (st.reportable) void st.arts.register(source);
+    },
+    // 스튜디오 도구를 부르기 직전에 승인 그림 목록을 최신으로 받아 설정 파일에 다시 합친다(20초 안에는 다시 받지 않음)
+    refreshArts: async () => {
+      if (Date.now() - (st.artsRefreshedAt ?? 0) < 20_000) return;
+      st.artsRefreshedAt = Date.now();
+      const r = await api("GET", `/api/factory/art?appSlug=${encodeURIComponent(job.appSlug)}`, undefined, { timeoutMs: 10_000 });
+      if (r.status !== 200 || !Array.isArray(r.data?.approved)) return;
+      job.approvedArts = r.data.approved;
+      writeProjectSettings(dir, job.projectToolSettings, job.approvedArts);
+      writeArtRefs(dir, job.pickedArts, job.approvedArts);
+    },
   }).start();
 
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
@@ -1084,6 +1105,7 @@ async function runJobUnlocked(job, lock) {
     child.on("close", (c) => resolve(c ?? -1));
   });
   st.broker.stop();
+  await st.arts?.idle(); // 올리는 중인 그림 후보는 끝까지(서버가 아직 실행 중으로 보는 동안)
   clearInterval(beat);
   clearTimeout(timer);
   clearTimeout(st.resultTimer);

@@ -81,7 +81,7 @@ const runningPanel = loadTs("components/admin/factory/RunningPanel.tsx", { "@/co
 const { DevicePanelView } = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters, "./RunningPanel": runningPanel });
 const toolkitLib = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
 const studioLib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/appRoles": loadTs("lib/factory/appRoles.ts") });
-const { default: StudioWorkbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/studioProjects": studioLib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null } });
+const { default: StudioWorkbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/studioProjects": studioLib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null }, "./StudioArtsCard": { __esModule: true, default: () => null } });
 const { ToolkitToolsView } = loadTs("components/admin/factory/ToolkitToolsPanel.tsx", {
   "@/lib/prisma": { __esModule: true, default: null },
   "@/lib/factory/toolkit": toolkitLib,

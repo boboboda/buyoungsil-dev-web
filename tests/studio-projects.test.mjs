@@ -25,7 +25,7 @@ const mask = loadTs("lib/factory/mask.ts");
 const toolkit = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
 const roles = loadTs("lib/factory/appRoles.ts");
 const lib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkit, "@/lib/factory/appRoles": roles });
-const { default: Workbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkit, "@/lib/factory/studioProjects": lib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null } }); // 도구 설정 카드는 tests/project-tool-settings.test.mjs 에서 따로 시험
+const { default: Workbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkit, "@/lib/factory/studioProjects": lib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null }, "./StudioArtsCard": { __esModule: true, default: () => null } }); // 도구 설정 카드는 tests/project-tool-settings.test.mjs 에서 따로 시험
 
 const reported = new Set(["pixel-generate", "pixel-anim", "env-doctor"]);
 const known = new Set(["saessak-hub", "memo-app"]);

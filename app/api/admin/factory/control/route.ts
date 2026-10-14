@@ -10,6 +10,7 @@ import { allowedStudioToolIds, isPurpose, isToolId, PURPOSE_LABELS, readToolkitV
 import { APP_ROLES_KEY, applyAppRolePatch, readAppRoles } from "@/lib/factory/appRoles";
 import { applyStudioPatch, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
 import prisma from "@/lib/prisma";
+import { resolvePicked, savePicks, type ArtDb, type PickDb } from "@/lib/factory/arts";
 import { createAdminStudioJob, STUDIO_REQUEST_SOURCE } from "@/lib/studio/requests";
 import { isToolBrokerMode, TOOL_BROKER_MODE_LABELS, toolBrokerLimitLabel } from "@/lib/factory/toolBroker";
 import { supervisorLog } from "@/lib/factory/supervisorLog";
@@ -160,9 +161,12 @@ export async function POST(req: NextRequest) {
     const slug = typeof input.appSlug === "string" ? input.appSlug.trim() : "";
     const [row, view] = await Promise.all([prisma.factorySetting.findUnique({ where: { key: STUDIO_PROJECTS_KEY } }), readToolkitView(prisma)]);
     const project = readStudioProjects(row?.value)[slug];
-    const r = await createAdminStudioJob(input, project, allowedStudioToolIds(view.rows, project?.tools));
+    // '참고로 고르기': 같은 프로젝트의 승인 그림만(최대 4장). 후보·반려 그림 id 는 조용히 버린다
+    const picked = await resolvePicked(prisma as unknown as ArtDb, slug, input.refArtIds);
+    const r = await createAdminStudioJob(input, project, allowedStudioToolIds(view.rows, project?.tools), picked.map((a) => ({ url: a.url, subject: a.subject })));
 
     if (r.ok === false) return NextResponse.json({ message: r.message }, { status: r.status });
+    if (picked.length) await savePicks(prisma as unknown as PickDb, r.jobId, picked.map((a) => a.id)).catch(() => undefined);
     const recent = await prisma.factoryJob.findMany({ where: { appSlug: slug, source: STUDIO_REQUEST_SOURCE }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, title: true, status: true, createdAt: true } });
 
     return NextResponse.json({ message: r.message, jobId: r.jobId, recent: recent.map((j) => ({ ...j, createdAt: j.createdAt.toISOString() })) }, { status: 201 });

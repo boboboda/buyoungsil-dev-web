@@ -5,6 +5,7 @@
 import { useState } from "react";
 
 import ProjectToolSettingsCard from "./ProjectToolSettingsCard";
+import StudioArtsCard from "./StudioArtsCard";
 
 import { PURPOSE_LABELS, type Purpose, type StudioKind as ToolKind, type ToolLayer } from "@/lib/factory/toolkit";
 import { cleanStudioUrl, FIRST_PURPOSES, isManualTool, orderToolsFor, STUDIO_KIND_LABELS, type StudioAppInfo, type StudioKind, type StudioProjects } from "@/lib/factory/studioProjects";
@@ -45,7 +46,7 @@ const jobHref = (id: string) => `/admin/factory?tab=jobs&job=${encodeURIComponen
 const FIELD = "mt-1 w-full min-w-0 rounded border border-default-300 bg-transparent px-2 py-1 text-sm";
 
 /** [일감 보내기] 카드: 연결된 도구 + 요청 종류 + 메모 → 서버가 Studio 요청과 같은 경로로 '승인 대기' 일감을 만든다. 아래에 이 프로젝트에서 보낸 최근 일감 */
-function SendJobCard({ appSlug, connected, initialRecent }: { appSlug: string; connected: string[]; initialRecent: StudioSentJob[] }) {
+function SendJobCard({ appSlug, connected, initialRecent, pickedArts = [], onSent = () => {} }: { appSlug: string; connected: string[]; initialRecent: StudioSentJob[]; pickedArts?: string[]; onSent?: () => void }) {
   const [tool, setTool] = useState(connected[0] ?? "");
   const [kind, setKind] = useState<SendKind>("regen");
   const [propName, setPropName] = useState("");
@@ -63,12 +64,13 @@ function SendJobCard({ appSlug, connected, initialRecent }: { appSlug: string; c
     setBusy(true);
     setNotice("");
     try {
-      const body = { appSlug, kind, tool: toolId, note, ...(kind === "regen" ? { propName: propName.trim() } : kind === "layout" ? { placement } : { instruction }) };
+      const body = { appSlug, kind, tool: toolId, note, ...(pickedArts.length ? { refArtIds: pickedArts } : {}), ...(kind === "regen" ? { propName: propName.trim() } : kind === "layout" ? { placement } : { instruction }) };
       const res = await fetch("/api/admin/factory/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ studioJob: body }) });
       const data = (await res.json().catch(() => ({}))) as { message?: string; recent?: StudioSentJob[] };
 
       setNotice(data.message || (res.ok ? "일감을 만들었어요." : "일감을 만들지 못했어요."));
       if (res.ok && data.recent) setRecent(data.recent);
+      if (res.ok) onSent(); // 참고로 고른 그림은 이번 일감에 실렸으니 비운다
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     } finally {
@@ -136,6 +138,11 @@ function SendJobCard({ appSlug, connected, initialRecent }: { appSlug: string; c
           <button className="rounded border border-default-300 px-3 py-1 font-semibold" data-send-submit disabled={busy || !ready} type="button" onClick={() => void send()}>
             [일감 만들기]
           </button>
+          {pickedArts.length ? (
+            <p className="text-sm" data-send-picked>
+              참고로 고른 승인 그림 {pickedArts.length}장이 이 일감에 실려 가요.
+            </p>
+          ) : null}
           <p className="text-sm fx-muted">승인 대기 일감으로 만들어져요. 승인은 통제실 [일감]이나 텔레그램에서 해요.</p>
         </>
       )}
@@ -197,6 +204,7 @@ export default function StudioWorkbench({
   const [draftUrl, setDraftUrl] = useState(initialPicked ? (initial[initialPicked]?.studioUrl ?? "") : "");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [pickedArts, setPickedArts] = useState<string[]>([]); // 그림 카드에서 '참고로 고르기' 한 승인 그림 id (프로젝트를 바꾸면 비움)
 
   // 앱 목록에 없어도 저장된 프로젝트는 보인다
   const all: StudioAppInfo[] = [
@@ -215,6 +223,7 @@ export default function StudioWorkbench({
     setDraftTools(saved[slug]?.tools ?? []);
     setDraftUrl(saved[slug]?.studioUrl ?? "");
     setNotice("");
+    setPickedArts([]);
   };
 
   const post = async (studioProject: Record<string, unknown>) => {
@@ -466,7 +475,8 @@ export default function StudioWorkbench({
                     {dirty ? <span className="text-sm fx-muted">저장하지 않은 변경이 있어요.</span> : null}
                   </div>
                   <ProjectToolSettingsCard key={`settings-${app.appSlug}`} appSlug={app.appSlug} />
-                  <SendJobCard key={app.appSlug} appSlug={app.appSlug} connected={cfg.tools.filter((id) => !isManualTool(id) && tools.some((t) => t.id === id)).sort((x, y) => Number(tools.find((t) => t.id === y)?.layer === "studio") - Number(tools.find((t) => t.id === x)?.layer === "studio"))} initialRecent={recent[app.appSlug] ?? []} />
+                  <StudioArtsCard key={`arts-${app.appSlug}`} appSlug={app.appSlug} picked={pickedArts} onPickedChange={setPickedArts} />
+                  <SendJobCard key={app.appSlug} appSlug={app.appSlug} pickedArts={pickedArts} onSent={() => setPickedArts([])} connected={cfg.tools.filter((id) => !isManualTool(id) && tools.some((t) => t.id === id)).sort((x, y) => Number(tools.find((t) => t.id === y)?.layer === "studio") - Number(tools.find((t) => t.id === x)?.layer === "studio"))} initialRecent={recent[app.appSlug] ?? []} />
                 </>
               )}
               {notice ? (

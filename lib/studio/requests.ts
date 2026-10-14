@@ -30,6 +30,8 @@ export type StudioTool = { name: string; mode?: string; engine?: "codex" | "pixe
 export type StudioPaths = { layoutFile?: string; manifestFile?: string };
 /** 모두 선택 필드: 옛 요청 형식은 이것 없이도 그대로 동작한다. */
 export type StudioExtras = {
+  /** 관리자 전용(통제실 [일감 보내기] '참고로 고르기'): 승인된 그림. 공개 입구(parseExtras)는 이 값을 받지 않는다 */
+  pickedRefs?: { url: string; subject: string }[];
   gameId?: string;
   templateId?: string;
   templateVersion?: number;
@@ -318,6 +320,18 @@ const noteBlock = (note: string) =>
 
 /** 서버가 만드는 기획서(수정 지시). 사용자가 쓴 값은 코드블록·검증된 이름으로만 들어간다. */
 export function buildStudioPlan(v: StudioRequest, appTitle: string): string {
+  return buildStudioPlanBase(v, appTitle) + pickedRefsBlock(v);
+}
+
+/** '참고로 고르기' 한 승인 그림(관리자가 고른 것). 감독 프로그램이 pixel-art 호출에 refs 로 자동으로 붙이므로 AI 가 주소를 직접 쓸 필요는 없다 */
+function pickedRefsBlock(v: StudioRequest): string {
+  if (!v.pickedRefs?.length) return "";
+  const lines = v.pickedRefs.map((r, i) => `${i + 1}. 대상 \`${r.subject.replace(/[`\r\n]/g, " ")}\``);
+
+  return `\n## 참고로 고른 승인 그림 (${v.pickedRefs.length}장)\n관리자가 승인된 그림 중에서 이번 요청의 참고로 골랐어요. \`pixel-art\` 를 중계로 부르면 감독 프로그램이 이 그림들을 refs 로 자동으로 붙여요(먼저 참고됨).\n\n${lines.join("\n")}\n`;
+}
+
+function buildStudioPlanBase(v: StudioRequest, appTitle: string): string {
   const head =
     `# ${appTitle} — Studio 요청 (${v.kind === "regen" ? "소품 다시 요청" : v.kind === "free" ? "자유 지시" : "배치 적용"})\n\n` +
     `이 지시는 Studio(소품 도구)가 보낸 요청으로 서버가 만들었어요. 승인한 사람이 통제실에서 확인했어요. 범위는 아래 내용으로만 한정해요.\n`;
@@ -533,6 +547,7 @@ export async function createAdminStudioJob(
   input: Record<string, unknown>,
   project: { tools: readonly string[]; templateId?: string } | undefined,
   reportedTools: ReadonlySet<string>,
+  pickedRefs: { url: string; subject: string }[] = [],
 ): Promise<AdminStudioResult> {
   const bad = (message: string, status: 400 | 409 = 400): AdminStudioResult => ({ ok: false, status, message });
   const appSlug = typeof input.appSlug === "string" ? input.appSlug.trim() : "";
@@ -576,7 +591,7 @@ export async function createAdminStudioJob(
   });
 
   if (active) return bad(`이미 진행 중인 일감이 있어요(${active.title})`, 409);
-  const r = await createStudioRequestJob(parsed.value);
+  const r = await createStudioRequestJob(pickedRefs.length ? { ...parsed.value, pickedRefs } : parsed.value);
 
   if (r.status !== 201) return bad(r.body.error, r.status);
 

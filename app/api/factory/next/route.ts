@@ -12,6 +12,7 @@
 //   재시작을 기다리는 감독 프로그램은 hold=1 을 붙인다: 일감·정비·1회성 신호를 하나도 넘기지 않고(유실 방지) { jobs: [], restartHold: true } 만 돌려준다.
 //   appSlots(1~4)·appSlotsDefault: 통제실 [설정]의 '동시에 만들 앱 수'. 정한 적 없으면 3 과 appSlotsDefault: true (감독 프로그램: slots 로 요청하는 수는 이 값에서 돌고 있는 일감 수를 뺀 만큼).
 //   설정이 저장된 앱의 일감에는 projectToolSettings: { version, settings } 가 붙는다(프로젝트 도구 설정, lib/factory/projectToolSettingsDb.ts).
+//   그림 저장소(lib/factory/arts.ts): 일감에 approvedArts: [{ url, subject, kind, approvedAt }](그 프로젝트의 승인 그림만, 최대 24), pickedArts: [{ url, subject, kind }](일감 보낼 때 '참고로 고르기' 한 승인 그림, 최대 4)가 붙을 수 있다.
 //   toolBroker: { mode: off|report|allow, maxRequests, toolTimeoutSec } 가 붙는다(도구 요청 중계, 기본 꺼짐. 수치 null = 제한 없음. lib/factory/toolBroker.ts).
 //   각 job 에 rules(CLAUDE.md 작업 규칙 본문)·prompt(첫 지시문)가 붙는다(lib/factory/rules.ts, 통제실에서 고칠 수 있음).
 //   감독 프로그램은 이 값이 없으면 자기 코드 안 기본값을 쓴다.
@@ -51,6 +52,7 @@ import { workerEngines } from "@/lib/factory/ai";
 import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
 import { labCleanupForNext, LAB_KIND } from "@/lib/factory/lab";
 import { projectSettingsForNext, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
+import { approvedForNext, pickedForJobs, type ArtDb, type PickDb } from "@/lib/factory/arts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -163,16 +165,21 @@ export async function GET(req: NextRequest) {
     const releases = await releaseJobExtras(claimed).catch(() => new Map<string, Record<string, unknown>>());
     // 프로젝트 도구 설정(pixel-art settings): 설정이 있는 앱의 일감에만 projectToolSettings: { version, settings } 를 붙인다(감독 프로그램이 .factory/project-settings.json 으로 내려 줌)
     const toolSettings = await projectSettingsForNext(prisma as unknown as SettingsDb, claimed.filter((j) => j.kind !== LAB_KIND).map((j) => j.appSlug)).catch(() => new Map<string, { version: number; settings: Record<string, unknown> }>());
+    // 도트 그림 저장소: 그 프로젝트의 '승인' 그림 목록(approvedArts)과 이 일감에서 '참고로 고른' 그림(pickedArts). 후보·반려는 절대 싣지 않는다. 못 읽으면 붙이지 않는다(일감은 그대로)
+    const artJobs = claimed.filter((j) => j.kind !== LAB_KIND);
+    const approvedArts = await approvedForNext(prisma as unknown as ArtDb, artJobs.map((j) => j.appSlug)).catch(() => new Map());
+    const pickedArts = await pickedForJobs(prisma as unknown as PickDb & ArtDb, artJobs).catch(() => new Map());
     const jobs = claimed.map((j) => {
       const release = releases.get(j.id);
       const projectToolSettings = toolSettings.get(j.appSlug);
+      const arts = { ...(approvedArts.has(j.appSlug) ? { approvedArts: approvedArts.get(j.appSlug) } : {}), ...(pickedArts.has(j.id) ? { pickedArts: pickedArts.get(j.id) } : {}) };
 
       if (j.kind === LAB_KIND) return j; // 실험은 앱 작업 규칙·첫 지시문을 붙이지 않는다(감독 프로그램이 머리말을 만든다)
 
       try {
-        return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}) };
+        return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...arts };
       } catch {
-        return { ...j, ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}) };
+        return { ...j, ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...arts };
       }
     });
 

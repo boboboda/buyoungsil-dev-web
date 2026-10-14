@@ -70,11 +70,75 @@ export function factoryDir(appDir, name) {
 export const PROJECT_SETTINGS_REL = ".factory/project-settings.json";
 const PROJECT_SETTINGS_MAX_BYTES = 16 * 1024;
 
+// 도트 그림 저장소: 홈페이지가 내려 준 '승인' 그림 목록을 프로젝트 설정의 references.approved 에 합치고(툴킷이 ②대상 이름 ③결과 종류로 고름),
+// 이번 일감에서 '참고로 고른' 그림(picked)은 .factory/art-refs.json 에 두었다가 pixel-art 호출에 refs 로 자동으로 붙인다. 후보·반려 그림은 서버가 애초에 보내지 않는다.
+export const ART_REFS_REL = ".factory/art-refs.json";
+const ART_KINDS = ["image-prop", "image-scene", "motion-game", "motion-clip"];
+const MAX_ART_REFS = 4;
+const MAX_APPROVED_ENTRIES = 24;
+const httpUrl = (u) => typeof u === "string" && u.length <= 500 && /^https?:\/\/[^\s]+$/.test(u);
+
+/** 서버가 준 목록 → 정리된 [{ url, subject, kind, approvedAt? }] (형식이 이상한 항목은 버린다) */
+export function cleanArtList(list, max) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((e) => e && typeof e === "object" && httpUrl(e.url) && typeof e.subject === "string" && e.subject.trim() && e.subject.length <= 60 && ART_KINDS.includes(e.kind))
+    .map((e) => ({ url: e.url, subject: e.subject.trim(), kind: e.kind, ...(typeof e.approvedAt === "string" ? { approvedAt: e.approvedAt.slice(0, 40) } : {}) }))
+    .slice(0, max);
+}
+
 /**
- * 일감의 projectToolSettings({ version, settings }) → <앱 폴더>/.factory/project-settings.json. 없거나 이상하면 예전 파일을 지운다(다른 일감의 설정이 남지 않게).
+ * 설정에 승인 그림을 합친다(lib/factory/arts.ts mergeApprovedIntoSettings 와 같은 규칙): 승인 그림이 앞, 설정에 원래 있던 approved 항목은 뒤, 같은 path 는 한 번만.
+ * 툴킷 항목은 { path, subject, kind } 만 쓴다(project 는 넣지 않는다: 이미 이 프로젝트의 목록이고, 넣으면 요청에 project 가 없을 때 걸러진다)
+ */
+export function mergeApprovedArts(settings, approved) {
+  const arts = cleanArtList(approved, MAX_APPROVED_ENTRIES);
+  if (!arts.length) return settings ?? null;
+  const base = settings && typeof settings === "object" && !Array.isArray(settings) ? settings : { version: 1 };
+  const refs = base.references && typeof base.references === "object" && !Array.isArray(base.references) ? base.references : {};
+  const stored = Array.isArray(refs.approved) ? refs.approved : [];
+  const seen = new Set();
+  const list = [...arts.map((a) => ({ path: a.url, subject: a.subject, kind: a.kind })), ...stored].filter((e) => e && typeof e.path === "string" && !seen.has(e.path) && !!seen.add(e.path));
+  return { ...base, references: { ...refs, approved: list } };
+}
+
+/** picked 목록 → .factory/art-refs.json. 비면 파일을 지운다. 반환: 쓴 장수 */
+export function writeArtRefs(appDir, picked, approved) {
+  const file = path.join(appDir, ".factory", "art-refs.json");
+  const pick = cleanArtList(picked, MAX_ART_REFS);
+  try {
+    if (!pick.length) {
+      if (fs.existsSync(file) || isLink(file)) fs.rmSync(file, { force: true });
+      return 0;
+    }
+    factoryDir(appDir, "assets"); // .factory 가 실제 폴더인지 확인
+    if (isLink(file)) fs.rmSync(file, { force: true });
+    fs.writeFileSync(file, JSON.stringify({ picked: pick, approved: cleanArtList(approved, MAX_APPROVED_ENTRIES) }, null, 2) + "\n", { mode: 0o600 });
+    return pick.length;
+  } catch {
+    return 0;
+  }
+}
+
+/** 자동으로 붙일 picked URL 들(.factory/art-refs.json). 없거나 이상하면 [] */
+export function readPickedRefs(appDir) {
+  try {
+    const file = path.join(appDir, ".factory", "art-refs.json");
+    const st = fs.lstatSync(file);
+    if (st.isSymbolicLink() || !st.isFile() || st.size > 32 * 1024) return [];
+    const j = JSON.parse(fs.readFileSync(file, "utf8"));
+    return cleanArtList(j?.picked, MAX_ART_REFS).map((e) => e.url);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 일감의 projectToolSettings({ version, settings }) + 승인 그림 목록 → <앱 폴더>/.factory/project-settings.json. 없거나 이상하면 예전 파일을 지운다(다른 일감의 설정이 남지 않게).
+ * 승인 그림이 있으면 설정이 없어도 { version: 1, references: { approved } } 만으로 쓴다. 16KB 를 넘으면 승인 그림을 뒤에서부터 줄인다.
  * 반환: "written" | "removed" | "none" | "invalid"  (값은 기록에 남기지 않는다)
  */
-export function writeProjectSettings(appDir, projectToolSettings) {
+export function writeProjectSettings(appDir, projectToolSettings, approvedArts = []) {
   const file = path.join(appDir, ".factory", "project-settings.json");
   const remove = () => {
     try {
@@ -87,10 +151,19 @@ export function writeProjectSettings(appDir, projectToolSettings) {
     }
     return false;
   };
-  const s = projectToolSettings?.settings;
-  if (!s || typeof s !== "object" || Array.isArray(s) || !Object.keys(s).some((k) => k !== "version" && k !== "$schema")) return remove() ? "removed" : "none";
-  const text = JSON.stringify(s, null, 2) + "\n";
-  if (Buffer.byteLength(text) > PROJECT_SETTINGS_MAX_BYTES) return remove() ? "removed" : "invalid";
+  const given = projectToolSettings?.settings;
+  const hasGiven = given && typeof given === "object" && !Array.isArray(given) && Object.keys(given).some((k) => k !== "version" && k !== "$schema");
+  let arts = cleanArtList(approvedArts, MAX_APPROVED_ENTRIES);
+  let s;
+  let text = "";
+  for (;;) {
+    s = mergeApprovedArts(hasGiven ? given : null, arts);
+    if (!s || !Object.keys(s).some((k) => k !== "version" && k !== "$schema")) return remove() ? "removed" : "none";
+    text = JSON.stringify(s, null, 2) + "\n";
+    if (Buffer.byteLength(text) <= PROJECT_SETTINGS_MAX_BYTES) break;
+    if (!arts.length) return remove() ? "removed" : "invalid"; // 승인 그림을 다 빼도 크면 쓰지 않는다
+    arts = arts.slice(0, -1);
+  }
   try {
     factoryDir(appDir, "assets"); // .factory 가 실제 폴더인지 확인(심볼릭 링크면 던짐)
     if (isLink(file)) fs.rmSync(file, { force: true });
@@ -317,6 +390,12 @@ const toolkitAdapter = {
       autoSettings = readProjectSettings(ctx.appDir);
       if (autoSettings) argv.push(`--settings=${autoSettings.rel}`);
     }
+    // refs 인자가 없으면 이번 일감에서 '참고로 고른' 승인 그림(.factory/art-refs.json)을 자동으로 붙인다(먼저 참고됨, 최대 4장). 요청에 refs 를 적었으면 그 값을 따른다
+    if (tool.layer === "studio" && tool.args.some((a) => a.name === "refs" && a.type !== "path" && a.type !== "int") && (given.refs === undefined || given.refs === null)) {
+      const urls = [];
+      for (const u of readPickedRefs(ctx.appDir)) if ([...urls, u].join(",").length <= 500) urls.push(u);
+      if (urls.length) argv.push(`--refs=${urls.join(",")}`);
+    }
     // 네트워크·비밀값이 필요한 도구는 '허용' 모드이면서 이 일감의 requiredSecrets 에 이름이 있을 때만
     // 선택 키(optionalSecrets)는 이 호출에 실제로 필요할 때(pixel-art 의 method=pixellab)만 필수 키처럼 검사하고 넘긴다
     const optional = neededOptionalSecrets(args.command, tool, given, manifest.studioTools, autoSettings?.settings ?? null);
@@ -349,7 +428,9 @@ const toolkitAdapter = {
     if (r.error) return { status: "failed", message: `도구를 실행하지 못했어요: ${ctx.redact(r.error).slice(0, 300)}`, files, output };
     const art = tool.layer === "studio" ? summarizeStudioResult(ctx.appDir, argv, r.code === 0, r.output) : null;
     const confirm = art?.needsConfirmation ? " (PixelLab 비용 한도 초과 — 승인 필요)" : "";
-    return { status: r.code === 0 ? "ok" : "failed", message: r.code === 0 ? `${command} 완료` : `${command} 실패(종료 코드 ${r.code})${confirm}`, files, output, ...(art ? { art } : {}) };
+    // 그림 저장소에 후보로 올릴 원본 정보(result.json 전체 요약). 응답 파일·보고에는 싣지 않고 onArt 로만 넘긴다
+    const artSource = tool.layer === "studio" && r.code === 0 ? readStudioArtSource(ctx.appDir, argv) : null;
+    return { status: r.code === 0 ? "ok" : "failed", message: r.code === 0 ? `${command} 완료` : `${command} 실패(종료 코드 ${r.code})${confirm}`, files, output, ...(art ? { art } : {}), ...(artSource ? { artSource } : {}) };
   },
 };
 
@@ -381,6 +462,42 @@ export function summarizeStudioResult(appDir, argv, ok, output) {
       refReasons: [...new Set(refs.map((r) => (typeof r?.reason === "string" ? r.reason : "")).filter((x) => /^[①②③④A-Za-z0-9_-]{1,24}$/.test(x)))].slice(0, 4),
       refsFallback: clipText(j.refs_fallback, 100),
       cost: Number.isFinite(cost) && cost >= 0 ? Math.min(cost, 100000) : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 그림 저장소에 후보로 올릴 정보: output_dir/result.json 의 project·subject·kind·method·outputs(앱 폴더 기준 경로)와 steps·refs·cost 요약.
+ * 프롬프트·인자 값·키는 담지 않는다(steps 는 도구 이름만). 읽을 게 없거나 subject·kind 가 없으면 null
+ */
+export function readStudioArtSource(appDir, argv) {
+  const dirArg = argv.find((a) => a.startsWith("--output_dir="));
+  if (!dirArg) return null;
+  const p = safeAppPath(appDir, `${dirArg.slice("--output_dir=".length)}/result.json`);
+  if (!p.ok) return null;
+  try {
+    const st = fs.lstatSync(p.full);
+    if (st.isSymbolicLink() || !st.isFile() || st.size > RESULT_JSON_BYTES) return null;
+    const j = JSON.parse(fs.readFileSync(p.full, "utf8").replace(/^﻿/, ""));
+    if (!j || typeof j !== "object" || Array.isArray(j)) return null;
+    const subject = clipText(j.subject, 60);
+    if (!subject || !ART_KINDS.includes(j.kind)) return null;
+    const refs = Array.isArray(j.refs) ? j.refs : [];
+    const cost = typeof j.cost === "number" ? j.cost : typeof j.cost?.pixellab_calls === "number" ? j.cost.pixellab_calls : typeof j.cost?.calls === "number" ? j.cost.calls : 0;
+    return {
+      project: typeof j.project === "string" ? j.project.trim().slice(0, 40) : "",
+      subject,
+      kind: j.kind,
+      method: /^[a-z][a-z0-9_]{0,39}$/.test(j.method ?? "") ? j.method : "",
+      outputs: (Array.isArray(j.outputs) ? j.outputs : []).filter((o) => typeof o === "string" && o.length <= 300).slice(0, 40),
+      summary: {
+        steps: (Array.isArray(j.steps) ? j.steps : []).map((s) => (typeof s?.tool === "string" ? s.tool : "")).filter((x) => /^[A-Za-z0-9_.-]{1,40}$/.test(x)).slice(0, 12),
+        refs: refs.map((r) => (typeof r?.reason === "string" ? r.reason : "")).filter((x) => /^[①②③④A-Za-z0-9_-]{1,24}$/.test(x)).slice(0, 8),
+        refsFallback: clipText(j.refs_fallback, 100),
+        cost: Number.isFinite(cost) && cost >= 0 ? Math.min(Math.floor(cost), 100000) : 0,
+      },
     };
   } catch {
     return null;
@@ -479,6 +596,8 @@ export function createBroker(opts) {
   const redact = (s) => maskText(secretValues.reduce((acc, v) => acc.split(v).join("***"), redactBase(String(s ?? ""))));
   const log = opts.log ?? (() => {});
   const onResult = opts.onResult ?? (() => {});
+  const onArt = opts.onArt ?? (() => {}); // pixel-art 결과(후보로 올릴 그림 정보)
+  const refreshArts = opts.refreshArts ?? null; // async () => void : 스튜디오 도구 실행 직전에 승인 그림 목록을 최신으로 갈아 끼운다
   const seen = new Set();
   const records = []; // 통제실에 보일 목록: { id, tool, command?, status, at, ms, message }
   let timer = null;
@@ -497,7 +616,7 @@ export function createBroker(opts) {
     }
   };
 
-  const respond = (id, tool, body, startedAt, command = null) => {
+  const respond = (id, tool, body, startedAt, command = null, artSource = null) => {
     const dir = factoryDir(appDir, "responses");
     const file = path.join(dir, `${id}.json`);
     if (isLink(file)) throw new Error("응답 파일 자리에 심볼릭 링크가 있어요.");
@@ -516,6 +635,13 @@ export function createBroker(opts) {
       onResult({ ...rec });
     } catch {
       /* 결과 알림 실패는 중계에 영향 없음 */
+    }
+    if (artSource && out.status === "ok") {
+      try {
+        onArt(artSource);
+      } catch {
+        /* 그림 등록 실패는 중계에 영향 없음 */
+      }
     }
     return out;
   };
@@ -547,11 +673,19 @@ export function createBroker(opts) {
     };
     // 기록에는 하위 명령 이름만 남긴다(인자 값은 남기지 않음)
     const command = req.tool === "toolkit.run" && typeof req.args?.command === "string" && SUBCOMMAND_RE.test(req.args.command) ? req.args.command : null;
+    // 스튜디오 도구를 부르기 전에 승인 그림 목록을 최신으로(그 사이에 승인·반려했을 수 있다). 실패해도 일감 시작 때 받은 목록으로 계속한다
+    if (refreshArts && req.tool === "toolkit.run" && command) {
+      try {
+        await refreshArts();
+      } catch {
+        /* 못 받으면 기존 목록 */
+      }
+    }
     const v = adapter.validate(req.args, ctx);
     if (!v.ok) return respond(id, req.tool, { status: v.status ?? "denied", message: v.reason, files: [] }, startedAt, command);
     if (settings.mode === "report") return respond(id, req.tool, { status: "denied", message: "보고만 모드: 요청은 기록했지만 실행하지 않았어요.", files: [] }, startedAt, command);
     const r = await adapter.run(v.value, ctx);
-    return respond(id, req.tool, { status: r.status, message: r.message, files: r.files ?? [], ...(r.output ? { output: r.output } : {}), ...(r.result !== undefined ? { result: r.result } : {}), ...(r.art ? { art: r.art } : {}), cost: adapter.cost(req.args) }, startedAt, command);
+    return respond(id, req.tool, { status: r.status, message: r.message, files: r.files ?? [], ...(r.output ? { output: r.output } : {}), ...(r.result !== undefined ? { result: r.result } : {}), ...(r.art ? { art: r.art } : {}), cost: adapter.cost(req.args) }, startedAt, command, r.artSource ?? null);
   }
 
   /** 한 번 확인: 응답이 없는 새 요청을 처리한다(꺼짐 모드면 아무것도 하지 않는다) */
@@ -650,7 +784,7 @@ export function brokerRules(mode, toolkitDir) {
 - args 를 JSON 파일로 쓴 뒤 한 줄로: \`node "${cli}" submit --tool <echo|toolkit.run> --args-file <json파일>\` (응답이 올 때까지 기다렸다가 상태와 응답 파일 경로를 출력해요. 기본 5분)
 - 이 명령은 오래 걸릴 수 있으니 명령 제한 시간을 넉넉히(예: 360000ms) 주세요. 중간에 끊겼으면 \`node "${cli}" wait --id <요청ID>\` 로 이어서 기다리세요.
 - toolkit.run 의 args: { "command": "<tools.json 의 하위 명령>", "args": { 이름: 값 } }. 경로 인자는 앱 폴더 안 상대 경로만 돼요.
-- 방식·규격·스타일은 프로젝트 설정을 따르고 사람에게 묻지 않아요. \`pixel-art\` 는 settings 인자를 안 주면 프로젝트 설정(.factory/project-settings.json)이 자동으로 붙어요(요청에 적은 값 > 프로젝트 설정 > 도구 기본값). 묻는 경우는 PixelLab 비용 한도 초과(needs_confirmation)뿐이에요.
+- 방식·규격·스타일은 프로젝트 설정을 따르고 사람에게 묻지 않아요. \`pixel-art\` 는 settings 인자를 안 주면 프로젝트 설정(.factory/project-settings.json)이 자동으로 붙어요(요청에 적은 값 > 프로젝트 설정 > 도구 기본값). 묻는 경우는 PixelLab 비용 한도 초과(needs_confirmation)뿐이에요. 참고 그림도 자동이에요: 부영실이 승인한 그림(같은 대상 이름 → 같은 결과 종류)과 이번 일감에 '참고로 고른' 그림이 붙으니 refs 를 직접 찾지 않아도 돼요. 결과 그림은 후보로 자동 등록되고 부영실이 스튜디오에서 승인해야 이후 참고로 쓰여요.
 - 결과: .factory/responses/<요청ID>.json(status ok|denied|failed|timeout, message, files), 만든 파일은 .factory/assets/ 아래. denied 면 이유를 읽고 같은 요청을 반복하지 마세요.
 ${imageToolRules(toolkitDir)}`;
 }
