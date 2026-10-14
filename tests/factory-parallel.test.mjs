@@ -35,6 +35,7 @@ const nextRoute = loadTs("app/api/factory/next/route.ts", {
   },
   "@/lib/factory/conductor": { appsToHold: async () => new Set(), appsWaitingForApproval: async () => new Map(), conductorTaskForNext: async () => null, isAutoGroupEnabled: async () => false }, // 지휘자(C-2): 자동 묶기 꺼짐과 같은 동작
   "@/lib/factory/appChecks": { getAppChecks: async () => ({}) },
+  "@/lib/factory/projectLinksDb": { consumeScan: async () => false },
   "@/lib/prisma": { __esModule: true, default: {} },
   "@/lib/factory/http": { fail: (status, message) => NextResponse.json({ message }, { status }), guardWorker: async () => null },
   "@/lib/factory/release": { consumeKeyScan: async () => false, notifyTestingDue: async () => {}, pcPathsToCheck: async () => [], releaseJobExtras: async () => new Map() },

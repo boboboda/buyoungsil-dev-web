@@ -48,6 +48,7 @@ import { appsToHold, appsWaitingForApproval, conductorTaskForNext, isAutoGroupEn
 import { claimJobs, MAX_SLOTS, releaseExpiredLeases, WORKER_RE } from "@/lib/factory/jobs";
 import { fail, guardWorker } from "@/lib/factory/http";
 import prisma from "@/lib/prisma";
+import { consumeScan as consumeProjectLinksScan } from "@/lib/factory/projectLinksDb";
 import { consumeKeyScan, notifyTestingDue, pcPathsToCheck, releaseJobExtras } from "@/lib/factory/release";
 import { keyPasswordsPending } from "@/lib/factory/keyPasswords";
 import { provisionPending } from "@/lib/factory/keyProvision";
@@ -160,6 +161,7 @@ export async function GET(req: NextRequest) {
     const keyPw = await keyPasswordsPending().catch(() => false);
     const secretsPending = (await secretEntriesPending().catch(() => false)) || (await provisionPending().catch(() => false)); // 키 값 전달 또는 서버 반영 대기
     const keyScan = await consumeKeyScan().catch(() => false);
+    const projectLinksScan = await consumeProjectLinksScan().catch(() => false); // 통제실 [새로 읽기](한 번)
     const keyTasks = await keyTasksForNext();
     const labCleanup = await labCleanupForNext().catch(() => []);
     const uploadTest = await consumeUploadTest(); // 통제실 '업로드 시험'(한 번)
@@ -180,6 +182,7 @@ export async function GET(req: NextRequest) {
       ...(secretsPending ? { secretsPending: true } : {}),
       ...(keyScan ? { keyScan: true } : {}),
       ...(Array.isArray(keyScan) ? { keyScanApps: keyScan } : {}),
+      ...(projectLinksScan ? { projectLinksScan: true } : {}),
       ...(keyTasks.length ? { keyTasks } : {}),
       ...(uploadTest ? { uploadTest } : {}),
       ...(labCleanup.length ? { labCleanup } : {}),

@@ -55,6 +55,7 @@ import { createArtRegistrar } from "./artregister.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { startDeviceStats } from "./devicestats.mjs";
 import { startToolkitReport } from "./toolkitinfo.mjs";
+import { startProjectLinksReport } from "./projectlinks.mjs";
 import { DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake } from "./slots.mjs";
 import { DEFAULT_MEMORY_REMOTE, memoryReport, setMemoryConfig } from "./memory.mjs";
 import { acquireLock, clearLocks, clearWait, LOCK_LABELS, lockRules, readWait } from "./applock.mjs";
@@ -2034,6 +2035,7 @@ function staleCopyQuery() {
     return found.length ? { staleCopies: found.join(",") } : {};
   } catch { return {}; }
 }
+let projectLinks = null; // 앱별 배포·저장소 연결 보고(하루 1회, 통제실 [새로 읽기] 때 바로)
 let memoryLine = ""; // 작업 메모리 상태(폴더별 시각·크기·푸시 결과, 본문 없음): 바뀌었거나 1시간이 지나면 /next 에 붙인다
 let memorySentAt = 0;
 function memoryQuery() {
@@ -2164,6 +2166,7 @@ async function loop() {
             await sleep(delay);
             continue;
           }
+          if (r.data?.projectLinksScan === true) projectLinks?.request(); // 통제실 [새로 읽기]: git 원격·컨테이너 이름을 읽기만 해서 보고
           if (r.data?.updateNow === true) requestUpdateNow(); // 1회성 "지금 업데이트": 다음 루프에서 바로 확인
           reportPcPaths(r.data?.pcPaths, api, log).catch(() => {}); // 배포 계정 키 파일이 있는지만 알린다
           // 통제실에서 등록한 키 비밀번호를 secrets.env 로(값은 로그에 남기지 않음), 키 점검 요청(한 번). 둘 다 던지지 않는다
@@ -2289,6 +2292,12 @@ if (command === "init") {
       startToolkitReport({ api, log, toolkitDir: () => cfg.toolkitDir });
     } catch (e) {
       log(`툴킷 도구 목록 보내기를 시작하지 못했어요: ${e.message}`);
+    }
+    // 앱별 배포·저장소 연결(앱 폴더 git 원격·브랜치, 서버 컨테이너 이름. 읽기 전용): 하루 1회와 통제실 [새로 읽기]
+    try {
+      projectLinks = startProjectLinksReport({ api, log, workDir: () => cfg.workDir });
+    } catch (e) {
+      log(`프로젝트 연결 정보 보내기를 시작하지 못했어요: ${e.message}`);
     }
     await loop();
   }

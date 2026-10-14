@@ -1144,3 +1144,23 @@ model FactoryRequestSeen {
   @@index([createdAt])
   @@map("factory_request_seen")
 }
+
+// 앱별 배포·저장소 연결 기록(사람이 입력하는 값 + 현황 조사 초기값). 감독 프로그램이 읽어 보낸 git 원격·컨테이너 목록은
+// factory_settings 의 projectLinksReport 에 따로 있다. 기록만 하고 통일은 하지 않는다(lib/factory/projectLinks.ts).
+model FactoryAppConnection {
+  appSlug       String   @id // 앱 이름 = 앱 폴더 이름
+  folder        String? // 앱 폴더 이름이 appSlug 와 다를 때만
+  stack         String?
+  defaultBranch String?
+  remotes       Json? // 초기값 [{ name, host, path, purpose }]. 감독 프로그램 보고가 있으면 보고가 우선
+  deployServer  String? // serverpc | serverpc2 | none
+  deployMethod  String? // 예: prod push / origin push / server push / 수동
+  domain        String?
+  containerName String? // 서버 도커 컨테이너 이름
+  services      Json? // 연결된 서비스 컨테이너 이름 목록
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("factory_app_connections")
+}

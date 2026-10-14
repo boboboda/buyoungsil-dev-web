@@ -377,3 +377,11 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
 ## 오래된 사본 표시 (1-5)
 - 작업 폴더 아래 `buyoungsil-dev-web`(예전 개발용 사본, `.git` 있음)이 있으면 `/next` 에 `staleCopies=<이름>` 만 붙인다(1회 `existsSync` 한 번, 지우지 않음). 서버가 이름 모양을 걸러 상태(`staleCopies`)에 싣고 통제실 감독 카드에 "오래된 사본(정리 필요)"로 보인다. 감독·일감은 이 폴더를 쓰지 않는다(실행은 `supervisor-src`, 정비는 `selfdev`).
 - 전체 시험은 `npm test`(`scripts/run-all-tests.mjs`: 시험 파일을 모두 찾아 돌리고 표로 요약, `--jobs=4` 로 동시에, 이름 일부를 주면 그것만). 개별 `test:*` 스크립트는 그대로 있다.
+
+## 앱별 배포·저장소 연결 보고 (1-6: `projectlinks.mjs`)
+- 하루 1번(시작 20초 뒤 포함)과 통제실 [새로 읽기] 때 `POST /api/factory/project-links` 로 보고한다. 읽기만 한다.
+  - 작업 폴더 바로 아래 폴더마다 `git remote -v`, `git symbolic-ref --short -q HEAD`, 종류(파일로 짐작). 제외: lab, supervisor-src, selfdev, buyoungsil-dev-web. git 이 아닌 폴더도 `isGit:false` 로 보낸다.
+  - 서버1·서버2 컨테이너 이름: 서버 접속 명령으로 `docker ps --format '{{.Names}}'` 한 줄만(BatchMode). 못 읽으면 `unknown`(그러면 통제실이 '컨테이너를 못 찾았다'고 말하지 않는다).
+  - 원격 주소의 자격 증명(`user:pass@`)은 보내기 전에 지운다(서버도 한 번 더). git 원격 추가·삭제·이름 변경, 컨테이너 조작, nginx 읽기는 하지 않는다.
+- 서버 쪽: `lib/factory/projectLinks.ts`(순수) · `projectLinksDb.ts`(DB), 표 `factory_app_connections`(도메인·배포 방법·컨테이너·서비스·비고, 현황 조사 초기값), 보고는 `factory_settings.projectLinksReport`.
+- 통제실 설정 > 프로젝트·규칙 > "앱별 배포·저장소 연결", 채팅 커넥터 `get_project_links`(읽기 전용). 시험: `npm run test:project-links`.

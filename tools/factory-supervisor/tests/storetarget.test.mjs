@@ -117,6 +117,7 @@ function loadMcp(prisma, release) {
     "@/lib/factory/settings": { getDefaultAiEngine: async () => "claude" },
     "@/lib/factory/secretEntries": { knownSecretNames: async () => [] },
     "@/lib/factory/telegram": { notifyJobEvent: async () => {} },
+    "@/lib/factory/projectLinks": {}, "@/lib/factory/projectLinksDb": {}, // get_project_links 는 이 시험에서 쓰지 않는다
     "@/lib/factory/supervisor": { runSupervisorAction: async () => ({}), SUPERVISOR_ACTIONS: ["status"] },
     "@/lib/factory/release": release,
     "@/lib/factory/storeAssets": { readStoreAssets: () => null, savePromoVideoUrl: async () => ({ ok: true }) },

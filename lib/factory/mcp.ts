@@ -1,5 +1,7 @@
 // 앱 공장용 커넥터 도구. lib/drafts/mcp.ts 의 MCP 서버에 합쳐서 쓴다. (같은 커넥터, 같은 토큰)
 // Claude 채팅은 여기서 지시를 "등록"만 한다. 승인은 관리자가 통제실에서 한다.
+import { PURPOSE_LABELS } from "@/lib/factory/projectLinks";
+import { readLinksView } from "@/lib/factory/projectLinksDb";
 import { createHash } from "crypto";
 
 import prisma from "@/lib/prisma";
@@ -78,7 +80,7 @@ export const FACTORY_INSTRUCTIONS =
   + "auto_update_on/off. 사용자가 요청한 경우에만 상태를 바꾸세요. "
   + "출시: get_release_status 로 앱별 출시 상태·배포 계정·패키지(스토어 문구·체크리스트)·AAB 정보·테스트 일정을 보고, "
   + "enqueue_release_job(appSlug, kind) 으로 출시 일감을 등록해요(kind: first=첫 출시, store=스토어 자료 수정, project=프로젝트 업데이트. 지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
-  + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
+  + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 앱별 git 원격·배포 서버·도메인·컨테이너는 get_project_links 로 읽어요(읽기 전용). 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
   + "실험: 도구·방식이 되는지 확인하는 테스트는 앱 수정 일감이 아니라 enqueue_lab_job(title, planMarkdown, aiEngine?, keep?)으로 보내요(앱 이름 없이, 작업 PC 의 실험 폴더에서 무인 실행. 승인은 관리자). "
   + "끝나면 get_factory_job 의 실험_결과에 올라온 이미지·mp4 주소(몇 시간 뒤 만료)와 report.md 본문이 나와요. 이미지 주소를 열어 직접 보고 검수할 수 있어요.";
 
@@ -295,6 +297,20 @@ export const FACTORY_TOOLS = [
     annotations: READ_ONLY,
   },
   {
+    name: "get_project_links",
+    description:
+      "앱별 배포·저장소 연결 정보를 읽어요(읽기 전용): 앱 폴더·종류·기본 브랜치, git 원격 목록(이름·호스트·용도 백업/배포/GitHub), 배포 서버(serverpc=서버1 / serverpc2=서버2 / none), 배포 방법, 도메인, 도커 컨테이너 이름과 서버에서 찾았는지, 연결된 서비스, 비고, 경고(원격 없음·컨테이너 못 찾음·git 폴더 아님). " +
+      "git 원격·브랜치와 서버 컨테이너 이름은 작업 PC 가 하루 1회(또는 통제실 [새로 읽기]) 읽어 보낸 값이고, 도메인·배포 방법 같은 값은 사람이 통제실에서 입력한 값이에요. 비밀값은 담지 않아요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appSlug: { type: "string", description: "이 앱만 보기 (선택)" },
+      },
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+  },
+  {
     name: "enqueue_release_job",
     description:
       "완성된 앱에 출시 일감을 등록합니다(승인 대기, 승인은 관리자). 지시문은 서버가 그 앱의 배포 계정 정보로 종류(kind)별로 만들어요. " +
@@ -399,6 +415,8 @@ export async function callFactoryTool(
       return supervisorControl(args);
     case "get_release_status":
       return getReleaseStatus(args);
+    case "get_project_links":
+      return getProjectLinks(args);
     case "enqueue_release_job":
       return enqueueReleaseJob(args);
     default:
@@ -423,6 +441,38 @@ function storeSummary(v: unknown) {
 }
 
 // 출시 상태. 키 값은 없다(경로·이름·존재 여부만). 패키지는 요약만(전문은 통제실 출시 패키지 화면).
+// 앱별 배포·저장소 연결 정보(읽기 전용)
+async function getProjectLinks(args: Record<string, unknown>): Promise<ToolResult> {
+  const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
+  const view = await readLinksView();
+  const rows = view.rows.filter((r) => !appSlug || r.appSlug === appSlug);
+
+  if (appSlug && rows.length === 0) return text(`${appSlug} 라는 앱 연결 기록이 없어요.`, true);
+
+  return json({
+    읽은시각: view.reportAt,
+    낡음: view.reportStale,
+    서버컨테이너목록: view.servers,
+    경고수: view.warningCount,
+    앱: rows.map((r) => ({
+      appSlug: r.appSlug,
+      폴더: r.folder,
+      git폴더: r.isGit,
+      종류: r.stack,
+      브랜치: r.branch,
+      git원격: r.remotes.map((x) => ({ 이름: x.name, 호스트: x.host, 경로: x.path, 용도: PURPOSE_LABELS[x.purpose] })),
+      배포서버: r.deployServer,
+      배포방법: r.deployMethod,
+      도메인: r.domain,
+      컨테이너: r.containerName,
+      컨테이너찾음: r.containersFound,
+      연결된서비스: r.services,
+      비고: r.notes,
+      경고: r.warnings.map((w) => w.text),
+    })),
+  });
+}
+
 async function getReleaseStatus(args: Record<string, unknown>): Promise<ToolResult> {
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
   const o = await releaseOverview();

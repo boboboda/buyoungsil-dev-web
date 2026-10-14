@@ -46,7 +46,8 @@
     "test:pc-guard": "node tools/factory-supervisor/tests/pcguard.test.mjs",
     "test:loop-guard": "node tools/factory-supervisor/tests/loopguard.test.mjs && node tests/loop-guard.test.mjs && node tools/factory-supervisor/tests/loopguard-e2e.test.mjs",
     "test:lab": "node tests/lab-jobs.test.mjs && node tools/factory-supervisor/tests/lab.test.mjs",
-    "test:stale-copies": "node tests/stale-copies.test.mjs"
+    "test:stale-copies": "node tests/stale-copies.test.mjs",
+    "test:project-links": "node tests/project-links.test.mjs"
   },
   "dependencies": {
     "@channel.io/channel-web-sdk-loader": "^2.0.0",

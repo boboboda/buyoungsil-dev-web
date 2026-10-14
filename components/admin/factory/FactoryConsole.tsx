@@ -6,6 +6,7 @@
 import { Card, CardBody } from "@heroui/react";
 
 import AppProjectLinks from "./AppProjectLinks";
+import ProjectConnections from "./ProjectConnections";
 import AppChecksSettings from "./AppChecksSettings";
 import LoopGuardSettings from "./LoopGuardSettings";
 import AppSlotsSettings, { ApprovalWaitSettings, ConductorSettings, ParallelPerAppSettings, UpdateBundleSettings } from "./AppSlotsSettings";
@@ -165,8 +166,9 @@ export default async function FactoryConsole({
                 <StudioAccessKeys />
                 <ReleaseAccounts />
               </SettingsGroup>
-              <SettingsGroup hint="홈페이지 프로젝트 연결과 Claude 작업 규칙" id="settings-project" title="프로젝트·규칙">
+              <SettingsGroup hint="홈페이지 프로젝트 연결, 앱별 배포·저장소 연결, Claude 작업 규칙" id="settings-project" title="프로젝트·규칙">
                 <AppProjectLinks />
+                <ProjectConnections />
                 <WorkRules />
               </SettingsGroup>
             </div>
