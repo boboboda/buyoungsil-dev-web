@@ -258,3 +258,19 @@ test("편집 화면의 별칭 글 ↔ 설정", () => {
   const r = lib.cleanProjectSettings({ aliases: card.parseAliases("싹이 = 감자, ssagi") });
   assert.deepEqual(r.settings.aliases, { 싹이: ["감자", "ssagi"] });
 });
+
+test("일부 수정(patch): 지정한 항목만 바꾸고 나머지는 그대로, 수정자·이력이 남고, 없는 프로젝트·잘못된 값은 거절", async () => {
+  const db = fakeDb();
+  assert.equal((await dbLib.patchProjectToolSettings(db, "one-tiny-frame", { spec: { cell_size: 128 } }, "정비")).status, 404, "저장된 설정이 없으면 만들지 않는다");
+  await dbLib.saveProjectToolSettings(db, "one-tiny-frame", { spec: { cell_size: 32, size_group: "small", canvas: 1024 }, style: { max_colors: 16 } }, "관리자");
+  const r = await dbLib.patchProjectToolSettings(db, "one-tiny-frame", { spec: { cell_size: 128 } }, "정비", "규격 칸 크기 128");
+  assert.ok(r.ok && !r.unchanged);
+  assert.deepEqual(r.record.settings, { version: 1, spec: { cell_size: 128, size_group: "small", canvas: 1024 }, style: { max_colors: 16 } });
+  assert.equal(r.record.version, 2);
+  assert.equal(db.rows.get("one-tiny-frame").updatedBy, "정비");
+  assert.equal(db.hist.at(-1).createdBy, "정비");
+  assert.equal(db.hist.at(-1).note, "규격 칸 크기 128");
+  assert.ok((await dbLib.patchProjectToolSettings(db, "one-tiny-frame", { spec: { cell_size: 128 } }, "정비")).unchanged, "같은 값이면 버전을 올리지 않는다");
+  assert.equal((await dbLib.patchProjectToolSettings(db, "one-tiny-frame", { spec: { cell_size: 4 } }, "정비")).status, 400);
+  assert.equal(db.rows.get("one-tiny-frame").version, 2);
+});

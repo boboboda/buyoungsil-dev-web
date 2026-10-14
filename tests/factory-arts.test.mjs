@@ -297,3 +297,32 @@ test("그림 카드: 대상별 묶음, 상태별 버튼, 승인 그림만 '참�
   assert.match(wb, /<StudioArtsCard /);
   assert.match(wb, /refArtIds: pickedArts/);
 });
+
+test("가져오기: 일감 없는 처음 값만 원래 만든·승인 시각을 쓰고, 일감 그림·잘못된 시각은 무시한다", async () => {
+  const db = fakeDb();
+  const made = "2026-10-09T10:08:14.982Z";
+  const decided = "2026-10-10T00:07:15.316Z";
+  const r = await arts.registerArt(db, { appSlug: "one-tiny-frame", subject: "싹이", kind: "image-scene", method: "pixellab", url: U("h1"), srcKey: "hancut:1", status: "approved", createdAt: made, decidedAt: decided });
+  assert.ok(r.ok);
+  assert.equal(r.art.createdAt, made);
+  assert.equal(r.art.decidedAt, decided);
+  const job = await arts.registerArt(db, { appSlug: "one-tiny-frame", subject: "싹이", kind: "image-scene", url: U("h2"), srcKey: "j:1", jobId: "job1", createdAt: made, decidedAt: decided });
+  assert.notEqual(job.art.createdAt, made, "일감이 올린 그림은 시각을 정할 수 없다");
+  assert.equal(job.art.status, "candidate");
+  const bad = await arts.registerArt(db, { appSlug: "one-tiny-frame", subject: "싹이", kind: "image-scene", url: U("h3"), srcKey: "hancut:3", status: "approved", createdAt: "2999-01-01T00:00:00.000Z", decidedAt: "어제" });
+  assert.ok(bad.ok);
+  assert.ok(new Date(bad.art.decidedAt).getTime() <= Date.now(), "잘못된 승인 시각은 지금으로");
+  const again = await arts.registerArt(db, { appSlug: "one-tiny-frame", subject: "싹이", kind: "image-scene", url: U("h1b"), srcKey: "hancut:1", status: "approved" });
+  assert.ok(again.duplicate, "같은 srcKey 는 중복 등록되지 않는다");
+});
+
+test("자동 참고: 가져온 장면 컷들(옛 승인 시각)이 있어도 새로 승인한 정면 그림이 먼저 고른다", () => {
+  const rows = [{ status: "approved", url: U("ref"), subject: "싹이", kind: "image-prop", decidedAt: new Date("2026-10-14T04:31:00Z") }];
+  for (let i = 1; i <= 45; i++) rows.push({ status: "approved", url: U(`c${i}`), subject: "싹이", kind: "image-scene", decidedAt: new Date(Date.UTC(2026, 9, 9, 10, i)) });
+  const list = arts.approvedEntries(rows);
+  assert.equal(list.length, 24);
+  assert.equal(list[0].url, U("ref"));
+  const refs = arts.selectReferences({ approved: list, subject: "싹이", kind: "image-prop" });
+  assert.equal(refs.length, 4);
+  assert.equal(refs[0].url, U("ref"));
+});

@@ -101,6 +101,8 @@ export async function POST(req: NextRequest) {
       status: text("status") || undefined,
       note: text("note"),
       decidedBy: "처음 값",
+      createdAt: text("createdAt"),
+      decidedAt: text("decidedAt"),
     });
 
     if (registered.ok === false) return fail(registered.status, registered.message);

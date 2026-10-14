@@ -136,7 +136,29 @@ export async function saveProjectToolSettings(db: SettingsDb, appSlug: string, r
   return writeVersion(db, appSlug, cleaned.settings, who, note);
 }
 
-/** 되돌리기: 이력의 옛 버전 내용을 '새 버전'으로 다시 저장한다(이력은 지우지 않는다) */
+/** 일부만 바꾸기: 지금 저장된 설정(없으면 빈 설정)의 묶음별로 patch 의 항목만 덮어쓴다. 나머지 값은 그대로. 이미 저장된 프로젝트만(정비·감독 프로그램용) */
+export async function patchProjectToolSettings(db: SettingsDb, appSlug: string, patch: unknown, who: string, note = "일부 수정"): Promise<SaveResult> {
+  if (!SLUG_RE.test(appSlug)) return { ok: false, errors: ["appSlug 형식이 올바르지 않아요."], status: 400 };
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { ok: false, errors: ["patch 는 묶음별 객체여야 해요."], status: 400 };
+  const cur = await db.factoryProjectToolSetting.findUnique({ where: { appSlug } });
+  const base = cur ? readStoredSettings(cur.settings) : null;
+
+  if (!base) return { ok: false, errors: ["저장된 설정이 없어요."], status: 404 };
+  const next: Record<string, unknown> = { ...base };
+
+  for (const [group, value] of Object.entries(patch as Record<string, unknown>)) {
+    const old = next[group];
+
+    next[group] = value && typeof value === "object" && !Array.isArray(value) && old && typeof old === "object" && !Array.isArray(old) ? { ...(old as object), ...value } : value;
+  }
+  const cleaned = cleanProjectSettings(next);
+
+  if (cleaned.ok === false) return { ok: false, errors: cleaned.errors, status: 400 };
+
+  return writeVersion(db, appSlug, cleaned.settings, who, note);
+}
+
+/** 되돌리기:이력의 옛 버전 내용을 '새 버전'으로 다시 저장한다(이력은 지우지 않는다) */
 export async function revertProjectToolSettings(db: SettingsDb, appSlug: string, version: unknown, who: string): Promise<SaveResult> {
   if (!SLUG_RE.test(appSlug)) return { ok: false, errors: ["appSlug 형식이 올바르지 않아요."], status: 400 };
   if (typeof version !== "number" || !Number.isInteger(version) || version < 1) return { ok: false, errors: ["되돌릴 버전 번호를 확인해 주세요."], status: 400 };

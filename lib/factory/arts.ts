@@ -257,9 +257,20 @@ export interface CandidateInput {
   status?: unknown;
   note?: unknown;
   decidedBy?: unknown;
+  /** 옛 그림을 가져올 때(jobId 없을 때만): 원래 만든 시각·승인 시각(ISO). 잘못된 값·미래 시각은 무시 */
+  createdAt?: unknown;
+  decidedAt?: unknown;
 }
 
 export type RegisterResult = { ok: true; art: ArtView; duplicate: boolean } | { ok: false; status: number; message: string };
+
+/** 가져오는 그림의 원래 시각: 올바른 ISO(Z) 이고 2020년 이후·지금 이전일 때만 쓴다 */
+export function originalTime(v: unknown): Date | null {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(v)) return null;
+  const d = new Date(v);
+
+  return Number.isNaN(d.getTime()) || d.getTime() < Date.UTC(2020, 0, 1) || d.getTime() > Date.now() ? null : d;
+}
 
 /** 후보 등록. 일감이 올리는 그림은 언제나 '후보'. 같은 srcKey 는 다시 만들지 않고 기존 것을 돌려준다 */
 export async function registerArt(db: ArtDb, input: CandidateInput): Promise<RegisterResult> {
@@ -295,7 +306,8 @@ export async function registerArt(db: ArtDb, input: CandidateInput): Promise<Reg
       jobId,
       srcKey,
       note: oneLine(input.note, MAX_NOTE),
-      ...(decided ? { decidedBy: oneLine(input.decidedBy, 80) || "처음 값", decidedAt: new Date() } : {}),
+      ...(!jobId && originalTime(input.createdAt) ? { createdAt: originalTime(input.createdAt) as Date } : {}),
+      ...(decided ? { decidedBy: oneLine(input.decidedBy, 80) || "처음 값", decidedAt: (!jobId && originalTime(input.decidedAt)) || new Date() } : {}),
     },
   });
 
