@@ -95,9 +95,9 @@ export interface GraphTool {
   methods: { id: string; label: string; secrets: { name: string; ready: boolean }[] }[];
 }
 
-export const NODE_W = 176;
-export const NODE_H = 72;
-export const COL_GAP = 56;
+export const NODE_W = 152;
+export const NODE_H = 92;
+export const COL_GAP = 36;
 export const ROW_GAP = 14;
 export const PAD = 8;
 

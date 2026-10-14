@@ -14,9 +14,9 @@ import BlockDiagram from "@/components/studio/BlockDiagram";
 import CardEditor from "@/components/studio/CardEditor";
 import ConfigDetail from "@/components/studio/ConfigDetail";
 
-export default function ConfigTab({ data, canEdit }: { data: StudioProjectData; canEdit: boolean }) {
+export default function ConfigTab({ data, canEdit, initialSelected }: { data: StudioProjectData; canEdit: boolean; initialSelected?: string }) {
   const router = useRouter();
-  const [selected, setSelected] = useState<string | null>(`project:${data.appSlug}`);
+  const [selected, setSelected] = useState<string | null>(initialSelected ?? `project:${data.appSlug}`);
   const [editing, setEditing] = useState<{ card: CardView | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -109,7 +109,7 @@ export default function ConfigTab({ data, canEdit }: { data: StudioProjectData; 
       <section aria-label="도구 블록 연결" className="min-w-0 space-y-2" data-config-section="blocks">
         <h2 className="fx-label">도구 블록 연결</h2>
         <p className="text-xs fx-muted">프로젝트 → 결과물 카드 → 도구 → 방법. 블록을 누르면 오른쪽(좁은 화면은 아래)에 상세가 나와요.</p>
-        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="fx-panel min-w-0 p-2">
             {data.cards.length ? <BlockDiagram graph={graph} selected={selected} onSelect={setSelected} /> : <p className="p-2 text-sm fx-muted">아직 카드가 없어요. 아래에서 카드를 만들면 블록이 그려져요.</p>}
           </div>
