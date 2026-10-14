@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { checkCommand, commandForLog, GUARD_PATH, guardHookSettings, SERVER_ACCESS_RULES, SERVER_HOSTS } from "../serveraccess.mjs";
+import { checkCommand, commandForLog, GUARD_PATH, guardHookSettings, RM_RF_ALLOWED_PARENTS, SERVER_ACCESS_RULES, SERVER_HOSTS } from "../serveraccess.mjs";
 import { maintenanceSettings } from "../maintenance.mjs";
 import { writeLabClaudeSettings } from "../lab.mjs";
 
@@ -85,6 +85,20 @@ test("서버에서 지우기·강제 덮어쓰기는 막는다", () => {
   deny("git push origin :old-branch", /브랜치 삭제/);
   deny("git push origin --delete old-branch", /브랜치 삭제/);
   deny("git push serverpc:git-server/repo/developWeb.git main", /배포/);
+});
+
+test("rm -rf 는 ~/studio-upload/<이름> 한 단계 폴더만 허용", () => {
+  assert.deepEqual(RM_RF_ALLOWED_PARENTS, ["~/studio-upload"]);
+  allow('ssh serverpc2 "rm -rf ~/studio-upload/hub"');
+  allow('ssh serverpc "rm -rf ~/studio-upload/hub-split"');
+  allow('ssh serverpc2 "rm -fr ~/studio-upload/hub-layout"');
+  for (const p of [
+    "~/git-server", "~/studio-upload/../x", "~/studio-upload/*", "~/studio-upload", "~/studio-upload/",
+    "~/studio-upload/hub/sub", "~/studio-upload/hub ~/git-server", "~/studio-upload/$X", "~/studio-upload/$(id)",
+    "~/studio-upload/..", "/studio-upload/hub", "~/git-server/work/app-kit/data/studio/hub", "~/studio-upload/hub/../../git-server",
+  ]) deny(`ssh serverpc2 "rm -rf ${p}"`, /허용 경로는 ~\/studio-upload\/<이름> 뿐이에요/);
+  deny('ssh serverpc2 "rm -rf ~/studio-upload/hub; rm -rf ~/data"', /rm -rf/);
+  deny('ssh serverpc2 "rm -rf ~/studio-upload/.env"', /\.env/);
 });
 
 test("서비스 중단은 막는다", () => {

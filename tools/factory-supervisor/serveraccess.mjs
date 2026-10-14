@@ -17,7 +17,7 @@ export const SERVER_ACCESS_RULES = `## 서버 접근 규칙
 - 접속해도 되는 곳: \`~/.ssh/config\` 의 우리 서버 두 대만 — \`serverpc\`(서버1), \`serverpc2\`(서버2). 그 밖의 호스트로 가는 ssh·scp 는 막혀 있다.
 - 쓸 수 있는 것: \`ssh -o BatchMode=yes <서버> "<명령>"\`, \`scp\`, git(ssh 원격 포함). sftp·rsync 는 쓰지 않는다. 원격 명령은 인자로 직접 적는다(표준입력으로 스크립트 보내기·eval·base64 디코드 실행 금지).
 - 하지 말 것(감독 프로그램 훅이 막는다):
-  - 서버에서 지우기: \`rm -rf\`, \`git-server\` 아래 저장소 삭제·이름 변경
+  - 서버에서 지우기: \`rm -rf\`(예외: \`~/studio-upload/<이름>\` 바로 아래 한 단계 폴더만),\`git-server\` 아래 저장소 삭제·이름 변경
   - 강제 덮어쓰기: \`git push --force\`/\`-f\`(\`--force-with-lease\`·\`+\`refspec 포함), 원격 브랜치 삭제, 서버 저장소에서 \`git reset --hard\`
   - 서비스 중단: \`docker compose down\`, \`docker rm\`, \`docker system prune\` 같은 prune, \`systemctl stop\`/\`disable\`, \`reboot\`, \`shutdown\`
   - 서버 설정·비밀: nginx 설정 수정, \`.env\` 읽기·수정, 인증서·키 파일, \`~/.ssh\` 아래 파일, crontab 수정
@@ -25,6 +25,25 @@ export const SERVER_ACCESS_RULES = `## 서버 접근 규칙
 - 위 일이 꼭 필요하면 직접 하지 말고, 실행할 명령과 이유를 결과에 적고 멈춘다(사람이 실행한다).
 - 실행한 ssh·scp 명령은 일감 로그에 그대로 남는다. 키·토큰 값을 명령에 넣지 않는다.
 - Codex 로 실행 중이면 샌드박스가 네트워크를 막아 ssh 가 안 될 수 있다. 그때는 필요한 명령을 결과에 적는다.`;
+
+// 서버에서 `rm -rf` 를 허용하는 폴더 목록(사람이 늘리고 줄이는 곳). 항목 바로 아래 한 단계 폴더만 허용한다(그 폴더 자체·더 깊은 경로·글로브·변수·..은 계속 막는다).
+// data/·git-server/·repo/·DB·릴리스·.env·백업 아래는 여기에 넣지 않는다.
+export const RM_RF_ALLOWED_PARENTS = ["~/studio-upload"];
+
+const RM_RF_CHILD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const RM_RF_NOTE = "허용 경로는 " + RM_RF_ALLOWED_PARENTS.map((p) => p + "/<이름>").join(", ") + " 뿐이에요";
+
+/** rm -rf 의 대상 인자가 허용 목록의 바로 아래 한 단계 폴더 하나뿐인지 */
+function rmRfAllowed(args) {
+  const targets = args.filter((a) => !a.startsWith("-"));
+  if (targets.length !== 1 || args.includes("--")) return false;
+  const t = targets[0];
+  return RM_RF_ALLOWED_PARENTS.some((p) => {
+    if (!t.startsWith(p + "/")) return false;
+    const name = t.slice(p.length + 1);
+    return name !== ".." && name !== "." && RM_RF_CHILD_NAME.test(name);
+  });
+}
 
 const STOP_NOTE = "꼭 필요하면 실행할 명령과 이유를 결과에 적고 멈추세요(사람이 실행해요).";
 
@@ -211,7 +230,7 @@ export function remoteReason(text, depth = 0) {
       const flags = args.filter((a) => a.startsWith("-"));
       const rec = flags.some((f) => f === "--recursive" || (/^-[a-zA-Z]+$/.test(f) && /r/i.test(f)));
       const force = flags.some((f) => f === "--force" || (/^-[a-zA-Z]+$/.test(f) && f.includes("f")));
-      if (rec && force) return "서버에서 rm -rf 는 하지 않아요";
+      if (rec && force && !rmRfAllowed(args)) return `서버에서 rm -rf 는 하지 않아요. ${RM_RF_NOTE}`;
       if (args.some((a) => /git-server/.test(a))) return "git-server 아래 저장소는 지우지 않아요";
     }
     if ((b === "mv" || b === "rmdir" || b === "unlink" || b === "shred") && args.some((a) => /git-server/.test(a))) return "git-server 아래 저장소는 지우거나 이름을 바꾸지 않아요";

@@ -175,7 +175,7 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 
 ## 서버 접근 규칙 (`serveraccess.mjs`, `ssh-guard.mjs`)
 - 공장 AI 세션(정비·앱 new/revision·출시·실험)은 `~/.ssh/config` 의 우리 서버 두 대(`serverpc` 서버1, `serverpc2` 서버2)로만 ssh·scp·git 접속을 할 수 있어요. 다른 호스트, `-J`·`-F`·`ProxyCommand`·터널 옵션, sftp·rsync 는 막혀요.
-- 계속 막는 것: 서버에서 `rm -rf`·`git-server` 아래 저장소 삭제/이름 변경, 강제 push(`--force`·`-f`·`--force-with-lease`·`+`refspec)·원격 브랜치 삭제·서버 저장소 `git reset --hard`, 배포 저장소(`git-server/repo/`)로 push, `docker compose down`·`docker rm`·prune·`systemctl stop/disable`·`reboot`·`shutdown`, nginx 설정 수정·`.env`·인증서/키·`~/.ssh`·crontab 수정. 표준입력으로 보낸 스크립트·eval·base64 디코드처럼 검사할 수 없는 원격 명령도 막아요.
+- 계속 막는 것: 서버에서 `rm -rf`(예외: `~/studio-upload/<이름>` 바로 아래 한 단계 폴더만, 목록은 serveraccess.mjs 의 RM_RF_ALLOWED_PARENTS)·`git-server` 아래 저장소 삭제/이름 변경, 강제 push(`--force`·`-f`·`--force-with-lease`·`+`refspec)·원격 브랜치 삭제·서버 저장소 `git reset --hard`, 배포 저장소(`git-server/repo/`)로 push, `docker compose down`·`docker rm`·prune·`systemctl stop/disable`·`reboot`·`shutdown`, nginx 설정 수정·`.env`·인증서/키·`~/.ssh`·crontab 수정. 표준입력으로 보낸 스크립트·eval·base64 디코드처럼 검사할 수 없는 원격 명령도 막아요.
 - Claude Code 는 권한 규칙(prefix)으로 호스트를 가릴 수 없어서, 감독 프로그램이 일감마다 만드는 `--settings` 에 PreToolUse 훅(`node "<실행 폴더>/tools/factory-supervisor/ssh-guard.mjs"`)을 넣어 Bash 명령을 실행 전에 판정해요. 훅은 실행 전용 체크아웃(`supervisor-src`)의 사본이라 AI 가 고칠 수 없어요.
 - 이 훅은 명령 문자열을 읽는 안전장치예요. 스크립트 파일이나 다른 언어 안에서 ssh 를 띄우는 우회까지 막는 격리 장치는 아니에요.
 - Codex 는 정비·앱·출시에서 샌드박스 네트워크가 꺼져 있어 ssh 가 되지 않아요(실험만 네트워크 켜짐, 훅 없음 — 규칙 문서로만 안내).
