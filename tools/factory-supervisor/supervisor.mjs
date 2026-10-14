@@ -1348,7 +1348,8 @@ async function finishWorktree(st) {
       withLock: (name, fn) => withAppLock(st, name, fn),
       verify: (d) =>
         withAppLock(st, "build", async () => {
-          const v = await verifyWorkspace(d, job.stack, (m) => addLog(st, "info", m), 15 * 60_000, (child) => { st.child = child; lock.setChild(child.pid || null); });
+          // 합치기 검사: stack 기본 검사 + 앱별 추가 검사 명령(서버 설정, 비어 있으면 기본만)
+          const v = await verifyWorkspace(d, job.stack, (m) => addLog(st, "info", m), 15 * 60_000, (child) => { st.child = child; lock.setChild(child.pid || null); }, undefined, { checks: job.checkCommands });
 
           verification = v;
 
@@ -1417,12 +1418,14 @@ async function runFinalCheck(st) {
 
         if (cur !== wt.base) return { ok: false, reason: `앱 폴더가 기본 브랜치(${wt.base})에 있지 않아요(지금: ${cur || "분리된 HEAD"})` };
 
-        return verifyWorkspace(wt.repoDir, job.stack, (m) => log(`[${appSlug}] 최종 점검: ${m}`), 15 * 60_000);
+        return verifyWorkspace(wt.repoDir, job.stack, (m) => log(`[${appSlug}] 최종 점검: ${m}`), 15 * 60_000, undefined, undefined, { checks: job.checkCommands });
       }),
     );
 
     ok = !!v?.ok;
-    detail = ok ? "" : String(v?.reason ?? "검사 실패");
+    const ran = Array.isArray(v?.ran) && v.ran.length ? `돌린 검사: ${v.ran.join(" · ")}` : "";
+
+    detail = ok ? ran : `${ran ? `${ran} / ` : ""}${String(v?.reason ?? "검사 실패")}`;
   } catch (e) {
     detail = `점검을 끝까지 돌리지 못했어요: ${e.message}`;
   }

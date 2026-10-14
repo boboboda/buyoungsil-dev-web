@@ -24,6 +24,7 @@ import {
 import { readStoreAssets, savePromoVideoUrl } from "@/lib/factory/storeAssets";
 import { NOT_TARGET_MESSAGE, isStoreTarget } from "@/lib/factory/storeTarget";
 import { appQueue, allAppQueues, numberQueue } from "@/lib/factory/queue";
+import { MAX_GROUP_SIZE, newGroupId, PARALLEL_KIND, SOURCE_MANUAL } from "@/lib/factory/parallel";
 import {
   ACTIVE_STATUSES,
   adminAction,
@@ -69,6 +70,7 @@ export const FACTORY_INSTRUCTIONS =
   " 앱 공장: 확정된 앱 기획서는 enqueue_app_job 으로 등록해요(승인은 관리자가 통제실 /admin/factory 에서 해요). " +
   "등록 전에 list_factory_jobs 로 같은 앱 이름이 이미 있는지, list_secret_names 로 쓸 수 있는 키 이름을 확인하세요. " +
   "이미 만든 앱을 고칠 때는 kind=revision 으로, 반드시 기존 앱 이름(appSlug)과 고칠 내용만 보내세요. 같은 앱에 지시를 여러 개 쌓아 둘 수 있고, 앱마다 한 번에 하나씩 priority(큰 값 먼저)→승인 순→등록 순으로 실행해요(응답에 대기 순서가 나와요. 순서는 set_job_priority 로 바꿔요). "
+  + "서로 겹치지 않는 수정 지시는 enqueue_app_job 의 parallelWith(같은 앱 다른 대기 일감 id)로 같은 묶음에 넣어 같이 돌릴 수 있어요(묶음은 모두 승인돼야 시작, 승인은 관리자가 통제실 [묶음 승인]으로 한 번에). "
   + "관리자가 통제실에서 직접 보낸 수정 지시는 source 가 '통제실'로 나와요. 결과는 get_factory_job(includePlan=true)으로 읽고 사용자와 의논하세요. "
   + "작업 PC 감독 프로그램은 supervisor_control 로 봐요: action=status(연결·버전·일시 정지·자동 업데이트·진행/대기 일감 수), "
   + "update_now(GitHub main 의 새 감독 프로그램 코드를 지금 받게 함. 15초~1분 뒤 status 의 commit 으로 확인), "
@@ -164,6 +166,8 @@ export const FACTORY_TOOLS = [
       "규칙: appSlug 는 앱 폴더 이름(영문 소문자·숫자·하이픈 3~40자)이고 이후 수정 지시에서도 똑같이 써야 해요. " +
       "kind=new 는 아직 없는 앱만, kind=revision 은 이미 완성(done)된 앱만 가능해요. 같은 앱에 승인 대기·승인됨·실행 중인 지시가 있어도 계속 쌓을 수 있어요: " +
       "앱마다 실행은 한 번에 1개이고, 승인된 지시는 priority(큰 값 먼저)→승인 시각→등록 시각 순으로 하나씩 실행해요. 응답에 이 앱의 대기 순서(몇 번째)가 나와요. " +
+      "서로 겹치지 않는 수정 지시 여러 개를 같은 앱에서 동시에 돌리고 싶으면 parallelWith 에 같은 앱의 다른 대기 일감 id 를 주세요(같은 묶음으로 등록, 묶음은 모두 승인돼야 시작). " +
+      "또 같은 앱에 승인 대기 수정 일감이 있으면 방금 승인된 일감도 잠깐(기본 60초, 설정) 다른 승인을 기다릴 수 있어요. " +
       "수정 지시가 이어받는 이전 지시(parentJobId)는 비우면 실행을 시작할 때 그 앱의 가장 최근 완료 지시로 정해져서, 앞 지시의 결과를 이어받아요. " +
       "planMarkdown 은 새 앱이면 기획서 전체, 수정이면 '고칠 내용만' 적으세요(원본 기획서를 다시 보내지 마세요).",
     inputSchema: {
@@ -210,6 +214,12 @@ export const FACTORY_TOOLS = [
           minimum: -100,
           maximum: 100,
           description: "우선순위(클수록 먼저, 기본 0)",
+        },
+        parallelWith: {
+          type: "string",
+          description:
+            "같이 돌릴 일감 id (선택, kind=revision 만). 같은 앱의 시작 전(승인 대기·승인됨) 수정 일감 id 를 주면 등록과 동시에 그 일감과 같은 묶음(사람이 정한 묶음)으로 넣어요. " +
+            "서로 다른 파일을 고치는 지시만 묶으세요. 묶음은 안의 일감이 모두 승인돼야 같이 시작하고, 일부만 승인된 동안은 시작하지 않아요(관리자가 통제실 대기열 [묶음 승인]으로 한 번에 승인).",
         },
         source: {
           type: "string",
@@ -769,6 +779,13 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
     return text("parentJobId 가 올바르지 않아요.", true);
   if (kind === "new" && parentArg)
     return text("parentJobId 는 kind=revision/release 일 때만 쓸 수 있어요.", true);
+  // 같이 돌리기: 같은 앱의 다른 대기(승인 대기·승인됨) 수정 일감 id. 등록과 동시에 같은 묶음(사람이 정한 묶음)으로 넣는다
+  if (args.parallelWith !== undefined && (typeof args.parallelWith !== "string" || !ID_RE.test(args.parallelWith.trim())))
+    return text("parallelWith 는 같은 앱의 다른 대기 일감 id 예요(list_factory_jobs 의 id).", true);
+  const parallelWith = typeof args.parallelWith === "string" ? args.parallelWith.trim() : "";
+
+  if (parallelWith && kind !== PARALLEL_KIND)
+    return text("parallelWith 는 kind=revision(수정 지시)일 때만 쓸 수 있어요. 새 앱·출시 일감은 같이 돌릴 수 없어요.", true);
 
   let priority = 0;
 
@@ -921,6 +938,24 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
         }
       }
 
+      // 같이 돌리기: 짝이 될 일감이 같은 앱의 시작 전(승인 대기·승인됨) 수정 일감인지 확인하고, 이미 묶음이 있으면 거기에 합류한다
+      let joinGroup: { group: string; targetId: string; existing: boolean } | null = null;
+
+      if (parallelWith) {
+        const target = await tx.factoryJob.findUnique({ where: { id: parallelWith }, select: { id: true, appSlug: true, kind: true, status: true, parallelGroup: true } });
+
+        if (!target) return { ok: false, message: "parallelWith 에 해당하는 일감이 없어요." } as EnqueueFail;
+        if (target.appSlug !== appSlug) return { ok: false, message: "parallelWith 일감은 같은 앱(appSlug)의 것이어야 해요." } as EnqueueFail;
+        if (target.kind !== PARALLEL_KIND) return { ok: false, message: "parallelWith 일감은 수정 지시여야 해요(새 앱·출시·실험은 같이 돌릴 수 없어요)." } as EnqueueFail;
+        if (target.status !== "pending" && target.status !== "approved") {
+          return { ok: false, message: `parallelWith 일감은 시작 전(승인 대기·승인됨)이어야 해요. 지금 상태: ${target.status}.` } as EnqueueFail;
+        }
+        const size = target.parallelGroup ? await tx.factoryJob.count({ where: { appSlug, parallelGroup: target.parallelGroup, status: { in: ["pending", "approved", "running"] } } }) : 1;
+
+        if (size + 1 > MAX_GROUP_SIZE) return { ok: false, message: `이 묶음은 이미 ${size}개예요. 한 묶음은 최대 ${MAX_GROUP_SIZE}개까지예요.` } as EnqueueFail;
+        joinGroup = { group: target.parallelGroup ?? newGroupId(), targetId: target.id, existing: !!target.parallelGroup };
+      }
+
       const job = await tx.factoryJob.create({
         data: {
           appSlug,
@@ -946,9 +981,18 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
           resumeFrom: kind === "release" && args.resumeFrom === "upload" ? "upload" : null,
           versionName: kind === "release" && typeof args.versionName === "string" ? args.versionName.slice(0, 40) : null,
           releaseNotes: kind === "release" && typeof args.releaseNotes === "string" ? args.releaseNotes.slice(0, 500) : null,
+          ...(joinGroup ? { parallelGroup: joinGroup.group, parallelSource: SOURCE_MANUAL } : {}),
         },
         select: { id: true },
       });
+
+      if (joinGroup) {
+        // 짝(처음 묶는 경우)도 같은 묶음으로, 이미 있던 묶음의 시작 전 일감은 사람이 정한 묶음으로 바꾼다(지휘자가 건드리지 않게)
+        await tx.factoryJob.updateMany({
+          where: joinGroup.existing ? { appSlug, parallelGroup: joinGroup.group, status: { in: ["pending", "approved"] } } : { id: joinGroup.targetId, status: { in: ["pending", "approved"] } },
+          data: { parallelGroup: joinGroup.group, parallelSource: SOURCE_MANUAL },
+        });
+      }
 
       // 이 앱의 대기 순서(실행 중 포함). 같은 트랜잭션에서 읽는다
       const waiting = await tx.factoryJob.findMany({
@@ -967,7 +1011,8 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
           `승인 대기 상태예요. 관리자가 통제실(/admin/factory)에서 승인하면 대기열에 들어가요. ` +
           (waiting.length > 1
             ? `이 앱의 대기 순서는 ${mine?.position}번째예요(앞에 대기 ${ahead}개${running ? " + 지금 실행 중 1개" : ""}, priority ${priority}). 앱마다 한 번에 하나씩 priority 큰 값 → 승인 순 → 등록 순으로 실행해요.`
-            : `이 앱의 대기 순서는 1번째예요(앞에 쌓인 지시 없음).`),
+            : `이 앱의 대기 순서는 1번째예요(앞에 쌓인 지시 없음).`) +
+          (joinGroup ? ` 일감 ${joinGroup.targetId} 와 같은 묶음(${joinGroup.group})으로 넣었어요. 묶음 안 일감이 모두 승인돼야 같이 돌기 시작해요(관리자가 통제실 대기열의 [묶음 승인]으로 한 번에 승인할 수 있어요).` : ""),
       } as EnqueueOk;
     },
   );

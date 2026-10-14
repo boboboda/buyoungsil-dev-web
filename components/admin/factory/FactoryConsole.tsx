@@ -6,7 +6,8 @@
 import { Card, CardBody } from "@heroui/react";
 
 import AppProjectLinks from "./AppProjectLinks";
-import AppSlotsSettings, { ConductorSettings, ParallelPerAppSettings } from "./AppSlotsSettings";
+import AppChecksSettings from "./AppChecksSettings";
+import AppSlotsSettings, { ApprovalWaitSettings, ConductorSettings, ParallelPerAppSettings } from "./AppSlotsSettings";
 import DefaultAiSettings from "./DefaultAiSettings";
 import DevicePanel from "./DevicePanel";
 import FactoryControl from "./FactoryControl";
@@ -136,6 +137,8 @@ export default async function FactoryConsole({
               <DefaultAiSettings />
               <AppSlotsSettings />
               <ParallelPerAppSettings />
+              <ApprovalWaitSettings />
+              <AppChecksSettings />
               <ConductorSettings />
               <ToolBrokerSettings />
               <TelegramSetup />

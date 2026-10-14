@@ -13,7 +13,7 @@ import { AI_LABELS, isAiEngine, readModelChoice, type AiEngine } from "@/lib/fac
 import { getDefaultClaudeModel } from "@/lib/factory/settings";
 import { cleanToolRequests, type ToolRequestRecord } from "@/lib/factory/toolBroker";
 import { cleanHandoff, type HandoffEntry } from "@/lib/factory/handoff";
-import { cleanParallelInfo, DEFAULT_PER_APP, pickClaims, finishGroupIfDone, type ParallelInfo } from "@/lib/factory/parallel";
+import { cleanParallelInfo, DEFAULT_PER_APP, pickClaims, finishGroupIfDone, PARALLEL_KIND, withoutPartialGroups, type ParallelInfo } from "@/lib/factory/parallel";
 
 // 실험 일감 종류 이름. 실험 결과 처리(lib/factory/lab.ts)는 보고에 lab 값이 있을 때만 불러온다(앱 일감 경로는 그 파일을 읽지 않는다)
 const LAB_KIND = "lab";
@@ -110,14 +110,17 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
   const now = new Date();
   const lease = new Date(now.getTime() + LEASE_MS);
 
-  const [approved, running] = await Promise.all([
+  const [approvedAll, running, pendingGrouped] = await Promise.all([
     prisma.factoryJob.findMany({
       where: { status: "approved", aiEngine: { in: [...engines] } },
       select: { id: true, appSlug: true, kind: true, priority: true, approvedAt: true, createdAt: true, parallelGroup: true },
     }),
     prisma.factoryJob.findMany({ where: { status: "running" }, select: { appSlug: true, kind: true, parallelGroup: true } }),
+    prisma.factoryJob.findMany({ where: { status: "pending", kind: PARALLEL_KIND, parallelGroup: { not: null } }, select: { appSlug: true, kind: true, parallelGroup: true } }),
   ]);
-  // 지휘자(C-2)가 같은 앱의 대기 일감 판단을 기다리는 동안은 그 앱 일감을 가져가지 않는다(순서를 새치기하지 않도록 앱 전체 보류)
+  // 묶음 중 일부만 승인된 상태에서는 그 묶음 일감을 가져가지 않는다(승인 대기 일감이 남아 있는 동안). 모두 승인되면 같이 내준다
+  const approved = withoutPartialGroups(approvedAll, pendingGrouped);
+  // 지휘자(C-2)가 같은 앱의 대기 일감 판단을 기다리는 동안, 또는 승인 직후 다른 승인을 기다리는 동안은 그 앱 일감을 가져가지 않는다(순서를 새치기하지 않도록 앱 전체 보류)
   const waiting = opts.holdApps?.size ? approved.filter((a) => !opts.holdApps!.has(a.appSlug)) : approved;
   const ids = pickClaims({ approved: waiting, running, slots, perApp: opts.perApp ?? DEFAULT_PER_APP });
 

@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { claimOrder, MAX_GROUP_SIZE, newGroupId, PARALLEL_KIND, readConductorInfo, SOURCE_CONDUCTOR, SOURCE_MANUAL, type ConductorInfo, type Confidence } from "@/lib/factory/parallel";
+import { approvalWaitRemaining, claimOrder, MAX_GROUP_SIZE, newGroupId, PARALLEL_KIND, readConductorInfo, SOURCE_CONDUCTOR, SOURCE_MANUAL, type ConductorInfo, type Confidence } from "@/lib/factory/parallel";
 
 export { SOURCE_CONDUCTOR, SOURCE_MANUAL };
 export type { Confidence };
@@ -412,6 +412,35 @@ export async function appsToHold(s: ConductorSettings, capable: boolean, now = D
   }
 
   return hold;
+}
+
+/**
+ * 승인 직후 '다른 승인'을 짧게 기다려야 하는 앱(앱 이름 → 남은 초). 같은 앱에 승인 대기(pending) 수정 일감이 또 있으면, 방금 승인된(묶이지 않은) 수정 일감을
+ * 바로 가져가지 않고 마지막 승인으로부터 waitSec 초 동안 기다린다(관리자가 연달아 승인해서 지휘자·묶음이 일할 시간). 0이면 기다리지 않는다(예전과 같음).
+ * 감독 프로그램이 지휘자를 쓸 줄 알 때(capable)만, 자동 묶기가 켜져 있고 같은 앱 동시 수가 2 이상일 때만(hasRoom). 그 밖에는 기다리지 않는다.
+ * 이미 묶인 일감은 대상이 아니다(묶음은 모두 승인될 때까지 따로 기다린다).
+ */
+export async function appsWaitingForApproval(s: ConductorSettings, capable: boolean, waitSec: number, now = Date.now()): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+
+  if (!capable || !(waitSec > 0) || !hasRoom(s)) return out;
+  const [approved, pending] = await Promise.all([
+    prisma.factoryJob.findMany({ where: { status: "approved", kind: PARALLEL_KIND, parallelGroup: null }, select: { appSlug: true, approvedAt: true } }),
+    prisma.factoryJob.findMany({ where: { status: "pending", kind: PARALLEL_KIND }, select: { appSlug: true } }),
+  ]);
+  const pendingBy = new Map<string, number>();
+
+  for (const p of pending) pendingBy.set(p.appSlug, (pendingBy.get(p.appSlug) ?? 0) + 1);
+  const bySlug = new Map<string, (Date | null)[]>();
+
+  for (const a of approved) bySlug.set(a.appSlug, [...(bySlug.get(a.appSlug) ?? []), a.approvedAt]);
+  for (const [slug, approvedAts] of bySlug) {
+    const left = approvalWaitRemaining({ approvedAts, pendingCount: pendingBy.get(slug) ?? 0, waitSec, now });
+
+    if (left > 0) out.set(slug, left);
+  }
+
+  return out;
 }
 
 // ───────────── 판단 요청 내주기(/next) ─────────────

@@ -48,6 +48,40 @@ export function groupOf(row: { kind: string; parallelGroup: string | null }): st
   return row.kind === PARALLEL_KIND && row.parallelGroup ? row.parallelGroup : null;
 }
 
+/** 묶음 안에 승인 대기(pending) 일감이 남아 있는 묶음의 키 목록용 문자열 */
+export const groupKey = (appSlug: string, group: string) => `${appSlug}\u0000${group}`;
+
+/**
+ * 묶음 중 일부만 승인된 상태(같은 묶음에 승인 대기 일감이 남아 있음)의 승인 일감을 가져가기 후보에서 뺀다. 모두 승인될 때까지 기다린다.
+ * pendingRows: 승인 대기 중인 수정 일감(appSlug·kind·parallelGroup). 묶음이 아닌 일감과 다른 묶음은 그대로 둔다.
+ */
+export function withoutPartialGroups<T extends { appSlug: string; kind: string; parallelGroup: string | null }>(approved: readonly T[], pendingRows: readonly { appSlug: string; kind: string; parallelGroup: string | null }[]): T[] {
+  const partial = new Set(pendingRows.filter((r) => groupOf(r)).map((r) => groupKey(r.appSlug, r.parallelGroup as string)));
+
+  if (!partial.size) return [...approved];
+
+  return approved.filter((a) => {
+    const g = groupOf(a);
+
+    return !(g && partial.has(groupKey(a.appSlug, g)));
+  });
+}
+
+/**
+ * 승인 직후 '다른 승인'을 기다리는 남은 초(없으면 0). 같은 앱에 승인 대기(pending) 수정 일감이 있고(pendingCount > 0),
+ * 가장 최근에 승인된(묶이지 않은) 수정 일감의 승인 시각으로부터 waitSec 가 아직 안 지났으면 남은 초를 올림해서 돌려준다.
+ * waitSec 가 0 이하이면 항상 0(예전과 같음).
+ */
+export function approvalWaitRemaining(args: { approvedAts: readonly (Date | null)[]; pendingCount: number; waitSec: number; now?: number }): number {
+  if (!(args.waitSec > 0) || args.pendingCount <= 0) return 0;
+  const times = args.approvedAts.filter((d): d is Date => !!d).map((d) => d.getTime());
+
+  if (!times.length) return 0;
+  const left = Math.max(...times) + args.waitSec * 1000 - (args.now ?? Date.now());
+
+  return left > 0 ? Math.ceil(left / 1000) : 0;
+}
+
 const time = (d: Date | null) => (d ? d.getTime() : Number.POSITIVE_INFINITY);
 
 /** 실행 순서 비교: priority 큰 값 먼저 → 승인 시각 빠른 순(미승인은 뒤) → 등록 시각 빠른 순 */
@@ -227,7 +261,7 @@ export async function groupJobs(jobIds: unknown): Promise<GroupResult> {
   // 기존 그룹에 합류시킨 경우 그 그룹의 다른 승인 전 일감도 사람이 정한 그룹이 된다(지휘자가 바꾸지 않음)
   if (existing[0]) await prisma.factoryJob.updateMany({ where: { appSlug: rows[0].appSlug, parallelGroup: group, status: { in: ["pending", "approved"] } }, data: { parallelSource: SOURCE_MANUAL } });
 
-  return { ok: true, group, message: `${ids.length}개 일감을 같이 돌리도록 묶었어요. 승인된 일감부터 같은 앱에서 동시에 실행돼요(최대 동시 수는 설정의 '같은 앱에서 같이 돌릴 수').` };
+  return { ok: true, group, message: `${ids.length}개 일감을 같이 돌리도록 묶었어요. 묶음 안 일감이 모두 승인되면 같은 앱에서 동시에 실행돼요(승인 대기 일감은 [묶음 승인]으로 한 번에 승인할 수 있어요. 최대 동시 수는 설정의 '같은 앱에서 같이 돌릴 수').` };
 }
 
 /** 일감 하나를 그룹에서 뺀다(시작 전 일감만). 남은 일감이 1개뿐이면 그 그룹은 사실상 해제된 것과 같다 */
@@ -235,6 +269,24 @@ export async function ungroupJob(id: string): Promise<GroupResult> {
   const res = await prisma.factoryJob.updateMany({ where: { id, status: { in: ["pending", "approved", "failed"] }, parallelGroup: { not: null } }, data: { parallelGroup: null, parallelSource: SOURCE_MANUAL } });
 
   return res.count > 0 ? { ok: true, message: "그룹에서 뺐어요. 이 일감은 앞으로 앱당 1개 규칙으로 돌아요." } : refuse(409, "그룹에 들어 있지 않거나, 이미 실행 중이라 뺄 수 없어요.");
+}
+
+/** 묶음 안의 승인 대기(pending) 수정 일감을 한 번에 승인한다. jobId 는 그 묶음의 일감 아무거나. 모델 선택은 '기본 설정 사용'(승인 화면에서 따로 고른 일감은 그대로 두기 위해 모델은 건드리지 않음) */
+export async function approveGroup(jobId: string, now = new Date()): Promise<GroupResult> {
+  const job = await prisma.factoryJob.findUnique({ where: { id: jobId }, select: { appSlug: true, kind: true, parallelGroup: true } });
+
+  if (!job) return refuse(404, "없는 일감이에요.");
+  const group = groupOf(job);
+
+  if (!group) return refuse(409, "묶음에 들어 있는 수정 일감이 아니에요.");
+  const pending = await prisma.factoryJob.findMany({ where: { appSlug: job.appSlug, kind: PARALLEL_KIND, parallelGroup: group, status: "pending" }, select: { id: true } });
+
+  if (!pending.length) return refuse(409, "이 묶음에는 승인 대기 중인 일감이 없어요.");
+  const res = await prisma.factoryJob.updateMany({ where: { id: { in: pending.map((p) => p.id) }, status: "pending" }, data: { status: "approved", approvedAt: now } });
+
+  if (res.count > 0) await prisma.factoryJobLog.createMany({ data: pending.map((p) => ({ jobId: p.id, level: "info", message: `묶음 승인: 묶음 ${group} 의 승인 대기 일감 ${res.count}개를 한 번에 승인했어요.` })) });
+
+  return res.count > 0 ? { ok: true, group, message: `묶음의 승인 대기 일감 ${res.count}개를 한 번에 승인했어요. 묶음이 모두 승인되어 같이 돌 수 있어요.` } : refuse(409, "방금 다른 곳에서 먼저 처리됐어요.");
 }
 
 // ───────────── 그룹 완료 요약 ─────────────

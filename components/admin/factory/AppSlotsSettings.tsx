@@ -208,6 +208,84 @@ export function ParallelPerAppSettings() {
   );
 }
 
+export const APPROVAL_WAIT_CHOICES = [0, 30, 60, 120, 300] as const;
+
+/**
+ * 통제실 [설정] '승인 직후 다른 승인 기다리는 시간'(0~300초, 기본 60초). 같은 앱에 승인 대기 수정 일감이 또 있으면, 방금 승인된 일감을 바로 시작하지 않고
+ * 마지막 승인 뒤 이 시간만큼 기다려요(연달아 승인하면 지휘자가 묶을 수 있게). 0이면 기다리지 않아요. 자동 묶기가 꺼져 있거나 같은 앱 동시 수가 1이면 기다리지 않아요.
+ */
+export function ApprovalWaitSettings() {
+  const [current, setCurrent] = useState<{ value: number; isDefault: boolean } | null>(null);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/factory/control", { cache: "no-store" });
+
+      if (!res.ok) throw new Error();
+      const data = (await res.json()) as { approvalWaitSec?: number; approvalWaitSecDefault?: boolean };
+
+      if (typeof data.approvalWaitSec === "number") {
+        setCurrent({ value: data.approvalWaitSec, isDefault: data.approvalWaitSecDefault === true });
+        setText((t) => (t === "" ? String(data.approvalWaitSec) : t));
+      }
+    } catch {
+      /* 못 읽으면 그대로 둔다 */
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const n = /^\d{1,3}$/.test(text.trim()) ? Number(text.trim()) : NaN;
+  const valid = Number.isInteger(n) && n >= 0 && n <= 300;
+
+  const save = async () => {
+    if (!valid) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/factory/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvalWaitSec: n }) });
+      const data = (await res.json().catch(() => ({}))) as { message?: string; approvalWaitSec?: number; approvalWaitSecDefault?: boolean };
+
+      setNotice(data.message ?? (res.ok ? "저장했어요." : "저장하지 못했어요."));
+      if (res.ok && typeof data.approvalWaitSec === "number") setCurrent({ value: data.approvalWaitSec, isDefault: data.approvalWaitSecDefault === true });
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded-lg border border-default-200 p-4" data-title="settings · 승인 직후 기다리는 시간" data-approval-wait="">
+      <h2 className="font-semibold">승인 직후 기다리는 시간</h2>
+      <p className="text-sm text-default-500">같은 앱에 승인 대기 중인 수정 일감이 또 있으면, 방금 승인한 일감을 바로 시작하지 않고 마지막 승인 뒤 이 시간만큼 기다려요(0~300초, 기본 60초). 그동안 연달아 승인하면 지휘자가 겹치는지 보고 같이 돌릴 수 있어요. 0이면 승인 즉시 시작해요. 자동 묶기가 꺼져 있거나 같은 앱에서 같이 돌릴 수가 1이면 기다리지 않아요.</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <div aria-label="승인 직후 기다리는 시간" className="flex gap-2" role="group">
+          {APPROVAL_WAIT_CHOICES.map((c) => (
+            <Button key={c} aria-pressed={text.trim() === String(c)} className="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0" color={text.trim() === String(c) ? "primary" : "default"} data-approval-wait-choice={c} isDisabled={busy || current === null} size="sm" variant={text.trim() === String(c) ? "solid" : "flat"} onPress={() => setText(String(c))}>
+              {c === 0 ? "기다리지 않음" : `${c}초`}
+            </Button>
+          ))}
+        </div>
+        <label className="flex items-center gap-1 text-sm">
+          직접 입력
+          <input aria-label="승인 직후 기다리는 시간(초)" className="w-20 rounded border border-default-300 px-2 py-1" data-approval-wait-input="" inputMode="numeric" value={text} onChange={(e) => setText(e.target.value)} />초
+        </label>
+        <Button data-approval-wait-save="" isDisabled={busy || !valid || n === current?.value} size="sm" variant="flat" onPress={save}>
+          저장
+        </Button>
+      </div>
+      {current && <p className="text-sm" data-approval-wait-current="">{current.value === 0 ? "현재: 기다리지 않음" : `현재 ${current.value}초`}{current.isDefault ? " (정한 적 없어서 기본값)" : ""}</p>}
+      {text !== "" && !valid && <p className="text-sm text-danger-600">0~300 사이 정수로 적어 주세요.</p>}
+      {notice && <p className="text-sm" role="status">{notice}</p>}
+    </div>
+  );
+}
+
 interface ConductorState {
   autoGroup: boolean;
   model: string;

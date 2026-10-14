@@ -16,11 +16,13 @@ const REFRESH_MS = 5_000;
 type Queues = Record<string, QueueItem[]>;
 
 /** 일감 카드에 붙일 병행 상태 이름들(시험·화면이 같이 쓴다). 합치기 실패가 가장 먼저 */
-export function parallelBadges(q: Pick<QueueItem, "status" | "parallelGroup" | "parallel" | "mergeFailed">): string[] {
+export function parallelBadges(q: Pick<QueueItem, "status" | "parallelGroup" | "parallel" | "mergeFailed"> & Partial<Pick<QueueItem, "approvalWait" | "groupPendingLeft">>): string[] {
   const out: string[] = [];
 
   if (q.mergeFailed) out.push("합치기 실패");
   if (q.parallelGroup) out.push(`병행 그룹 ${q.parallelGroup}`);
+  if (q.status === "approved" && (q.groupPendingLeft ?? 0) > 0) out.push(`묶음 승인 기다림 (${q.groupPendingLeft}개 남음)`);
+  if (q.status === "approved" && (q.approvalWait ?? 0) > 0) out.push(`다른 승인 기다림 ${q.approvalWait}초`);
   if (q.status === "running" && q.parallel?.worktree) out.push("worktree 실행 중");
   if (q.status === "running" && q.parallel?.lockWait) out.push(`잠금 대기: ${LOCK_TEXT[q.parallel.lockWait.name] ?? q.parallel.lockWait.name}`);
   if (q.status === "running" && q.parallel?.merging) out.push("합치는 중");
@@ -42,6 +44,12 @@ export function conductorLine(q: Pick<QueueItem, "conductor" | "parallelSource">
 
 /** '같이 돌리기'로 묶을 수 있는 일감: 시작 전(승인 대기·승인됨) 수정 일감 */
 export const groupable = (q: Pick<QueueItem, "status" | "kind">) => q.kind === "revision" && (q.status === "pending" || q.status === "approved");
+/** [묶음 승인]을 보일 일감: 묶음 안 승인 대기 일감 중 목록에서 가장 앞에 있는 것 하나(묶음마다 버튼이 한 번만 나오게) */
+export function showGroupApprove(items: Pick<QueueItem, "id" | "status" | "kind" | "parallelGroup">[], q: Pick<QueueItem, "id" | "status" | "kind" | "parallelGroup">): boolean {
+  if (q.status !== "pending" || q.kind !== "revision" || !q.parallelGroup) return false;
+
+  return items.find((x) => x.status === "pending" && x.kind === "revision" && x.parallelGroup === q.parallelGroup)?.id === q.id;
+}
 /** 올리기/내리기로 바꿀 priority: 바로 앞(뒤) 일감과 순서가 바뀌도록 1 차이를 둔다(-100~100). */
 export function movedPriority(items: QueueItem[], index: number, dir: "up" | "down"): number | null {
   const cur = items[index];
@@ -129,7 +137,7 @@ export default function AppQueue({ appSlug }: { appSlug?: string }) {
   return (
     <section aria-label="앱별 대기열" className="min-w-0 space-y-3 rounded-xl border border-default-200 p-3" data-app-queue>
       <h4 className="fx-label">{appSlug ? "대기열" : "앱별 대기열"}</h4>
-      <p className="text-xs fx-muted">앱마다 한 번에 하나씩, priority 큰 값 → 먼저 승인한 순 → 먼저 등록한 순으로 실행해요. 번호 0은 지금 실행 중이에요. 서로 겹치지 않는 수정 일감은 체크해서 [같이 돌리기]로 묶으면 같은 앱에서 동시에 실행하고(작업 사본에서), 끝난 순서대로 합치며 서로 충돌하는지 마지막까지 점검해요.</p>
+      <p className="text-xs fx-muted">앱마다 한 번에 하나씩, priority 큰 값 → 먼저 승인한 순 → 먼저 등록한 순으로 실행해요. 번호 0은 지금 실행 중이에요. 서로 겹치지 않는 수정 일감은 체크해서 [같이 돌리기]로 묶으면(승인 전에도 묶을 수 있어요) 같은 앱에서 동시에 실행하고(작업 사본에서), 끝난 순서대로 합치며 서로 충돌하는지 마지막까지 점검해요. 묶음은 안의 일감이 모두 승인돼야 시작하니, 승인 대기 일감은 [묶음 승인]으로 한 번에 승인하세요.</p>
       {notice ? <p className="text-sm">{notice}</p> : null}
       {apps.map(([slug, items]) => (
         <div key={slug} className="space-y-1">
@@ -174,6 +182,11 @@ export default function AppQueue({ appSlug }: { appSlug?: string }) {
                       다시 시도
                     </button>
                   </span>
+                ) : null}
+                {showGroupApprove(items, q) ? (
+                  <button className="rounded border border-primary-300 px-2" data-queue-approve-group disabled={busy} type="button" onClick={() => void groupAct({ action: "approve-group", jobId: q.id }, "이 묶음의 승인 대기 일감을 한 번에 승인할까요? 모두 승인되면 같이 돌기 시작해요.")}>
+                    묶음 승인 ({items.filter((x) => x.status === "pending" && x.kind === "revision" && x.parallelGroup === q.parallelGroup).length}개)
+                  </button>
                 ) : null}
                 {q.parallelGroup && q.status !== "running" ? (
                   <button className="rounded border border-default-300 px-2" data-queue-ungroup disabled={busy} type="button" onClick={() => void groupAct({ action: "ungroup", jobId: q.id })}>

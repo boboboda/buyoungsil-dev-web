@@ -84,7 +84,7 @@ async function attemptMerge(ctx) {
     const files = changedFiles(repoDir, base, branch); // 합치기 직전: 기본 브랜치를 이미 합쳐 넣은 상태라 base..branch 가 이 일감이 바꾼 파일이다
     const ff = fastForwardBase(repoDir, branch);
 
-    if (ff.ok) return { ok: true, checks: "통과 (최신 기본 브랜치와 합친 상태에서 빌드·시험)", files };
+    if (ff.ok) return { ok: true, checks: `통과 (최신 기본 브랜치와 합친 상태에서 빌드·시험${Array.isArray(v.ran) && v.ran.length ? `: ${v.ran.join(" · ")}` : ""})`, files };
     log("warn", `기본 브랜치를 앞으로 감기(fast-forward)하지 못했어요(그 사이 기본 브랜치가 움직임). 다시 합쳐요: ${tail(ff.stderr || ff.stdout, 200)}`);
   }
 

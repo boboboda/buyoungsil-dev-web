@@ -93,6 +93,7 @@ function setup() {
     "@/lib/factory/lab": { LAB_KIND: "lab", LAB_SLUG: "lab" },
     "@/lib/factory/queue": queue,
     "@/lib/factory/jobs": jobsMod,
+    "@/lib/factory/parallel": parallelFor(db.prisma),
   });
   return { ...db, queue, jobsMod, mcp };
 }

@@ -5,6 +5,7 @@
 import prisma from "@/lib/prisma";
 import {
   getAppSlots,
+  getApprovalWaitSec,
   getParallelPerApp,
   getDefaultAiEngine,
   getDefaultClaudeModel,
@@ -28,6 +29,7 @@ import {
 import { drainNote } from "@/lib/factory/supervisorDrain";
 import { addSupervisorLog, type SupervisorLogKind } from "@/lib/factory/supervisorLog";
 import { notifyText } from "@/lib/factory/telegram";
+import { getAppChecks } from "@/lib/factory/appChecks";
 
 const ONLINE_MS = 90_000;
 // 재시작 요청을 받아 간 뒤 이만큼 응답이 없고 새로 켜지지도 않았으면 실패로 본다(실행기는 30초 뒤 다시 띄운다)
@@ -38,7 +40,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp, conductor] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp, approvalWait, appChecks, conductor] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -60,6 +62,8 @@ export async function supervisorSnapshot() {
     getDefaultClaudeModel(),
     getAppSlots(),
     getParallelPerApp(),
+    getApprovalWaitSec(),
+    getAppChecks(),
     import("@/lib/factory/conductor").then((m) => m.conductorSnapshot()).catch(() => null), // 지휘자(C-2) 설정·최근 판단 기록
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
@@ -80,6 +84,9 @@ export async function supervisorSnapshot() {
     appSlotsDefault: appSlots.isDefault, // true = 통제실에서 정한 적 없음
     parallelPerApp: parallelPerApp.value, // 같은 앱에서 병행 그룹 일감을 같이 돌릴 수(1~4, 기본 2)
     parallelPerAppDefault: parallelPerApp.isDefault,
+    approvalWaitSec: approvalWait.value, // 승인 직후 다른 승인을 기다리는 시간(0~300초, 기본 60, 0 = 기다리지 않음)
+    approvalWaitSecDefault: approvalWait.isDefault,
+    appChecks, // 앱별 합치기·최종 점검 검사 명령 { appSlug: ["명령", ...] } (비면 stack 기본 검사만)
     ...(conductor ? { conductor } : {}), // 지휘자(C-2) 설정·최근 판단 비용 기록
     commit: info?.commit ?? null,
     commitSubject: info?.subject ?? null, // 현재 커밋 메시지 첫 줄(무엇이 바뀌었는지)

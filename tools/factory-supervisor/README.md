@@ -235,6 +235,12 @@ PIXELLAB_TOKEN=여기에값
 - **그룹 완료 요약**: 그룹의 일감이 모두 합쳐져 완료되면 서버가 합친 순서·다시 맞추기 횟수·검사 결과를 통제실 대기열 아래와 각 일감 로그에 남겨요.
 - 인계 기록·작업 메모리는 사본이 아니라 앱 폴더에 남겨요(사본은 사라지므로).
 
+### 병렬화 C 보완 (승인 전 묶기·승인 직후 대기·앱별 검사 명령)
+
+- **묶음 승인**: 승인 대기(pending) 수정 일감도 [같이 돌리기]로 묶을 수 있고(채팅 `enqueue_app_job` 의 선택 인자 `parallelWith` = 같은 앱의 다른 대기 일감 id 로 등록과 동시에 같은 묶음, `parallelSource=manual`), 묶음 카드의 **[묶음 승인]**(`POST /api/admin/factory/queue` `{ action: "approve-group", jobId }`)으로 묶음 안 승인 대기 일감을 한 번에 승인해요. 묶음에 승인 대기 일감이 남아 있는 동안은 그 묶음의 승인된 일감도 가져가지 않아요(`withoutPartialGroups`). 다른 묶음·묶음이 아닌 일감은 영향이 없어요.
+- **승인 직후 대기**: 같은 앱에 승인 대기 수정 일감이 또 있으면 방금 승인된(묶이지 않은) 수정 일감을 마지막 승인 뒤 `approvalWaitSec`(통제실 설정 '승인 직후 기다리는 시간', 기본 60초, 0~300, 0 = 기다리지 않음) 동안 가져가지 않아요. 카드에 '다른 승인 기다림 n초'. 자동 묶기가 꺼져 있거나 같은 앱 동시 수가 1이거나 `conductor` 를 보내지 않는 감독 프로그램이면 기다리지 않아요.
+- **앱별 검사 명령**: 통제실 설정 '앱별 합치기·최종 점검 검사 명령'(`factory_settings` 의 `appCheckCommands`, `{ 앱: ["명령", …] }`)이 있으면 `/next` 가 그 앱 일감에 `checkCommands` 를 붙이고, 감독 프로그램은 합치기 검사와 마지막 전체 점검에서 stack 기본 검사 **뒤에** 그 명령들을 앱 폴더에서 셸 없이 더 돌려요(`ai-runner.mjs` `customChecks`/`verifyWorkspace` 의 `ran`). 비어 있으면 stack 기본 검사만(예전과 같음). 돌린 명령은 일감의 합친 뒤 검사 결과와 그룹 요약에 표시돼요. game-toolkit 처음 값: `python -m unittest discover -s tests -q`.
+
 ## 지휘자: 겹치지 않는 일감 자동 묶기 (병렬화 단계 C-2: `conductor.mjs`, 서버 `lib/factory/conductor.ts`)
 
 같은 앱에 승인된 수정 일감이 그룹 없이 2개 이상 쌓이면, 서버가 `/next` 응답에 `conductor: { appSlug, key, model, perApp, sharedFiles, jobs }` 를 한 번 실어 판단을 맡겨요(감독 프로그램이 `conductor=1` 을 보낼 때만, 공장 전체 동시에 1개).

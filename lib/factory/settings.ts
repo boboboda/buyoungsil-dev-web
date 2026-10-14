@@ -250,6 +250,34 @@ export async function setParallelPerApp(n: number): Promise<void> {
   await prisma.factorySetting.upsert({ where: { key: PER_APP_KEY }, create: { key: PER_APP_KEY, value }, update: { value } });
 }
 
+const APPROVAL_WAIT_KEY = "approvalWaitSec";
+export const MIN_APPROVAL_WAIT = 0;
+export const MAX_APPROVAL_WAIT = 300;
+export const DEFAULT_APPROVAL_WAIT = 60;
+
+/** 승인 직후 기다리는 시간(초)으로 받아들이는 값: 0~300 정수(숫자 또는 정수 문자열)만. 그 밖은 null */
+export function cleanApprovalWait(v: unknown): number | null {
+  if (typeof v === "string" && !/^\s*\d{1,4}\s*$/.test(v)) return null;
+  if (typeof v !== "number" && typeof v !== "string") return null;
+  const n = Number(v);
+
+  return Number.isInteger(n) && n >= MIN_APPROVAL_WAIT && n <= MAX_APPROVAL_WAIT ? n : null;
+}
+
+/** 통제실에서 정한 '승인 직후 다른 승인 기다리는 시간'(초, 0~300). 정한 적 없거나 값이 이상하면 기본 60(isDefault: true). 0 = 기다리지 않음 */
+export async function getApprovalWaitSec(): Promise<{ value: number; isDefault: boolean }> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: APPROVAL_WAIT_KEY } });
+  const n = cleanApprovalWait(row?.value);
+
+  return n === null ? { value: DEFAULT_APPROVAL_WAIT, isDefault: true } : { value: n, isDefault: false };
+}
+
+export async function setApprovalWaitSec(n: number): Promise<void> {
+  const value = String(n);
+
+  await prisma.factorySetting.upsert({ where: { key: APPROVAL_WAIT_KEY }, create: { key: APPROVAL_WAIT_KEY, value }, update: { value } });
+}
+
 const AUTO_DEPLOY_KEY = "maintenanceAutoDeploy";
 
 /** 정비 대기열이 모두 끝나면 자동 배포할지. 값이 없으면 꺼짐. */

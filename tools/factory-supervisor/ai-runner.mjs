@@ -251,21 +251,44 @@ function makeEntryOnly(dir, facts, redact) {
 // Parent-owned checks. Do not accept an agent's statement that tests passed as evidence.
 export function verificationCommands(dir, stack) {
   if (!stack) stack = fs.existsSync(path.join(dir, "pubspec.yaml")) ? "flutter" : fs.existsSync(path.join(dir, "package.json")) ? "nextjs" : null;
-  if (stack === "flutter") return [{ command: IS_WIN ? "flutter.bat" : "flutter", args: ["analyze"] }];
+  if (stack === "flutter") return [{ command: IS_WIN ? "flutter.bat" : "flutter", args: ["analyze"], label: "flutter analyze" }];
   if (stack === "nextjs" || stack === "nestjs") {
     const tsc = path.join(dir, "node_modules", "typescript", "bin", "tsc");
     if (!fs.existsSync(tsc)) throw new Error("타입 검사를 위한 프로젝트 TypeScript가 없습니다.");
-    return [{ command: process.execPath, args: [tsc, "--noEmit", "--incremental", "false", "-p", "."] }];
+    return [{ command: process.execPath, args: [tsc, "--noEmit", "--incremental", "false", "-p", "."], label: "tsc --noEmit" }];
   }
-  if (stack === "kotlin-compose") return [{ command: path.join(dir, IS_WIN ? "gradlew.bat" : "gradlew"), args: ["testDebugUnitTest", "--no-daemon"] }];
-  if (stack === "swift-swiftui" && IS_WIN) return [{ command: process.execPath, args: [fileURLToPath(new URL("./swift-source-check.mjs", import.meta.url)), dir] }];
+  if (stack === "kotlin-compose") return [{ command: path.join(dir, IS_WIN ? "gradlew.bat" : "gradlew"), args: ["testDebugUnitTest", "--no-daemon"], label: "gradlew testDebugUnitTest" }];
+  if (stack === "swift-swiftui" && IS_WIN) return [{ command: process.execPath, args: [fileURLToPath(new URL("./swift-source-check.mjs", import.meta.url)), dir], label: "Swift 소스 확인" }];
   throw new Error("이 프로젝트의 필수 검증 명령이 설정되지 않았습니다. 검증 가능한 환경에서 검사 후 완료하세요.");
 }
-export async function verifyWorkspace(dir, stack, log = () => {}, timeoutMs = 15 * 60_000, onChild = () => {}, transport = { spawn, stop: stopAi }) {
+// 앱별 추가 검사 명령(서버 설정 checkCommands, 한 줄에 명령 하나). 셸 없이 실행하므로 && | ; > < ` $ % ^ 같은 셸 글자는 받지 않는다.
+// 공백으로 나누고 큰따옴표("…")로 묶을 수 있다. 윈도우에서 npm·npx·yarn·pnpm 은 .cmd 로 실행한다. 모양이 이상하면 null
+const SHELL_CHARS = /[&|;<>`$%^\r\n\u0000]/;
+export function parseCheckCommand(line) {
+  if (typeof line !== "string") return null;
+  const text = line.trim();
+  if (!text || text.length > 200 || SHELL_CHARS.test(text)) return null;
+  const tokens = [...text.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+  if (!tokens.length || tokens.some((t) => t.length === 0) || tokens.length > 20) return null;
+  let [command, ...args] = tokens;
+  if (IS_WIN && /^(npm|npx|yarn|pnpm)$/i.test(command)) command = `${command}.cmd`;
+  return { command, args, label: text };
+}
+// 서버가 내려 준 목록(checkCommands)을 읽을 수 있는 명령만 남긴다(최대 8개)
+export function customChecks(list) {
+  return (Array.isArray(list) ? list : []).map(parseCheckCommand).filter(Boolean).slice(0, 8);
+}
+// 합치기·최종 점검 검사: stack 기본 검사 + 앱별 추가 명령(extra.checks). 추가 명령이 없으면 예전과 똑같다.
+// 반환의 ran 은 실제로 돈 명령 이름 목록(통제실 그룹 요약·일감 로그에 표시)
+export async function verifyWorkspace(dir, stack, log = () => {}, timeoutMs = 15 * 60_000, onChild = () => {}, transport = { spawn, stop: stopAi }, extra = {}) {
+  const custom = customChecks(extra?.checks);
   let commands;
-  try { commands = verificationCommands(dir, stack); } catch (e) { return { ok: false, reason: e.message }; }
-  for (const { command, args } of commands) {
-    log(`검증: ${path.basename(command)} ${args.join(" ")}`);
+  try { commands = verificationCommands(dir, stack); } catch (e) { if (!custom.length) return { ok: false, reason: e.message }; commands = []; }
+  commands = [...commands, ...custom];
+  const ran = [];
+  for (const { command, args, label } of commands) {
+    ran.push(label ?? `${path.basename(command)} ${args.join(" ")}`);
+    log(`검증: ${label ?? `${path.basename(command)} ${args.join(" ")}`}`);
     const result = await new Promise((resolve) => {
       let child;
       const batch = IS_WIN && /\.(?:bat|cmd)$/i.test(command);
@@ -281,9 +304,9 @@ export async function verifyWorkspace(dir, stack, log = () => {}, timeoutMs = 15
       child.on("error", (e) => { clearTimeout(timer); resolve({ ok: false, reason: e.message }); });
       child.on("close", (code) => { clearTimeout(timer); resolve(timedOut ? { ok: false, reason: "검증 시간 초과" } : code === 0 ? { ok: true } : { ok: false, reason: output || `검증 종료 코드 ${code}` }); });
     });
-    if (!result.ok) return result;
+    if (!result.ok) return { ...result, ran: [...ran] };
   }
-  return { ok: true, ...(stack === "swift-swiftui" && IS_WIN ? { scope: "source-only" } : {}) };
+  return { ok: true, ran, ...(stack === "swift-swiftui" && IS_WIN ? { scope: "source-only" } : {}) };
 }
 export function stopAi(child) {
   if (!child?.pid) return;

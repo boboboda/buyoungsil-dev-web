@@ -38,10 +38,13 @@
 //   지휘자(단계 C-2): 감독 프로그램이 conductor=1(지금 판단을 맡을 수 있음) 또는 conductor=busy(판단 중)를 보내면, 같은 앱의 승인된 수정 일감이 그룹 없이 2개 이상일 때 응답에
 //   conductor: { appSlug, key, model, perApp, sharedFiles, jobs: [{ id, title, priority, instruction }] } 가 한 번 붙는다(공장 전체 동시에 1개). 결과는 POST /api/factory/conductor.
 //   판단 결과를 기다리는 동안(최대 5분) 그 앱의 승인된 일감은 가져가지 않는다. conductor 를 보내지 않는 감독 프로그램에는 아무 영향이 없다.
+//   앱별 검사 명령: 통제실에서 그 앱에 검사 명령을 정했으면(lib/factory/appChecks.ts) 일감에 checkCommands: ["python -m unittest discover -s tests -q", ...] 가 붙는다. 감독 프로그램은 합치기·최종 점검 때 stack 기본 검사 뒤에 더 돌린다(없으면 기본만).
+//   묶음 중 일부만 승인된 상태(같은 묶음에 승인 대기 일감이 남음)면 그 묶음의 승인된 일감은 가져가지 않는다. 모두 승인되면 같이 내준다.
+//   승인 직후 대기: 같은 앱에 승인 대기 수정 일감이 또 있으면 방금 승인된(묶이지 않은) 수정 일감을 마지막 승인 뒤 approvalWaitSec 초(기본 60, 0~300, 0=기다리지 않음) 동안 가져가지 않는다(conductor 를 보내는 감독 프로그램만).
 //   만료된 running 을 먼저 정리하고, approved 중 우선순위 높은 순으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 import { NextRequest, NextResponse } from "next/server";
 
-import { appsToHold, conductorTaskForNext, isAutoGroupEnabled } from "@/lib/factory/conductor";
+import { appsToHold, appsWaitingForApproval, conductorTaskForNext, isAutoGroupEnabled } from "@/lib/factory/conductor";
 import { claimJobs, MAX_SLOTS, releaseExpiredLeases, WORKER_RE } from "@/lib/factory/jobs";
 import { fail, guardWorker } from "@/lib/factory/http";
 import prisma from "@/lib/prisma";
@@ -54,11 +57,12 @@ import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
 import { maintenanceForNext } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
-import { consumeRestart, consumeUpdateNow, getAppSlots, getDefaultAiEngine, getParallelPerApp, getToolBrokerSettings, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
+import { consumeRestart, consumeUpdateNow, getAppSlots, getApprovalWaitSec, getDefaultAiEngine, getParallelPerApp, getToolBrokerSettings, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
 import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
 import { labCleanupForNext, LAB_KIND } from "@/lib/factory/lab";
+import { getAppChecks } from "@/lib/factory/appChecks";
 import { projectSettingsForNext, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
 import { approvedForNext, pickedForJobs, type ArtDb, type PickDb } from "@/lib/factory/arts";
 
@@ -178,6 +182,9 @@ export async function GET(req: NextRequest) {
     const capable = conductorParam === "1" || conductorParam === "busy";
     const cs = { autoGroup: await isAutoGroupEnabled().catch(() => false), perApp: perApp ?? 2, appSlots: appSlotsSetting?.value ?? 3 };
     const holdApps = await appsToHold(cs, capable).catch(() => new Set<string>());
+    // 승인 직후 혼자 가져가기 막기: 같은 앱에 승인 대기 수정 일감이 또 있으면 마지막 승인 뒤 잠깐(설정 approvalWaitSec, 기본 60초) 기다린다. 0이면 기다리지 않는다
+    const approvalWaitSec = (await getApprovalWaitSec().catch(() => null))?.value ?? 0;
+    for (const slug of (await appsWaitingForApproval(cs, capable, approvalWaitSec).catch(() => new Map<string, number>())).keys()) holdApps.add(slug);
     const claimed = slots > 0 ? await claimJobs(worker, slots, engines, { ...(perApp === undefined ? {} : { perApp }), holdApps }) : [];
     const conductor = conductorParam === "1" && !drain ? await conductorTaskForNext(cs).catch(() => null) : null;
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
@@ -189,10 +196,13 @@ export async function GET(req: NextRequest) {
     const artJobs = claimed.filter((j) => j.kind !== LAB_KIND);
     const approvedArts = await approvedForNext(prisma as unknown as ArtDb, artJobs.map((j) => j.appSlug)).catch(() => new Map());
     const pickedArts = await pickedForJobs(prisma as unknown as PickDb & ArtDb, artJobs).catch(() => new Map());
+    // 앱별 합치기·최종 점검 검사 명령(통제실 설정). 있는 앱의 일감에만 checkCommands 를 붙인다(비면 stack 기본 검사만)
+    const appChecks = claimed.length ? await getAppChecks().catch(() => ({} as Record<string, string[]>)) : {};
     const jobs = claimed.map((j) => {
       const release = releases.get(j.id);
       const projectToolSettings = toolSettings.get(j.appSlug);
-      const arts = { ...(approvedArts.has(j.appSlug) ? { approvedArts: approvedArts.get(j.appSlug) } : {}), ...(pickedArts.has(j.id) ? { pickedArts: pickedArts.get(j.id) } : {}) };
+      const checks = appChecks[j.appSlug]?.length ? { checkCommands: appChecks[j.appSlug] } : {};
+      const arts = { ...checks, ...(approvedArts.has(j.appSlug) ? { approvedArts: approvedArts.get(j.appSlug) } : {}), ...(pickedArts.has(j.id) ? { pickedArts: pickedArts.get(j.id) } : {}) };
 
       if (j.kind === LAB_KIND) return j; // 실험은 앱 작업 규칙·첫 지시문을 붙이지 않는다(감독 프로그램이 머리말을 만든다)
 

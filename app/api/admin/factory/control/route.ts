@@ -5,8 +5,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/lib/factory/admin";
 import { CLAUDE_MODELS, isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
+import { applyAppChecksPatch, getAppChecks, saveAppChecks } from "@/lib/factory/appChecks";
 import { cleanSharedPatterns, conductorSnapshot, setAutoGroupEnabled, setConductorModel, setSharedFiles } from "@/lib/factory/conductor";
-import { cleanAppSlots, cleanPerApp, MAX_APP_SLOTS, MAX_PER_APP, MIN_APP_SLOTS, MIN_PER_APP, setAppSlots, setParallelPerApp, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
+import { cleanAppSlots, cleanApprovalWait, cleanPerApp, MAX_APP_SLOTS, MAX_APPROVAL_WAIT, MAX_PER_APP, MIN_APP_SLOTS, MIN_APPROVAL_WAIT, MIN_PER_APP, setAppSlots, setApprovalWaitSec, setParallelPerApp, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
 import { allowedStudioToolIds, isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
 import { APP_ROLES_KEY, applyAppRolePatch, readAppRoles } from "@/lib/factory/appRoles";
 import { applyStudioPatch, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
@@ -50,6 +51,8 @@ export async function POST(req: NextRequest) {
     compactAfterJob?: unknown;
     appSlots?: unknown;
     parallelPerApp?: unknown;
+    approvalWaitSec?: unknown;
+    appChecks?: unknown;
     conductorAutoGroup?: unknown;
     conductorModel?: unknown;
     conductorSharedFiles?: unknown;
@@ -119,6 +122,29 @@ export async function POST(req: NextRequest) {
       ...(await supervisorSnapshot()),
       message: `같은 앱에서 같이 돌릴 수를 ${n}개로 저장했어요. '같이 돌리기'로 묶은 수정 일감만 해당돼요. 이미 도는 일감은 끊지 않아요.`,
     });
+  }
+
+  // 승인 직후 다른 승인을 기다리는 시간(초): { approvalWaitSec: 0~300 정수 }. 0 = 기다리지 않음(예전과 같음). 서버가 일감을 내줄 때 바로 쓴다
+  if (body && Object.hasOwn(body, "approvalWaitSec")) {
+    const n = cleanApprovalWait(body.approvalWaitSec);
+
+    if (n === null) return NextResponse.json({ message: `승인 직후 기다리는 시간은 ${MIN_APPROVAL_WAIT}~${MAX_APPROVAL_WAIT}초 사이 정수여야 해요.` }, { status: 400 });
+    await setApprovalWaitSec(n);
+
+    return NextResponse.json({
+      ...(await supervisorSnapshot()),
+      message: n === 0 ? "승인 직후 기다리지 않도록 저장했어요(승인하면 바로 시작해요)." : `승인 직후 ${n}초 동안 다른 승인을 기다리도록 저장했어요. 같은 앱에 승인 대기 수정 일감이 또 있을 때만 기다려요.`,
+    });
+  }
+
+  // 앱별 합치기·최종 점검 검사 명령: { appChecks: { appSlug, commands: 줄바꿈으로 나눈 글자 | 배열 } }. 비우면 그 앱은 stack 기본 검사만(예전과 같음)
+  if (body && Object.hasOwn(body, "appChecks")) {
+    const res = applyAppChecksPatch(await getAppChecks(), body.appChecks);
+
+    if (!res.ok) return NextResponse.json({ message: res.message }, { status: 400 });
+    await saveAppChecks(res.checks);
+
+    return NextResponse.json({ ...(await supervisorSnapshot()), message: res.message });
   }
 
   // 지휘자(C-2) 자동 묶기 켜기·끄기: { conductorAutoGroup: boolean }. 끄면 C-1 과 똑같이 사람이 묶은 것만 같이 돈다
