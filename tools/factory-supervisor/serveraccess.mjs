@@ -146,11 +146,11 @@ export function splitCommands(text) {
   return { cmds, subs };
 }
 
-const base = (w) => path.basename(String(w)).replace(/\.(exe|cmd|bat)$/i, "").toLowerCase();
+export const base = (w) => path.basename(String(w)).replace(/\.(exe|cmd|bat)$/i, "").toLowerCase();
 const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 // env·command·exec·nohup·timeout·time 같은 앞붙이를 벗긴 실제 명령 argv
-function unwrap(argv) {
+export function unwrap(argv) {
   let a = argv;
   for (let guard = 0; guard < 8 && a.length; guard++) {
     while (a.length && ENV_ASSIGN.test(a[0])) a = a.slice(1);

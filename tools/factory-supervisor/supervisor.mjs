@@ -15,6 +15,7 @@ import readline from "node:readline";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
+import { enforceTestMode } from "./testmode.mjs";
 import { maybeUpdate, notePoll, reportInfo, requestUpdateNow, startupGuard, updateWaiting } from "./update.mjs";
 import {
   maskText,
@@ -57,6 +58,9 @@ import { branchName, cleanupLeftovers, createWorktree, defaultBranch, currentBra
 import { MAX_REBASES, mergeJob } from "./merge.mjs";
 import { conductorBusy, runConductor } from "./conductor.mjs";
 import { LAB_SLUG, compareSnapshots, createLabGuard, deleteLabFolder, discoverRepos, labCodexOptions, labPrompt, prepareLab, snapshotRepos, uploadLabOutputs, writeLabClaudeSettings } from "./lab.mjs";
+
+// 시험 모드(FACTORY_TEST_MODE=1)인데 진짜 주소·토큰·상태 파일이 섞여 있으면 아무것도 하기 전에 거부한다(진짜 감독 보호)
+enforceTestMode();
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();

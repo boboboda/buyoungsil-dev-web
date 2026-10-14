@@ -185,6 +185,17 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - 바꾸기 전 백업(`~/env-backups/developWeb`, `~/nginx-backups`, 600/700, 최근 20개, 작업 폴더 밖) → nginx 는 `nginx -t` 통과 시에만 reload, 헬스체크 실패 시 자동 복원 / `.env` 는 rebuild 전 이미지 `rollback-<시각>` 태그, 실패 시 `.env` 백업·이미지로 되돌림.
 - 값은 어디에도 출력하지 않아요. 바꿀 때마다 정비 대화와 텔레그램에 무엇을·백업·검증 결과가 남아요.
 
+## 정비 보호 규칙·시험 격리 (`pcguard.mjs`, `maintenance-guard.mjs`, `testmode.mjs`)
+
+10-14 정비 중 시험용 감독과 `taskkill //IM node.exe` 가 진짜 감독을 6번 꺼서 진행 중 일감이 끊긴 일의 재발 방지예요.
+
+- **실행기(`run-supervisor.sh`, 작업 스케줄러) 변경은 정비에서 하지 않는다. 필요하면 바꿀 내용만 보고하고 멈춘다(사람이 로컬에서 적용).**
+- 정비 `--settings` 의 PreToolUse 훅은 `maintenance-guard.mjs`(서버 접근 규칙 + `pcguard.mjs`)예요. 앱·실험 일감은 계속 `ssh-guard.mjs` 만 써요(앱 일감 권한은 그대로).
+- 막는 것: 실행기 실행(`run-supervisor.sh/.cmd/.ps1`)·작업 스케줄러 명령, 진짜 감독의 잠금·상태 파일(`supervisor-src` 아래, `run-supervisor.pid`, `supervisor-update.json`, `serverctl-state.json`, `supervisor-restart.json`, 공장 루트의 `.locks`·`.ai-locks`·설정·로그) 쓰기·삭제, `kill`·`pkill`·`killall`·`taskkill`·`Stop-Process` 와 `node -e`·`python -c` 안의 프로세스 종료, 시험 모드 없이 `node supervisor.mjs` 직접 실행. 정비 권한 설정(`maintenanceSettings`)에도 같은 deny 규칙이 있어요.
+- 한계: 명령줄에 드러난 것만 봐요. 스크립트 파일·히어독 본문 안의 동작은 못 봐서, 규칙 문서(정비 `CLAUDE.local.md`)와 아래 시험 모드 거부가 겹쳐서 막아요.
+- **시험 모드**: 감독을 시험으로 띄울 때는 `FACTORY_TEST_MODE=1` 과 임시 폴더의 `FACTORY_CONFIG`(설정·상태·잠금 파일, `HOME`·`USERPROFILE` 모두 임시)와 가짜 토큰, `127.0.0.1` 의 가짜 홈페이지 주소를 써요. 이 모드에서 진짜 주소·진짜 토큰·`~/dev/factory` 안의 상태/잠금/작업 폴더가 들어오면 감독은 아무것도 하기 전에(자동 업데이트 시험 기록 전에) 이유를 찍고 종료 코드 2 로 시작을 거부해요. `worktree-e2e.test.mjs` 도 이 모드로 띄워요. 시험: `npm run test:pc-guard`.
+- 참고: `run-supervisor.sh` 의 "종료(코드 N)" 로그는 `$(date)` 뒤에 `$?` 를 써서 항상 0 으로 찍히는 듯해요[추정](실행기 수정은 정비 범위 밖이라 사람이 확인·수정할 것).
+
 ## 실행 전용 체크아웃
 - 실행기는 `~/dev/factory/supervisor-src/tools/factory-supervisor` 에서 돌려요(GitHub main 의 별도 clone). 자동 업데이트만 여기를 pull 해요.
 - 개발은 `~/dev/buyoungsil-dev-web` 에서 하고 GitHub 에 push 하면 감독 프로그램이 받아 가요(두 폴더가 섞이지 않게).

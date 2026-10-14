@@ -143,6 +143,7 @@ async function runScenario({ jobs, scenario, prepare, expectDone }) {
     ...process.env,
     HOME: home,
     USERPROFILE: home,
+    FACTORY_TEST_MODE: "1", // 진짜 주소·토큰·상태 파일이 섞이면 감독이 시작을 거부한다(testmode.mjs)
     FACTORY_CONFIG: path.join(root, "supervisor.config.json"),
     FACTORY_UPDATE_STATE: path.join(root, "update.json"),
     FACTORY_RESTART_STATE: path.join(root, "restart.json"),

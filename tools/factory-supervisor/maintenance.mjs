@@ -44,6 +44,8 @@ const RULES = `# 공장 정비 규칙 (감독 프로그램이 자동으로 쓰�
   - 바꾸기 전 백업, 검증(nginx -t·reload·헬스체크 / 재빌드·헬스체크), 실패 시 자동 되돌림은 도구가 한다. .env 를 바꿨으면 마지막에 rebuild 를 한 번 해야 반영된다.
   - 이 도구는 감독 프로그램 실행 폴더에 있는 신뢰된 사본이다. 정비 폴더의 tools/factory-supervisor/serverctl.mjs 를 실행하지 말고, 위 경로만 써라.
 - 하지 말 것: 키·토큰 값 출력, ~/dev/factory 의 다른 폴더(앱 폴더, supervisor-src, 설정·키 파일) 수정, 작업 스케줄러·PC 설정 변경, 백그라운드 프로세스 남기기.
+- **실행기(\`run-supervisor.sh\`, 작업 스케줄러) 변경은 정비에서 하지 않는다. 필요하면 바꿀 내용만 보고하고 멈춘다(사람이 로컬에서 적용).**
+- 실제로 돌고 있는 감독 프로그램을 건드리지 마라(훅이 막는다): 실행기 실행, 진짜 감독의 잠금·상태 파일(supervisor-src 아래, run-supervisor.pid, supervisor-update.json, serverctl-state.json 등) 수정·삭제, node·claude·codex 프로세스 종료(kill, taskkill, Stop-Process, pkill). 감독 프로그램 시험은 임시 폴더·임시 설정(FACTORY_CONFIG)·가짜 토큰·가짜 홈페이지 주소(127.0.0.1)로, \`FACTORY_TEST_MODE=1\` 을 주고 띄운다. 진짜 주소·토큰이 섞이면 감독이 시작을 거부한다.
 - 마지막 응답은 한국어로 짧게: 바꾼 것, 커밋, 검사 결과, 서버 배포가 필요한지(서버 코드가 바뀌었는지), 사람이 할 일.
 
 ${SERVER_ACCESS_RULES}
@@ -53,12 +55,17 @@ ${SERVER_ACCESS_RULES}
 const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const SERVERCTL = path.join(HERE, "serverctl.mjs").replace(/\\/g, "/");
 
+const MAINTENANCE_GUARD_PATH = path.join(HERE, "maintenance-guard.mjs").replace(/\\/g, "/"); // 서버 접근 규칙 + 이 PC 보호 규칙(앱·실험은 ssh-guard.mjs 만 쓴다)
+
 // 정비 Claude 권한: 서버 설정은 serverctl 로만. 이 PC 의 docker·sudo·nginx·systemctl 직접 호출, sftp·rsync, ~/.ssh 읽기, 감독 프로그램 실행 폴더 수정은 막는다.
 // ssh·scp 는 우리 서버 두 대로만: 권한 규칙(prefix)으로는 호스트를 가릴 수 없어서 PreToolUse 훅(ssh-guard.mjs)이 판정한다.
 export function maintenanceSettings(serverctl = SERVERCTL, guard) {
   const deny = ["sftp", "rsync", "docker", "docker-compose", "sudo", "nginx", "systemctl"].map((c) => `Bash(${c}:*)`);
   deny.push("Read(~/.ssh/**)", "Edit(~/dev/factory/supervisor-src/**)", "Write(~/dev/factory/supervisor-src/**)", "Edit(~/dev/factory/*.json)", "Write(~/dev/factory/*.json)");
-  return { permissions: { allow: [`Bash(node ${serverctl}:*)`, `Bash(node "${serverctl}":*)`], deny }, hooks: guardHookSettings(guard) };
+  // 실제 감독 보호: 실행기 실행, 진짜 감독의 잠금·상태 파일 수정, node·claude·codex 프로세스 종료. 훅(maintenance-guard.mjs)이 명령 인자까지 보고, 이 목록은 그 앞의 방어선이다.
+  for (const c of ["kill", "pkill", "killall", "taskkill", "Stop-Process", "schtasks", "bash run-supervisor.sh", "sh run-supervisor.sh", "./run-supervisor.sh", "run-supervisor.sh", "run-supervisor.cmd", "run-supervisor.ps1", "bash -l run-supervisor.sh"]) deny.push(`Bash(${c}:*)`);
+  for (const f of ["run-supervisor*", "*.pid", "LOCK*", "*.log", ".locks/**", ".ai-locks/**"]) deny.push(`Edit(~/dev/factory/${f})`, `Write(~/dev/factory/${f})`);
+  return { permissions: { allow: [`Bash(node ${serverctl}:*)`, `Bash(node "${serverctl}":*)`], deny }, hooks: guardHookSettings(guard ?? MAINTENANCE_GUARD_PATH) };
 }
 
 function permissionSettings() {
