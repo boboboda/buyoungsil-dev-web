@@ -26,6 +26,8 @@
 //   통제실 '업로드 시험'을 누르면 uploadTest: { id, kind: video|image|big } 가 한 번 붙는다(결과는 /api/factory/upload-test-report).
 //   키 보관함 일(공용 키 만들기·키 파일 조회)이 있으면 keyTasks: [{ id, op: create|check, path, alias, dname, storeName, keyName }] 가 붙는다
 //   (비밀번호는 이름만. 결과는 /api/factory/key-vault).
+//   실험 일감(kind=lab, appSlug=lab)은 앱 폴더가 아니라 lab<id> 에서 돈다(rules·prompt 없음). 통제실 [폴더 지우기]가 눌렸으면 labCleanup: [jobId, ...] 가 붙는다
+//   (감독 프로그램이 해당 lab<id> 만 지우고 /api/factory/lab 으로 알린다. shared 는 지우지 않는다).
 //   출시 일감(kind=release)에는 release: { kind, stages, outbox, resumeFrom, resumeNote, key } 가 붙는다(lib/factory/release.ts releaseJobExtras).
 //   만료된 running 을 먼저 정리하고, approved 중 우선순위 높은 순으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 import { NextRequest, NextResponse } from "next/server";
@@ -45,6 +47,7 @@ import { consumeRestart, consumeUpdateNow, getAppSlots, getDefaultAiEngine, getT
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
 import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
+import { labCleanupForNext, LAB_KIND } from "@/lib/factory/lab";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -119,6 +122,7 @@ export async function GET(req: NextRequest) {
     const secretsPending = (await secretEntriesPending().catch(() => false)) || (await provisionPending().catch(() => false)); // 키 값 전달 또는 서버 반영 대기
     const keyScan = await consumeKeyScan().catch(() => false);
     const keyTasks = await keyTasksForNext();
+    const labCleanup = await labCleanupForNext().catch(() => []);
     const uploadTest = await consumeUploadTest(); // 통제실 '업로드 시험'(한 번)
     void sweepReviewVideos(); // 7일 지난 검토 영상 정리(가끔)
     const extra = {
@@ -135,6 +139,7 @@ export async function GET(req: NextRequest) {
       ...(Array.isArray(keyScan) ? { keyScanApps: keyScan } : {}),
       ...(keyTasks.length ? { keyTasks } : {}),
       ...(uploadTest ? { uploadTest } : {}),
+      ...(labCleanup.length ? { labCleanup } : {}),
       ...maint,
     };
 
@@ -155,6 +160,8 @@ export async function GET(req: NextRequest) {
     const releases = await releaseJobExtras(claimed).catch(() => new Map<string, Record<string, unknown>>());
     const jobs = claimed.map((j) => {
       const release = releases.get(j.id);
+
+      if (j.kind === LAB_KIND) return j; // 실험은 앱 작업 규칙·첫 지시문을 붙이지 않는다(감독 프로그램이 머리말을 만든다)
 
       try {
         return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}) };

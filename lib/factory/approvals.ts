@@ -183,7 +183,7 @@ export async function activeNow() {
         id: j.id,
         title: j.title,
         sub: j.appSlug,
-        kindLabel: KIND_LABELS[j.releaseKind ? "release" : j.kind === "new" ? "new" : "revision"] ?? j.kind,
+        kindLabel: KIND_LABELS[j.releaseKind ? "release" : j.kind === "new" || j.kind === "lab" ? j.kind : "revision"] ?? j.kind,
         startedAt: j.startedAt,
         aiEngine: j.aiEngine,
         aiModel: j.aiModel,
@@ -302,7 +302,7 @@ export async function jobHistory(limit = 40, cursor?: string) {
 
   return rows.map((j) => {
     // 출시 일감은 kind 가 revision 이어도 releaseKind 가 채워져 있다
-    const kind = j.releaseKind ? "release" : j.kind === "new" ? "new" : "revision";
+    const kind = j.releaseKind ? "release" : j.kind === "new" || j.kind === "lab" ? j.kind : "revision";
 
     return {
       id: j.id,

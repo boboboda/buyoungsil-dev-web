@@ -154,6 +154,16 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 - 서버 코드가 바뀌었으면 "배포 필요". 대기열이 다 끝난 뒤 한 번 안내하고(급하면 통제실 [지금 배포]), 사람이 통제실·텔레그램에서 [배포]를 누르면 가장 최근 정비 커밋(GitHub main 에 있는 것만)을 `deployRemote`(기본 `serverpc:git-server/repo/developWeb.git`)로 push 해요. 서버는 커밋 해시만 보내요. 설정에서 "대기열 끝나면 자동 배포"를 켤 수 있어요(기본 꺼짐).
 - 서버가 `maintenance.deployBundling` 을 보내지 않으면(예전 서버) 예전 방식 그대로 해요.
 
+## 실험 일감 (`lab.mjs`, 일감 종류 `lab`)
+도구·방식이 되는지 확인하는 테스트 전용입니다(앱 수정 일감으로 돌리면 권한이 맞지 않아 막혀서 따로 만들었어요). 앱 폴더가 아니라 `<workDir>/lab/<일감id>/`에서 돌고, 여러 실험이 다시 쓰는 것(ComfyUI·모델 등)은 `<workDir>/lab/shared/`에 둡니다.
+- 대기열: 일감 이름(appSlug)이 고정 `lab`이라 실험은 동시에 1개이고, 앱 일감·정비를 멈추지 않습니다(자리 하나는 차지). 승인은 다른 일감과 같습니다.
+- 권한: 공장 안 다른 폴더는 읽기·복사만, `lab/<id>`·`lab/shared`만 쓰기·실행, 명령은 승인 없이, 인터넷 허용.
+  - Claude: `--settings` 로 `lab/.settings/<id>.json`(allow: Read 공장 폴더 · Edit 실험 폴더 둘 · Bash, deny: 공장 폴더 안 다른 항목에 Edit · 설정/비밀 파일 Read, additionalDirectories: shared). 허용 도구에서 아무 곳이나 쓰는 `Edit`·`Write` 는 뺍니다.
+  - Codex: `sandbox_mode="workspace-write"`, 작업 폴더가 cwd, `writable_roots`=shared, `network_access=true`.
+- 사후 검사: 시작 전에 공장 안 저장소들(`.git` 있는 직속 폴더 + game-toolkit·app-kit·selfdev)의 `git status --porcelain -uall`(파일 크기·수정 시각 포함)을 찍어 두고 끝난 뒤 비교합니다. 달라졌으면 일감을 `failed`(failStage `lab-check`)로 보고하고 저장소·파일을 로그와 `labResult`에 남깁니다(텔레그램 실패 알림). 자동 되돌리기는 하지 않습니다. 실험 동안 다른 앱 일감이 만진 저장소는 비교에서 빼고 이유를 적습니다.
+- 결과: `outputs/` 의 png·webp·gif·mp4, `report.md`(실험 폴더 또는 outputs), 지시문이 지정한 실험 폴더 안 파일을 8MB 조각으로 `PUT /api/factory/lab-file` 에 올립니다(파일 50MB·실험 200MB·40개, 넘으면 올리지 않고 목록만).
+- 폴더 지우기: 통제실 [폴더 지우기] → `/next` 의 `labCleanup` → 해당 `lab/<id>` 만 삭제(shared 제외) → `POST /api/factory/lab`. 자동 삭제는 없습니다.
+
 ## 작업 후 컨텍스트 정리 (`compact.mjs`)
 - 일감·정비가 성공으로 끝나면(검증·커밋·push 뒤, 완료 보고 전) 감독 프로그램이 이어 쓸 Claude 세션에 `claude -p --resume <세션>` 으로 `/compact` 를 걸어 맥락을 요약해요. 정비는 완료 보고 전에 끝나므로 다음 지시보다 먼저 끝나요.
 - Claude 세션만, 다시 이어 쓸 세션만(정비 대화, 이전 세션을 이어받은 일감). 지금 앱 일감은 새 세션으로 시작해서 건너뛰어요. 실패한 작업·Codex 는 건드리지 않아요.

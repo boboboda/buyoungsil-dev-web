@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/factory/admin";
 import { adminAction, claudeUsageFor, ID_RE } from "@/lib/factory/jobs";
 import { runApproval } from "@/lib/factory/approvals";
 import { isAiEngine, readModelChoice } from "@/lib/factory/ai";
+import { LAB_KIND, labResultView } from "@/lib/factory/lab";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,7 +32,10 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   // 같은 앱 이름의 Claude 세션과 토큰 합계. 지시를 가져간 감독 프로그램 이름과 기기 이름이 같은 것만 붙인다.
   const claude = await claudeUsageFor(job.appSlug, job.workerId);
 
-  return NextResponse.json({ job: { ...job, logs: [...job.logs].reverse() }, claude });
+  // 실험 일감: 올라온 결과 파일(관리자 세션으로 여는 상대 주소)·report.md 본문·사후 검사
+  const lab = job.kind === LAB_KIND ? await labResultView(job.id, job.labResult, { signed: false }) : undefined;
+
+  return NextResponse.json({ job: { ...job, logs: [...job.logs].reverse() }, claude, ...(lab ? { lab } : {}) });
 }
 
 export async function POST(req: NextRequest, { params }: Ctx) {

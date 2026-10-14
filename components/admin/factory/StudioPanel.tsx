@@ -15,6 +15,7 @@ export default async function StudioPanel() {
   try {
     const [jobs, setting, rolesRow, view, sent] = await Promise.all([
       prisma.factoryJob.findMany({
+        where: { kind: { not: "lab" } }, // 실험 일감(appSlug=lab)은 앱이 아니다
         orderBy: { createdAt: "desc" },
         take: 500,
         select: { appSlug: true, title: true, stack: true, status: true, finishedAt: true, kind: true },

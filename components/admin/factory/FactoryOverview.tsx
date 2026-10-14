@@ -552,7 +552,7 @@ export default function FactoryOverview({
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip kind="approval" />
-                  <KindChip label={`${j.kind === "release" ? "📦 " : "📱 "}${j.kindLabel}`} />
+                  <KindChip label={`${j.kind === "release" ? "📦 " : j.kind === "lab" ? "🧪 " : "📱 "}${j.kindLabel}`} />
                   <span className="font-medium">{j.title}</span>
                   <span className="font-mono text-xs text-default-500">
                     {j.appSlug} · {j.stack} · {when(j.createdAt)}

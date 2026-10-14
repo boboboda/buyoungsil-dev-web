@@ -49,6 +49,7 @@ import { startDeviceStats } from "./devicestats.mjs";
 import { startToolkitReport } from "./toolkitinfo.mjs";
 import { DEFAULT_APP_SLOTS, effectiveSlots, pcSlots, planTake } from "./slots.mjs";
 import { DEFAULT_MEMORY_REMOTE, memoryReport, setMemoryConfig } from "./memory.mjs";
+import { LAB_SLUG, compareSnapshots, createLabGuard, deleteLabFolder, discoverRepos, labCodexOptions, labPrompt, prepareLab, snapshotRepos, uploadLabOutputs, writeLabClaudeSettings } from "./lab.mjs";
 
 // 실행 모드면 맨 먼저: 현재 커밋을 찍고, 방금 자동 업데이트한 버전이면 시험 기간(30초)을 잰다. (아래 코드가 시작 중에 죽어도 다음 시작 때 되돌릴 수 있게)
 if (!process.argv[2]) startupGuard();
@@ -658,10 +659,10 @@ async function flush(st, extra = {}) {
 
 async function finish(st, status, fields) {
   st.job.aiOutcome = { ...st.job.aiOutcome, status, summary: fields?.summary, failReason: fields?.failReason, sessionId: st.sessionId };
-  if (st.dir !== cfg.workDir) recordLifecycle(st.dir, st.job.aiEngine, status, st.job.id);
+  if (st.dir !== cfg.workDir && !st.lab) recordLifecycle(st.dir, st.job.aiEngine, status, st.job.id);
   // 인계 기록 항목: Git·변경 파일·검사 같은 사실은 여기서 직접 채우고, 요청·남은 작업·주의는 AI 최종 답변의 '## 인계' 블록에서 읽는다.
   // 실패한 일감도 남긴다. 같은 항목을 통제실에 보고하고(일감 상세 '인계 기록'), 폴더의 .factory/handoff.json 에도 쓴다
-  if (st.dir !== cfg.workDir) {
+  if (st.dir !== cfg.workDir && !st.lab) {
     try {
       const o = st.job.aiOutcome;
       const failed = status === "failed";
@@ -710,6 +711,9 @@ async function failEarly(job, reason) {
   await finish(st, "failed", { failReason: reason });
 }
 
+const labGuard = createLabGuard(); // 실험 사후 검사용: 앱 일감이 시작·끝날 때 그 앱 폴더를 기억한다
+const labCleaning = new Set(); // [폴더 지우기] 처리 중인 실험 id
+
 async function runJob(job) {
   let lock;
   let dir;
@@ -717,6 +721,7 @@ async function runJob(job) {
     job.aiEngine = engineOf(job.aiEngine);
     if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(job.appSlug)) throw new Error("앱 폴더 이름이 올바르지 않습니다.");
     dir = path.join(cfg.workDir, job.appSlug);
+    labGuard.touch(dir);
     lock = acquireWorkspace(dir, { engine: job.aiEngine, taskId: job.id });
     // 인계 기록에 쓸 일감 정보(요청은 앞부분만, 기획서 전문은 넣지 않음)
     job.aiOutcome = { handoff: { kind: "job", appSlug: job.appSlug, title: job.title, request: `${job.kind === "new" ? "새 앱" : job.kind === "release" ? "출시 준비" : "수정"}: ${String(job.planMarkdown ?? job.prompt ?? "").replace(/^#.*$/gm, " ").slice(0, 600)}`, model: job.aiEngine === "claude" ? job.aiModel || "기본" : cfg.codexModel || "기본" } };
@@ -725,10 +730,182 @@ async function runJob(job) {
     await failEarly(job, e.message);
   } finally {
     running.delete(job.id);
+    labGuard.touch(dir);
     if (lock) {
       try { if (fs.existsSync(dir)) saveHandoff(dir, { engine: job.aiEngine, taskId: job.id, status: "interrupted", ...job.aiOutcome }, (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s))); }
       catch (e) { log(`[${job.appSlug}] 상태 인계 기록 실패: ${maskText(e.message)}`); }
       lock.release();
+    }
+  }
+}
+
+// ───────────── 실험(lab) 일감 ─────────────
+// 앱 일감과 따로 도는 경로: 앱 폴더·CLAUDE.md·검증·커밋이 없다. 작업 폴더는 lab/<일감id>, 끝난 뒤 사후 검사와 결과 파일 올리기를 한다(lab.mjs).
+async function runLabJob(job) {
+  let lock;
+  try {
+    job.aiEngine = engineOf(job.aiEngine);
+    if (job.appSlug !== LAB_SLUG) throw new Error("실험 일감의 이름이 올바르지 않습니다.");
+    const paths = prepareLab(cfg.workDir, job); // 일감 id 형식도 여기서 확인한다
+    lock = acquireWorkspace(paths.dir, { engine: job.aiEngine, taskId: job.id });
+    await runLabUnlocked(job, lock, paths);
+  } catch (e) {
+    await failEarly(job, e.message);
+  } finally {
+    running.delete(job.id);
+    lock?.release();
+  }
+}
+
+// AI 에게 넘길 환경: 키·토큰 모양 변수는 뺀다(인터넷이 열려 있는 무인 실행이라)
+function labEnv(job, dir, shared) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!/(TOKEN|PASSWORD|SECRET|API_KEY|PRIVATE_KEY)/i.test(k)) env[k] = v;
+  return { ...env, FACTORY_JOB_ID: job.id, FACTORY_LAB_JOB_ID: job.id, FACTORY_LAB_DIR: dir, FACTORY_LAB_SHARED: shared };
+}
+
+async function runLabUnlocked(job, lock, { dir, shared }) {
+  log(`[lab] 시작 (실험, 시도 ${job.attempts}): ${job.title}`);
+  const secrets = readSecrets();
+  // (1) 쓰기 제한: Claude 는 permission 설정(--settings), Codex 는 writable_roots. 설정을 못 만들면 권한 없이 돌리지 않고 실패시킨다
+  let settings;
+  if (job.aiEngine === "claude") {
+    try {
+      settings = writeLabClaudeSettings({ workDir: cfg.workDir, dir, shared, jobId: job.id, extraProtected: [expand(cfg.selfdevDir || "~/dev/factory/selfdev"), path.join(cfg.workDir, "supervisor-src")] });
+    } catch (e) {
+      return failEarly(job, `쓰기 제한 설정을 만들지 못했어요: ${e.message}`);
+    }
+  }
+  // (2) 사후 검사용 시작 전 상태
+  const repos = discoverRepos(cfg.workDir, [cfg.toolkitDir, cfg.appKitDir, expand(cfg.selfdevDir || "~/dev/factory/selfdev")]);
+  const startedAtMs = Date.now();
+  const before = snapshotRepos(repos);
+  const st = {
+    job, dir, lab: true, child: null, logs: [], phase: "lab", phaseDirty: true, shots: new Set(), shotHashes: new Set(), shotTries: new Map(),
+    reportable: true, stopped: null, result: null, stderrTail: "", lastText: "", started: startedAtMs,
+    redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(secrets)])(s)),
+  };
+  running.set(job.id, st);
+  addLog(st, "info", `실험 폴더 준비 완료: ${dir} · 공용 폴더: ${shared} · 사후 검사 저장소 ${repos.length}개`);
+  const model = job.aiEngine === "claude" ? job.aiModel || null : null;
+  if (job.aiEngine === "claude") addLog(st, "info", `모델: ${model ?? "기본 설정(--model 없음)"}`);
+  // 허용 도구에서 아무 곳이나 고칠 수 있는 Edit·Write 는 뺀다(쓰기는 설정 파일의 Edit(실험 폴더) 규칙으로만 허용). 명령(Bash)은 승인 없이
+  const child = startAi(job.aiEngine, { ...cfg, allowedTools: "Bash,Read,Glob,Grep,WebFetch,WebSearch" }, {
+    model,
+    settings,
+    lab: job.aiEngine === "codex" ? labCodexOptions(shared) : undefined,
+    cwd: dir,
+    env: labEnv(job, dir, shared),
+  });
+  lock.setChild(child.pid || null);
+  const decode = eventDecoder(job.aiEngine);
+  st.child = child;
+  child.stdin.on("error", () => {});
+  child.stdin.end(labPrompt({ job, dir, shared, workDir: cfg.workDir }));
+
+  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    let ev;
+    try {
+      ev = decode(JSON.parse(line));
+    } catch {
+      return addLog(st, "info", line);
+    }
+    if (!ev) return;
+    noteRateLimitEvent(ev);
+    if (ev.session_id) st.sessionId = ev.session_id;
+    if (ev.type === "system" && ev.subtype === "init") addLog(st, "info", `${ENGINE_LABELS[job.aiEngine]} 세션 시작${ev.model ? ` (${ev.model})` : ""}`);
+    else if (ev.type === "assistant") {
+      for (const b of ev.message?.content ?? []) {
+        if (b.type === "text" && b.text?.trim()) {
+          st.lastText = b.text;
+          addLog(st, "info", b.text);
+        } else if (b.type === "tool_use") {
+          if (b.name === "Bash") addLog(st, "info", `$ ${brief(b.input?.command)}`);
+          else if (b.name === "Write" || b.name === "Edit") addLog(st, "info", `${b.name}: ${brief(b.input?.file_path, 100)}`);
+        }
+      }
+    } else if (ev.type === "result") {
+      if (!st.result || st.result.is_error) st.result = ev;
+      if (!ev.is_error && !st.resultTimer) {
+        st.resultTimer = setTimeout(() => {
+          if (child.exitCode !== null || st.stopped) return;
+          st.killedAfterResult = true;
+          addLog(st, "warn", `결과를 낸 뒤 ${RESULT_GRACE_SEC}초가 지나도 AI 가 끝나지 않아 정리해요(남은 백그라운드 작업 종료).`);
+          killTree(child);
+        }, RESULT_GRACE_SEC * 1000);
+      }
+    }
+  });
+  child.stderr.on("data", (d) => {
+    st.stderrTail = (st.stderrTail + d.toString()).slice(-2000);
+  });
+
+  const beat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
+  const timer = setTimeout(() => stop(st, `시간 초과(${cfg.jobTimeoutMin}분)`), cfg.jobTimeoutMin * 60 * 1000);
+  const code = await new Promise((resolve) => {
+    child.on("error", (e) => {
+      st.stderrTail += `\n실행 오류: ${e.message}`;
+      resolve(-1);
+    });
+    child.on("close", (c) => resolve(c ?? -1));
+  });
+  clearTimeout(timer);
+  clearTimeout(st.resultTimer);
+
+  try {
+    // 취소·종료·서버 쪽 상태 변경이면 서버가 이미 정리했으므로 보고하지 않는다(시간 초과만 실패로 보고)
+    if (st.stopped && !/^시간 초과/.test(st.stopped)) return;
+    // (2) 사후 검사 + 결과 올리기. 올리는 동안에도 임대를 이어 가려고 하트비트는 계속 돈다
+    const runningDirs = [...running.values()].filter((s) => s !== st && !s.lab).map((s) => s.dir);
+    const check = compareSnapshots(before, snapshotRepos(repos), { isBusy: (d) => labGuard.isBusy(d, startedAtMs, runningDirs) });
+    if (repos.length > 0 && check.repos === 0) check.notes.push("비교할 수 있는 저장소가 하나도 없었어요.");
+    for (const c of check.changes) addLog(st, "error", `사후 검사: 기존 저장소가 바뀌었어요 — ${c.repo}: ${c.files.join(", ")}${c.more ? ` 외 ${c.more}개` : ""}`);
+    for (const n of check.notes) addLog(st, "warn", `사후 검사: ${n}`);
+    if (check.ok) addLog(st, "info", `사후 검사 통과: 저장소 ${check.repos}개 비교, 바뀐 곳 없음`);
+    let up = { uploaded: [], skipped: [], bytes: 0 };
+    if (st.reportable) {
+      up = await uploadLabOutputs({
+        labDir: dir,
+        plan: job.planMarkdown,
+        log: (level, m) => addLog(st, level, m),
+        put: ({ name, idx, count, size, bytes }) =>
+          api("PUT", `/api/factory/lab-file?jobId=${encodeURIComponent(job.id)}&name=${encodeURIComponent(name)}&idx=${idx}&count=${count}&size=${size}`, bytes, { timeoutMs: 120_000 }),
+      });
+      if (up.stopped) st.reportable = false;
+    }
+    const lab = { skipped: up.skipped, uploadedBytes: up.bytes, check: { ok: check.ok, at: new Date().toISOString(), changes: check.changes, notes: check.notes, repos: check.repos } };
+    const aiOk = st.result && !st.result.is_error && (code === 0 || st.killedAfterResult) && !st.stopped;
+    if (!check.ok) {
+      const what = check.changes.map((c) => `${c.repo}: ${c.files.slice(0, 3).join(", ")}${c.files.length + c.more > 3 ? " 등" : ""}`).join(" / ");
+      await finish(st, "failed", { failReason: st.redact(`사후 검사 실패: 기존 저장소가 바뀌었어요(자동으로 되돌리지 않았어요) — ${what}`).slice(0, 1800), failStage: "lab-check", lab });
+    } else if (aiOk) {
+      const text = st.redact(String(st.result.result ?? st.lastText ?? "").trim());
+      const footer = `\n(소요 ${Math.round((Date.now() - st.started) / 60000)}분${st.result.num_turns ? `, ${st.result.num_turns}턴` : ""}, 결과 파일 ${up.uploaded.length}개 올림${up.skipped.length ? `, ${up.skipped.length}개 못 올림` : ""})`;
+      await finish(st, "done", { summary: (text || "완료(요약 없음)").slice(0, 3800) + footer, lab });
+    } else {
+      const why = st.stopped ?? st.redact(String(st.result?.is_error ? st.result.result : "") || st.stderrTail.trim() || `AI 가 비정상 종료(코드 ${code})`);
+      await finish(st, "failed", { failReason: String(why).slice(-1800), lab });
+    }
+  } finally {
+    clearInterval(beat);
+    running.delete(job.id);
+    void refreshAfterTask({ log });
+  }
+}
+
+// 통제실 [폴더 지우기]: 해당 lab/<id> 만 지우고 홈페이지에 알린다(shared 는 지우지 않음). 던지지 않는다
+async function runLabCleanups(ids) {
+  for (const id of ids.slice(0, 5)) {
+    if (typeof id !== "string" || labCleaning.has(id) || running.has(id)) continue;
+    labCleaning.add(id);
+    try {
+      const res = deleteLabFolder(cfg.workDir, id);
+      const r = await api("POST", "/api/factory/lab", { jobId: id, deleted: true });
+      log(`[lab] 실험 폴더 지우기 ${res === "deleted" ? "완료" : "(이미 없음)"}: ${id} (홈페이지 응답 ${r.status})`);
+    } catch (e) {
+      log(`[lab] 실험 폴더를 지우지 못했어요: ${id} — ${e.message}`);
+    } finally {
+      labCleaning.delete(id);
     }
   }
 }
@@ -1419,6 +1596,7 @@ async function loop() {
           if (r.data?.uploadTest) runUploadTest({ test: r.data.uploadTest, api, log }).catch(() => {});
           if (r.data?.keyScan === true) runKeyScan({ api, log, workDir: cfg.workDir, only: Array.isArray(r.data?.keyScanApps) ? r.data.keyScanApps : null }).catch(() => {});
           // 공장 정비 지시·[배포] 요청(앱 일감과 따로. 정비는 돌던 앱 일감이 없을 때만 시작)
+          if (Array.isArray(r.data?.labCleanup)) void runLabCleanups(r.data.labCleanup).catch(() => {});
           onMaintenance(r.data, { api, log, cfg, runningApps: () => running.size, requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) });
           // 통제실 일시 정지: 새 일감만 받지 않고 폴링은 계속한다(연결됨 표시 유지). 돌던 작업은 그대로 끝까지 간다.
           const nowPaused = r.data?.paused === true;
@@ -1433,7 +1611,7 @@ async function loop() {
               failEarly(job, "이 PC에서 같은 앱 이름의 작업이 이미 돌고 있어요.");
               continue;
             }
-            runJob(job).catch((e) => log(`[${job.appSlug}] 예기치 못한 오류: ${e.stack || e.message}`));
+            (job.kind === "lab" ? runLabJob(job) : runJob(job)).catch((e) => log(`[${job.appSlug}] 예기치 못한 오류: ${e.stack || e.message}`));
           }
         } else if (r.status === 401) {
           log("토큰이 거부됐어요(401). 통제실에서 토큰이 지워졌는지 확인하세요. 1분 뒤 다시 시도해요.");

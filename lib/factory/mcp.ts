@@ -7,6 +7,7 @@ import { isAiEngine } from "@/lib/factory/ai";
 import { getDefaultAiEngine } from "@/lib/factory/settings";
 import { knownSecretNames } from "@/lib/factory/secretEntries";
 import { notifyJobEvent } from "@/lib/factory/telegram";
+import { LAB_KIND, LAB_SLUG, labResultView } from "@/lib/factory/lab";
 import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
 import {
   OVERWRITE_KINDS,
@@ -26,6 +27,7 @@ import {
   ACTIVE_STATUSES,
   APP_SLUG_RE,
   ID_RE,
+  JOB_KINDS,
   JOB_STATUSES,
   MAX_PENDING_JOBS,
   MAX_PLAN,
@@ -72,7 +74,9 @@ export const FACTORY_INSTRUCTIONS =
   + "auto_update_on/off. 사용자가 요청한 경우에만 상태를 바꾸세요. "
   + "출시: get_release_status 로 앱별 출시 상태·배포 계정·패키지(스토어 문구·체크리스트)·AAB 정보·테스트 일정을 보고, "
   + "enqueue_release_job(appSlug, kind) 으로 출시 일감을 등록해요(kind: first=첫 출시, store=스토어 자료 수정, project=프로젝트 업데이트. 지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
-  + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 결과는 get_factory_job 과 get_release_status 로 확인하세요.";
+  + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
+  + "실험: 도구·방식이 되는지 확인하는 테스트는 앱 수정 일감이 아니라 enqueue_lab_job(title, planMarkdown, aiEngine?, keep?)으로 보내요(앱 이름 없이, 작업 PC 의 실험 폴더에서 무인 실행. 승인은 관리자). "
+  + "끝나면 get_factory_job 의 실험_결과에 올라온 이미지·mp4 주소(몇 시간 뒤 만료)와 report.md 본문이 나와요. 이미지 주소를 열어 직접 보고 검수할 수 있어요.";
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -99,6 +103,11 @@ export const FACTORY_TOOLS = [
           enum: [...JOB_STATUSES],
           description: "이 상태만 보기 (선택)",
         },
+        kind: {
+          type: "string",
+          enum: [...JOB_KINDS],
+          description: "이 종류만 보기 (선택). 실험 일감만 보려면 lab",
+        },
         limit: {
           type: "integer",
           minimum: 1,
@@ -114,6 +123,7 @@ export const FACTORY_TOOLS = [
     name: "get_factory_job",
     description:
       "지시 하나의 상세를 돌려줍니다: 상태, 완료 요약, 실패 이유, 최근 로그, 스크린샷 주소. includePlan=true 면 등록했던 기획서 본문도 같이 줘요. " +
+      "실험(lab) 일감이면 실험_결과(올라온 이미지·mp4·report.md 파일 주소와 report.md 본문, 올리지 못한 파일 목록, 기존 저장소 변경 사후 검사)도 같이 줘요. " +
       "수정 지시를 쓰기 전에 원래 기획과 결과 요약을 확인할 때 쓰세요.",
     inputSchema: {
       type: "object",
@@ -210,6 +220,31 @@ export const FACTORY_TOOLS = [
       idempotentHint: false,
       openWorldHint: false,
     },
+  },
+  {
+    name: "enqueue_lab_job",
+    description:
+      "실험(lab) 일감을 등록합니다. 도구·방식이 되는지 확인하는 테스트 전용이에요(앱 수정 일감으로 돌리면 권한이 맞지 않아 막혀요). " +
+      "앱 이름 없이 등록하고, 승인 대기 상태로 쌓여요(승인은 관리자가 통제실·텔레그램에서). 작업 PC 의 실험 폴더(lab\<일감id>)에서 승인 없이 끝까지 돌아가요: " +
+      "공장 안 다른 폴더는 읽기·복사만, 실험 폴더에만 쓰기·실행, 인터넷 허용. 기존 폴더 수정·삭제와 커밋·푸시는 금지이고, 끝난 뒤 저장소가 바뀌었으면 실패로 표시해요. " +
+      "결과로 보고 싶은 이미지(png/webp/gif)·영상(mp4)은 실험 폴더의 outputs\ 에 저장하라고 planMarkdown 에 적고, 요약은 report.md 에 쓰게 하세요. " +
+      "실험은 동시에 1개만 돌아요. 끝나면 get_factory_job 의 실험_결과로 결과를 보세요. 좋은 결과면 그때 정식 일감(앱 수정·정비)으로 붙여요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "실험 이름 (80자 이내)" },
+        planMarkdown: {
+          type: "string",
+          description: `실험 내용: 무엇을 해 보고 어떤 결과(이미지·영상·report.md)를 남길지. ${MIN_PLAN}~${MAX_PLAN}자, 마크다운`,
+        },
+        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI. 생략하면 홈페이지의 주사용 AI" },
+        keep: { type: "boolean", description: "false 면 '지워도 되는 실험'으로 표시해요(자동 삭제는 안 해요. 폴더는 통제실 [폴더 지우기]로 지움). 기본 true" },
+        source: { type: "string", description: "어느 기획 대화에서 온 건지 짧게 (선택, 100자 이내)" },
+      },
+      required: ["title", "planMarkdown"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: "get_release_status",
@@ -323,6 +358,8 @@ export async function callFactoryTool(
       // 출시 준비는 서버가 지시문을 만드는 enqueue_release_job 으로만
       if (args.kind === "release") return text("출시 준비 일감은 enqueue_release_job(appSlug) 으로 보내세요.", true);
       return enqueue(args);
+    case "enqueue_lab_job":
+      return enqueueLabJob(args);
     case "supervisor_control":
       return supervisorControl(args);
     case "get_release_status":
@@ -540,9 +577,11 @@ async function supervisorControl(args: Record<string, unknown>): Promise<ToolRes
 async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
   const status = typeof args.status === "string" ? args.status : "";
+  const kindArg = typeof args.kind === "string" ? args.kind : "";
 
   if (status && !(JOB_STATUSES as readonly string[]).includes(status))
     return text("status 값이 올바르지 않아요.", true);
+  if (kindArg && !(JOB_KINDS as readonly string[]).includes(kindArg)) return text("kind 값이 올바르지 않아요.", true);
 
   const limitRaw = typeof args.limit === "number" ? Math.floor(args.limit) : 20;
   const limit = Math.min(
@@ -551,7 +590,7 @@ async function listJobs(args: Record<string, unknown>): Promise<ToolResult> {
   );
 
   const jobs = await prisma.factoryJob.findMany({
-    where: { ...(appSlug ? { appSlug } : {}), ...(status ? { status } : {}) },
+    where: { ...(appSlug ? { appSlug } : {}), ...(status ? { status } : {}), ...(kindArg ? { kind: kindArg } : {}) },
     orderBy: { createdAt: "desc" },
     take: limit,
     select: {
@@ -632,6 +671,7 @@ async function getJob(args: Record<string, unknown>): Promise<ToolResult> {
     최근_로그: [...job.logs]
       .reverse()
       .map((l) => `${iso(l.at)} [${l.level}] ${l.message}`),
+    ...(job.kind === LAB_KIND ? { 실험_결과: await labResultView(job.id, job.labResult, { signed: true }) } : {}),
     ...(args.includePlan === true ? { planMarkdown: job.planMarkdown } : {}),
   });
 }
@@ -679,6 +719,7 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
     );
   }
   if (!title) return text("title(표시할 앱 이름)이 필요해요.", true);
+  if (appSlug === LAB_SLUG) return text(`${LAB_SLUG} 는 실험 일감 전용 이름이라 앱 이름으로 쓸 수 없어요. 실험은 enqueue_lab_job 으로 보내세요.`, true);
   if (kind !== "new" && kind !== "revision" && kind !== "release")
     return text("kind 는 new, revision, release 중 하나예요.", true);
   if (
@@ -801,7 +842,7 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
       } else {
         if (done.length === 0) {
           const known = await tx.factoryJob.findMany({
-            where: { status: "done" },
+            where: { status: "done", kind: { not: LAB_KIND } },
             distinct: ["appSlug"],
             select: { appSlug: true, title: true },
             take: 30,
@@ -891,6 +932,60 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
   );
 
   // 승인 대기 알림. 통제실에서 직접 보낸 지시는 보낸 사람이 이미 아니까 알리지 않는다.
+  if (result.ok && source !== "통제실") void notifyJobEvent(result.id, "pending");
+
+  return result.ok ? { ...text(result.message), jobId: result.id } : text(result.message, true);
+}
+
+// 실험(lab) 일감 등록. 앱 이름 없이(appSlug 는 고정 "lab") 승인 대기로 쌓는다. 같은 내용이 이미 대기·진행 중이면 중복으로 거절한다.
+export async function enqueueLabJob(args: Record<string, unknown>): Promise<ToolResult & { jobId?: string }> {
+  if (args.aiEngine !== undefined && !isAiEngine(args.aiEngine)) return text("작업 AI는 claude 또는 codex만 쓸 수 있어요.", true);
+  const aiEngine = isAiEngine(args.aiEngine) ? args.aiEngine : await getDefaultAiEngine();
+  const title = clean(args.title, 80);
+  const plan = clean(args.planMarkdown, MAX_PLAN + 1, true);
+  const source = clean(args.source, 100) || null;
+
+  if (!title) return text("title(실험 이름)이 필요해요.", true);
+  if (args.keep !== undefined && typeof args.keep !== "boolean") return text("keep 은 true/false 예요.", true);
+  if (plan.length < MIN_PLAN) return text(`planMarkdown 이 너무 짧아요(${MIN_PLAN}자 이상).`, true);
+  if (plan.length > MAX_PLAN) return text(`planMarkdown 이 너무 길어요(${MAX_PLAN}자 이하). 핵심만 줄여서 다시 보내세요.`, true);
+  const planHash = createHash("sha256").update(plan).digest("hex");
+
+  const result: EnqueueFail | EnqueueOk = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"factory:" + LAB_SLUG}))`;
+
+    const pendingTotal = await tx.factoryJob.count({ where: { status: "pending" } });
+
+    if (pendingTotal >= MAX_PENDING_JOBS) {
+      return { ok: false, message: `승인 대기 중인 지시가 ${MAX_PENDING_JOBS}개예요. 관리자가 정리한 뒤에 다시 등록하세요.` } as EnqueueFail;
+    }
+    const dup = await tx.factoryJob.findFirst({ where: { kind: LAB_KIND, planHash, status: { in: [...ACTIVE_STATUSES] } }, select: { id: true, status: true } });
+
+    if (dup) return { ok: false, message: `같은 내용의 실험이 이미 있어요 (id: ${dup.id}, 상태: ${dup.status}). 중복 등록이에요.` } as EnqueueFail;
+    const job = await tx.factoryJob.create({
+      data: {
+        appSlug: LAB_SLUG,
+        title,
+        kind: LAB_KIND,
+        planMarkdown: plan,
+        planHash,
+        aiEngine,
+        stack: "lab",
+        source,
+        labResult: args.keep === false ? { keep: false } : undefined,
+      },
+      select: { id: true },
+    });
+
+    return {
+      ok: true,
+      id: job.id,
+      message:
+        `실험 일감을 등록했어요 (id: ${job.id}). 승인 대기 상태예요. 관리자가 통제실(/admin/factory)·텔레그램에서 승인하면 작업 PC 의 실험 폴더에서 시작해요. ` +
+        `끝나면 get_factory_job(id) 의 실험_결과로 이미지·mp4·report.md 를 보세요. 실험은 동시에 1개만 돌아서 앞 실험이 있으면 기다려요.`,
+    } as EnqueueOk;
+  });
+
   if (result.ok && source !== "통제실") void notifyJobEvent(result.id, "pending");
 
   return result.ok ? { ...text(result.message), jobId: result.id } : text(result.message, true);

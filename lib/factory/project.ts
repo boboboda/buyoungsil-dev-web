@@ -341,6 +341,7 @@ export async function linkProjectOnAdd(appSlug: string, choice: { projectId?: st
 export async function listAppProjectLinks() {
   const [jobs, links, projects, rolesRow] = await Promise.all([
     prisma.factoryJob.findMany({
+      where: { kind: { not: "lab" } }, // 실험 일감(appSlug=lab)은 앱이 아니다
       orderBy: { createdAt: "desc" },
       select: { appSlug: true, title: true, stack: true, kind: true },
     }),

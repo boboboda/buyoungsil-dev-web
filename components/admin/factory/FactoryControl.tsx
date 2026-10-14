@@ -35,6 +35,7 @@ interface JobRow {
   aiModel?: string | null; // Claude Code 모델(승인 때 고름). 없으면 기본 설정
   requiredSecrets: string[];
   priority: number;
+  labCleanupAt?: string | null; // 실험 [폴더 지우기] 요청 시각(상세에서만 옴)
   status: Status;
   phase: string | null;
   summary: string | null;
@@ -58,6 +59,26 @@ interface JobDetail extends JobRow {
   toolRequests?: ToolRequestRecord[] | null; // 도구 요청 중계 목록(예전 서버면 없음)
   handoff?: HandoffEntry | null; // 인계 기록 마지막 항목(예전 서버·예전 일감이면 없음)
 }
+
+// 실험(lab) 일감 결과(상세 API 의 lab). 파일 주소는 관리자 세션으로 열리는 상대 주소
+interface LabView {
+  files: { id: string; name: string; kind: "image" | "video" | "report"; size: number; url: string | null }[];
+  reportText: string | null;
+  skipped: { name: string; size: number; reason: string }[];
+  check: {
+    ok: boolean;
+    at: string;
+    repos: number;
+    notes: string[];
+    changes: { repo: string; files: string[]; more: number }[];
+  } | null;
+  keep: boolean;
+  folderDeleted: string | null;
+}
+
+const KIND_TEXT: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비", lab: "실험" };
+const kindText = (k: string) => KIND_TEXT[k] ?? "수정";
+const mbText = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.ceil(n / 1024))}KB`);
 
 interface Usage {
   sessions: {
@@ -165,19 +186,25 @@ export const JOB_LIST_LIMIT = 50;
 // initialJobId: 주소의 ?job=<id> 로 바로 연 일감(이력의 [앱 일감] 줄에서 넘어올 때)
 export default function FactoryControl({ initialJobId = null }: { initialJobId?: string | null }) {
   const [filter, setFilter] = useState<"" | Status>("");
+  const [labOnly, setLabOnly] = useState(false); // 실험 일감만 보기
   const [jobs, setJobs] = useState<JobRow[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(initialJobId);
   const [detail, setDetail] = useState<{
     job: JobDetail;
     claude: Usage;
+    lab?: LabView;
   } | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const loadList = useCallback(async () => {
-    const q = filter ? `?status=${filter}` : "";
+    const params = new URLSearchParams();
+
+    if (filter) params.set("status", filter);
+    if (labOnly) params.set("kind", "lab");
+    const q = params.size ? `?${params}` : "";
     const { ok, data } = await call<{ jobs: JobRow[] }>(
       `/api/admin/factory/jobs${q}`,
     );
@@ -191,15 +218,15 @@ export default function FactoryControl({ initialJobId = null }: { initialJobId?:
           "지시 목록을 읽지 못했어요. 마이그레이션(factory_jobs 테이블)이 적용됐는지 확인하세요.",
       );
     }
-  }, [filter]);
+  }, [filter, labOnly]);
 
   const loadDetail = useCallback(async (id: string) => {
-    const { ok, data } = await call<{ job: JobDetail; claude: Usage }>(
+    const { ok, data } = await call<{ job: JobDetail; claude: Usage; lab?: LabView }>(
       `/api/admin/factory/jobs/${id}`,
     );
 
     if (ok) {
-      setDetail({ job: data.job, claude: data.claude });
+      setDetail({ job: data.job, claude: data.claude, lab: data.lab });
       setDetailError(null);
     } else {
       setDetailError(data.message ?? "상세를 읽지 못했어요.");
@@ -279,6 +306,16 @@ export default function FactoryControl({ initialJobId = null }: { initialJobId?:
             {f.value && counts[f.value] ? ` (${counts[f.value]})` : ""}
           </Button>
         ))}
+        <Button
+          className="shrink-0"
+          color={labOnly ? "secondary" : "default"}
+          data-lab-filter
+          size="sm"
+          variant={labOnly ? "solid" : "flat"}
+          onPress={() => setLabOnly((v) => !v)}
+        >
+          🧪 실험만
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -333,10 +370,14 @@ export default function FactoryControl({ initialJobId = null }: { initialJobId?:
                 </Chip>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-default-500">
-                <span className="font-mono">{j.appSlug}</span>
+                {j.kind === "lab" ? (
+                  <Chip color="secondary" size="sm" variant="flat">🧪 실험</Chip>
+                ) : (
+                  <span className="font-mono">{j.appSlug}</span>
+                )}
                 <span>{AI_LABELS[j.aiEngine ?? "claude"]}</span>
                 <ModelTag engine={j.aiEngine ?? "claude"} model={j.aiModel} />
-                <span>{j.kind === "new" ? "새 앱" : "수정"}</span>
+                {j.kind !== "lab" && <span>{kindText(j.kind)}</span>}
                 {j.phase && j.status === "running" && (
                   <span>단계: {j.phase}</span>
                 )}
@@ -379,7 +420,7 @@ export default function FactoryControl({ initialJobId = null }: { initialJobId?:
             </Card>
           )}
           {selectedId && detail && detail.job.id === selectedId && (
-            <JobDetailView busy={busy} detail={detail} onAct={act} />
+            <JobDetailView busy={busy} detail={detail} lab={detail.lab} onAct={act} />
           )}
         </div>
       </div>
@@ -389,10 +430,12 @@ export default function FactoryControl({ initialJobId = null }: { initialJobId?:
 
 function JobDetailView({
   detail,
+  lab,
   busy,
   onAct,
 }: {
   detail: { job: JobDetail; claude: Usage };
+  lab?: LabView;
   busy: boolean;
   onAct: (
     id: string,
@@ -431,8 +474,8 @@ function JobDetailView({
           <div className="min-w-0">
             <h2 className="truncate text-xl font-bold">{job.title}</h2>
             <p className="font-mono text-xs text-default-500">
-              {job.appSlug} · {job.kind === "new" ? "새 앱" : "수정 지시"} ·{" "}
-              {job.stack} · {AI_LABELS[job.aiEngine ?? "claude"]}
+              {job.kind === "lab" ? "🧪 실험" : `${job.appSlug} · ${job.kind === "new" ? "새 앱" : kindText(job.kind) + " 지시"} · ${job.stack}`} ·{" "}
+              {AI_LABELS[job.aiEngine ?? "claude"]}
               {(job.aiEngine ?? "claude") === "claude" && <> · <ModelTag engine="claude" model={job.aiModel} /></>}
             </p>
           </div>
@@ -580,6 +623,9 @@ function JobDetailView({
           </div>
         )}
 
+        {/* 실험 결과: 사후 검사·올라온 이미지/영상/report.md·올리지 못한 파일·[폴더 지우기] */}
+        {job.kind === "lab" && lab && <LabResultBox busy={busy} job={job} lab={lab} onAct={onAct} />}
+
         {/* 인계 기록(읽기 전용 접이식): 기록이 없는 예전 일감은 칸을 보이지 않는다 */}
         <HandoffBox entry={job.handoff} />
 
@@ -641,8 +687,8 @@ function JobDetailView({
           </section>
         )}
 
-        {/* 토큰 */}
-        <section>
+        {/* 토큰 (실험은 앱 이름이 없어 Claude 사용 이력을 따로 붙이지 않는다) */}
+        {job.kind !== "lab" && <section>
           <h3 className="mb-2 font-semibold">Claude 사용량</h3>
           {job.aiEngine === "codex" && <p className="mb-2 text-sm text-default-500">아래는 이 앱의 Claude 사용 이력이에요. 현재 Codex 작업의 진행·검증 결과는 진행 로그에서 확인하세요.</p>}
           {claude.sessions.length === 0 ? (
@@ -668,7 +714,7 @@ function JobDetailView({
               </ul>
             </>
           )}
-        </section>
+        </section>}
 
         {/* 로그 */}
         <section>
@@ -716,6 +762,115 @@ function JobDetailView({
         </section>
       </CardBody>
     </Card>
+  );
+}
+
+// 실험(lab) 일감 결과 상자
+function LabResultBox({
+  job,
+  lab,
+  busy,
+  onAct,
+}: {
+  job: JobDetail;
+  lab: LabView;
+  busy: boolean;
+  onAct: (id: string, body: Record<string, unknown>, confirmText?: string) => void;
+}) {
+  const images = lab.files.filter((f) => f.kind === "image");
+  const videos = lab.files.filter((f) => f.kind === "video");
+  const finished = job.status === "done" || job.status === "failed" || job.status === "cancelled";
+
+  return (
+    <section className="space-y-4" data-lab-result>
+      <h3 className="font-semibold">🧪 실험 결과</h3>
+
+      {lab.check && (
+        <div className={`rounded-lg p-3 text-sm ${lab.check.ok ? "bg-success-50 dark:bg-success-50/10" : "bg-danger-50 text-danger-700 dark:bg-danger-50/10"}`}>
+          <b>{lab.check.ok ? "사후 검사 통과" : "사후 검사 실패 — 기존 저장소가 바뀌었어요"}</b>
+          <span className="ml-2 text-xs text-default-500">저장소 {lab.check.repos}개 비교</span>
+          {lab.check.changes.map((c) => (
+            <div key={c.repo} className="mt-1">
+              <span className="font-mono font-semibold">{c.repo}</span>
+              <ul className="ml-4 list-disc font-mono text-xs">
+                {c.files.map((f) => <li key={f}>{f}</li>)}
+                {c.more > 0 && <li>…외 {c.more}개</li>}
+              </ul>
+            </div>
+          ))}
+          {lab.check.notes.length > 0 && (
+            <ul className="mt-1 list-disc pl-4 text-xs text-default-500">
+              {lab.check.notes.map((n, i) => <li key={i}>{n}</li>)}
+            </ul>
+          )}
+          {!lab.check.ok && <p className="mt-1 text-xs text-default-500">자동 되돌리기는 하지 않아요. 위 저장소를 직접 확인해 주세요.</p>}
+        </div>
+      )}
+
+      {images.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {images.map((f) => f.url && (
+            <a key={f.id} href={f.url} rel="noreferrer" target="_blank">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img alt={f.name} className="aspect-square w-full rounded-lg border border-default-200 bg-default-100 object-contain" loading="lazy" src={f.url} />
+              <p className="mt-1 truncate text-center text-xs text-default-500">{f.name} · {mbText(f.size)}</p>
+            </a>
+          ))}
+        </div>
+      )}
+
+      {videos.map((f) => f.url && (
+        <div key={f.id}>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video className="w-full max-w-xl rounded-lg border border-default-200 bg-black" controls playsInline preload="metadata" src={f.url} />
+          <p className="mt-1 text-xs text-default-500">{f.name} · {mbText(f.size)}</p>
+        </div>
+      ))}
+
+      {lab.reportText !== null && (
+        <div>
+          <p className="mb-1 text-sm font-semibold">report.md</p>
+          <div className="prose prose-sm max-h-[28rem] max-w-none overflow-y-auto rounded-lg border border-default-200 p-4 dark:prose-invert">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{lab.reportText}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+
+      {lab.skipped.length > 0 && (
+        <div className="rounded-lg bg-warning-50 p-3 text-sm dark:bg-warning-50/10">
+          <b>올리지 않은 파일 (목록만)</b>
+          <ul className="mt-1 list-disc pl-4 font-mono text-xs">
+            {lab.skipped.map((s) => <li key={s.name}>{s.name} · {mbText(s.size)} · {s.reason}</li>)}
+          </ul>
+          <p className="mt-1 text-xs text-default-500">파일은 PC 의 실험 폴더 outputs 에 그대로 있어요.</p>
+        </div>
+      )}
+
+      {finished && lab.files.length === 0 && lab.skipped.length === 0 && (
+        <p className="text-sm text-default-500">올라온 결과 파일이 없어요(outputs 에 png·webp·gif·mp4·report.md 가 없었어요).</p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {!lab.keep && <Chip color="warning" size="sm" variant="flat">지워도 되는 실험</Chip>}
+        {lab.folderDeleted ? (
+          <span className="text-sm text-default-500">실험 폴더를 지웠어요 ({when(lab.folderDeleted)})</span>
+        ) : (
+          finished && (
+            <Button
+              color="danger"
+              data-lab-delete
+              isDisabled={busy}
+              size="sm"
+              variant="flat"
+              onPress={() => onAct(job.id, { action: "lab-delete-folder" }, "이 실험의 PC 폴더(lab 아래 일감 폴더)를 지울까요? 공용 폴더(shared)는 지우지 않아요. 통제실에 올라간 결과 파일은 그대로 남아요.")}
+            >
+              폴더 지우기
+            </Button>
+          )
+        )}
+        {job.labCleanupAt && !lab.folderDeleted && <span className="text-xs text-default-500">지우기 요청됨 — 작업 PC 가 곧 지워요</span>}
+      </div>
+    </section>
   );
 }
 

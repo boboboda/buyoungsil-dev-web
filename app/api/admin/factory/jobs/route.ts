@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
 import { requireAdmin } from "@/lib/factory/admin";
-import { JOB_STATUSES, adminAction } from "@/lib/factory/jobs";
+import { JOB_KINDS, JOB_STATUSES, adminAction } from "@/lib/factory/jobs";
 import { enqueue } from "@/lib/factory/mcp";
 import { isAiEngine } from "@/lib/factory/ai";
 
@@ -19,12 +19,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: "status 값이 올바르지 않아요." }, { status: 400 });
   }
 
+  // 종류 필터(예: 실험만 = lab)
+  const kind = req.nextUrl.searchParams.get("kind");
+  if (kind && !(JOB_KINDS as readonly string[]).includes(kind)) {
+    return NextResponse.json({ message: "kind 값이 올바르지 않아요." }, { status: 400 });
+  }
+
   const limitRaw = Number(req.nextUrl.searchParams.get("limit") ?? "50");
   const limit = Number.isFinite(limitRaw) ? Math.min(100, Math.max(1, Math.floor(limitRaw))) : 50;
 
   // 목록에는 기획서 본문을 싣지 않는다. 상세에서 받는다.
   const jobs = await prisma.factoryJob.findMany({
-    where: status ? { status } : undefined,
+    where: { ...(status ? { status } : {}), ...(kind ? { kind } : {}) },
     orderBy: { createdAt: "desc" },
     take: limit,
     select: {

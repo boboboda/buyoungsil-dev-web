@@ -14,6 +14,9 @@ import { getDefaultClaudeModel } from "@/lib/factory/settings";
 import { cleanToolRequests, type ToolRequestRecord } from "@/lib/factory/toolBroker";
 import { cleanHandoff, type HandoffEntry } from "@/lib/factory/handoff";
 
+// 실험 일감 종류 이름. 실험 결과 처리(lib/factory/lab.ts)는 보고에 lab 값이 있을 때만 불러온다(앱 일감 경로는 그 파일을 읽지 않는다)
+const LAB_KIND = "lab";
+
 export const LEASE_MS = 10 * 60 * 1000;
 export const MAX_LOGS_PER_JOB = 500;
 export const MAX_LOG_MESSAGE = 2000;
@@ -43,8 +46,9 @@ export const STACK_LABELS: Record<(typeof STACKS)[number], string> = {
 };
 
 // 일감 종류. release = 출시 준비(완성된 앱만, 수정 지시처럼 기존 폴더에서 출시 자료를 만든다)
-export const JOB_KINDS = ["new", "revision", "release"] as const;
-export const KIND_LABELS: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비" };
+// lab = 실험(도구·방식이 되는지 확인하는 테스트. 앱 폴더가 아니라 lab<id> 에서 돈다. lib/factory/lab.ts)
+export const JOB_KINDS = ["new", "revision", "release", "lab"] as const;
+export const KIND_LABELS: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비", lab: "실험" };
 
 export const ACTIVE_STATUSES = ["pending", "approved", "running"] as const;
 // review = 출시 일감(첫 출시·스토어 수정)이 자료를 만든 뒤 사람의 검토를 기다리는 중. 작업 PC 를 붙잡지 않는다(ACTIVE 아님, 임대 없음, 자동 취소 없음)
@@ -165,6 +169,7 @@ export interface ReportInput {
   failStage?: string | null; // 실패한 단계(출시 일감: key, build, sign, upload, homepage, store …)
   toolRequests?: ToolRequestRecord[] | null; // 도구 요청 중계 목록(감독 프로그램이 전체를 보냄. null 이면 그대로 둔다)
   handoff?: HandoffEntry | null; // 인계 기록 항목(일감이 끝날 때만. null 이면 그대로 둔다)
+  lab?: Record<string, unknown> | null; // 실험 일감 결과(건너뛴 파일·사후 검사). 아직 정리 전 값: 저장할 때 lib/factory/lab.ts cleanLabResult 로 정리하고, 실험 일감에만 저장한다
 }
 
 export type ParseResult = { ok: true; value: ReportInput } | { ok: false; reason: string };
@@ -219,6 +224,7 @@ export function parseReport(body: unknown): ParseResult {
       build: cleanBuild(b.build),
       toolRequests: cleanToolRequests(b.toolRequests),
       handoff: cleanHandoff(b.handoff),
+      lab: b.lab && typeof b.lab === "object" && !Array.isArray(b.lab) ? (b.lab as Record<string, unknown>) : null,
     },
   };
 }
@@ -300,6 +306,18 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   // running 일 때만 바꾼다. 취소가 먼저 들어왔으면 0건이라 conflict 가 된다.
   const res = await prisma.factoryJob.updateMany({ where: { id: input.jobId, status: "running" }, data });
   if (res.count === 0) return conflictOf(input.jobId);
+
+  if (input.lab) {
+    // 실험 일감만 저장한다(다른 종류가 lab 필드를 보내도 무시)
+    const isLab = await prisma.factoryJob.count({ where: { id: input.jobId, kind: LAB_KIND } });
+
+    if (isLab) {
+      const { cleanLabResult, mergeLabResult } = await import("@/lib/factory/lab");
+      const clean = cleanLabResult(input.lab);
+
+      if (clean) await mergeLabResult(input.jobId, clean).catch(() => undefined);
+    }
+  }
 
   if (input.logs.length > 0) {
     await prisma.factoryJobLog.createMany({
@@ -414,6 +432,18 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
         },
       });
       return res.count > 0 ? done("재시도하도록 승인했어요.") : explainNoChange(id, "재시도");
+    }
+
+    case "lab-delete-folder": {
+      // 실험 폴더 지우기 요청. 감독 프로그램이 해당 lab<id> 만 지운다(shared 는 지우지 않음). 돌고 있는 실험은 안 된다
+      const job = await prisma.factoryJob.findUnique({ where: { id }, select: { kind: true, status: true } });
+
+      if (!job) return refuse(404, "없는 지시예요.");
+      if (job.kind !== LAB_KIND) return refuse(409, "실험 일감만 폴더를 지울 수 있어요.");
+      if (job.status === "running" || job.status === "approved" || job.status === "pending") return refuse(409, "끝나거나 취소된 실험만 폴더를 지울 수 있어요.");
+      await prisma.factoryJob.update({ where: { id }, data: { labCleanupAt: now } });
+
+      return done("폴더 지우기를 요청했어요. 작업 PC 가 곧 지워요.");
     }
 
     case "set-ai": {

@@ -601,6 +601,8 @@ model FactoryJob {
   releaseNotes    String?   @db.Text // 앱 업데이트: 출시 노트(What's new, 비우면 공장이 초안)
   buildResult     Json? // 앱 업데이트 결과: 버전 이름·코드, AAB 크기, 시험 요약, 업로드 트랙
   toolRequests    Json? // 도구 요청 중계 목록: [{ id, tool, status, at, ms, message }] (비밀값 없음)
+  labResult       Json? // 실험(lab) 일감 결과: 건너뛴 파일 목록·사후 검사(저장소 변경)·폴더 지움 표시. 비밀값 없음
+  labCleanupAt    DateTime? // 실험 [폴더 지우기]를 요청한 시각(감독 프로그램이 지우고 알리면 labResult.folderDeleted)
   handoff         Json? // 인계 기록 마지막 항목(Claude Code ↔ Codex 공유 인계, 읽기 전용 표시용). lib/factory/handoff.ts 가 정리해서 저장. 비밀값·기획서·diff 없음
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
@@ -610,6 +612,7 @@ model FactoryJob {
 
   images FactoryJobImage[]
   logs   FactoryJobLog[]
+  labFiles FactoryLabFile[]
 
   @@index([status, priority, createdAt])
   @@index([appSlug])
@@ -627,6 +630,35 @@ model FactoryJobImage {
 
   @@index([jobId, createdAt])
   @@map("factory_job_images")
+}
+
+// 실험(lab) 일감 결과 파일(이미지·mp4·report.md). 감독 프로그램이 8MB 이하 조각으로 올리고, 통제실(관리자)·커넥터(서명 주소)가 읽는다.
+model FactoryLabFile {
+  id         String     @id @default(cuid())
+  jobId      String
+  name       String // outputs/ 아래 상대 경로(슬래시)
+  kind       String // image | video | report
+  mime       String
+  size       Int
+  chunkCount Int
+  received   Int        @default(0)
+  complete   Boolean    @default(false)
+  createdAt  DateTime   @default(now())
+  job        FactoryJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  chunks     FactoryLabFileChunk[]
+
+  @@unique([jobId, name])
+  @@map("factory_lab_files")
+}
+
+model FactoryLabFileChunk {
+  fileId String
+  idx    Int
+  data   Bytes
+  file   FactoryLabFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@id([fileId, idx])
+  @@map("factory_lab_file_chunks")
 }
 
 model FactoryJobLog {

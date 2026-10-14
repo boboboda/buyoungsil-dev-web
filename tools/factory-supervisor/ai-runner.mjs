@@ -29,7 +29,8 @@ export function claudeModelOf(value) {
 }
 
 // model: 일감·정비 지시에 고른 Claude Code 모델(허용 목록). 없으면 설정 파일의 cfg.model, 그것도 없으면 --model 없이(예전 그대로). Codex 는 무시
-export function invocation(engine, cfg = {}, { sessionId, settings, model } = {}) {
+// lab: 실험(lab) 일감 옵션 { writableRoots: [쓰기 가능 루트…], network: true|false }. Codex 에만 쓰이고(작업 폴더는 cwd 라 자동 쓰기 가능), 없으면 예전 그대로(네트워크 꺼짐·cwd 만 쓰기)
+export function invocation(engine, cfg = {}, { sessionId, settings, model, lab } = {}) {
   engine = engineOf(engine);
   if (sessionId && !/^[0-9a-f-]{8,64}$/i.test(sessionId)) throw new Error("세션 ID 형식이 올바르지 않습니다.");
   if (engine === "claude") {
@@ -42,7 +43,8 @@ export function invocation(engine, cfg = {}, { sessionId, settings, model } = {}
   }
   // Never inherit Claude's model or grant full access to match acceptEdits.
   const args = sessionId ? ["exec", "resume"] : ["exec"];
-  args.push("--json", "-c", 'approval_policy="never"', "-c", 'sandbox_mode="workspace-write"', "-c", "sandbox_workspace_write.network_access=false", "-c", 'project_doc_fallback_filenames=["CLAUDE.local.md","CLAUDE.md"]');
+  args.push("--json", "-c", 'approval_policy="never"', "-c", 'sandbox_mode="workspace-write"', "-c", `sandbox_workspace_write.network_access=${lab?.network === true ? "true" : "false"}`, "-c", 'project_doc_fallback_filenames=["CLAUDE.local.md","CLAUDE.md"]');
+  if (lab?.writableRoots?.length) args.push("-c", `sandbox_workspace_write.writable_roots=[${lab.writableRoots.map((r) => JSON.stringify(String(r))).join(",")}]`);
   if (cfg.codexModel) args.push("--model", cfg.codexModel);
   if (sessionId) args.push(sessionId);
   args.push("-");

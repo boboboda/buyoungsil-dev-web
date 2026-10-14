@@ -689,6 +689,7 @@ export async function releaseOverview() {
     prisma.factoryReleaseAccount.findMany({ orderBy: { label: "asc" }, include: { defaultKey: true } }),
     prisma.factoryApp.findMany({ include: { key: true } }),
     prisma.factoryJob.findMany({
+      where: { kind: { not: "lab" } }, // 실험 일감(appSlug=lab)은 앱이 아니다
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
