@@ -307,6 +307,70 @@ export async function setUpdateBundleMin(n: number): Promise<void> {
   await prisma.factorySetting.upsert({ where: { key: UPDATE_BUNDLE_KEY }, create: { key: UPDATE_BUNDLE_KEY, value }, update: { value } });
 }
 
+const LOOP_GUARD_KEY = "loopGuard";
+export const LOOP_JUDGES = ["any", "result", "count"] as const;
+export type LoopJudge = (typeof LOOP_JUDGES)[number];
+export interface LoopGuardSettings {
+  enabled: boolean; // 같은 시험·빌드 명령 반복 감지 켜기
+  repeatMax: number; // 같은 명령이 이 횟수를 넘게(기본 4번째부터) 돌면 살핀다
+  judge: LoopJudge; // any = 바뀐 파일이 적거나 결과가 같으면 / result = 결과가 같을 때만 / count = 횟수만
+  minChangedFiles: number; // 직전 같은 명령 이후 바뀐 파일이 이 개수 이하면 "적다"
+  screenshotMaxMin: number; // 스크린샷 단계 시간 상한(분)
+}
+export const DEFAULT_LOOP_GUARD: LoopGuardSettings = { enabled: true, repeatMax: 3, judge: "any", minChangedFiles: 2, screenshotMaxMin: 15 };
+export const LOOP_GUARD_LIMITS = { repeatMax: [2, 20], minChangedFiles: [0, 50], screenshotMaxMin: [1, 120] } as const;
+
+/** 일감 시간 낭비 막기 설정 정리(tools/factory-supervisor/loopguard.mjs 의 cleanLoopGuard 와 같은 기준). 이상한 항목은 기본값 */
+export function cleanLoopGuard(v: unknown): LoopGuardSettings {
+  const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  const out: LoopGuardSettings = { ...DEFAULT_LOOP_GUARD };
+
+  if (typeof o.enabled === "boolean") out.enabled = o.enabled;
+  if (typeof o.judge === "string" && (LOOP_JUDGES as readonly string[]).includes(o.judge)) out.judge = o.judge as LoopJudge;
+  for (const k of Object.keys(LOOP_GUARD_LIMITS) as (keyof typeof LOOP_GUARD_LIMITS)[]) {
+    const raw = o[k];
+    const n = Number(raw);
+
+    if (raw !== null && raw !== "" && raw !== undefined && Number.isFinite(n)) out[k] = Math.min(LOOP_GUARD_LIMITS[k][1], Math.max(LOOP_GUARD_LIMITS[k][0], Math.round(n)));
+  }
+
+  return out;
+}
+
+/** 통제실에서 정한 '일감 시간 낭비 막기' 설정. 정한 적 없으면 기본값(isDefault: true) */
+export async function getLoopGuard(): Promise<{ value: LoopGuardSettings; isDefault: boolean }> {
+  const row = await prisma.factorySetting.findUnique({ where: { key: LOOP_GUARD_KEY } });
+
+  if (!row) return { value: { ...DEFAULT_LOOP_GUARD }, isDefault: true };
+  try {
+    return { value: cleanLoopGuard(JSON.parse(row.value)), isDefault: false };
+  } catch {
+    return { value: { ...DEFAULT_LOOP_GUARD }, isDefault: true };
+  }
+}
+
+/** 일부 항목만 바꾼다. 범위 밖·이상한 값이 하나라도 있으면 저장하지 않고 이유를 돌려준다 */
+export async function patchLoopGuard(patch: unknown): Promise<{ ok: true; value: LoopGuardSettings } | { ok: false; message: string }> {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { ok: false, message: "loopGuard 는 항목을 담은 객체여야 해요." };
+  const p = patch as Record<string, unknown>;
+
+  if (p.enabled !== undefined && typeof p.enabled !== "boolean") return { ok: false, message: "enabled 는 true/false 여야 해요." };
+  if (p.judge !== undefined && !(LOOP_JUDGES as readonly unknown[]).includes(p.judge)) return { ok: false, message: "판정(judge)은 any / result / count 중 하나여야 해요." };
+  for (const k of Object.keys(LOOP_GUARD_LIMITS) as (keyof typeof LOOP_GUARD_LIMITS)[]) {
+    if (p[k] === undefined) continue;
+    const n = Number(p[k]);
+    const [lo, hi] = LOOP_GUARD_LIMITS[k];
+
+    if (typeof p[k] === "boolean" || p[k] === "" || p[k] === null || !Number.isInteger(n) || n < lo || n > hi) return { ok: false, message: `${k} 는 ${lo}~${hi} 사이 정수여야 해요.` };
+  }
+  const next = cleanLoopGuard({ ...(await getLoopGuard()).value, ...p });
+  const value = JSON.stringify(next);
+
+  await prisma.factorySetting.upsert({ where: { key: LOOP_GUARD_KEY }, create: { key: LOOP_GUARD_KEY, value }, update: { value } });
+
+  return { ok: true, value: next };
+}
+
 const AUTO_DEPLOY_KEY = "maintenanceAutoDeploy";
 
 /** 정비 대기열이 모두 끝나면 자동 배포할지. 값이 없으면 꺼짐. */

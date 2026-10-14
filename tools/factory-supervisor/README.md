@@ -359,3 +359,12 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
 8. **통제실**: "업데이트로 일시 중지 N개"(`/next` 의 `pausedJobs`), "업데이트 대기(묶는 중, 남은 n분)"(`bundleLeft`), 설정 `updateBundleMin`(응답에 실려 온다).
 
 시험: `npm run test:update-pause` (순수 부분 `tests/pause.test.mjs`, 묶기·받기 `tests/update.test.mjs`, 정비 턴 `tests/pause-maint.test.mjs`, 진짜 감독 + 가짜 Claude + 가짜 실행기 `tests/pause-e2e.test.mjs`, 서버 쪽 `tests/update-pause.test.mjs`).
+
+## 일감 시간 낭비 막기 (1-3: `loopguard.mjs`)
+앱 일감(new·revision)이 같은 시험을 되풀이하며 공장을 오래 붙잡지 않게 한다. 실험·출시·정비는 대상이 아니다.
+- **반복 감지**: AI 의 Bash 명령(Claude `tool_use`, Codex `command_execution`)을 보고 e2e·스크린샷·측정 명령을 같은 명령끼리 센다(cd·파이프 뒤·리다이렉션은 무시). 기본 3회를 넘어 4번째가 시작될 때, 직전 같은 명령 이후 바뀐 파일(`git status` 기준)이 2개 이하이거나 직전 결과가 같으면 그 명령을 끊고 같은 세션에 "같은 시험을 반복 중이다. 지금 상태로 정리하고 막힌 점을 보고하라"를 **한 번** 보낸다(경고). 그 뒤에도 같은 시험이 또 시작되면 일감을 `failed`(`failStage=stuck`, 사유 "막힘: …")로 끝낸다. 작업 파일은 그대로 둔다. 빌드·린트·단위 시험은 고치며 되풀이하는 게 정상이라 기준이 두 배(7번째)이고 "결과가 같을 때"만 본다.
+- **스크린샷 단계 상한**: `.factory/phase.txt` 가 `screenshots` 가 된 때부터 15분이 지나면 찍힌 것까지만 올리고(보고에 같이 올라간다) 같은 세션에 "더 만들지 말고 마무리하라"를 한 번 보낸다.
+- **작업 규칙**: 앱 일감 규칙(`rulesFor`·서버 `DEFAULT_RULES.common`)에 "중간 확인은 빌드·린트·단위 시험… 스크린샷 e2e는 마지막에 한 번만… 측정·시뮬레이션은 지시문이 요구할 때만" 한 줄이 들어 있다.
+- **설정**: 통제실 [설정] → 실행·동시성 → '일감 시간 낭비 막기'(켜기/끄기, 판정 any·result·count, 반복 횟수 2~20, 바뀐 파일 0~50개, 스크린샷 상한 1~120분). 서버가 `/next` 의 `loopGuard` 로 내려 주고, 값이 없으면(예전 서버) 설정 파일의 `loopGuard` 객체, 그것도 없으면 기본값을 쓴다.
+- **승인 화면**: 지시문 길이(수정 2500자·새 앱 7500자 이상)·항목 수(12개 이상)·측정/스크린샷 요구로 '예상 큼'을 표시하고 "측정·조사는 실험 일감으로 나누기"를 안내한다(`lib/factory/jobSize.ts`). 안내만 하고 승인은 막지 않는다.
+- 시험: `npm run test:loop-guard`. 시험 모드에서만 `FACTORY_TEST_SCREENSHOT_SEC` 로 스크린샷 상한을 초 단위로 줄인다.

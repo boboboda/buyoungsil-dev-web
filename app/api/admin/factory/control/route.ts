@@ -7,7 +7,7 @@ import { requireAdmin } from "@/lib/factory/admin";
 import { CLAUDE_MODELS, isAiEngine, AI_LABELS, readModelChoice } from "@/lib/factory/ai";
 import { applyAppChecksPatch, getAppChecks, saveAppChecks } from "@/lib/factory/appChecks";
 import { cleanSharedPatterns, conductorSnapshot, setAutoGroupEnabled, setConductorModel, setSharedFiles } from "@/lib/factory/conductor";
-import { cleanAppSlots, cleanApprovalWait, cleanPerApp, cleanUpdateBundle, MAX_APP_SLOTS, MAX_APPROVAL_WAIT, MAX_PER_APP, MAX_UPDATE_BUNDLE, MIN_APP_SLOTS, MIN_APPROVAL_WAIT, MIN_PER_APP, MIN_UPDATE_BUNDLE, setAppSlots, setApprovalWaitSec, setUpdateBundleMin, setParallelPerApp, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
+import { patchLoopGuard, cleanAppSlots, cleanApprovalWait, cleanPerApp, cleanUpdateBundle, MAX_APP_SLOTS, MAX_APPROVAL_WAIT, MAX_PER_APP, MAX_UPDATE_BUNDLE, MIN_APP_SLOTS, MIN_APPROVAL_WAIT, MIN_PER_APP, MIN_UPDATE_BUNDLE, setAppSlots, setApprovalWaitSec, setUpdateBundleMin, setParallelPerApp, setCompactAfterJobEnabled, setDefaultAiEngine, setDefaultClaudeModel, setToolBrokerSettings } from "@/lib/factory/settings";
 import { allowedStudioToolIds, isPurpose, isToolId, PURPOSE_LABELS, readToolkitView, setToolPurpose, type Purpose } from "@/lib/factory/toolkit";
 import { APP_ROLES_KEY, applyAppRolePatch, readAppRoles } from "@/lib/factory/appRoles";
 import { applyStudioPatch, readStudioProjects, STUDIO_PROJECTS_KEY } from "@/lib/factory/studioProjects";
@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
     parallelPerApp?: unknown;
     approvalWaitSec?: unknown;
     updateBundleMin?: unknown;
+    loopGuard?: unknown;
     appChecks?: unknown;
     conductorAutoGroup?: unknown;
     conductorModel?: unknown;
@@ -148,6 +149,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ...(await supervisorSnapshot()),
       message: n === 0 ? "업데이트를 묶지 않고 바로 받도록 저장했어요(새 버전이 있으면 진행 중인 AI 를 잠깐 멈췄다가 이어서 해요)." : `일감이 돌고 있으면 감독 프로그램 새 커밋을 최대 ${n}분 모았다가 한 번에 받도록 저장했어요. 공장이 비어 있으면 바로 받아요.`,
+    });
+  }
+
+  // 일감 시간 낭비 막기: { loopGuard: { enabled?, repeatMax?, judge?, minChangedFiles?, screenshotMaxMin? } }. 같은 시험·빌드 명령 반복 감지(경고 → 막힘)와 스크린샷 단계 시간 상한
+  if (body && Object.hasOwn(body, "loopGuard")) {
+    const res = await patchLoopGuard(body.loopGuard);
+
+    if ("message" in res) return NextResponse.json({ message: res.message }, { status: 400 });
+
+    return NextResponse.json({
+      ...(await supervisorSnapshot()),
+      message: res.value.enabled
+        ? `같은 시험이 ${res.value.repeatMax}번을 넘게 반복되면 AI 에게 정리하라고 알리고, 그래도 계속되면 '막힘'으로 끝내도록 저장했어요. 스크린샷 단계는 ${res.value.screenshotMaxMin}분까지예요.`
+        : `반복 시험 감지를 껐어요. 스크린샷 단계는 ${res.value.screenshotMaxMin}분까지예요.`,
     });
   }
 

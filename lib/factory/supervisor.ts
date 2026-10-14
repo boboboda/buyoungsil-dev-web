@@ -14,6 +14,7 @@ import {
   getSupervisorInfo,
   getSupervisorRuntime,
   getToolBrokerSettings,
+  getLoopGuard,
   getUpdateBundleMin,
   isAutoDeployEnabled,
   isAutoUpdateEnabled,
@@ -41,7 +42,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp, approvalWait, appChecks, conductor, updateBundle] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp, approvalWait, appChecks, conductor, updateBundle, loopGuard] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -67,6 +68,7 @@ export async function supervisorSnapshot() {
     getAppChecks(),
     import("@/lib/factory/conductor").then((m) => m.conductorSnapshot()).catch(() => null), // 지휘자(C-2) 설정·최근 판단 기록
     getUpdateBundleMin(),
+    getLoopGuard(),
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
@@ -115,6 +117,8 @@ export async function supervisorSnapshot() {
     deployNote: deployNote(deploying, outbox), // "배포 중 · 재전송 대기 N개" 또는 null
     updateBundleMin: updateBundle.value, // 감독 프로그램 업데이트 때 새 커밋을 모으는 시간(분, 0~180, 기본 60, 0 = 바로 받음)
     updateBundleMinDefault: updateBundle.isDefault,
+    loopGuard: loopGuard.value, // 일감 시간 낭비 막기 설정(반복 시험 감지·스크린샷 시간 상한)
+    loopGuardDefault: loopGuard.isDefault,
     pausedJobs: online ? (rt.pausedJobs ?? 0) : 0, // 업데이트로 일시 중지된 AI 일감·정비 턴 수(새 버전이 켜지면 같은 세션으로 이어 줌)
     pausedNote: online ? pausedNote(rt.pausedJobs ?? 0) : null, // "업데이트로 일시 중지 N개"
     bundleLeftMin: online && rt.bundleLeft ? rt.bundleLeft : null, // 새 커밋을 모으는 중이면 남은 분

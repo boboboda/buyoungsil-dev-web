@@ -262,7 +262,7 @@ export function UpdateBundleSettings() {
     if (typeof data?.updateBundleMin === "number") setText((t) => (t === "" ? String(data.updateBundleMin) : t));
   }, [data]);
 
-  const n = /^d{1,3}$/.test(text.trim()) ? Number(text.trim()) : NaN;
+  const n = /^\d{1,3}$/.test(text.trim()) ? Number(text.trim()) : NaN;
   const valid = Number.isInteger(n) && n >= 0 && n <= 180;
 
   const save = async () => {

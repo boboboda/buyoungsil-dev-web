@@ -61,6 +61,7 @@ export const DEFAULT_RULES: Record<RuleSectionId, string> = {
 - 에뮬레이터, 개발 서버, 감시 프로세스처럼 백그라운드로 띄운 것은 마지막 응답 전에 반드시 직접 끄세요. 남아 있으면 작업이 끝나지 않아 감독 프로그램이 강제로 정리해요.
 - 진행 단계가 바뀔 때마다 .factory/phase.txt 에 한 단어(scaffold, code, build, screenshots, done 중 하나)를 덮어써 주세요.
 - 화면 스크린샷을 만들 수 있으면 .factory/screenshots/ 에 png 로 저장하세요(예: home.png, result.png). 못 만들면 건너뛰세요.
+- 중간 확인은 빌드·린트·단위 시험으로 한다. 스크린샷 e2e는 마지막에 한 번만 돌린다. 측정·시뮬레이션은 지시문이 요구할 때만, 요구한 범위만 한다.
 - 마지막 응답은 한국어 3~6줄 결과 요약으로 하세요: 만든 화면, 분석/빌드 결과, 사람이 해야 할 일.`,
   release: `## 출시 준비 (이 일감은 kind=release)
 - RELEASE_REQUEST.md 가 이번 지시예요(종류: 첫 출시 / 스토어 수정 / 앱 업데이트(기능 추가) / 프로젝트 업데이트(예전)). 그 종류가 허락한 것만 하세요.

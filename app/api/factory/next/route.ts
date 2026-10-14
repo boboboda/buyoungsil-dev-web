@@ -57,7 +57,7 @@ import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
 import { maintenanceForNext } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
-import { consumeRestart, consumeUpdateNow, getAppSlots, getApprovalWaitSec, getDefaultAiEngine, getParallelPerApp, getToolBrokerSettings, getUpdateBundleMin, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
+import { consumeRestart, consumeUpdateNow, getAppSlots, getApprovalWaitSec, getDefaultAiEngine, getLoopGuard, getParallelPerApp, getToolBrokerSettings, getUpdateBundleMin, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
 import { noteSupervisorRuntime } from "@/lib/factory/supervisor";
 import { workerEngines } from "@/lib/factory/ai";
 import { toolBrokerForSupervisor } from "@/lib/factory/toolBroker";
@@ -162,8 +162,10 @@ export async function GET(req: NextRequest) {
     const uploadTest = await consumeUploadTest(); // 통제실 '업로드 시험'(한 번)
     void sweepReviewVideos(); // 7일 지난 검토 영상 정리(가끔)
     const updateBundleMin = (await Promise.resolve().then(() => getUpdateBundleMin()).catch(() => null))?.value;
+    const loopGuard = (await Promise.resolve().then(() => getLoopGuard()).catch(() => null))?.value;
     const extra = {
       defaultAiEngine,
+      ...(loopGuard ? { loopGuard } : {}), // 일감 시간 낭비 막기(반복 시험 감지·스크린샷 시간 상한)
       ...(updateBundleMin === undefined ? {} : { updateBundleMin }), // 감독 프로그램 업데이트 때 새 커밋을 모으는 시간(분, 0~180, 0 = 바로 받음)
       compactAfterJob, // 작업 후 컨텍스트 정리(/compact). false 면 감독 프로그램이 하지 않는다
       // 동시에 만들 앱 수(1~4). appSlotsDefault: true 면 통제실에서 정한 적 없는 기본값(PC 에 따로 정한 값이 있으면 감독 프로그램이 그걸 쓴다)

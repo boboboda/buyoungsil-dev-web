@@ -43,6 +43,7 @@
     "test:app-queue": "node tests/app-queue.test.mjs",
     "test:parallel-fixes": "node tests/parallel-fixes.test.mjs && node tools/factory-supervisor/tests/checks.test.mjs",
     "test:pc-guard": "node tools/factory-supervisor/tests/pcguard.test.mjs",
+    "test:loop-guard": "node tools/factory-supervisor/tests/loopguard.test.mjs && node tests/loop-guard.test.mjs && node tools/factory-supervisor/tests/loopguard-e2e.test.mjs",
     "test:lab": "node tests/lab-jobs.test.mjs && node tools/factory-supervisor/tests/lab.test.mjs"
   },
   "dependencies": {

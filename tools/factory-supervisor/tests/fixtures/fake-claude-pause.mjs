@@ -1,6 +1,6 @@
 // 시험용 가짜 Claude Code(업데이트 멈춤/이어서 하기 시험용): 진짜 AI 없이 도구 호출(tool_use ↔ tool_result)을 시간에 맞춰 내보낸다.
 // FAKE_SCENARIO(JSON 파일): { "<일감 id>": { calls: [ [단계…], [단계…] ], rejectResume?: true } }  — calls[n] 은 n 번째 실행(0 = 처음, 1 = 이어서 …)의 단계 목록
-// 단계: { say } | { tool: { name, input, ms } }(도구 호출을 내고 ms 뒤 결과) | { hang: { name, input } }(결과 없이 영원히) | { wait: ms } | { write: { file, text } }
+// 단계: { say } | { tool: { name, input, ms, out? } }(도구 호출을 내고 ms 뒤 결과) | { hang: { name, input } }(결과 없이 영원히) | { wait: ms } | { write: { file, text } }
 // 실행 기록은 FAKE_CALLS 에 줄마다 JSON 으로 남긴다: { id, n, resume, prompt, cwd }
 import fs from "node:fs";
 import path from "node:path";
@@ -39,7 +39,7 @@ let toolSeq = 0;
 for (const step of (cfg.calls ?? [])[earlier] ?? []) {
   if (step.say) emit({ type: "assistant", session_id: resume ?? session, message: { content: [{ type: "text", text: step.say }] } });
   if (step.wait) await new Promise((r) => setTimeout(r, step.wait));
-  if (step.write) fs.writeFileSync(path.join(process.cwd(), step.write.file), step.write.text);
+  if (step.write) fs.writeFileSync(path.join(process.cwd(), step.write.file), step.write.binary ? Buffer.from(step.write.text, "latin1") : step.write.text);
   if (step.tool || step.hang) {
     const t = step.tool ?? step.hang;
     const tuId = `tu-${earlier}-${toolSeq++}`;
@@ -49,7 +49,7 @@ for (const step of (cfg.calls ?? [])[earlier] ?? []) {
       await new Promise(() => {});
     }
     await new Promise((r) => setTimeout(r, t.ms ?? 0));
-    emit({ type: "user", session_id: resume ?? session, message: { content: [{ type: "tool_result", tool_use_id: tuId, content: "ok" }] } });
+    emit({ type: "user", session_id: resume ?? session, message: { content: [{ type: "tool_result", tool_use_id: tuId, content: t.out ?? "ok" }] } });
   }
 }
 emit({ type: "assistant", session_id: resume ?? session, message: { content: [{ type: "text", text: `${id} 호출 ${earlier} 처리` }] } });

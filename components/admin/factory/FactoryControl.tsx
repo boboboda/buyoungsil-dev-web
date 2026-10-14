@@ -13,6 +13,7 @@ import { AI_LABELS, isClaudeModel, type AiEngine, type TaskModel } from "@/lib/f
 import type { ToolRequestRecord } from "@/lib/factory/toolBroker";
 import type { HandoffEntry } from "@/lib/factory/handoff";
 import HandoffBox from "./HandoffBox";
+import JobSizeNotice from "./JobSizeNotice";
 
 type Status =
   | "pending"
@@ -503,6 +504,7 @@ function JobDetailView({
         {(job.status === "pending" || job.status === "failed") && (
           <ClaudeModelSelect disabled={busy} engine={aiEngine} label={job.status === "failed" ? "다시 시도할 모델" : "승인할 모델"} value={aiModel} onChange={setAiModel} />
         )}
+        {job.status === "pending" && <JobSizeNotice kind={job.kind} plan={job.planMarkdown} />}
         <div className="flex flex-wrap gap-2">
           {job.status === "pending" && (
             <Button

@@ -239,7 +239,8 @@ const reportsOf = (r, id) => r.state.reports.filter((x) => x.jobId === id);
 
 test("멈춤 → 업데이트 → 같은 세션으로 이어짐: 새 커밋을 받고 다시 켜진 감독이 --resume 으로 이어서 끝낸다", { skip, timeout: 200_000 }, async () => {
   const id = "P1";
-  const bash = (ms, cmd = "npm run build") => ({ tool: { name: "Bash", input: { command: cmd }, ms } });
+  let step = 0; // 명령이 매번 달라야 한다(같은 빌드를 결과 변화 없이 계속 돌리면 일감 시간 낭비 막기가 경고한다)
+  const bash = (ms, cmd = `npm run build -- --step ${++step}`) => ({ tool: { name: "Bash", input: { command: cmd }, ms } });
   const r = await runScenario({
     id,
     scenario: {

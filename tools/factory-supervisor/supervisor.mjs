@@ -18,6 +18,7 @@ import { createInterface } from "node:readline/promises";
 import { enforceTestMode } from "./testmode.mjs";
 import { BIG_UPLOAD_BYTES, createOutbox, trackUpload, uploadBusy } from "./outbox.mjs";
 import { bundleStatus, maybeUpdate, notePoll, reportInfo, requestUpdateNow, setUpdateBundle, startupGuard, updateWaiting } from "./update.mjs";
+import { SCREENSHOT_CUT_MESSAGE, STUCK_PREFIX, WARN_MESSAGE, cleanLoopGuard, commandEvents, createLoopGuard, screenshotBudget, snapshotWorkdir } from "./loopguard.mjs";
 import { RESUME_MESSAGE, clearSavedState, createPauser, readSavedState, resumeFailed } from "./pause.mjs";
 import {
   maskText,
@@ -126,6 +127,7 @@ function loadConfig() {
   c.pollSec = Math.max(5, Number(c.pollSec) || 15);
   c.heartbeatSec = Math.min(120, Math.max(5, Number(c.heartbeatSec) || 20));
   c.jobTimeoutMin = Math.max(5, Number(c.jobTimeoutMin) || 120);
+  c.loopGuard = cleanLoopGuard(c.loopGuard); // 일감 시간 낭비 막기(반복 시험 감지·스크린샷 시간 상한): PC 기본값. 통제실에서 정한 값이 오면 그 값이 우선
   // 시험 모드에서만: 시간 한도를 초 단위로 줄여 "멈춰 있던 시간은 빼고 센다"를 짧게 시험한다(진짜 운영에서는 쓰이지 않는다)
   if (process.env.FACTORY_TEST_MODE === "1" && Number(process.env.FACTORY_TEST_JOB_TIMEOUT_SEC) > 0) c.jobTimeoutMin = Number(process.env.FACTORY_TEST_JOB_TIMEOUT_SEC) / 60;
   if (!c.token || String(c.token).length < 16) {
@@ -311,6 +313,7 @@ ${stackRules(job)}
 - 에뮬레이터, 개발 서버, 감시 프로세스처럼 백그라운드로 띄운 것은 마지막 응답 전에 반드시 직접 끄세요. 남아 있으면 작업이 끝나지 않아 감독 프로그램이 강제로 정리해요.
 - 진행 단계가 바뀔 때마다 .factory/phase.txt 에 한 단어(scaffold, code, build, screenshots, done 중 하나)를 덮어써 주세요.
 - 화면 스크린샷을 만들 수 있으면 .factory/screenshots/ 에 png 로 저장하세요(예: home.png, result.png). 못 만들면 건너뛰세요.
+- 중간 확인은 빌드·린트·단위 시험으로 한다. 스크린샷 e2e는 마지막에 한 번만 돌린다. 측정·시뮬레이션은 지시문이 요구할 때만, 요구한 범위만 한다.
 - 마지막 응답은 한국어 3~6줄 결과 요약으로 하세요: 만든 화면, 분석/빌드 결과, 사람이 해야 할 일.
 ${releaseRules(job)}${RULES_END}
 `;
@@ -543,6 +546,7 @@ function readPhase(st) {
     if (/^[a-z_-]{1,40}$/.test(v) && v !== st.phase) {
       st.phase = v;
       st.phaseDirty = true;
+      st.phaseAt = Date.now();
     }
   } catch {
     /* 아직 없음 */
@@ -1091,6 +1095,15 @@ async function runAiTurn(st, prompt) {
     if (st.unit && !st.inMerge) await waitWhilePausing(st); // 업데이트하려고 멈추는 중이면 AI 를 띄우지 않고 기다린다
     if (st.stopped) return code;
     code = await runAiProcess(st, text, sessionId);
+    // 시간 낭비 막기(1-3): 같은 시험 반복 경고 / 스크린샷 시간 상한은 프로세스를 끊고 같은 세션에 한 마디 하며 이어 간다. 막힘은 여기서 끝(바깥에서 처리)
+    const cut = st.loopCut;
+    st.loopCut = null;
+    if (cut && !st.stopped && !st.stuck && !st.unit?.paused && (st.sessionId ?? sessionId)) {
+      sessionId = st.sessionId ?? sessionId;
+      text = cut === "shots" ? SCREENSHOT_CUT_MESSAGE(shotMaxMin()) : WARN_MESSAGE;
+      st.result = null;
+      continue;
+    }
     if (!st.unit?.paused || st.stopped || st.resumeProblem) return code;
     // 업데이트 때문에 멈춘 것: 세션을 기억해 두고 풀리면 같은 세션으로 이어 간다
     sessionId = st.sessionId ?? sessionId;
@@ -1116,6 +1129,43 @@ async function waitWhilePausing(st) {
   }
 }
 
+const effectiveLoopGuard = () => cleanLoopGuard(loopGuardSettings ?? cfg.loopGuard);
+// 시험 모드에서만: 스크린샷 단계 상한을 초 단위로 줄여 시험한다(진짜 운영에서는 쓰이지 않는다)
+const shotMaxMin = () => (process.env.FACTORY_TEST_MODE === "1" && Number(process.env.FACTORY_TEST_SCREENSHOT_SEC) > 0 ? Number(process.env.FACTORY_TEST_SCREENSHOT_SEC) / 60 : effectiveLoopGuard().screenshotMaxMin);
+
+// 일감 시간 낭비 막기: AI 원본 이벤트의 명령을 보고 같은 시험 반복을 감지한다(앱 일감 new·revision 만)
+function watchLoop(st, raw) {
+  if (!st.guard || st.inMerge) return; // 합치기 뒤 다시 맞추기 턴은 보지 않는다
+  for (const e of commandEvents(st.job.aiEngine, raw)) {
+    if (e.type === "end") {
+      st.guard.end(e.id, e.output);
+      continue;
+    }
+    const v = st.guard.start(e.id, e.command, () => snapshotWorkdir(st.dir));
+    if (v.action === "ok" || st.stopped || st.loopCut || st.stuck) continue;
+    if (v.action === "warn") {
+      st.loopCut = "warn";
+      addLog(st, "warn", `같은 시험을 반복 중이라 이 명령은 돌리지 않고 AI 에게 정리하라고 알려요. ${v.why}`);
+    } else {
+      st.stuck = `${STUCK_PREFIX}같은 시험·빌드 명령을 계속 반복해서 일감을 끝냈어요(경고 뒤에도 반복). ${v.why}`;
+      addLog(st, "error", st.stuck);
+    }
+    killTree(st.child);
+  }
+}
+
+// 스크린샷 단계(phase=screenshots)가 상한(기본 15분)을 넘으면 찍힌 것까지만 올리고 넘어가라고 한다. 하트비트마다 확인
+function checkScreenshotBudget(st) {
+  if (!st.guard || st.inMerge || st.stopped || st.stuck || st.loopCut) return;
+  readPhase(st);
+  const b = screenshotBudget({ phase: st.phase, enteredAt: st.phaseAt ?? null, now: Date.now(), maxMin: shotMaxMin(), done: st.shotsCut });
+  if (b.state !== "over") return;
+  st.shotsCut = true;
+  st.loopCut = "shots";
+  addLog(st, "warn", `스크린샷 단계가 ${shotMaxMin()}분을 넘어서 찍힌 것까지만 올리고 넘어가요.`);
+  killTree(st.child);
+}
+
 async function runAiProcess(st, prompt, resumeSession) {
   const { job, dir } = st;
   const { appSettings, aiSecrets, model, reqSecrets, secrets, lock } = st.turnCfg;
@@ -1125,6 +1175,7 @@ async function runAiProcess(st, prompt, resumeSession) {
   st.killedAfterResult = false;
   st.stderrTail = "";
   st.resumeProblem = null;
+  if (!st.guard && ["new", "revision"].includes(job.kind)) st.guard = createLoopGuard(effectiveLoopGuard());
   const segStart = Date.now();
   const child = startAi(job.aiEngine, cfg, {
     model,
@@ -1178,6 +1229,7 @@ async function runAiProcess(st, prompt, resumeSession) {
     let ev;
     try {
       const raw = JSON.parse(line);
+      watchLoop(st, raw);
       st.unit?.feed(raw); // 끝나지 않은 도구 호출 추적(업데이트로 멈출 안전한 지점을 찾는 데 쓴다)
       ev = decode(raw);
     } catch {
@@ -1216,7 +1268,10 @@ async function runAiProcess(st, prompt, resumeSession) {
     st.stderrTail = (st.stderrTail + d.toString()).slice(-2000);
   });
 
-  const beat = setInterval(() => flush(st), cfg.heartbeatSec * 1000);
+  const beat = setInterval(() => {
+    checkScreenshotBudget(st);
+    void flush(st);
+  }, cfg.heartbeatSec * 1000);
   // 시간 한도는 이 일감이 실제로 돈 시간만 센다: 업데이트로 멈춰 있던 시간은 남은 시간(st.timeLeftMs)에서 빠지지 않는다
   const timer = setTimeout(() => stop(st, `시간 초과(${cfg.jobTimeoutMin}분)`), Math.max(1000, st.timeLeftMs));
 
@@ -1368,7 +1423,11 @@ async function runJobUnlocked(job, lock, resume = null) {
   const code = await runAiTurn(st, resume?.sessionId ? RESUME_MESSAGE : promptFor(job));
 
   try {
-    if (st.resumeProblem) {
+    if (st.stuck) {
+      // 같은 시험 반복: 경고를 보낸 뒤에도 계속 반복해서 '막힘'으로 끝낸다(진행 중인 일감을 끄는 유일한 경우). 작업 파일은 그대로 둔다
+      await finish(st, "failed", { failReason: st.redact(`${st.stuck}
+작업한 파일은 그대로예요. 막힌 점을 확인하고 지시를 줄이거나 나눠서 [다시 시도]하세요.`).slice(-1800), failStage: "stuck" });
+    } else if (st.resumeProblem) {
       // 이어서 하기가 바로 오류로 끝났다(세션을 못 찾음 등): 실패가 아니라 '다시 시작 필요'. 서버가 통제실·텔레그램에 한 번 알린다
       addLog(st, "error", `이어서 하기 실패: ${st.resumeProblem}`);
       await finish(st, "failed", { failReason: st.redact(`다시 시작 필요: 업데이트로 멈춘 일감을 같은 세션으로 이어 주지 못했어요(${st.resumeProblem}). 파일은 그대로예요. 통제실에서 [다시 시도]를 눌러 주세요.`).slice(-1800), failStage: "resume" });
@@ -1952,6 +2011,7 @@ async function finishVideoLink(st, { summary }) {
 let paused = false;
 let autoUpdate = true; // 통제실 스위치. /next 응답에 autoUpdate: false 가 오면 끈다(필드가 없으면 켜짐)
 let defaultAiEngine = null;
+let loopGuardSettings = null; // 통제실 [설정] 일감 시간 낭비 막기(없으면 PC 설정 파일 값 → 기본값)
 let compactAfterJob = true; // 통제실 '작업 후 컨텍스트 정리'. /next 에 compactAfterJob: false 가 오면 끈다(필드가 없으면 켜짐)
 let slotLimit = null; // 통제실 '동시에 만들 앱 수'를 받은 값(null = 아직 못 받음 → PC 설정 slots)
 const appLimit = () => slotLimit ?? cfg.slots;
@@ -2075,6 +2135,7 @@ async function loop() {
           autoUpdate = r.data?.autoUpdate !== false;
           if (r.data && r.data.updateBundleMin !== undefined) setUpdateBundle(r.data.updateBundleMin); // 새 커밋을 모으는 시간(분, 0~180)
           compactAfterJob = r.data?.compactAfterJob !== false;
+          if (r.data?.loopGuard && typeof r.data.loopGuard === "object") loopGuardSettings = cleanLoopGuard(r.data.loopGuard); // 일감 시간 낭비 막기 설정(통제실)
           // 동시에 만들 앱 수: 서버 값(1~4)이 우선, 없거나 범위 밖이면 PC 값. 줄이면 돌던 일감은 그대로 두고 끝나면서 줄어든다
           const nextLimit = effectiveSlots({ server: r.data?.appSlots, serverIsDefault: r.data?.appSlotsDefault === true, pc: cfg.pcSlots });
           if (nextLimit !== appLimit()) log(`동시에 만들 앱: ${appLimit()}개 → ${nextLimit}개${running.size > nextLimit ? ` (돌던 ${running.size}개는 그대로 두고 끝나면서 줄어요)` : ""}`);
