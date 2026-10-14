@@ -87,3 +87,11 @@ server {
 - 로그인 쿠키(`__Secure-authjs.session-token`)는 홈페이지 도메인 것이라, 다른 도메인(studio.…)에서는 로그인이 안 이어진다. 관리자 로그인으로 쓰려면 홈페이지 도메인의 `/studio` 를 쓰거나, 쿠키 도메인 설정을 따로 정해야 한다. 접근 키(Basic)는 도메인과 무관하다.
 - 기존 `docs/studio-access.md` 의 `location ^~ /studio { auth_request … }`(app-kit 앞 인증)와 이 블록은 같은 서버 블록에 함께 둘 수 없다. 옮기는 순간 app-kit 쪽 `/studio` 주소가 바뀌므로 먼저 `studioUrl`(통제실 [스튜디오] 탭의 바로가기)을 점검한다.
 - 정리(기존 통제실 스튜디오 기능 제거)는 3-4 에서 한다.
+
+## [제작] 탭 (3-2)
+- 화면: `components/studio/MakeTab.tsx`, 자료 읽기 `lib/studio/makeData.ts`, 순수 계산 `lib/studio/make.ts`. `/studio/<앱>?tab=make`.
+- [생성]: `POST /api/studio/make`(관리자만) → 2-3 `enqueueToolJob`(출처 '스튜디오', `askLimit`). 일·월 비용 한도를 넘으면 409 + `needsConfirm`, 화면이 확인을 받고 `confirmed:true` 로 다시 보낸다(그 일감만 한도 검사를 건너뜀). 승인 규칙은 2-3 설정 그대로(자동 승인은 한도 안일 때만).
+- 진행: 도구 일감 목록(대기·진행·완료·실패·확인 필요), 진행 중이면 감독의 마지막 로그 한 줄. `router.refresh()` 를 5초마다 불러 접근 키 사용자도 같은 방식으로 갱신한다.
+- 미리보기: 정수배 확대(`pixelScale`)와 `image-rendering: pixelated`, 누르면 라이트박스. 그림마다 카드 이름·판 번호·참고 표시와 `[운영에서 검수]` 링크(`?tab=ops&sub=review&art=<id>`, 3-3에서 연결).
+- [배치]: 프로젝트 연결 설정의 배치가 켜져 있을 때만 `sub=batch` 자리(3-4에서 채움).
+- Studio 요청 API(regen·split/redraw)는 2-3에서 이미 카드 도구 일감 경로를 쓴다(확인만 함).

@@ -77,13 +77,13 @@ export async function toolUsage(now = new Date(), exceptId?: string): Promise<Us
 
 // ───────── 등록 ─────────
 
-export type ToolEnqueue = { ok: true; id: string; autoApproved: boolean; message: string } | { ok: false; message: string };
+export type ToolEnqueue = { ok: true; id: string; autoApproved: boolean; message: string } | { ok: false; message: string; needsConfirm?: { reason: string; estimatedCost: number; usage: Usage } };
 
 /**
  * 도구 일감 등록. args: { appSlug, card(이름 또는 id), count?, subject|subjects, extra?, refArtIds?, source? }
  * 카드·키·설명서를 검사하고(카드가 꺼져 있거나 AI 턴이 필요한 방법이면 거절), 설정이 허락하면 바로 승인 상태로 둔다.
  */
-export async function enqueueToolJob(args: Record<string, unknown>, who: { source: string | null; autoApproveAllowed?: boolean } = { source: null }): Promise<ToolEnqueue> {
+export async function enqueueToolJob(args: Record<string, unknown>, who: { source: string | null; autoApproveAllowed?: boolean; askLimit?: boolean } = { source: null }): Promise<ToolEnqueue> {
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
 
   if (!SLUG_RE.test(appSlug)) return { ok: false, message: "appSlug(카드가 있는 프로젝트 이름)가 필요해요." };
@@ -111,7 +111,15 @@ export async function enqueueToolJob(args: Record<string, unknown>, who: { sourc
   const settings = await getToolSettings();
   const usage = estimated > 0 ? await toolUsage() : { day: 0, month: 0 };
   const auto = who.autoApproveAllowed !== false && shouldAutoApprove(settings, estimated, usage);
-  const toolInput = { ...input.value, estimatedCost: estimated };
+  // 스튜디오(askLimit): 일·월 비용 한도를 넘으면 등록하지 않고 확인을 먼저 받는다. 사람이 확인(confirmed)하면 일감에 confirmed 를 켜서 한도 검사를 건너뛴다(통제실 [그대로 진행]과 같다)
+  const limit = checkCostLimit(usage, estimated, settings);
+  let confirmed = false;
+
+  if (who.askLimit && limit.ok === false) {
+    if (args.confirmed !== true) return { ok: false, message: `${limit.reason}. 그래도 만들려면 확인해 주세요.`, needsConfirm: { reason: limit.reason, estimatedCost: estimated, usage } };
+    confirmed = true;
+  }
+  const toolInput = { ...input.value, estimatedCost: estimated, ...(confirmed ? { confirmed: true } : {}) };
   const plan = toolJobPlan({ cardName: row.name, cardVersion: row.version, tool: data.tool, method: data.method, input: input.value, estimatedCost: estimated });
   const aiEngine = await getDefaultAiEngine().catch(() => "claude" as const);
   const now = new Date();

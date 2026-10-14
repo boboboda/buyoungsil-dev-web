@@ -504,3 +504,34 @@ test("마이그레이션: 새 칸 2개만 추가하고 지우는 문장이 없�
   assert.equal(/DROP|DELETE|TRUNCATE/i.test(sql.replace(/^--.*$/gm, "")), false);
   assert.match(read("prisma/schema.prisma"), /toolInput\s+Json\?/);
 });
+
+test("스튜디오 등록(askLimit): 한도를 넘으면 등록 없이 확인을 요구하고, 확인하면 confirmed 로 등록한다. 채팅 등 다른 곳의 confirmed 는 무시", async () => {
+  const w = fakeWorld();
+  const db = loadDb(w);
+  await db.setToolSettings({ autoApprove: true, autoApproveMaxCost: 10, dailyLimit: 4, concurrency: 4 });
+  w.jobs.push({ id: "old", kind: "tool", status: "done", cardId: "card_x", startedAt: new Date(), finishedAt: new Date(), toolInput: null, toolResult: { cost: 3, arts: [], message: "" } });
+  const ask = { source: "스튜디오", askLimit: true };
+  const first = await db.enqueueToolJob({ appSlug: "one-tiny-frame", card: "card_1", subjects: ["싹이"], count: 2 }, ask);
+
+  assert.equal(first.ok, false);
+  assert.match(first.needsConfirm.reason, /오늘 PixelLab 호출 한도\(4회\)/);
+  assert.equal(first.needsConfirm.estimatedCost, 2);
+  assert.equal(w.jobs.length, 1, "확인 전에는 일감을 만들지 않는다");
+  const again = await db.enqueueToolJob({ appSlug: "one-tiny-frame", card: "card_1", subjects: ["싹이"], count: 2, confirmed: true }, ask);
+
+  assert.equal(again.ok, true);
+  assert.equal(again.autoApproved, false, "한도를 넘으면 자동 승인하지 않는다(승인 규칙은 그대로)");
+  const job = w.jobs.find((j) => j.id === again.id);
+  assert.equal(job.status, "pending");
+  assert.equal(job.toolInput.confirmed, true);
+  assert.equal(job.source, "스튜디오");
+  // 한도 안이면 확인을 묻지 않고 confirmed 도 켜지 않는다
+  const small = await db.enqueueToolJob({ appSlug: "one-tiny-frame", card: "card_1", subjects: ["싹이"], count: 1, confirmed: true }, ask);
+  assert.equal(small.ok, true);
+  assert.equal(small.autoApproved, true);
+  assert.equal(w.jobs.find((j) => j.id === small.id).toolInput.confirmed, undefined);
+  // askLimit 가 없는 등록(채팅·Studio 요청)은 confirmed 를 줘도 한도를 건너뛰지 못한다
+  const chat = await db.enqueueToolJob({ appSlug: "one-tiny-frame", card: "card_1", subjects: ["싹이"], count: 3, confirmed: true }, { source: "채팅" });
+  assert.equal(chat.ok, true);
+  assert.equal(w.jobs.find((j) => j.id === chat.id).toolInput.confirmed, undefined);
+});

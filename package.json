@@ -51,6 +51,7 @@
     "test:tool-manifests": "node tests/tool-manifests.test.mjs && node tools/factory-supervisor/tests/toolmanifest.test.mjs",
     "test:result-cards": "node tests/result-cards.test.mjs && node tools/factory-supervisor/tests/cards.test.mjs",
     "test:studio-hub": "node tests/studio-hub.test.mjs",
+    "test:studio-make": "node tests/studio-make.test.mjs",
     "test:tool-jobs": "node tests/tool-jobs.test.mjs && node tools/factory-supervisor/tests/tooljob.test.mjs"
   },
   "dependencies": {

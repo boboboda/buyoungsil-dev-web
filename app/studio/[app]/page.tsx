@@ -1,12 +1,14 @@
 // app/studio/[app]/page.tsx
-// 공용 스튜디오 프로젝트 화면: 탭 [구성] [제작] [운영]. 이번에는 [구성]만 채우고 [제작]·[운영]은 '준비 중' 자리(운영 하위 메뉴는 프로젝트 연결 설정의 기능 스위치를 따른다).
+// 공용 스튜디오 프로젝트 화면: 탭 [구성] [제작] [운영]. [구성](3-1)·[제작](3-2)을 채웠고 [운영]은 '준비 중' 자리(운영 하위 메뉴는 프로젝트 연결 설정의 기능 스위치를 따른다).
 // 접근: 관리자 또는 이 앱의 Studio 접근 키(읽기 전용). 안 되면 같은 거부 화면.
 import Link from "next/link";
 
 import { readStudioProject, type StudioProjectData } from "@/lib/studio/data";
 import { parseStudioTab, STUDIO_TABS, visibleOpsMenu } from "@/lib/studio/dashboard";
 import { resolveViewer } from "@/lib/studio/pageAccess";
+import { readMakeData, type MakeData } from "@/lib/studio/makeData";
 import ConfigTab from "@/components/studio/ConfigTab";
+import MakeTab from "@/components/studio/MakeTab";
 import StudioDenied from "@/components/studio/StudioDenied";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +49,15 @@ export default async function StudioProjectPage({ params, searchParams }: { para
   const flags = { studioBatch: data.link?.studioBatch ?? false, studioService: data.link?.studioService ?? false };
   const ops = visibleOpsMenu(flags);
   const sub = Array.isArray(search.sub) ? search.sub[0] : search.sub;
+  let make: MakeData | null = null;
+
+  if (tab === "make") {
+    try {
+      make = await readMakeData(app);
+    } catch (error) {
+      console.error("[studio] 제작 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
+    }
+  }
   const opsNow = ops.find((o) => o.key === sub) ?? ops[0];
 
   return (
@@ -79,10 +90,13 @@ export default async function StudioProjectPage({ params, searchParams }: { para
 
       {tab === "config" ? <ConfigTab canEdit={viewer.kind === "admin"} data={data} /> : null}
       {tab === "make" ? (
-        <section className="fx-panel space-y-1 p-4" data-studio-pending="make">
-          <h2 className="fx-label">제작</h2>
-          <p className="text-sm fx-muted">준비 중이에요. 카드를 골라 생성하는 화면이 여기에 들어와요. 지금은 통제실의 &quot;카드로 바로 만들기&quot;를 쓰세요.</p>
-        </section>
+        make ? (
+          <MakeTab canEdit={viewer.kind === "admin"} data={make} showBatch={flags.studioBatch} sub={sub} />
+        ) : (
+          <p className="fx-panel p-3 text-sm fx-muted" data-make-failed role="status">
+            ○ 확인 못 함 — 제작 자료를 읽지 못했어요. 잠시 뒤 다시 열어 주세요.
+          </p>
+        )
       ) : null}
       {tab === "ops" ? (
         <section className="fx-panel min-w-0 space-y-2 p-4" data-studio-pending="ops">
