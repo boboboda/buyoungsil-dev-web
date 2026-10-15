@@ -4,36 +4,22 @@ import prisma from "@/lib/prisma";
 import { parseDraftInput } from "@/lib/drafts/validate";
 import { MAX_SUB_NAME, cleanSubName, normalizeName } from "@/lib/drafts/subCategory";
 import { FACTORY_INSTRUCTIONS, FACTORY_TOOLS, callFactoryTool, isFactoryTool } from "@/lib/factory/mcp";
+import { RpcOutcome, ToolResult, createRpcHandler, text } from "@/lib/mcp/rpc";
 import { MAINTENANCE_INSTRUCTIONS, MAINTENANCE_TOOLS, callMaintenanceTool, isMaintenanceTool } from "@/lib/factory/maintenance-mcp";
 
-const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_PENDING = 100; // 초안함이 이 개수를 넘으면 더 받지 않는다 (폭주 방지)
 
 const STORY_CATEGORIES = ["삽질기", "꿀팁", "일상"];
 
 const MAX_SUB_PER_SECTION = 15; // 섹션당 세부 카테고리 상한 (난립 방지, Claude 도구에만 적용)
 
-const INSTRUCTIONS =
+// 도구 묶음 둘: 블로그 초안함 / 공장(앱 공장 + 정비). /api/mcp 는 둘을 합쳐 한 토큰으로 제공한다.
+export const DRAFT_INSTRUCTIONS =
   "부영실 개발 홈페이지의 초안함 커넥터예요. save_draft 로 글 초안을 보내면 관리자 초안함에 '대기' 상태로 쌓이고, " +
-  "관리자가 분류를 정해 비공개 글로 보내요. 보내기 전에 list_categories 로 실제 섹션/카테고리 이름을 확인하세요." +
-  FACTORY_INSTRUCTIONS +
-  MAINTENANCE_INSTRUCTIONS;
+  "관리자가 분류를 정해 비공개 글로 보내요. 보내기 전에 list_categories 로 실제 섹션/카테고리 이름을 확인하세요.";
+export const FACTORY_BUNDLE_INSTRUCTIONS = FACTORY_INSTRUCTIONS + MAINTENANCE_INSTRUCTIONS;
 
-type JsonRpcRequest = {
-  jsonrpc?: string;
-  id?: string | number | null;
-  method?: string;
-  params?: Record<string, unknown>;
-};
-
-type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
-
-const text = (t: string, isError = false): ToolResult => ({
-  content: [{ type: "text", text: t }],
-  ...(isError ? { isError: true } : {}),
-});
-
-const DRAFT_TOOLS = [
+export const DRAFT_TOOLS = [
   {
     name: "list_categories",
     description:
@@ -92,7 +78,9 @@ const DRAFT_TOOLS = [
   },
 ];
 
-export const TOOLS = [...DRAFT_TOOLS, ...FACTORY_TOOLS, ...MAINTENANCE_TOOLS];
+export const FACTORY_BUNDLE_TOOLS = [...FACTORY_TOOLS, ...MAINTENANCE_TOOLS];
+export const TOOLS = [...DRAFT_TOOLS, ...FACTORY_BUNDLE_TOOLS];
+export const INSTRUCTIONS = DRAFT_INSTRUCTIONS + FACTORY_BUNDLE_INSTRUCTIONS;
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
   if (isFactoryTool(name)) return callFactoryTool(name, args);
@@ -192,56 +180,12 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
   return text(`알 수 없는 도구예요: ${name}`, true);
 }
 
-export type RpcOutcome = { status: number; body?: unknown };
+export type { RpcOutcome };
 
-async function handleOne(msg: JsonRpcRequest): Promise<unknown | null> {
-  const isNotification = msg.id === undefined || msg.id === null;
-  const reply = (result: unknown) => ({ jsonrpc: "2.0", id: msg.id, result });
-  const fail = (code: number, message: string) => ({ jsonrpc: "2.0", id: msg.id ?? null, error: { code, message } });
-
-  if (typeof msg.method !== "string") return isNotification ? null : fail(-32600, "Invalid Request");
-  if (isNotification) return null; // notifications/initialized 등: 응답 없음
-
-  switch (msg.method) {
-    case "initialize": {
-      const asked = msg.params?.protocolVersion;
-      const version = typeof asked === "string" && SUPPORTED_VERSIONS.includes(asked) ? asked : SUPPORTED_VERSIONS[1];
-      return reply({
-        protocolVersion: version,
-        capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "buyoungsil-drafts", version: "1.1.0" },
-        instructions: INSTRUCTIONS,
-      });
-    }
-    case "ping":
-      return reply({});
-    case "tools/list":
-      return reply({ tools: TOOLS });
-    case "tools/call": {
-      const name = msg.params?.name;
-      const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
-      if (typeof name !== "string") return fail(-32602, "도구 이름이 필요해요");
-      try {
-        return reply(await callTool(name, args));
-      } catch (error) {
-        console.error("MCP 도구 오류:", error);
-        return reply(text("서버에서 오류가 났어요. 잠시 뒤 다시 시도해 주세요.", true));
-      }
-    }
-    default:
-      return fail(-32601, `지원하지 않는 메서드예요: ${msg.method}`);
-  }
-}
-
-export async function handleRpc(payload: unknown): Promise<RpcOutcome> {
-  if (Array.isArray(payload)) {
-    if (payload.length === 0) return { status: 400, body: { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } } };
-    const out = (await Promise.all(payload.map((m) => handleOne(m as JsonRpcRequest)))).filter((r) => r !== null);
-    return out.length ? { status: 200, body: out } : { status: 202 };
-  }
-  if (!payload || typeof payload !== "object") {
-    return { status: 400, body: { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } } };
-  }
-  const result = await handleOne(payload as JsonRpcRequest);
-  return result === null ? { status: 202 } : { status: 200, body: result };
-}
+export const handleRpc = createRpcHandler({
+  tools: TOOLS,
+  instructions: INSTRUCTIONS,
+  callTool,
+  serverName: "buyoungsil-drafts",
+  serverVersion: "1.1.0",
+});
