@@ -176,6 +176,29 @@ test("site-init: 훅 이름 4곳 치환, clone, 이미 있으면 멈춤, 대상�
   }
 });
 
+test("backup-init: 훅 없는 bare 만들기, 이미 있으면 그대로, 이름·대상 검사", { skip }, async () => {
+  const ctx = setup();
+  try {
+    let r = await run(ctx, ["backup-init", "factory-web"]);
+    assert.equal(r.code, 0, r.out);
+    const b = `${ctx.home}/git-server/backup/factory-web.git`;
+    assert.ok(fs.existsSync(`${b}/HEAD`), "bare 저장소");
+    assert.deepEqual(fs.readdirSync(`${b}/hooks`), [], "훅 없음");
+    assert.match(read(`${ctx.home}/serverctl-actions.log`), /backup-init factory-web/);
+    fs.writeFileSync(`${b}/marker`, "x");
+    r = await run(ctx, ["backup-init", "factory-web"]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /이미 있어서 그대로/);
+    assert.ok(fs.existsSync(`${b}/marker`), "있던 것은 건드리지 않는다");
+    r = await run(ctx, ["backup-init", "../x"]);
+    assert.notEqual(r.code, 0);
+    r = await run(ctx, ["backup-init", "x", "--host", "evil.example.com"]);
+    assert.notEqual(r.code, 0);
+  } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
 test("env-clone: 서버 안에서만 복사, --set·--gen, 값은 출력하지 않음, 대상 있으면 백업, 실패하면 대상 그대로", { skip }, async () => {
   const ctx = setup();
   try {

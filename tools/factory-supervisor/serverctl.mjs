@@ -50,6 +50,8 @@
 //                                    보관함 주소는 deploy 설정이 아니라 감독 설정의 serverUrl 을 따른다(그 홈페이지의 /api/factory/service-token). 전환 전에는 블로그, 전환 뒤에는 새 serverUrl.
 //                                    어느 단계든 실패하면 둘 다 되돌림(.env 백업 복원, 보관함 이전 값 복원 또는 삭제, 컨테이너 재시작). 값은 출력·로그·파일·인자에 남지 않음
 //
+//   backup-init NAME [--host H]      ~/git-server/backup/NAME.git(bare, 훅 없음) 만들기. 메인 PC 원본 bare 에서 push 로만 채우는 백업용. 이미 있으면 그대로 둠
+//
 // 감독 홈페이지 주소 전환(서버가 아니라 이 PC 의 감독 설정을 바꾼다. 자세한 건 serverswitch.mjs):
 //   server-switch <새 주소> [--dry-run]
 //                                    ① 새 주소로 시험 호출(워커 토큰으로 일감 확인 200, 상태 토큰으로 /api/claude-status 200) — 하나라도 틀리면 아무것도 안 바꿈
@@ -70,7 +72,7 @@ import { healthPassed, healthRedirect, resolveDeploy } from "./deploycfg.mjs";
 import { runServerSwitch } from "./serverswitch.mjs";
 
 // 정비 보호 훅(pcguard.mjs)도 이 목록으로 "신뢰된 serverctl 호출"을 가린다
-export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "nginx-find", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token", "server-switch"];
+export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "nginx-find", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token", "server-switch", "backup-init"];
 const HOST = "serverpc";
 const HOSTS = ["serverpc", "serverpc2"]; // 우리 서버 두 대만(serveraccess.mjs 의 SERVER_HOSTS 와 같게)
 // 시험 모드(FACTORY_TEST_MODE=1)에서만 가짜 ssh·가짜 홈페이지 주소를 쓴다. 진짜 실행에서는 환경변수로 바꿀 수 없다
@@ -344,6 +346,13 @@ set -u
 TS=$(date +%Y%m%d-%H%M%S)
 act() { echo "$(date '+%F %T') $*" >> "$HOME/serverctl-actions.log"; }
 case "$1" in
+  backup-init)
+    # 백업 저장소(훅 없음): 메인 PC 원본 bare 에서 push 로만 채운다. 이미 있으면 그대로 두고 EXISTS 만 알린다
+    B="$HOME/git-server/backup/$2.git"
+    if [ -e "$B" ]; then echo "EXISTS $B"; exit 0; fi
+    mkdir -p "$HOME/git-server/backup" && git init -q --bare --template= -b main "$B" || { echo "INIT_FAIL"; exit 8; }
+    mkdir -p "$B/hooks"
+    act "backup-init $2"; echo "CREATED $B" ;;
   app-update-start)
     # 배포 훅이 없는 앱(한 컷): 작업 폴더가 가진 origin(서버의 배포 저장소)의 main 을 fast-forward 로만 받고, compose 로 다시 빌드·실행한다
     N="$2"; D="$HOME/git-server/work/$N"; LF="$HOME/serverctl-app-$N.log"
@@ -454,7 +463,7 @@ esac
 // 시험 모드에서만 가짜 ssh(node 스크립트)를 쓴다
 const sshCmd = () => (TEST && process.env.SERVERCTL_SSH ? [process.execPath, [process.env.SERVERCTL_SSH]] : ["ssh", []]);
 function remote(args, input, host = DEFAULT_HOST) {
-  const script = /^(app-(update|health|restart)|env-restore-work)/.test(args[0]) ? REMOTE_APP : args[0] === "web-release" ? REMOTE_WEB : /^nginx-(show|apply|restore|backups|find)$/.test(args[0]) ? REMOTE_NGX : REMOTE;
+  const script = /^(app-(update|health|restart)|env-restore-work|backup-init)/.test(args[0]) ? REMOTE_APP : args[0] === "web-release" ? REMOTE_WEB : /^nginx-(show|apply|restore|backups|find)$/.test(args[0]) ? REMOTE_NGX : REMOTE;
   if (!HOSTS.includes(host)) die(`대상 서버는 ${HOSTS.join("·")} 만이에요: ${host}`);
   // 윈도우 ssh 명령줄은 길면 잘린다(원격 셸이 "unmatched \"" 로 실패) → 스크립트를 gzip 한 뒤 base64 로 보낸다
   const b64 = gzipSync(Buffer.from(script.replace(/\r\n/g, "\n")), { level: 9 }).toString("base64");
@@ -795,6 +804,22 @@ async function siteInit(args) {
   }
   say2(`site-init ${name}: ${host} 에 배포 저장소·훅·작업 폴더를 만들었어요(원본 ${from}, 이름 4곳 치환, 원본 이름 남은 곳 0).`, r.out);
   await report(`서버 site-init ${name} (${host}, 원본 ${from})\n결과: bare 저장소 + post-receive 훅(이름 4곳 치환) + 작업 폴더 clone`);
+}
+
+async function backupInit(args) {
+  const { pos, opts } = parseOpts(args);
+  const [name] = pos;
+  const host = hostOpt(opts);
+  if (!NAME_RE.test(name ?? "")) die("backup-init <이름> (영문·숫자·_- 로, 영문으로 시작)");
+  const r = remote(["backup-init", name], "", host);
+  if (r.code !== 0) {
+    say2(`backup-init ${name}: 실패(코드 ${r.code}).`, r.out);
+    process.exit(r.code || 1);
+  }
+  const existed = /EXISTS/.test(r.out);
+  say2(`backup-init ${name}: ${host} 의 git-server/backup/${name}.git ${existed ? "이미 있어서 그대로 뒀어요" : "(bare, 훅 없음)을 만들었어요"}.`, r.out);
+  if (!existed) await report(`서버 backup-init ${name} (${host})
+결과: git-server/backup/${name}.git bare(훅 없음)`);
 }
 
 async function envClone(args) {
@@ -1374,6 +1399,8 @@ async function main() {
       return siteInit(rest);
     case "env-clone":
       return envClone(rest);
+    case "backup-init":
+      return backupInit(rest);
     case "nginx-site":
       return nginxSite(rest);
     case "cert":
