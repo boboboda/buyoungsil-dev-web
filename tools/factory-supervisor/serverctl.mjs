@@ -4,9 +4,11 @@
 //
 //   env-keys                         .env.local 의 키 이름만(값은 절대 출력하지 않음)
 //   env-set KEY                      값은 환경변수 SERVERCTL_VALUE 또는 stdin 으로만(명령줄·로그에 값 없음). 반영은 rebuild 로
-//   env-set <작업폴더…> [--gen-shared KEY]… [--gen KEY]… [--host H]
+//   env-set <작업폴더…> [--gen-shared KEY]… [--gen KEY]… [--put KEY] [--host H]
 //                                    비밀값을 서버 안에서 만들어 .env.local 에 넣음(값은 어디에도 출력 안 함, 결과는 변수 이름만).
 //                                    --gen-shared: 한 번 만든 같은 값을 나열한 모든 폴더에, --gen: 폴더마다 따로(이미 있으면 건너뜀).
+//                                    --put KEY: 사람이 정한 값(SERVERCTL_VALUE 환경변수나 stdin 으로만)을 모든 폴더에 넣음(이미 있으면 바꿈).
+//                                    폴더에 .env.local 이 없으면 .env 를 씀(한 컷 등)
 //                                    폴더마다 백업(~/env-backups/<폴더>/), 권한 600, 하나라도 실패하면 모두 되돌림
 //   env-unset KEY
 //   nginx-show                       대상 사이트 설정 파일 내용
@@ -25,6 +27,12 @@
 //                                    sites-available/NAME 새로 만들고 링크 → nginx -t → reload → 헬스체크, 실패하면 지움. 기존 사이트 파일은 고치지 않음
 //   cert DOMAIN                      certbot --nginx --redirect(사이트 파일 백업, 실패하면 복원). 인증서 내용은 출력하지 않음
 //   deploy-push APP_DIR REMOTE URL   작업 PC 앱 폴더에 배포 원격을 추가하고 main push → 서버 배포 로그 끝·컨테이너 확인
+//   app-update NAME [--host H] [--probe PATH]… [--domain D]
+//                                    배포 훅이 없는 앱(한 컷): 서버 작업 폴더에서 origin main 을 ff-only 로 받고 compose up -d --build → 컨테이너·경로 응답 확인.
+//                                    실패하면 이전 이미지·커밋으로 되돌림. 경로는 토큰 없이 부른 응답 코드만 보고(기본 /health). --domain 이면 공개 주소도 확인
+//   web-release APP_DIR [--site NAME] [--host H] [--domain D]
+//                                    새싹 허브 /preview/ 같은 정적 웹: APP_DIR/build/preview(+.gz)와 tools/web/server 설정 4개를 서버 작업 폴더(기본 saessak-hub-web)에 올림.
+//                                    새 nginx 설정은 임시 컨테이너로 먼저 검사, 바꾸기 전 백업, 실패하면 설정·링크 되돌림, /preview/ 와 / 200·헤더 확인
 //
 // 안전 절차: 바꾸기 전에 백업(작업 폴더 밖, 최근 20개) → 바꾸고 검증(nginx -t, reload, 헬스체크 / rebuild, 헬스체크)
 //           → 실패하면 자동 되돌림. 바꿀 때마다 정비 대화와 텔레그램에 "무엇을·백업·검증 결과"를 남긴다(값 제외).
@@ -36,7 +44,7 @@ import path from "node:path";
 import { gzipSync } from "node:zlib";
 
 // 정비 보호 훅(pcguard.mjs)도 이 목록으로 "신뢰된 serverctl 호출"을 가린다
-export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push"];
+export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release"];
 const HOST = "serverpc";
 const HOSTS = ["serverpc", "serverpc2"]; // 우리 서버 두 대만(serveraccess.mjs 의 SERVER_HOSTS 와 같게)
 // 시험 모드(FACTORY_TEST_MODE=1)에서만 가짜 ssh·가짜 홈페이지 주소를 쓴다. 진짜 실행에서는 환경변수로 바꿀 수 없다
@@ -102,18 +110,21 @@ case "$1" in
   env-multi)
     # 인자: 작업 폴더 이름들. 표준입력: "shared<TAB>KEY" / "gen<TAB>KEY" 줄. 전부 준비된 뒤에야 바꾸고, 하나라도 실패하면 되돌린다
     shift; umask 077; PLAN=""; DONE_N=""
-    for N in "$@"; do [ -f "$HOME/git-server/work/$N/.env.local" ] || { echo "NO_ENV $N"; exit 2; }; done
-    while IFS=$'\t' read -r OP K; do
+    # 환경 파일은 폴더마다 .env.local 이 있으면 그것, 없으면 .env (한 컷처럼 .env 를 쓰는 앱). 줄 종류: shared·gen(서버에서 생성) / val(넘겨받은 값)
+    envf() { if [ -f "$HOME/git-server/work/$1/.env.local" ]; then echo .env.local; elif [ -f "$HOME/git-server/work/$1/.env" ]; then echo .env; fi; }
+    for N in "$@"; do [ -n "$(envf "$N")" ] || { echo "NO_ENV $N"; exit 2; }; done
+    while IFS=$'\t' read -r OP K V0; do
       [ -z "$OP" ] && continue
       V=""
       if [ "$OP" = shared ]; then V=$(openssl rand -hex 32 2>/dev/null); [[ "$V" =~ ^[0-9a-f]{64}$ ]] || { V=""; PLAN=""; echo "GEN_FAIL $K"; exit 3; }; fi
-      PLAN="$PLAN$OP"$'\t'"$K"$'\t'"$V"$'\n'; V=""
+      if [ "$OP" = val ]; then V="$V0"; fi
+      PLAN="$PLAN$OP"$'\t'"$K"$'\t'"$V"$'\n'; V=""; V0=""
     done
-    cleanup() { for N in "$@"; do rm -f "$HOME/git-server/work/$N/.env.local.serverctl-$TS" "$HOME/git-server/work/$N/.env.local.serverctl-$TS.n"; done; }
+    cleanup() { for N in "$@"; do F=$(envf "$N"); rm -f "$HOME/git-server/work/$N/$F.serverctl-$TS" "$HOME/git-server/work/$N/$F.serverctl-$TS.n"; done; }
     for N in "$@"; do
-      D="$HOME/git-server/work/$N/.env.local"; EB="$HOME/env-backups/$N"; mkdir -p "$EB"; chmod 700 "$HOME/env-backups" "$EB"
-      B="$EB/.env.local.bak-$TS"; cp "$D" "$B" && chmod 600 "$B" || { cleanup "$@"; echo "BACKUP_FAIL $N"; exit 3; }
-      prune "$EB" .env.local; echo "BACKUP $B"
+      F=$(envf "$N"); D="$HOME/git-server/work/$N/$F"; EB="$HOME/env-backups/$N"; mkdir -p "$EB"; chmod 700 "$HOME/env-backups" "$EB"
+      B="$EB/$F.bak-$TS"; cp "$D" "$B" && chmod 600 "$B" || { cleanup "$@"; echo "BACKUP_FAIL $N"; exit 3; }
+      prune "$EB" "$F"; echo "BACKUP $B"
       T="$D.serverctl-$TS"; cp "$D" "$T" && chmod 600 "$T" || { cleanup "$@"; echo "COPY_FAIL $N"; exit 3; }
       [ -n "$(tail -c1 "$T")" ] && echo >> "$T"
       while IFS=$'\t' read -r OP K V; do
@@ -128,16 +139,16 @@ case "$1" in
       done <<< "$PLAN"
     done
     for N in "$@"; do
-      D="$HOME/git-server/work/$N/.env.local"
+      F=$(envf "$N"); D="$HOME/git-server/work/$N/$F"
       if ! { mv -f "$D.serverctl-$TS" "$D" && chmod 600 "$D"; }; then
         cleanup "$@"
-        for M in $DONE_N; do cat "$HOME/env-backups/$M/.env.local.bak-$TS" > "$HOME/git-server/work/$M/.env.local"; echo "RESTORED $M"; done
+        for M in $DONE_N; do FM=$(envf "$M"); cat "$HOME/env-backups/$M/$FM.bak-$TS" > "$HOME/git-server/work/$M/$FM"; echo "RESTORED $M"; done
         PLAN=""; echo "MOVE_FAIL $N"; exit 3
       fi
       DONE_N="$DONE_N $N"
     done
     PLAN=""; act "env-multi$(printf ' %s' "$@")"
-    for N in "$@"; do echo "MODE $N $(stat -c %a "$HOME/git-server/work/$N/.env.local")"; done ;;
+    for N in "$@"; do echo "MODE $N $(stat -c %a "$HOME/git-server/work/$N/$(envf "$N")")"; done ;;
   env-restore)
     F="$ENVB/.env.local.bak-$2"; [ -f "$F" ] || { echo "NO_BACKUP"; exit 2; }
     env_backup; cat "$F" > "$ENVF"; echo "RESTORED $F" ;;
@@ -254,13 +265,114 @@ case "$1" in
 esac
 `;
 
+// 배포 훅이 없는 앱 업데이트용 원격 스크립트(REMOTE 가 윈도우 ssh 명령줄 한도에 가까워 따로 둔다)
+const REMOTE_APP = String.raw`
+set -u
+TS=$(date +%Y%m%d-%H%M%S)
+act() { echo "$(date '+%F %T') $*" >> "$HOME/serverctl-actions.log"; }
+case "$1" in
+  app-update-start)
+    # 배포 훅이 없는 앱(한 컷): 작업 폴더가 가진 origin(서버의 배포 저장소)의 main 을 fast-forward 로만 받고, compose 로 다시 빌드·실행한다
+    N="$2"; D="$HOME/git-server/work/$N"; LF="$HOME/serverctl-app-$N.log"
+    [ -d "$D/.git" ] && [ -f "$D/docker-compose.yml" ] || { echo "NO_WORK $N"; exit 2; }
+    cd "$D" || exit 2
+    CN=$(docker compose ps -q </dev/null 2>/dev/null | head -1); OLD=$(git rev-parse HEAD); IMGN=""; TAG=""
+    if [ -n "$CN" ]; then
+      IMGN=$(docker inspect "$CN" --format '{{.Config.Image}}'); IID=$(docker inspect "$CN" --format '{{.Image}}')
+      TAG="serverctl-rollback/$N:$TS"; docker tag "$IID" "$TAG" || TAG=""
+    fi
+    git fetch -q origin main </dev/null 2>&1 || { echo "FETCH_FAIL"; exit 3; }
+    git merge --ff-only -q origin/main </dev/null 2>&1 || { echo "MERGE_FAIL"; exit 3; }
+    echo "OLD $(git rev-parse --short "$OLD")"; echo "NEW $(git rev-parse --short HEAD)"; echo "OLDFULL $OLD"; echo "IMAGE_NAME $IMGN"; echo "ROLLBACK_TAG $TAG"
+    nohup bash -c 'docker compose up -d --build && echo UPDATE_OK; echo UPDATE_END' > "$LF" 2>&1 < /dev/null &
+    act "app-update $N $(git rev-parse --short HEAD)"; echo "STARTED" ;;
+  app-update-status)
+    LF="$HOME/serverctl-app-$2.log"
+    [ -f "$LF" ] && tail -n 12 "$LF" | sed 's/^/| /'
+    grep -q '^UPDATE_END' "$LF" 2>/dev/null && echo "UPDATE_END"
+    grep -q '^UPDATE_OK' "$LF" 2>/dev/null && echo "UPDATE_OK"; true ;;
+  app-health)
+    # 인자: 작업 폴더, 확인할 경로들(토큰 없이 부른 응답 코드만 본다)
+    N="$2"; shift 2; cd "$HOME/git-server/work/$N" || exit 2
+    CN=$(docker compose ps -q </dev/null 2>/dev/null | head -1); [ -n "$CN" ] || { echo "NO_CONTAINER"; exit 2; }
+    A=$(docker port "$CN" 2>/dev/null | head -1 | sed 's/.*-> //; s/^0\.0\.0\.0/127.0.0.1/; s/^\[::\]/127.0.0.1/')
+    [ -n "$A" ] || { echo "NO_PORT"; exit 2; }
+    FIRST=1
+    for P in "$@"; do
+      C=000
+      # 첫 경로(/health)는 컨테이너가 뜰 때까지 기다리고, 나머지는 한 번만 부른다
+      for _ in 1 2 3 4 5 6 7 8 9 10; do C=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "http://$A$P"); [ "$C" = 200 ] && break; [ $FIRST = 1 ] || break; sleep 4; done
+      FIRST=0; echo "PROBE $P $C"
+    done ;;
+  app-update-rollback)
+    N="$2"; OLD="$3"; TAG="$4"; IMGN="$5"; cd "$HOME/git-server/work/$N" || exit 2
+    git reset --keep -q "$OLD" 2>&1 || echo "GIT_RESET_FAIL"
+    if [ -n "$TAG" ] && [ -n "$IMGN" ]; then docker tag "$TAG" "$IMGN" || { echo "TAG_FAIL"; exit 3; }; fi
+    docker compose up -d --no-build </dev/null 2>&1 | tail -3
+    act "app-update-rollback $N $OLD"; echo "ROLLED_BACK" ;;
+  *) echo "UNKNOWN"; exit 9 ;;
+esac
+`;
+
+// 정적 웹 릴리스용 원격 스크립트(REMOTE 가 윈도우 ssh 명령줄 한도에 가까워 따로 둔다)
+const REMOTE_WEB = String.raw`
+set -u
+TS=$(date +%Y%m%d-%H%M%S)
+act() { echo "$(date '+%F %T') $*" >> "$HOME/serverctl-actions.log"; }
+case "$1" in
+  web-release)
+    # 정적 웹 컨테이너(nginx)에 /preview/ 빌드와 설정을 올린다. 표준입력: tar.gz(site/ = 빌드 결과, conf/ = docker-compose.yml default.conf headers.conf preview-headers.conf)
+    # 설정은 임시 컨테이너로 먼저 검사하고, 바꾸기 전 백업. 어느 단계든 실패하면 설정·링크를 되돌린다
+    N="$2"; D="$HOME/git-server/work/$N"; umask 022
+    [ -f "$D/docker-compose.yml" ] || { echo "NO_SITE $N"; exit 2; }
+    cd "$D" || exit 2
+    ST="$D/.release-$TS"; BK="$HOME/web-backups/$N/$TS"; CF="docker-compose.yml default.conf headers.conf preview-headers.conf"
+    mkdir -p "$ST" && tar -xzf - -C "$ST" || { rm -rf "$ST"; echo "UNTAR_FAIL"; exit 3; }
+    [ -f "$ST/site/index.html" ] || { rm -rf "$ST"; echo "NO_INDEX"; exit 3; }
+    for F in $CF; do [ -f "$ST/conf/$F" ] || { rm -rf "$ST"; echo "NO_CONF $F"; exit 3; }; done
+    if ! docker run --rm -v "$ST/conf/default.conf:/etc/nginx/conf.d/default.conf:ro" -v "$ST/conf/headers.conf:/etc/nginx/headers.conf:ro" -v "$ST/conf/preview-headers.conf:/etc/nginx/preview-headers.conf:ro" nginxinc/nginx-unprivileged:stable-alpine nginx -t -q </dev/null 2>&1; then rm -rf "$ST"; echo "NGINX_TEST_FAIL"; exit 3; fi
+    echo "NGINX_TEST_OK"
+    mkdir -p "$BK" "$D/public/preview-site"; chmod 700 "$HOME/web-backups" "$HOME/web-backups/$N" "$BK"
+    for F in $CF; do [ -f "$D/$F" ] && cp -p "$D/$F" "$BK/$F"; done
+    ls -1t "$HOME/web-backups/$N" | tail -n +11 | while read -r O; do rm -rf "$HOME/web-backups/$N/$O"; done
+    echo "BACKUP $BK"
+    PREV=$(readlink "$D/public/preview-site/preview" 2>/dev/null || true)
+    undo() {
+      for F in $CF; do [ -f "$BK/$F" ] && cp "$BK/$F" "$D/$F"; done
+      if [ -n "$PREV" ]; then ln -sfn "$PREV" "$D/public/preview-site/preview.new" && mv -T "$D/public/preview-site/preview.new" "$D/public/preview-site/preview"; else rm -f "$D/public/preview-site/preview"; fi
+      docker compose up -d </dev/null 2>&1 | tail -2; docker compose exec -T web nginx -s reload </dev/null 2>&1 | tail -2
+      echo "ROLLED_BACK"
+    }
+    # cp 는 기존 파일을 제자리에서 덮어써서 컨테이너가 붙잡은 파일(inode)이 그대로라 reload 로 반영된다
+    for F in $CF; do cp "$ST/conf/$F" "$D/$F" || { undo; echo "COPY_FAIL $F"; exit 4; }; done
+    mkdir -p "$D/public/preview-releases"
+    mv "$ST/site" "$D/public/preview-releases/$TS" || { undo; echo "MOVE_FAIL"; exit 4; }
+    rm -rf "$ST"; chmod -R a+rX "$D/public"
+    ln -sfn "../preview-releases/$TS" "$D/public/preview-site/preview.new" && mv -T "$D/public/preview-site/preview.new" "$D/public/preview-site/preview" || { undo; echo "LINK_FAIL"; exit 4; }
+    if ! docker compose up -d </dev/null >/dev/null 2>&1 || ! docker compose exec -T web nginx -t </dev/null >/dev/null 2>&1 || ! docker compose exec -T web nginx -s reload </dev/null >/dev/null 2>&1; then undo; echo "RELOAD_FAIL"; exit 4; fi
+    sleep 2
+    A=$(docker compose port web 8080 </dev/null 2>/dev/null | head -1 | sed 's/^0\.0\.0\.0/127.0.0.1/')
+    [ -n "$A" ] || { undo; echo "NO_PORT"; exit 4; }
+    C1=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://$A/preview/"); C2=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://$A/")
+    echo "CHECK /preview/ $C1"; echo "CHECK / $C2"
+    HD=$(curl -sI --max-time 10 "http://$A/preview/")
+    echo "$HD" | grep -qi '^x-frame-options' && echo "XFO present" || echo "XFO absent"
+    echo "$HD" | grep -io "frame-ancestors[^;\"]*" | head -1 | sed 's/^/HEADER /'
+    if [ "$C1" != 200 ] || [ "$C2" != 200 ]; then undo; echo "CHECK_FAIL"; exit 4; fi
+    ls -1t "$D/public/preview-releases" | tail -n +4 | while read -r O; do rm -rf "$D/public/preview-releases/$O"; done
+    act "web-release $N $TS"; echo "RELEASED $TS" ;;
+  *) echo "UNKNOWN"; exit 9 ;;
+esac
+`;
+
 // 서버에서 고정 스크립트 실행. args 는 호출 전에 형식 검사를 마친 값만. stdin 은 값(.env)·설정 본문 전달에만 쓴다.
 // 시험 모드에서만 가짜 ssh(node 스크립트)를 쓴다
 const sshCmd = () => (TEST && process.env.SERVERCTL_SSH ? [process.execPath, [process.env.SERVERCTL_SSH]] : ["ssh", []]);
 function remote(args, input, host = HOST) {
+  const script = /^app-(update|health)/.test(args[0]) ? REMOTE_APP : args[0] === "web-release" ? REMOTE_WEB : REMOTE;
   if (!HOSTS.includes(host)) die(`대상 서버는 ${HOSTS.join("·")} 만이에요: ${host}`);
   // 윈도우 ssh 명령줄은 길면 잘린다(원격 셸이 "unmatched \"" 로 실패) → 스크립트를 gzip 한 뒤 base64 로 보낸다
-  const b64 = gzipSync(Buffer.from(REMOTE.replace(/\r\n/g, "\n")), { level: 9 }).toString("base64");
+  const b64 = gzipSync(Buffer.from(script.replace(/\r\n/g, "\n")), { level: 9 }).toString("base64");
   const quoted = args.map((a) => `'${String(a).replace(/'/g, "")}'`).join(" ");
   const [bin, pre] = sshCmd();
   const r = spawnSync(bin, [...pre, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, `LC_ALL=C bash -c "$(echo ${b64} | base64 -d | gunzip)" serverctl ${quoted}`], {
@@ -765,19 +877,29 @@ async function deployPush(args) {
 
 // env-set <작업폴더…> --gen-shared KEY --gen KEY : 비밀값을 서버 안에서 만들어 넣는다(값은 이 PC 로 오지 않는다)
 async function envMulti(args) {
-  const { pos, opts } = parseOpts(args, ["gen", "gen-shared"]);
+  const { pos, opts } = parseOpts(args, ["gen", "gen-shared", "put"]);
   const host = hostOpt(opts);
   if (!pos.length) die("env-set <작업폴더…> [--gen-shared KEY]… [--gen KEY]…");
-  if (!opts.gen.length && !opts["gen-shared"].length) die("--gen-shared 나 --gen 이 하나는 있어야 해요(값을 직접 넣는 건 env-set KEY 로).");
+  if (!opts.gen.length && !opts["gen-shared"].length && !opts.put.length) die("--gen-shared, --gen, --put 중 하나는 있어야 해요.");
+  if (opts.put.length > 1) die("--put 은 한 번만 쓸 수 있어요(값을 하나만 받아요).");
   const dirs = pos.map(workName);
   if (new Set(dirs).size !== dirs.length) die("같은 작업 폴더를 두 번 적었어요.");
   const lines = [];
   const names = [];
-  for (const [op, list] of [["shared", opts["gen-shared"]], ["gen", opts.gen]])
+  for (const [op, list] of [["shared", opts["gen-shared"]], ["gen", opts.gen], ["val", opts.put]])
     for (const k of list) {
       if (!KEY_RE.test(k)) die("KEY 형식이 올바르지 않아요(영문 대문자·숫자·_): " + k);
       if (/^(NEXTAUTH_SECRET|AUTH_SECRET)$/.test(k)) die(k + " 는 바꾸지 않아요(공장 키 암호화 기준).");
-      lines.push(op + "\t" + k);
+      if (op === "val") {
+        let v = process.env.SERVERCTL_VALUE;
+        if (v === undefined) {
+          if (process.stdin.isTTY) die("--put 의 값은 환경변수 SERVERCTL_VALUE 또는 stdin 으로 넘겨 주세요(명령줄 인자 금지).");
+          v = fs.readFileSync(0, "utf8").replace(/\r?\n$/, "");
+        }
+        if (!/^[A-Za-z0-9._~+/=:@-]{8,512}$/.test(v)) die("값 형식이 올바르지 않아요(영문·숫자·._~+/=:@- 만, 8~512자).");
+        secretValue = v;
+        lines.push(op + "\t" + k + "\t" + v);
+      } else lines.push(op + "\t" + k);
       names.push(k);
     }
   if (new Set(names).size !== names.length) die("같은 KEY 를 두 번 지정했어요.");
@@ -789,7 +911,7 @@ async function envMulti(args) {
     await report("서버 비밀값 생성 " + who + " (" + host + ")\n결과: 실패, 되돌림" + (backups.length ? "\n백업: " + backups.join(", ") : ""));
     process.exit(r.code || 1);
   }
-  const set = [...r.out.matchAll(/^SET (shared|gen) (\S+) (\S+)$/gm)].map((m) => m[3] + " → " + m[2] + (m[1] === "shared" ? "(공통 값)" : "(폴더별 새 값)"));
+  const set = [...r.out.matchAll(/^SET (shared|gen|val) (\S+) (\S+)$/gm)].map((m) => m[3] + " → " + m[2] + (m[1] === "shared" ? "(공통 값)" : m[1] === "val" ? "(넘겨받은 값)" : "(폴더별 새 값)"));
   const skip = [...r.out.matchAll(/^SKIP (\S+) (\S+)$/gm)].map((m) => m[2] + " → " + m[1] + "(이미 있어 건너뜀)");
   const modes = [...r.out.matchAll(/^MODE (\S+) (\d+)$/gm)].map((m) => m[1] + "=" + m[2]);
   // developWeb 을 바꿨으면 다음 rebuild 가 실패할 때 이 백업으로 되돌린다
@@ -804,6 +926,116 @@ async function envMulti(args) {
   const body = "바꾼 변수: " + (set.join(", ") || "없음") + (skip.length ? "\n건너뜀: " + skip.join(", ") : "") + "\n권한: " + modes.join(", ") + "\n백업: " + backups.join(", ");
   say("env-set " + who + " (" + host + "): 완료, 값은 서버에만 있고 출력하지 않았어요\n" + body + (own ? "\n서버(블로그)에 반영하려면 rebuild 가 필요해요." : ""));
   await report("서버 비밀값 생성 " + who + " (" + host + ", 값은 서버 밖으로 나가지 않음)\n" + body);
+}
+
+const PROBE_RE = /^\/[A-Za-z0-9_\-./]{0,100}$/;
+const publicProbe = async (domain, p, wantHeader) => {
+  if (TEST) return "시험 모드 생략";
+  try {
+    const r = await fetch(`https://${domain}${p}`, { headers: { "User-Agent": UA }, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+    const csp = wantHeader ? /frame-ancestors[^;"]*/.exec(r.headers.get("content-security-policy") ?? "")?.[0] : "";
+    return `${r.status}${wantHeader ? ` / X-Frame-Options ${r.headers.get("x-frame-options") ? "있음" : "없음"} / ${csp || "frame-ancestors 없음"}` : ""}`;
+  } catch (e) {
+    return `응답 없음(${e.message})`;
+  }
+};
+
+// app-update NAME : 배포 훅이 없는 앱을 서버 작업 폴더에서 최신 main 으로 다시 빌드·실행
+async function appUpdate(args) {
+  const { pos, opts } = parseOpts(args, ["probe"]);
+  if (pos.length !== 1) die("app-update <작업 폴더 이름> [--host H] [--probe /경로]… [--domain D]");
+  const host = hostOpt(opts);
+  const name = workName(pos[0]);
+  const probes = opts.probe.length ? opts.probe : ["/health"];
+  for (const p of probes) if (!PROBE_RE.test(p)) die(`--probe 경로 형식이 올바르지 않아요: ${p}`);
+  if (opts.domain && !DOMAIN_RE.test(opts.domain)) die(`도메인 형식이 올바르지 않아요: ${opts.domain}`);
+  const start = remote(["app-update-start", name], "", host);
+  if (!/STARTED/.test(start.out)) die(`업데이트를 시작하지 못했어요: ${start.out}`);
+  const old = /^OLD (\S+)/m.exec(start.out)?.[1] ?? "?";
+  const now = /^NEW (\S+)/m.exec(start.out)?.[1] ?? "?";
+  const oldFull = /^OLDFULL ([0-9a-f]{7,40})$/m.exec(start.out)?.[1] ?? "";
+  const imgName = /^IMAGE_NAME (\S+)$/m.exec(start.out)?.[1] ?? "";
+  const tag = /^ROLLBACK_TAG (\S+)$/m.exec(start.out)?.[1] ?? "";
+  say(`app-update ${name} (${host}): ${old} → ${now}. 빌드가 끝날 때까지 기다려요(보통 3~5분).`);
+  let status = "";
+  for (let i = 0; i < (TEST ? 5 : 120); i++) {
+    await new Promise((res) => setTimeout(res, TEST ? 50 : 10_000));
+    status = remote(["app-update-status", name], "", host).out;
+    if (/UPDATE_END/.test(status)) break;
+  }
+  const built = /UPDATE_OK/.test(status);
+  const hr = built ? remote(["app-health", name, ...probes], "", host) : { out: "", code: 1 };
+  const codes = [...hr.out.matchAll(/^PROBE (\S+) (\d{3})$/gm)].map((m) => [m[1], m[2]]);
+  const healthy = built && codes.length > 0 && codes[0][1] === "200";
+  if (healthy) {
+    const pub = opts.domain ? await Promise.all(probes.map(async (p) => `${p} → ${await publicProbe(opts.domain, p)}`)) : [];
+    const body = `커밋 ${old} → ${now}\n서버 안 응답(토큰 없이): ${codes.map(([p, c]) => `${p} ${c}`).join(", ")}${pub.length ? `\n공개 주소 ${opts.domain}: ${pub.join(", ")}` : ""}`;
+    say(`app-update ${name}: 완료\n${body}`);
+    await report(`앱 업데이트 ${name} (${host})\n결과: 빌드·실행 성공\n${body}`);
+    return;
+  }
+  const notes = [built ? `헬스체크 실패(${codes.map(([p, c]) => `${p} ${c}`).join(", ") || hr.out.split("\n")[0]})` : "빌드 실패(기존 컨테이너가 있으면 그대로 돌고 있을 수 있어요)"];
+  if (/^[0-9a-f]{7,40}$/.test(oldFull) && (!tag || /^serverctl-rollback\/[A-Za-z0-9_-]+:\d{8}-\d{6}$/.test(tag)) && (!imgName || /^[A-Za-z0-9._/:-]+$/.test(imgName))) {
+    const rb = remote(["app-update-rollback", name, oldFull, tag, imgName], "", host);
+    notes.push(`이전 커밋·이미지로 되돌림(${/ROLLED_BACK/.test(rb.out) ? "됨" : `실패: ${rb.out.split("\n").slice(-2).join(" ")}`})`);
+  }
+  say(`app-update ${name}: 실패 → 자동 되돌림\n${notes.join("\n")}\n--- 서버 로그 끝부분 ---\n${status}`);
+  await report(`앱 업데이트 ${name} (${host}) 실패 → 자동 되돌림\n${notes.join("\n")}`);
+  process.exit(5);
+}
+
+const WEB_CONF = ["docker-compose.yml", "default.conf", "headers.conf", "preview-headers.conf"];
+const GZ_EXT = /\.(js|wasm|json|html|ttf|otf|css|svg)$/;
+const listFiles = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? listFiles(path.join(d, e.name)) : [path.join(d, e.name)]));
+
+// web-release APP_DIR : 정적 웹(/preview/) 빌드와 nginx 설정을 서버 작업 폴더에 올린다
+async function webRelease(args) {
+  const { pos, opts } = parseOpts(args, []);
+  if (pos.length !== 1) die("web-release <앱 폴더> [--site NAME] [--host H] [--domain D]");
+  const host = hostOpt(opts);
+  const site = workName(opts.site ?? "saessak-hub-web");
+  if (opts.domain && !DOMAIN_RE.test(opts.domain)) die(`도메인 형식이 올바르지 않아요: ${opts.domain}`);
+  const app = path.resolve(String(pos[0]));
+  const build = path.join(app, "build", "preview");
+  const confDir = path.join(app, "tools", "web", "server");
+  if (!fs.existsSync(path.join(build, "index.html"))) die(`빌드 결과가 없어요(먼저 tools/build_preview.sh): ${build}`);
+  for (const f of WEB_CONF) if (!fs.existsSync(path.join(confDir, f))) die(`설정 파일이 없어요: ${path.join(confDir, f)}`);
+  // 미리 압축(.gz): nginx gzip_static 이 그대로 보낸다
+  let gz = 0;
+  for (const f of listFiles(build)) if (f.endsWith(".gz")) fs.rmSync(f);
+  for (const f of listFiles(build)) {
+    if (!GZ_EXT.test(f) || fs.statSync(f).size <= 1024) continue;
+    fs.writeFileSync(`${f}.gz`, gzipSync(fs.readFileSync(f), { level: 9 }));
+    gz++;
+  }
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "web-release-"));
+  try {
+    fs.cpSync(build, path.join(stage, "site"), { recursive: true });
+    fs.mkdirSync(path.join(stage, "conf"));
+    for (const f of WEB_CONF) fs.copyFileSync(path.join(confDir, f), path.join(stage, "conf", f));
+    const t = spawnSync("tar", ["-czf", "-", "-C", stage.replace(/\\/g, "/"), "."], { maxBuffer: 400 * 1024 * 1024, windowsHide: true });
+    if (t.status !== 0 || !t.stdout?.length) die(`tar 로 묶지 못했어요: ${t.stderr?.toString() ?? t.error?.message}`);
+    say(`web-release ${site} (${host}): 빌드 ${listFiles(build).length - gz}개 파일(.gz ${gz}개) + 설정 4개를 올려요(${Math.round(t.stdout.length / 1024 / 1024)}MB).`);
+    const r = remote(["web-release", site], t.stdout, host);
+    const checks = [...r.out.matchAll(/^CHECK (\S+) (\d{3})$/gm)].map((m) => `${m[1]} ${m[2]}`);
+    const hdr = [/^XFO .*$/m.exec(r.out)?.[0], /^HEADER (.*)$/m.exec(r.out)?.[1]].filter(Boolean).join(" / ");
+    const backup = backupOf(r.out);
+    const rel = /^RELEASED (\S+)/m.exec(r.out)?.[1];
+    if (r.code !== 0 || !rel) {
+      const why = /(NGINX_TEST_FAIL|UNTAR_FAIL|NO_INDEX|NO_CONF \S+|NO_SITE \S+|COPY_FAIL \S+|MOVE_FAIL|LINK_FAIL|RELOAD_FAIL|NO_PORT|CHECK_FAIL)/.exec(r.out)?.[1] ?? `코드 ${r.code}`;
+      const rolled = /ROLLED_BACK/.test(r.out) ? "설정·링크 되돌림" : "서버는 바뀌기 전 상태";
+      say(`web-release ${site}: 실패(${why}) — ${rolled}\n${r.out.split("\n").slice(-12).join("\n")}`);
+      await report(`웹 릴리스 ${site} (${host}) 실패(${why}) — ${rolled}${backup.startsWith("/") ? `\n백업: ${backup}` : ""}`);
+      fs.rmSync(stage, { recursive: true, force: true });
+      process.exit(5);
+    }
+    const pub = opts.domain ? [`/preview/ → ${await publicProbe(opts.domain, "/preview/", true)}`, `/ → ${await publicProbe(opts.domain, "/", false)}`] : [];
+    const body = `릴리스 ${rel}\n서버 안 응답: ${checks.join(", ")}\n헤더: ${hdr}\n백업: ${backup}${pub.length ? `\n공개 주소 ${opts.domain}: ${pub.join(", ")}` : ""}`;
+    say(`web-release ${site}: 완료\n${body}`);
+    await report(`웹 릴리스 ${site} (${host})\n${body}`);
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
 }
 
 async function main() {
@@ -884,6 +1116,10 @@ async function main() {
       return cert(rest);
     case "deploy-push":
       return deployPush(rest);
+    case "app-update":
+      return appUpdate(rest);
+    case "web-release":
+      return webRelease(rest);
     default:
       die(`서브커맨드: ${SUBCOMMANDS.join(" | ")}`, 2);
   }

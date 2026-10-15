@@ -130,6 +130,11 @@ test("원격 스크립트는 gzip+base64 로 보내고 길이가 윈도우 ssh �
   const script = /const REMOTE = String\.raw`([\s\S]*?)`;/.exec(src)[1];
   // 13.8KB(압축 안 함)에서 원격 셸이 잘린 명령으로 실패했고 4.8KB 는 됐다. 6KB 를 넘기면 스크립트를 나눠야 한다
   assert.ok(gzipSync(Buffer.from(script), { level: 9 }).toString("base64").length < 6000);
+  // 앱 업데이트·웹 릴리스 스크립트는 따로 보낸다(REMOTE 가 한도에 가까워서). 각각 같은 한도 안
+  for (const name of ["REMOTE_APP", "REMOTE_WEB"]) {
+    const part = new RegExp("const " + name + " = String\\.raw`([\\s\\S]*?)`;").exec(src)[1];
+    assert.ok(gzipSync(Buffer.from(part), { level: 9 }).toString("base64").length < 6000, name);
+  }
   assert.match(src, /base64 -d \| gunzip\)/);
 });
 
@@ -397,6 +402,236 @@ test("deploy-push: 원격 추가 → main push(강제 없음) → 배포 로그 
       assert.notEqual(r.code, 0, bad);
     }
     assert.ok(!/--force|\+main/.test(read(SCTL).match(/gitIn\(dir, \["push"[^\n]*/)[0]), "강제 push 없음");
+  } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+// ───────── .env 폴더·--put·app-update·web-release (2026-10-15) ─────────
+
+test("env-set: .env.local 이 없는 폴더는 .env 를 씀(한 컷), --put 은 받은 값을 그대로, 값 출력 없음", { skip }, async () => {
+  const ctx = setup();
+  try {
+    const otf = `${ctx.home}/git-server/work/one-tiny-frame`;
+    fs.mkdirSync(otf, { recursive: true });
+    fs.writeFileSync(otf + "/.env", "PIXELLAB_TOKEN=" + SECRET + "\nALLOWED_ORIGINS=https://a.example\n");
+    const val = (k) => new RegExp("^" + k + "=(.*)$", "m").exec(read(otf + "/.env"))?.[1];
+    let r = await run(ctx, ["env-set", "one-tiny-frame", "--gen", "ADMIN_API_TOKEN", "--host", "serverpc2"]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(val("ADMIN_API_TOKEN"), /^[0-9a-f]{64}$/);
+    assert.ok(!r.out.includes(val("ADMIN_API_TOKEN")) && !read(ctx.report).includes(val("ADMIN_API_TOKEN")));
+    assert.ok(!fs.existsSync(otf + "/.env.local"), ".env.local 을 새로 만들지 않는다");
+    assert.ok(fs.readdirSync(`${ctx.home}/env-backups/one-tiny-frame`).some((f) => f.startsWith(".env.bak-")));
+    assert.match(r.out, /one-tiny-frame=600/);
+    assert.match(read(ctx.sshLog), /serverpc2/);
+    noSecret(ctx, r.out);
+    assert.equal(val("PIXELLAB_TOKEN"), SECRET, "다른 줄은 그대로");
+    // --put: 사람이 정한 값을 넣고(이미 있으면 바꿈), 두 종류 폴더에 한 번에
+    const PUT = "Put-Value-abc123456789";
+    r = await run(ctx, ["env-set", "one-tiny-frame", "developWeb", "--put", "SERVICE_SHARED_TOKEN", "--host", "serverpc2"], { SERVERCTL_VALUE: PUT });
+    assert.equal(r.code, 0, r.out);
+    assert.equal(val("SERVICE_SHARED_TOKEN"), PUT);
+    assert.match(read(`${ctx.home}/git-server/work/developWeb/.env.local`), new RegExp("^SERVICE_SHARED_TOKEN=" + PUT + "$", "m"));
+    assert.ok(!r.out.includes(PUT) && !read(ctx.report).includes(PUT), "--put 값은 출력·보고에 없다");
+    assert.match(r.out, /SERVICE_SHARED_TOKEN → one-tiny-frame\(넘겨받은 값\)/);
+    r = await run(ctx, ["env-set", "one-tiny-frame", "--put", "SERVICE_SHARED_TOKEN"], { SERVERCTL_VALUE: PUT + "2" });
+    assert.equal(r.code, 0, r.out);
+    assert.equal(val("SERVICE_SHARED_TOKEN"), PUT + "2", "있어도 바꾼다");
+    // 형식이 틀린 값·두 번 지정은 서버에 가기 전에 거부, 아무것도 안 바뀜
+    const before = read(otf + "/.env");
+    for (const [args, v] of [[["one-tiny-frame", "--put", "K_A"], "has space value"], [["one-tiny-frame", "--put", "K_A"], "short"], [["one-tiny-frame", "--put", "K_A", "--put", "K_B"], PUT]]) {
+      r = await run(ctx, ["env-set", ...args], { SERVERCTL_VALUE: v });
+      assert.notEqual(r.code, 0, args.join(" ") + r.out);
+    }
+    assert.equal(read(otf + "/.env"), before);
+  } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+// 가짜 docker·curl: 호출을 $HOME/docker.log 에 남기고, 환경변수로 실패를 만든다
+function fakeDockerCurl(ctx) {
+  // 윈도우 Git Bash 의 ln -s 는 복사라서, 링크는 "가리키는 곳을 적은 파일"로 흉내 낸다(진짜 서버는 리눅스 심볼릭 링크)
+  const ln = ['T=""; L=""; for a in "$@"; do case "$a" in -*) ;; *) if [ -z "$T" ]; then T="$a"; else L="$a"; fi ;; esac; done', 'rm -rf "$L"; printf %s "$T" > "$L"'].join("\n");
+  fs.writeFileSync(path.join(ctx.bin, "ln"), `#!/bin/bash\n${ln}\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(ctx.bin, "readlink"), '#!/bin/bash\n[ -f "$1" ] && cat "$1"; true\n', { mode: 0o755 });
+  const sh = (name, body) => fs.writeFileSync(path.join(ctx.bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+  sh(
+    "docker",
+    [
+      'echo "docker $*" >> "$HOME/docker.log"',
+      'case "$1 $2" in',
+      '  "compose ps") echo cid123 ;;',
+      '  "compose port") echo "127.0.0.1:5300" ;;',
+      '  "compose up") if [ -n "$FAKE_BUILD_FAIL" ] && [[ " $* " == *" --build "* ]]; then echo "Failed to compile"; exit 1; fi ;;',
+      '  "compose exec") if [ -n "$FAKE_RELOAD_FAIL" ]; then exit 1; fi ;;',
+      '  "inspect cid123") case "$*" in *Config.Image*) echo one-tiny-frame-api ;; *) echo sha256:oldimage ;; esac ;;',
+      '  "port cid123") echo "8080/tcp -> 0.0.0.0:18787" ;;',
+      '  "run --rm") if [ -n "$FAKE_NGINX_FAIL" ]; then echo "nginx: [emerg] bad"; exit 1; fi ;;',
+      "esac",
+      "exit 0",
+    ].join("\n"),
+  );
+  sh(
+    "curl",
+    [
+      'ALL="$*"; URL="${@: -1}"',
+      'if [[ " $ALL " == *" -sI "* ]]; then',
+      "  printf 'HTTP/1.1 200 OK\\r\\nCache-Control: no-cache\\r\\nContent-Security-Policy: default-src self; frame-ancestors self https://www.example.com https://factory.example.com\\r\\n\\r\\n'; exit 0",
+      "fi",
+      'case "$URL" in',
+      "  */api/admin/health) echo -n 401 ;;",
+      '  */health) echo -n "${FAKE_HEALTH:-200}" ;;',
+      '  */preview/) echo -n "${FAKE_PREVIEW_CODE:-200}" ;;',
+      "  *) echo -n 200 ;;",
+      "esac",
+    ].join("\n"),
+  );
+}
+
+const git = (cwd, ...a) => {
+  const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.trim();
+};
+
+test("app-update: origin main ff-only → compose up --build → 응답 코드 확인, 실패하면 이전 커밋·이미지로 되돌림", { skip }, async () => {
+  const ctx = setup();
+  try {
+    fakeDockerCurl(ctx);
+    const bare = `${ctx.home}/git-server/repo/one-tiny-frame.git`;
+    const work = `${ctx.home}/git-server/work/one-tiny-frame`;
+    git(ctx.root, "init", "-q", "--bare", "-b", "main", bare);
+    git(ctx.root, "clone", "-q", bare, work);
+    fs.writeFileSync(work + "/docker-compose.yml", "services: {}\n");
+    fs.writeFileSync(work + "/.env", "SECRET_X=" + SECRET + "\n");
+    fs.writeFileSync(work + "/.gitignore", ".env\n");
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", "v1");
+    git(work, "push", "-q", "origin", "HEAD:main");
+    const v1 = git(work, "rev-parse", "HEAD");
+    // 서버 배포 저장소에 새 커밋이 올라온 상태
+    const other = path.join(ctx.root, "other");
+    git(ctx.root, "clone", "-q", bare, other);
+    fs.writeFileSync(other + "/api.txt", "new api\n");
+    git(other, "add", "-A");
+    git(other, "commit", "-q", "-m", "v2");
+    git(other, "push", "-q", "origin", "HEAD:main");
+    const v2 = git(other, "rev-parse", "HEAD");
+    const A = ["app-update", "one-tiny-frame", "--host", "serverpc2", "--probe", "/health", "--probe", "/api/admin/health"];
+
+    // 빌드 실패 → 되돌림
+    let r = await run(ctx, A, { FAKE_BUILD_FAIL: "1" });
+    assert.equal(r.code, 5, r.out);
+    assert.match(r.out, /빌드 실패/);
+    assert.match(r.out, /되돌림\(됨\)/);
+    assert.equal(git(work, "rev-parse", "HEAD"), v1, "작업 폴더 커밋이 되돌아감");
+    const log1 = read(`${ctx.home}/docker.log`);
+    assert.match(log1, /docker tag sha256:oldimage serverctl-rollback\/one-tiny-frame:\d{8}-\d{6}/);
+    assert.match(log1, /docker tag serverctl-rollback\/one-tiny-frame:\d{8}-\d{6} one-tiny-frame-api/);
+    assert.match(log1, /compose up -d --no-build/);
+    noSecret(ctx, r.out);
+
+    // 헬스체크 실패 → 되돌림
+    r = await run(ctx, A, { FAKE_HEALTH: "500" });
+    assert.equal(r.code, 5, r.out);
+    assert.match(r.out, /헬스체크 실패\(\/health 500/);
+    assert.equal(git(work, "rev-parse", "HEAD"), v1);
+
+    // 성공
+    r = await run(ctx, A);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /완료/);
+    assert.match(r.out, /\/health 200, \/api\/admin\/health 401/);
+    assert.equal(git(work, "rev-parse", "HEAD"), v2, "작업 폴더가 새 커밋으로");
+    assert.match(read(ctx.report), /빌드·실행 성공/);
+    noSecret(ctx, r.out);
+    assert.ok(!/--force|reset --hard/.test(read(`${ctx.home}/docker.log`)));
+
+    // 형식 검사·대상 서버·없는 폴더
+    for (const bad of [["../x"], ["one-tiny-frame", "--host", "evil"], ["one-tiny-frame", "--probe", "health;rm"], ["one-tiny-frame", "--domain", "not a domain"], []]) {
+      r = await run(ctx, ["app-update", ...bad]);
+      assert.notEqual(r.code, 0, bad.join(" ") + r.out);
+    }
+    r = await run(ctx, ["app-update", "noSuchApp", "--host", "serverpc2"]);
+    assert.notEqual(r.code, 0, r.out);
+    assert.match(r.out, /NO_WORK/);
+  } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+test("web-release: 설정 검사 → 백업 → 설정·빌드 올리기 → 링크·reload → 응답·헤더 확인, 실패하면 설정 되돌림", { skip }, async () => {
+  const ctx = setup();
+  try {
+    fakeDockerCurl(ctx);
+    const site = `${ctx.home}/git-server/work/saessak-hub-web`;
+    fs.mkdirSync(site, { recursive: true });
+    const OLD = { "docker-compose.yml": "old compose\n", "default.conf": "old default\n", "headers.conf": "old headers\n" };
+    for (const [f, c] of Object.entries(OLD)) fs.writeFileSync(`${site}/${f}`, c);
+    const app = path.join(ctx.root, "hub");
+    const conf = path.join(app, "tools", "web", "server");
+    const build = path.join(app, "build", "preview");
+    fs.mkdirSync(conf, { recursive: true });
+    fs.mkdirSync(path.join(build, "assets"), { recursive: true });
+    for (const f of ["docker-compose.yml", "default.conf", "headers.conf", "preview-headers.conf"]) fs.writeFileSync(`${conf}/${f}`, `new ${f}\n`);
+    fs.writeFileSync(`${build}/index.html`, "<html>" + "x".repeat(2000) + "</html>");
+    fs.writeFileSync(`${build}/assets/small.txt`, "tiny");
+    fs.writeFileSync(`${build}/stale.js.gz`, "stale");
+    const A = ["web-release", app, "--host", "serverpc2"];
+    const releases = () => fs.readdirSync(`${site}/public/preview-releases`).sort();
+
+    // nginx 검사 실패: 아무것도 안 바뀜
+    let r = await run(ctx, A, { FAKE_NGINX_FAIL: "1" });
+    assert.equal(r.code, 5, r.out);
+    assert.match(r.out, /NGINX_TEST_FAIL/);
+    assert.equal(read(`${site}/default.conf`), OLD["default.conf"]);
+    assert.ok(!fs.existsSync(`${site}/public/preview-releases`) || releases().length === 0);
+    assert.ok(!fs.readdirSync(site).some((f) => f.startsWith(".release-")), "임시 폴더 정리");
+
+    // 성공
+    r = await run(ctx, A);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /\/preview\/ 200, \/ 200/);
+    assert.match(r.out, /XFO absent/);
+    assert.match(r.out, /frame-ancestors self https:\/\/www\.example\.com https:\/\/factory\.example\.com/);
+    for (const f of ["docker-compose.yml", "default.conf", "headers.conf", "preview-headers.conf"]) assert.equal(read(`${site}/${f}`), `new ${f}\n`, f);
+    const [rel1] = releases();
+    assert.equal(releases().length, 1);
+    const link = `${site}/public/preview-site/preview`;
+    assert.equal(read(link), `../preview-releases/${rel1}`, "링크가 새 릴리스를 가리킴");
+    assert.ok(fs.existsSync(`${site}/public/preview-releases/${rel1}/index.html.gz`), "큰 파일은 미리 압축");
+    assert.ok(!fs.existsSync(`${site}/public/preview-releases/${rel1}/assets/small.txt.gz`));
+    assert.ok(!fs.existsSync(`${site}/public/preview-releases/${rel1}/stale.js.gz`), "예전 .gz 는 지우고 새로");
+    const bk = fs.readdirSync(`${ctx.home}/web-backups/saessak-hub-web`);
+    assert.equal(bk.length, 1);
+    assert.equal(read(`${ctx.home}/web-backups/saessak-hub-web/${bk[0]}/default.conf`), "old default\n", "바꾸기 전 설정이 백업에");
+    assert.match(read(`${ctx.home}/docker.log`), /compose exec -T web nginx -s reload/);
+    assert.match(read(ctx.report), /웹 릴리스/);
+
+    // 확인 단계 실패(/preview/ 404): 설정을 되돌림
+    await new Promise((res) => setTimeout(res, 1100)); // 릴리스 이름(초 단위)이 겹치지 않게
+    fs.writeFileSync(`${conf}/default.conf`, "newer default\n");
+    r = await run(ctx, A, { FAKE_PREVIEW_CODE: "404" });
+    assert.equal(r.code, 5, r.out);
+    assert.match(r.out, /CHECK_FAIL/);
+    assert.match(r.out, /설정·링크 되돌림/);
+    assert.equal(read(`${site}/default.conf`), "new default.conf\n", "설정이 직전 것으로 돌아감");
+    assert.equal(read(link), `../preview-releases/${rel1}`, "링크가 직전 릴리스로 돌아감");
+
+    // reload 실패도 되돌림
+    await new Promise((res) => setTimeout(res, 1100));
+    r = await run(ctx, A, { FAKE_RELOAD_FAIL: "1" });
+    assert.equal(r.code, 5, r.out);
+    assert.match(r.out, /RELOAD_FAIL/);
+    assert.equal(read(link), `../preview-releases/${rel1}`);
+    assert.equal(read(`${site}/default.conf`), "new default.conf\n");
+
+    // 빌드·설정 파일이 없으면 서버에 가기 전에 멈춤, 대상 서버는 우리 서버만
+    for (const bad of [[path.join(ctx.root, "nope")], [app, "--host", "evil"], [app, "--site", "../x"], []]) {
+      r = await run(ctx, ["web-release", ...bad]);
+      assert.notEqual(r.code, 0, bad.join(" ") + r.out);
+    }
   } finally {
     fs.rmSync(ctx.root, { recursive: true, force: true });
   }
