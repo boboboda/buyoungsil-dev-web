@@ -20,3 +20,4 @@
 - 공장 AI 세션에서는 감독 프로그램 훅(factory 저장소)이 같은 목록을 막고, 실행한 ssh·scp 명령은 일감 로그에 그대로 남는다.
 
 Claude Code 인계문은 `docs/CLAUDE_CODE_HANDOFF.md`를 읽는다.
+- 일감 시작 때 WORKMAP.md를 먼저 읽는다.

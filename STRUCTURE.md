@@ -8,3 +8,4 @@
 - 연결 키: `lib/connection-keys.ts`, `lib/connect/{adminKeys,guard,pepper}.ts`, 화면 `components/admin/settings/ConnectionKeys.tsx`.
 - 시험: `tests/*.test.mjs`(`npm test`). 빌드에는 가짜 `DATABASE_URL`·`MONGODB_URI` 필요.
 - 환경변수 이름: DATABASE_URL, MONGODB_URI, AUTH_SECRET/NEXTAUTH_SECRET, DRAFT_API_TOKEN, CONTROL_HANDOFF_SECRET, CONTROL_PUBLIC_URL, STUDIO_KEY_PEPPER(선택).
+- 작업 지도: [WORKMAP.md](WORKMAP.md) (기능→파일, 시험, 빌드 주의점, DB)
