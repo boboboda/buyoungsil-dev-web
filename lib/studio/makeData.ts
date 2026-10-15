@@ -30,7 +30,7 @@ export interface MakeData {
   cards: MakeCard[];
   jobs: MakeJob[];
   names: string[]; // 대상 이름 자동완성 후보(별칭 + 승인 그림 대상)
-  approved: { id: string; subject: string; url: string }[]; // 직접 고를 수 있는 참고 그림(승인 그림)
+  approved: { id: string; subject: string; kind: string; url: string; decidedAt: string | null }[]; // 직접 고를 수 있는 참고 그림(승인 그림)
   limits: Pick<ToolSettings, "autoApprove" | "autoApproveMaxCost" | "dailyLimit" | "monthlyLimit">;
   usage: { day: number; month: number };
 }
@@ -48,7 +48,7 @@ export async function readMakeData(appSlug: string): Promise<MakeData | null> {
       take: MAKE_JOB_LIMIT,
       select: { id: true, title: true, status: true, phase: true, cardId: true, createdAt: true, finishedAt: true, failReason: true, toolInput: true, toolResult: true },
     }),
-    prisma.factoryArt.findMany({ where: { appSlug, status: "approved" }, orderBy: { decidedAt: "desc" }, select: { id: true, subject: true, url: true }, take: 200 }),
+    prisma.factoryArt.findMany({ where: { appSlug, status: "approved" }, orderBy: { decidedAt: "desc" }, select: { id: true, subject: true, kind: true, url: true, decidedAt: true }, take: 200 }),
     getProjectToolSettings(prisma as unknown as SettingsDb, appSlug).catch(() => null),
   ]);
   const ids = jobRows.map((j) => j.id);
@@ -77,7 +77,7 @@ export async function readMakeData(appSlug: string): Promise<MakeData | null> {
     }
     const jobId = p.key.slice(ART_PICKS_PREFIX.length);
 
-    picksOf.set(jobId, (Array.isArray(list) ? list : []).map((x) => (typeof x === "string" ? approvedById.get(x) : undefined)).filter((x): x is { id: string; url: string; subject: string } => !!x));
+    picksOf.set(jobId, (Array.isArray(list) ? list : []).map((x) => (typeof x === "string" ? approvedById.get(x) : undefined)).filter((x): x is NonNullable<ReturnType<typeof approvedById.get>> => !!x));
   }
   const artsOf = new Map<string, MakeArt[]>();
 
@@ -119,7 +119,7 @@ export async function readMakeData(appSlug: string): Promise<MakeData | null> {
       .map((c) => ({ id: c.id, name: c.name, description: c.description, version: c.version, tool: c.tool, method: c.method, perCall: perCallCost(tools[c.tool], c.method), warnings: c.warnings })),
     jobs,
     names: subjectNames(aliases, approved.map((a) => a.subject)),
-    approved,
+    approved: approved.map((a) => ({ ...a, decidedAt: a.decidedAt ? a.decidedAt.toISOString() : null })),
     limits: { autoApprove: settings.autoApprove, autoApproveMaxCost: settings.autoApproveMaxCost, dailyLimit: settings.dailyLimit, monthlyLimit: settings.monthlyLimit },
     usage,
   };

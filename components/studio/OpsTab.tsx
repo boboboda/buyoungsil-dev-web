@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { ART_STATUS_LABELS, type ArtView } from "@/lib/factory/arts";
+import ArtPicker from "@/components/studio/ArtPicker";
 import { PixelImg } from "@/components/studio/MakeTab";
 import { EXPORT_LIMIT, EXPORT_STATUS_LABELS, filterArts, OPS_BULK_LIMIT, SCHEDULE_LIMITS, scheduleError, type ExportRecord, type ReviewFilter } from "@/lib/studio/ops";
 import type { OpsData, OpsScheduleView } from "@/lib/studio/opsData";
@@ -70,17 +71,20 @@ function ReviewPane({ data, canEdit, focusArt }: { data: OpsData; canEdit: boole
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<{ reason: string; estimatedCost: number } | null>(null);
+  const [pickDefault, setPickDefault] = useState(false);
+  const approvedPicks = useMemo(() => data.arts.filter((a) => a.status === "approved").map((a) => ({ id: a.id, subject: a.subject, kind: a.kind, url: a.url, decidedAt: a.decidedAt })), [data.arts]);
+  const defaultIds = useMemo(() => data.cards.map((x) => x.defaultArtId).filter((x): x is string => !!x), [data.cards]);
   const list = useMemo(() => filterArts(data.arts, filter, data.aliases), [data.arts, data.aliases, filter]);
   const set = (patch: Partial<ReviewFilter>) => {
     setFilter((f) => ({ ...f, ...patch }));
     setSel([]);
   };
   const toggle = (id: string) => setSel((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length >= OPS_BULK_LIMIT ? cur : [...cur, id]));
-  const run = async (action: "approve" | "reject" | "reset" | "redo" | "default", confirmed = false) => {
-    if (!sel.length) return;
+  const run = async (action: "approve" | "reject" | "reset" | "redo" | "default", confirmed = false, artId?: string) => {
+    if (!sel.length && !artId) return;
     setBusy(true);
     setNotice("");
-    const r = await post({ appSlug: data.appSlug, action, ...(action === "default" ? { artId: sel[0] } : { ids: sel }), ...(confirmed ? { confirmed: true } : {}) });
+    const r = await post({ appSlug: data.appSlug, action, ...(action === "default" ? { artId: artId ?? sel[0] } : { ids: sel }), ...(confirmed ? { confirmed: true } : {}) });
 
     if (r.status === 409 && r.needsConfirm) setConfirm(r.needsConfirm);
     else {
@@ -88,6 +92,7 @@ function ReviewPane({ data, canEdit, focusArt }: { data: OpsData; canEdit: boole
       setNotice(r.message);
       if (r.ok) {
         setSel([]);
+        setPickDefault(false);
         router.refresh();
       }
     }
@@ -165,10 +170,16 @@ function ReviewPane({ data, canEdit, focusArt }: { data: OpsData; canEdit: boole
             <button className={BTN} data-review-action="redo" disabled={busy || !sel.length} type="button" onClick={() => run("redo")}>
               다시 요청
             </button>
-            <button className={BTN} data-review-action="default" disabled={busy || sel.length !== 1} title="승인된 그림 한 장을 골라요" type="button" onClick={() => run("default")}>
+            <button aria-expanded={pickDefault} className={BTN} data-review-action="default" disabled={busy} title="승인된 그림 중에서 골라요" type="button" onClick={() => setPickDefault((v) => !v)}>
               기본 그림으로
             </button>
           </span>
+        </div>
+      ) : null}
+      {pickDefault && canEdit ? (
+        <div className="fx-panel space-y-2 p-3" data-review-default-picker>
+          <p className="text-sm font-bold">기본 그림으로 쓸 그림을 누르세요</p>
+          <ArtPicker arts={approvedPicks} disabled={busy} name="review-default" preferSubject={sel.length ? data.arts.find((a) => a.id === sel[0])?.subject : undefined} starIds={defaultIds} value={[]} onChange={(ids) => ids[0] && run("default", false, ids[0])} />
         </div>
       ) : null}
       {confirm ? (

@@ -62,6 +62,13 @@ function CardDetail({ card, usage, canEdit, appSlug, onEdit, onToggle, busy }: {
             .filter(Boolean)
             .join(" · ")}
         </Row>
+        {card.pinnedArt ? (
+          <Row k="기본 그림">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img alt={`기본 그림 ${card.pinnedArt.subject}`} className="inline-block h-12 w-12 rounded border border-default-300 bg-default-100 object-contain align-middle" data-detail-default-art={card.pinnedArt.id} src={card.pinnedArt.url} style={{ imageRendering: "pixelated" }} />
+            <span className="ml-1 text-xs fx-muted">{card.pinnedArt.subject}</span>
+          </Row>
+        ) : null}
         {usage ? (
           <Row k="최근 30일">
             {usage.recent}장 생성{usage.cost ? ` · PixelLab ${usage.cost}회` : ""}

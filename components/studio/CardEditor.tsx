@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CardView } from "@/lib/factory/cardsDb";
 import type { CardField, CardOptions, RefRules } from "@/lib/factory/cards";
 import type { ApprovedArtLite } from "@/lib/studio/data";
+import ArtPicker from "@/components/studio/ArtPicker";
 
 interface ToolChoice {
   name: string;
@@ -192,18 +193,20 @@ export default function CardEditor({ appSlug, card, approvedArts, onSaved, onClo
               기본 그림을 1순위로 고정
             </label>
             {rules.pinDefault ? (
-              <label className="block min-w-0 text-sm">
+              <div className="block min-w-0 text-sm">
                 <span className="fx-label">기본 그림 (그림 저장소의 승인 그림 중에서)</span>
-                <select className={FIELD} data-card-rule="defaultArtId" disabled={busy} value={rules.defaultArtId ?? ""} onChange={(e) => setRules({ ...rules, defaultArtId: e.target.value || null })}>
-                  <option value="">(고르지 않음 — 고를 때까지 고정 안 됨)</option>
-                  {approvedArts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.subject} · {a.kind} · {a.id.slice(0, 8)}
-                    </option>
-                  ))}
-                </select>
-                {!approvedArts.length ? <span className="text-xs fx-muted">승인된 그림이 아직 없어요.</span> : null}
-              </label>
+                <ArtPicker
+                  allowNone
+                  arts={approvedArts}
+                  disabled={busy}
+                  name="defaultArtId"
+                  noneLabel="(고르지 않음 — 고를 때까지 고정 안 됨)"
+                  preferSubject={card?.pinnedArt?.subject ?? approvedArts.find((a) => card?.name.includes(a.subject))?.subject}
+                  starIds={card?.refRules.defaultArtId ? [card.refRules.defaultArtId] : []}
+                  value={rules.defaultArtId ? [rules.defaultArtId] : []}
+                  onChange={(ids) => setRules({ ...rules, defaultArtId: ids[0] ?? null })}
+                />
+              </div>
             ) : null}
             <label className="flex items-center gap-2 text-sm">
               <input checked={rules.sameSubject} data-card-rule="sameSubject" disabled={busy} type="checkbox" onChange={(e) => setRules({ ...rules, sameSubject: e.target.checked })} />

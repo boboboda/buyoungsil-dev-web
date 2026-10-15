@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import ArtPicker from "@/components/studio/ArtPicker";
 import { applySuggestion, countByGroup, estimateCost, isActiveStatus, MAKE_LIMITS, MAKE_REFRESH_MS, makeInputError, parseSubjects, pixelScale, subjectSuggestions, type MakeArt, type MakeJob } from "@/lib/studio/make";
 import type { MakeData } from "@/lib/studio/makeData";
 import type { LayoutData } from "@/lib/studio/layoutData";
@@ -198,7 +199,6 @@ export default function MakeTab({ data, canEdit, showBatch, sub, layout }: { dat
     setBusy(false);
   };
 
-  const toggleRef = (id: string) => setRefs((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length >= MAKE_LIMITS.refs ? cur : [...cur, id]));
 
   return (
     <div className="min-w-0 space-y-3" data-make-tab>
@@ -294,23 +294,9 @@ export default function MakeTab({ data, canEdit, showBatch, sub, layout }: { dat
                       </button>
                       {showRefs ? (
                         data.approved.length ? (
-                          <ul className="flex flex-wrap gap-2" data-make-refs>
-                            {data.approved.slice(0, 60).map((a) => (
-                              <li key={a.id}>
-                                <button
-                                  aria-pressed={refs.includes(a.id)}
-                                  className={`rounded border p-1 ${refs.includes(a.id) ? "border-default-700 bg-default-100" : "border-default-300"}`}
-                                  data-make-ref={a.id}
-                                  title={a.subject}
-                                  type="button"
-                                  onClick={() => toggleRef(a.id)}
-                                >
-                                  <PixelImg alt={a.subject} box={48} src={a.url} />
-                                  <span className="block max-w-[3.5rem] truncate text-[10px]">{a.subject}</span>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
+                          <div data-make-refs>
+                            <ArtPicker arts={data.approved.slice(0, 60)} max={MAKE_LIMITS.refs} multiple name="make-refs" value={refs} onChange={setRefs} />
+                          </div>
                         ) : (
                           <p className="text-xs fx-muted">승인된 그림이 아직 없어요. 비워 두면 카드의 참고 규칙대로 골라요.</p>
                         )

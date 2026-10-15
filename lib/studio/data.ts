@@ -76,6 +76,7 @@ export interface ApprovedArtLite {
   subject: string;
   kind: string;
   url: string;
+  decidedAt: string | null;
 }
 
 export interface StudioProjectData {
@@ -126,7 +127,7 @@ export async function readStudioProject(appSlug: string, now = Date.now()): Prom
     readManifestsView().catch(() => ({ commit: "", reportedAt: null, tools: [] }) as ManifestsView),
     prisma.factoryArt.findMany({ where: { appSlug, cardId: { not: null }, createdAt: { gte: since } }, select: { cardId: true, status: true, createdAt: true, summary: true }, take: 3000 }),
     prisma.factoryArt.count({ where: { appSlug, status: "candidate" } }),
-    prisma.factoryArt.findMany({ where: { appSlug, status: "approved" }, orderBy: { decidedAt: "desc" }, select: { id: true, subject: true, kind: true, url: true }, take: 200 }),
+    prisma.factoryArt.findMany({ where: { appSlug, status: "approved" }, orderBy: { decidedAt: "desc" }, select: { id: true, subject: true, kind: true, url: true, decidedAt: true }, take: 200 }),
   ]);
 
   const weekLines = await studioWeekLines(appSlug, cards, manifest, now);
@@ -142,7 +143,7 @@ export async function readStudioProject(appSlug: string, now = Date.now()): Prom
     usage: summarizeUsage(arts, cards.map((c) => c.id), now),
     weekLines,
     pendingReview,
-    approvedArts: approved,
+    approvedArts: approved.map((a) => ({ ...a, decidedAt: a.decidedAt ? a.decidedAt.toISOString() : null })),
     studioUrl: classes[appSlug]?.studioUrl ?? null,
   };
 }
