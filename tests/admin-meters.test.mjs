@@ -282,7 +282,7 @@ test("관리자 상단바: 메뉴 순서·지금 위치 강조·사이트로·�
   assert.match(out, /<header class="fx-topbar">/);
   assert.match(out, /<nav aria-label="관리자 메뉴"/);
   assert.equal(count(out, /aria-current="page"/g), 1);
-  assert.match(out, /href="\/admin\/factory" aria-current="page" class="fx-topbar-link">통제실</);
+  assert.match(out, /<a aria-current="page" class="fx-topbar-link" href="\/api\/admin\/handoff\?to=\/admin\/factory">통제실</);
   assert.match(out, /href="\/" class="fx-topbar-link">↗ 사이트로</);
   assert.match(out, />12:42</);
   assert.match(out, />부영실</);

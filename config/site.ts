@@ -36,7 +36,7 @@ export const siteConfig = {
     { key: "adminNotes", label: "📚 노트 관리", short: "글/노트", href: "/admin/notes" },
     { key: "adminProjects", label: "💼 프로젝트", short: "프로젝트", href: "/admin/projects" },
     { key: "adminStories", label: "😅 이야기", short: "이야기", href: "/admin/stories" },
-    { key: "adminFactory", label: "🏭 앱 공장", short: "통제실", href: "/admin/factory" },
+    { key: "adminFactory", label: "🏭 앱 공장", short: "통제실", href: "/api/admin/handoff?to=/admin/factory", activeHref: "/admin/factory" },
     { key: "adminWorks", label: "💻 외주 신청", short: "외주", href: "/admin/works" },
     { key: "adminBoards", label: "💬 앱별 공지/문의 게시판", short: "문의함", href: "/admin/boards" },
     { key: "adminAnalytics", label: "📈 분석", short: "분석", href: "/admin/analytics" },

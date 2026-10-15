@@ -96,7 +96,11 @@ export default function NavBar() {
           <DropdownItem
             key={item.key}
             textValue={item.label}
-            onPress={() => router.push(item.href)}
+            onPress={() =>
+              item.href.startsWith("/api/")
+                ? window.location.assign(item.href)
+                : router.push(item.href)
+            }
           >
             <p>{item.label}</p>
           </DropdownItem>

@@ -9,6 +9,14 @@ import { faEye, faEyeSlash } from "@fortawesome/free-solid-svg-icons";
 import { toast } from "react-toastify";
 import { useRouter } from "next/navigation";
 
+// 통제실 로그인 넘김(/api/admin/handoff)으로 돌아오는 callbackUrl 만 따른다(같은 도메인의 이 경로 하나만 허용)
+function handoffCallback(): string | null {
+  if (typeof window === "undefined") return null;
+  const raw = new URLSearchParams(window.location.search).get("callbackUrl");
+
+  return raw && /^\/api\/admin\/handoff\?to=%2F[A-Za-z0-9%_\-.~]*$/.test(raw) ? raw : null;
+}
+
 export default function SignInComponent() {
   const router = useRouter();
 
@@ -66,7 +74,10 @@ export default function SignInComponent() {
       } else {
         // 로그인 성공
         toast.success("로그인 성공!");
-        router.push("/");
+        const back = handoffCallback();
+
+        if (back) window.location.assign(back);
+        else router.push("/");
       }
     } catch (error) {
       notifyFailedEvent("로그인 중 오류가 발생했습니다.");
@@ -79,13 +90,13 @@ export default function SignInComponent() {
   // 🔥 OAuth 로그인 - NextAuth 직접 사용
   const handleGitHubSignIn = () => {
     signIn("github", {
-      callbackUrl: "/?login=success&provider=github",
+      callbackUrl: handoffCallback() ?? "/?login=success&provider=github",
     });
   };
 
   const handleGoogleSignIn = () => {
     signIn("google", {
-      callbackUrl: "/?login=success&provider=google",
+      callbackUrl: handoffCallback() ?? "/?login=success&provider=google",
     });
   };
 
