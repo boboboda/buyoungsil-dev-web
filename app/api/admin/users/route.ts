@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
-import { requireAdmin } from "@/lib/factory/admin";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 import { listMembers, memberSummary, parseMemberQuery } from "@/lib/admin/members";
 
 export const dynamic = "force-dynamic";

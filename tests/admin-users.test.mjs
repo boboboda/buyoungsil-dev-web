@@ -216,13 +216,13 @@ test("민감 필드: select 에 비밀번호·토큰·세션이 없고, 결과�
   assert.doesNotMatch(JSON.stringify(page), SENSITIVE);
 });
 
-// ── API: 비로그인·일반 회원·관리자 (관문은 실제 lib/factory/admin.ts) ──
+// ── API: 비로그인·일반 회원·관리자 (관문은 실제 lib/auth/requireAdmin.ts) ──
 let session = null;
 const getSession = { auth: async () => session };
-const factoryAdmin = loadTs("lib/factory/admin.ts", { "@/lib/auth/get-sesstion": getSession });
+const factoryAdmin = loadTs("lib/auth/requireAdmin.ts", { "@/lib/auth/get-sesstion": getSession });
 const route = loadTs("app/api/admin/users/route.ts", {
   "@/lib/prisma": { __esModule: true, default: db },
-  "@/lib/factory/admin": factoryAdmin,
+  "@/lib/auth/requireAdmin": factoryAdmin,
   "@/lib/admin/members": members,
 });
 const get = (qs = "") => route.GET(new NextRequest(`http://localhost/api/admin/users${qs ? `?${qs}` : ""}`));
@@ -340,4 +340,10 @@ test("관리자 메뉴·상단바에 '가입자'(/admin/users), 지금 위치 �
   const html = renderToStaticMarkup(h(top.AdminTopBarView, { pathname: "/admin/users", clock: "12:00", account: null }));
   assert.match(html, /href="\/admin\/users" aria-current="page" class="fx-topbar-link">가입자</);
   assert.equal((html.match(/aria-current="page"/g) ?? []).length, 1);
+});
+
+test("requireAdmin 은 lib/auth/requireAdmin.ts 에 있고, lib/factory/admin.ts 는 다시 내보내기만 한다", () => {
+  const re = fs.readFileSync(path.join(repo, "lib/factory/admin.ts"), "utf8");
+  assert.match(re, /export \{ requireAdmin \} from "@\/lib\/auth\/requireAdmin"/);
+  assert.doesNotMatch(re, /auth\(\)/);
 });
