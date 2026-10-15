@@ -463,7 +463,8 @@ function fakeDockerCurl(ctx) {
       'case "$1 $2" in',
       '  "compose ps") echo cid123 ;;',
       '  "compose port") echo "127.0.0.1:5300" ;;',
-      '  "compose up") if [ -n "$FAKE_BUILD_FAIL" ] && [[ " $* " == *" --build "* ]]; then echo "Failed to compile"; exit 1; fi ;;',
+      '  "compose up") if [ -n "$FAKE_BUILD_FAIL" ] && [[ " $* " == *" --build "* ]]; then echo "Failed to compile"; exit 1; fi',
+      '                if [ -n "$FAKE_RESTART_FAIL" ] && [[ " $* " == *" --force-recreate "* ]]; then echo "recreate failed"; exit 1; fi ;;',
       '  "compose exec") if [ -n "$FAKE_RELOAD_FAIL" ]; then exit 1; fi ;;',
       '  "inspect cid123") case "$*" in *Config.Image*) echo one-tiny-frame-api ;; *) echo sha256:oldimage ;; esac ;;',
       '  "port cid123") echo "8080/tcp -> 0.0.0.0:18787" ;;',
@@ -480,7 +481,7 @@ function fakeDockerCurl(ctx) {
       "  printf 'HTTP/1.1 200 OK\\r\\nCache-Control: no-cache\\r\\nContent-Security-Policy: default-src self; frame-ancestors self https://www.example.com https://factory.example.com\\r\\n\\r\\n'; exit 0",
       "fi",
       'case "$URL" in',
-      "  */api/admin/health) echo -n 401 ;;",
+      '  */api/admin/health) echo -n "${FAKE_ADMIN:-401}" ;;',
       '  */health) echo -n "${FAKE_HEALTH:-200}" ;;',
       '  */preview/) echo -n "${FAKE_PREVIEW_CODE:-200}" ;;',
       "  *) echo -n 200 ;;",
@@ -633,6 +634,155 @@ test("web-release: 설정 검사 → 백업 → 설정·빌드 올리기 → 링
       assert.notEqual(r.code, 0, bad.join(" ") + r.out);
     }
   } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+// 가짜 홈페이지 키 보관함(/api/factory/service-token): 감독 토큰만 받고, 저장·되돌리기를 메모리에 흉내 낸다. 받은 본문을 남겨 시험이 본다
+function fakeVault(token) {
+  const entries = new Map(); // name → { value, version }
+  const prev = new Map(); // name → { version, before }
+  const calls = [];
+  const state = { fail: false };
+  const srv = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (d) => (raw += d));
+    req.on("end", () => {
+      const send = (status, body) => {
+        res.statusCode = status;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(body));
+      };
+      if (req.headers.authorization !== `Bearer ${token}`) return send(401, { message: "권한이 없습니다." });
+      if (req.url !== "/api/factory/service-token" || req.method !== "POST") return send(404, { message: "없음" });
+      const b = JSON.parse(raw);
+      calls.push(b);
+      if (state.fail) return send(500, { message: "처리에 실패했습니다." });
+      if (!/^SERVICE_ADMIN_TOKEN_[A-Z0-9_]+$/.test(String(b.name))) return send(400, { message: "이름" });
+      if (b.rollback === true) {
+        const p = prev.get(b.name);
+        const cur = entries.get(b.name);
+        if (!p || p.version !== b.version || !cur || cur.version !== b.version) return send(409, { message: "되돌릴 기록 없음" });
+        if (p.before) entries.set(b.name, { value: p.before.value, version: cur.version + 1 });
+        else entries.delete(b.name);
+        prev.delete(b.name);
+        return send(200, { ok: true, restored: p.before ? "previous" : "deleted" });
+      }
+      const cur = entries.get(b.name);
+      const next = { value: b.value, version: (cur?.version ?? 0) + 1 };
+      prev.set(b.name, { version: next.version, before: cur ?? null });
+      entries.set(b.name, next);
+      send(200, { ok: true, version: next.version, replaced: !!cur });
+    });
+  });
+  return { srv, entries, calls, state, listen: () => new Promise((r) => srv.listen(0, "127.0.0.1", r)), close: () => new Promise((r) => srv.close(r)) };
+}
+
+test("service-token: 값 한 번 생성 → 서버 .env --put → 보관함 저장 → 컨테이너 재시작·401 확인, 한쪽 실패면 둘 다 되돌림, 값은 어디에도 없음", { skip }, async () => {
+  const ctx = setup();
+  const TOKEN = "fake-supervisor-token-0123456789";
+  const vault = fakeVault(TOKEN);
+  await vault.listen();
+  try {
+    fakeDockerCurl(ctx);
+    const work = `${ctx.home}/git-server/work/one-tiny-frame`;
+    fs.mkdirSync(work + "/.git", { recursive: true });
+    fs.writeFileSync(work + "/docker-compose.yml", "services: {}\n");
+    const ENV0 = "PIXELLAB_TOKEN=" + SECRET + "\nALLOWED_ORIGINS=https://a.example\n";
+    fs.writeFileSync(work + "/.env", ENV0);
+    const cfgPath = path.join(ctx.root, "supervisor.config.json");
+    fs.writeFileSync(cfgPath, JSON.stringify({ serverUrl: `http://127.0.0.1:${vault.srv.address().port}/`, token: TOKEN }));
+    const env = { FACTORY_CONFIG: cfgPath };
+    const envTok = () => /^ADMIN_API_TOKEN=(.*)$/m.exec(read(work + "/.env"))?.[1];
+    const dockerLog = () => (fs.existsSync(`${ctx.home}/docker.log`) ? read(`${ctx.home}/docker.log`) : "");
+    const restarts = () => (dockerLog().match(/compose up -d --force-recreate --no-build/g) ?? []).length;
+    const NAME = "SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME";
+    const A = ["service-token", "one-tiny-frame", "--host", "serverpc2", "--env-key", "ADMIN_API_TOKEN", "--secret", NAME];
+
+    // 형식·설정 검사는 서버·보관함에 가기 전에 멈춤
+    let r;
+    for (const bad of [
+      ["service-token", "one-tiny-frame", "--env-key", "ADMIN_API_TOKEN", "--secret", "PIXELLAB_TOKEN"],
+      ["service-token", "one-tiny-frame", "--env-key", "ADMIN_API_TOKEN"],
+      ["service-token", "one-tiny-frame", "--secret", NAME],
+      ["service-token", "one-tiny-frame", "--env-key", "NEXTAUTH_SECRET", "--secret", NAME],
+      ["service-token", "one-tiny-frame", "--env-key", "bad key", "--secret", NAME],
+      [...A, "--host", "evil"],
+      [...A, "--probe", "health;rm"],
+      ["service-token"],
+    ]) {
+      r = await run(ctx, bad, env);
+      assert.notEqual(r.code, 0, bad.join(" ") + r.out);
+    }
+    // 감독 설정이 없거나(시험 모드는 진짜 설정으로 되돌아가지 않는다) 주소가 이 PC 밖이면 멈춤
+    r = await run(ctx, A, { FACTORY_CONFIG: path.join(ctx.root, "nope.json") });
+    assert.notEqual(r.code, 0, r.out);
+    assert.match(r.out, /감독 설정/);
+    r = await run(ctx, A, { FACTORY_CONFIG: "" });
+    assert.notEqual(r.code, 0, r.out);
+    assert.match(r.out, /감독 설정/);
+    const farCfg = path.join(ctx.root, "far.json");
+    fs.writeFileSync(farCfg, JSON.stringify({ serverUrl: "https://www.example.com/", token: TOKEN }));
+    r = await run(ctx, A, { FACTORY_CONFIG: farCfg });
+    assert.notEqual(r.code, 0, r.out);
+    assert.match(r.out, /홈페이지 주소/);
+    assert.equal(read(work + "/.env"), ENV0, "검사에서 막히면 .env 그대로");
+    assert.equal(vault.calls.length, 0, "보관함에 아무것도 보내지 않음");
+    assert.ok(!fs.existsSync(`${ctx.home}/docker.log`));
+
+    // 보관함 저장 실패 → .env 되돌림, 컨테이너는 손대지 않음
+    vault.state.fail = true;
+    r = await run(ctx, A, env);
+    assert.equal(r.code, 5, r.out);
+    assert.match(r.out, /보관함 저장 500/);
+    assert.match(r.out, /되돌림\(됨\)/);
+    assert.equal(read(work + "/.env"), ENV0, ".env 가 원래대로");
+    assert.equal(vault.calls.length, 1);
+    assert.equal(restarts(), 0, "컨테이너를 다시 만들지 않음");
+    assert.ok(!r.out.includes(vault.calls[0].value) && !read(ctx.report).includes(vault.calls[0].value), "만든 값이 출력·보고에 없다");
+    noSecret(ctx, r.out);
+    vault.state.fail = false;
+
+    // 성공: .env 와 보관함에 같은 값, 컨테이너 재시작, /health 200·/api/admin/health 401
+    r = await run(ctx, A, env);
+    assert.equal(r.code, 0, r.out);
+    const t1 = envTok();
+    assert.match(t1, /^[0-9a-f]{64}$/);
+    assert.equal(vault.entries.get(NAME)?.value, t1, "보관함과 .env 가 같은 값");
+    assert.equal(vault.entries.get(NAME)?.version, 1);
+    assert.match(read(work + "/.env"), /^PIXELLAB_TOKEN=/m, "다른 줄은 그대로");
+    assert.equal(restarts(), 1);
+    assert.match(r.out, /완료/);
+    assert.match(r.out, /\/health 200, \/api\/admin\/health 401/);
+    assert.match(r.out, /등록\(version 1\)/);
+    assert.ok(!r.out.includes(t1) && !read(ctx.report).includes(t1) && !read(ctx.sshLog).includes(t1), "값이 출력·보고·ssh 기록에 없다");
+    assert.match(read(ctx.report), /서비스 토큰 짝 넣기/);
+    noSecret(ctx, r.out);
+    assert.ok(!A.some((a) => a.length >= 64), "명령줄 인자에 값이 없다");
+
+    // 재시작 뒤 응답 확인 실패(관리 API 가 503 = 토큰을 못 읽음) → 보관함 이전 값·.env 되돌림, 컨테이너 다시 시작
+    const envAfter = read(work + "/.env");
+    r = await run(ctx, A, { ...env, FAKE_ADMIN: "503" });
+    assert.equal(r.code, 5, r.out);
+    assert.match(r.out, /응답 확인 실패\(\/health 200, \/api\/admin\/health 503\)/);
+    assert.match(r.out, /보관함 되돌림\(이전 값으로\)/);
+    assert.match(r.out, /\.env 되돌림\(됨\)/);
+    assert.equal(read(work + "/.env"), envAfter, ".env 가 성공 직후 상태로");
+    assert.equal(vault.entries.get(NAME)?.value, t1, "보관함도 이전 값으로");
+    assert.equal(restarts(), 3, "실패 재시작 + 되돌린 뒤 재시작");
+    const sent = vault.calls.find((c) => c.rollback === true);
+    assert.equal(sent?.version, 2);
+    noSecret(ctx, r.out);
+
+    // 컨테이너 재시작 자체가 실패해도 같은 되돌림
+    r = await run(ctx, A, { ...env, FAKE_RESTART_FAIL: "1" });
+    assert.equal(r.code, 5, r.out);
+    assert.match(r.out, /컨테이너 재시작 실패/);
+    assert.equal(read(work + "/.env"), envAfter);
+    assert.equal(vault.entries.get(NAME)?.value, t1);
+    for (const c of vault.calls) if (c.value) assert.ok(!read(ctx.report).includes(c.value) && !dockerLog().includes(c.value));
+  } finally {
+    await vault.close();
     fs.rmSync(ctx.root, { recursive: true, force: true });
   }
 });

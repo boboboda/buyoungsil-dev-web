@@ -39,6 +39,8 @@
 
 1. (서비스 쪽) 한 컷 앱 일감이 끝나 서버에 배포되면 `/api/admin/*` 가 생긴다. 서비스 환경변수 `ADMIN_API_TOKEN` 같은 별도 값(쿠키 `ADMIN_TOKEN` 과 분리)을 정한다. 이 정비는 서비스 코드·DB·nginx·.env 를 고치지 않는다.
 2. 통제실 [설정] → 외부 서비스 키(서버 보관 키)에 `SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME` 으로 같은 값을 등록한다. (검수 대기 개수용 `REVIEW_STATUS_TOKEN_ONE_TINY_FRAME` 은 이미 있으면 그대로.)
+   - **자동(결정 10-15 20:50)**: 1~2 는 정비에서 신뢰된 serverctl `service-token one-tiny-frame --host serverpc2 --env-key ADMIN_API_TOKEN --secret SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME` 한 번으로 한다. 작업 PC 프로세스 메모리에서 값을 한 번 만들어 서버2 `.env` 와 홈페이지 키 보관함(`POST /api/factory/service-token`, 워커 토큰, `lib/factory/serviceToken.ts`)에 같이 넣고 컨테이너를 다시 만든 뒤 토큰 없는 `/api/admin/health` 가 401 인지 본다. 한쪽이라도 실패하면 둘 다 되돌린다(.env 백업 복원, 보관함 이전 값 복원 또는 삭제). 값은 출력·로그·파일·인자 어디에도 남지 않는다.
+   - 보관함 쓰기 API 는 지금 블로그(selfdev)에만 있다. 통제실(factory-web)에도 같은 것을 7-3/실행 순서 4 에서 옮긴다(그때까지 serverctl 은 블로그 주소로 보낸다).
 3. 스튜디오 [구성]의 서비스 연결 상태에서 [지금 확인] → 키 등록 '등록됨', 서비스 API '정상'이 되면 [운영] → 서비스 운영의 버튼이 켜진다.
 4. 서비스 서버의 HTTPS 인증서가 만료됐다면(`certificate has expired`) 서버에서 갱신한다(이 정비가 인증서·nginx 를 고치지 않는다).
 

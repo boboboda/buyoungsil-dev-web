@@ -33,6 +33,11 @@
 //   web-release APP_DIR [--site NAME] [--host H] [--domain D]
 //                                    새싹 허브 /preview/ 같은 정적 웹: APP_DIR/build/preview(+.gz)와 tools/web/server 설정 4개를 서버 작업 폴더(기본 saessak-hub-web)에 올림.
 //                                    새 nginx 설정은 임시 컨테이너로 먼저 검사, 바꾸기 전 백업, 실패하면 설정·링크 되돌림, /preview/ 와 / 200·헤더 확인
+//   service-token NAME --env-key KEY --secret SERVICE_ADMIN_TOKEN_<앱> [--host H] [--probe PATH]… [--domain D]
+//                                    서비스 관리자 토큰 짝 맞추기(한 컷): 이 PC 프로세스 메모리에서 32바이트 값을 한 번 만들어
+//                                    ① 서버 작업 폴더 .env(.local) 의 KEY 에 넣고(백업·600) ② 홈페이지 키 보관함(/api/factory/service-token, 감독 토큰)에 저장
+//                                    ③ 컨테이너를 다시 만들어(compose up -d --force-recreate) 새 값을 읽게 하고 첫 경로 200·나머지 경로(토큰 없이) 401 확인.
+//                                    어느 단계든 실패하면 둘 다 되돌림(.env 백업 복원, 보관함 이전 값 복원 또는 삭제, 컨테이너 재시작). 값은 출력·로그·파일·인자에 남지 않음
 //
 // 안전 절차: 바꾸기 전에 백업(작업 폴더 밖, 최근 20개) → 바꾸고 검증(nginx -t, reload, 헬스체크 / rebuild, 헬스체크)
 //           → 실패하면 자동 되돌림. 바꿀 때마다 정비 대화와 텔레그램에 "무엇을·백업·검증 결과"를 남긴다(값 제외).
@@ -41,10 +46,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
 // 정비 보호 훅(pcguard.mjs)도 이 목록으로 "신뢰된 serverctl 호출"을 가린다
-export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release"];
+export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token"];
 const HOST = "serverpc";
 const HOSTS = ["serverpc", "serverpc2"]; // 우리 서버 두 대만(serveraccess.mjs 의 SERVER_HOSTS 와 같게)
 // 시험 모드(FACTORY_TEST_MODE=1)에서만 가짜 ssh·가짜 홈페이지 주소를 쓴다. 진짜 실행에서는 환경변수로 바꿀 수 없다
@@ -70,7 +76,9 @@ const REMOTE_NAME_RE = /^[a-z][a-z0-9_-]{0,30}$/;
 const DEPLOY_URL_RE = /^(serverpc|serverpc2):git-server\/repo\/([A-Za-z][A-Za-z0-9_-]{0,40})\.git$/;
 const home = os.homedir();
 const STATE = (TEST && process.env.SERVERCTL_STATE) || path.join(home, "dev", "factory", "serverctl-state.json");
-const CONFIG = path.join(home, "dev", "factory", "supervisor.config.json");
+// 감독 설정(홈페이지 주소·감독 토큰): 보고와 service-token 의 보관함 저장에 쓴다.
+// 시험 모드는 임시 설정(FACTORY_CONFIG)만 쓰고 진짜 설정으로 되돌아가지 않는다(시험이 진짜 홈페이지에 닿지 않게)
+const CONFIG = TEST ? process.env.FACTORY_CONFIG || "" : path.join(home, "dev", "factory", "supervisor.config.json");
 
 // ───────── 서버 쪽 고정 스크립트(인자는 아래에서 형식 검사 후에만 넘긴다) ─────────
 const REMOTE = String.raw`
@@ -310,6 +318,18 @@ case "$1" in
     if [ -n "$TAG" ] && [ -n "$IMGN" ]; then docker tag "$TAG" "$IMGN" || { echo "TAG_FAIL"; exit 3; }; fi
     docker compose up -d --no-build </dev/null 2>&1 | tail -3
     act "app-update-rollback $N $OLD"; echo "ROLLED_BACK" ;;
+  app-restart)
+    # .env 를 바꾼 뒤 컨테이너가 새 값을 읽게 다시 만든다(빌드 없음). service-token 이 쓴다
+    N="$2"; D="$HOME/git-server/work/$N"; LF="$HOME/serverctl-app-$N.log"
+    [ -d "$D/.git" ] && [ -f "$D/docker-compose.yml" ] || { echo "NO_WORK $N"; exit 2; }
+    cd "$D" || exit 2
+    if docker compose up -d --force-recreate --no-build </dev/null > "$LF" 2>&1; then act "app-restart $N"; echo "RESTARTED"; else tail -n 5 "$LF" | sed 's/^/| /'; echo "RESTART_FAIL"; exit 3; fi ;;
+  env-restore-work)
+    # service-token 되돌리기: env-multi 가 남긴 백업(시각 $3)으로 작업 폴더의 .env.local(없으면 .env)을 되돌린다
+    N="$2"; D="$HOME/git-server/work/$N"; F=.env.local; [ -f "$D/.env.local" ] || F=.env
+    B="$HOME/env-backups/$N/$F.bak-$3"; [ -f "$B" ] || { echo "NO_BACKUP"; exit 2; }
+    cat "$B" > "$D/$F" && chmod 600 "$D/$F" || { echo "RESTORE_FAIL"; exit 3; }
+    act "env-restore-work $N $3"; echo "RESTORED $B" ;;
   *) echo "UNKNOWN"; exit 9 ;;
 esac
 `;
@@ -369,7 +389,7 @@ esac
 // 시험 모드에서만 가짜 ssh(node 스크립트)를 쓴다
 const sshCmd = () => (TEST && process.env.SERVERCTL_SSH ? [process.execPath, [process.env.SERVERCTL_SSH]] : ["ssh", []]);
 function remote(args, input, host = HOST) {
-  const script = /^app-(update|health)/.test(args[0]) ? REMOTE_APP : args[0] === "web-release" ? REMOTE_WEB : REMOTE;
+  const script = /^(app-(update|health|restart)|env-restore-work)/.test(args[0]) ? REMOTE_APP : args[0] === "web-release" ? REMOTE_WEB : REMOTE;
   if (!HOSTS.includes(host)) die(`대상 서버는 ${HOSTS.join("·")} 만이에요: ${host}`);
   // 윈도우 ssh 명령줄은 길면 잘린다(원격 셸이 "unmatched \"" 로 실패) → 스크립트를 gzip 한 뒤 base64 로 보낸다
   const b64 = gzipSync(Buffer.from(script.replace(/\r\n/g, "\n")), { level: 9 }).toString("base64");
@@ -1038,6 +1058,113 @@ async function webRelease(args) {
   }
 }
 
+// ───────── service-token: 서비스 관리자 토큰을 서버 .env 와 홈페이지 키 보관함에 같은 값으로 ─────────
+
+const SERVICE_SECRET_RE = /^SERVICE_ADMIN_TOKEN_[A-Z0-9_]{1,40}$/;
+
+// 감독 설정에서 홈페이지 주소·감독 토큰을 읽는다(값은 출력하지 않는다). 시험 모드는 이 PC 안(127.0.0.1·localhost)만
+function supervisorConfig() {
+  let cfg;
+  try {
+    cfg = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+  } catch {
+    die("감독 설정(supervisor.config.json)을 읽지 못했어요.");
+  }
+  const url = String(cfg?.serverUrl ?? "").replace(/\/+$/, "");
+  // 시험 모드는 이 PC 안(127.0.0.1·localhost)만, 진짜 실행은 https 만
+  if (TEST ? !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(url) : !/^https:\/\/[a-z0-9.-]+$/i.test(url)) die("감독 설정의 홈페이지 주소가 올바르지 않아요.");
+  if (typeof cfg.token !== "string" || cfg.token.length < 8) die("감독 설정에 감독 토큰이 없어요.");
+  return { url, token: cfg.token };
+}
+
+// 홈페이지 키 보관함 쓰기(/api/factory/service-token). 본문은 여기서만 만들고 어디에도 남기지 않는다
+async function vaultPost(cfg, body) {
+  try {
+    const r = await fetch(`${cfg.url}/api/factory/service-token`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const j = await r.json().catch(() => ({}));
+    return { ok: r.status === 200 && j?.ok === true, status: r.status, version: j?.version, restored: j?.restored, message: typeof j?.message === "string" ? j.message : "" };
+  } catch (e) {
+    return { ok: false, status: 0, message: `연결 실패(${e.name || e.code || ""})` };
+  }
+}
+
+// service-token NAME --env-key KEY --secret SERVICE_ADMIN_TOKEN_<앱> : 값을 한 번 만들어 서버 .env 와 보관함에 같이 넣고, 컨테이너 재시작 → 응답 확인. 실패하면 둘 다 되돌림
+async function serviceToken(args) {
+  const { pos, opts } = parseOpts(args, ["probe"]);
+  if (pos.length !== 1) die("service-token <작업 폴더 이름> --env-key KEY --secret SERVICE_ADMIN_TOKEN_<앱> [--host H] [--probe /경로]… [--domain D]");
+  const host = hostOpt(opts);
+  const name = workName(pos[0]);
+  const envKey = String(opts["env-key"] ?? "");
+  const secret = String(opts.secret ?? "");
+  if (!KEY_RE.test(envKey)) die(`--env-key 형식이 올바르지 않아요(영문 대문자·숫자·_): ${envKey || "(없음)"}`);
+  if (/^(NEXTAUTH_SECRET|AUTH_SECRET)$/.test(envKey)) die(`${envKey} 는 바꾸지 않아요(공장 키 암호화 기준).`);
+  if (!SERVICE_SECRET_RE.test(secret)) die(`--secret 은 SERVICE_ADMIN_TOKEN_<앱> 꼴만이에요: ${secret || "(없음)"}`);
+  const probes = opts.probe.length ? opts.probe : ["/health", "/api/admin/health"];
+  for (const p of probes) if (!PROBE_RE.test(p)) die(`--probe 경로 형식이 올바르지 않아요: ${p}`);
+  if (opts.domain && !DOMAIN_RE.test(opts.domain)) die(`도메인 형식이 올바르지 않아요: ${opts.domain}`);
+  const cfg = supervisorConfig();
+  const who = `${envKey}(${name}@${host}) ↔ ${secret}(홈페이지 보관함)`;
+  // 값은 이 프로세스 메모리에만. 출력은 mask 가 가린다
+  const value = randomBytes(32).toString("hex");
+  secretValue = value;
+
+  // ① 서버 .env
+  const r1 = remote(["env-multi", name], `val\t${envKey}\t${value}\n`, host);
+  const backup = backupOf(r1.out);
+  const ts = tsOf(backup);
+  if (r1.code !== 0 || !/^SET val /m.test(r1.out) || !ts) {
+    say2(`service-token ${who}: 실패(서버 .env 쓰기). 서버·보관함 모두 바뀌기 전 상태예요.`, r1.out);
+    await report(`서비스 토큰 짝 넣기 ${who}\n결과: 서버 .env 쓰기 실패, 아무것도 바뀌지 않음`);
+    process.exit(r1.code || 5);
+  }
+  const undoEnv = () => {
+    const u = remote(["env-restore-work", name, ts], "", host);
+    return /RESTORED/.test(u.out) ? "됨" : `실패: ${u.out.split("\n").slice(-2).join(" ")}`;
+  };
+
+  // ② 홈페이지 키 보관함
+  const put = await vaultPost(cfg, { name: secret, value });
+  if (!put.ok) {
+    const e = undoEnv();
+    say(`service-token ${who}: 실패(보관함 저장 ${put.status || "연결 안 됨"} ${put.message}) → 서버 .env 되돌림(${e}). 컨테이너는 그대로(이전 값으로 돌고 있음)`);
+    await report(`서비스 토큰 짝 넣기 ${who}\n결과: 보관함 저장 실패(${put.status || "연결 안 됨"}) → 서버 .env 되돌림(${e})\n백업: ${backup}`);
+    process.exit(5);
+  }
+  const version = put.version;
+  const undoVault = async () => {
+    const rb = await vaultPost(cfg, { name: secret, rollback: true, version });
+    return rb.ok ? (rb.restored === "previous" ? "이전 값으로" : "삭제") : `실패(${rb.status} ${rb.message})`;
+  };
+
+  // ③ 컨테이너 재시작 → 응답 확인(첫 경로 200, 나머지는 토큰 없이 401)
+  const rs = remote(["app-restart", name], "", host);
+  let codes = [];
+  if (/RESTARTED/.test(rs.out)) {
+    const hr = remote(["app-health", name, ...probes], "", host);
+    codes = [...hr.out.matchAll(/^PROBE (\S+) (\d{3})$/gm)].map((m) => [m[1], m[2]]);
+  }
+  const healthy = codes.length === probes.length && codes[0][1] === "200" && codes.slice(1).every(([, c]) => c === "401");
+  const codeText = codes.map(([p, c]) => `${p} ${c}`).join(", ") || rs.out.split("\n").slice(-2).join(" ");
+  if (!healthy) {
+    const v = await undoVault();
+    const e = undoEnv();
+    const again = remote(["app-restart", name], "", host);
+    const notes = `${/RESTARTED/.test(rs.out) ? `응답 확인 실패(${codeText})` : "컨테이너 재시작 실패"} → 보관함 되돌림(${v}), 서버 .env 되돌림(${e}), 컨테이너 다시 시작(${/RESTARTED/.test(again.out) ? "됨" : "실패"})`;
+    say(`service-token ${who}: 실패 → 자동 되돌림\n${notes}`);
+    await report(`서비스 토큰 짝 넣기 ${who} 실패 → 자동 되돌림\n${notes}\n백업: ${backup}`);
+    process.exit(5);
+  }
+  const pub = opts.domain ? await Promise.all(probes.map(async (p) => `${p} → ${await publicProbe(opts.domain, p)}`)) : [];
+  const body = `서버 .env ${envKey} 넣음(백업: ${backup}), 보관함 ${secret} ${put.replaced ? "교체" : "등록"}(version ${version}), 컨테이너 다시 만듦\n서버 안 응답(토큰 없이): ${codeText}${pub.length ? `\n공개 주소 ${opts.domain}: ${pub.join(", ")}` : ""}`;
+  say(`service-token ${who}: 완료, 값은 서버·보관함에만 있고 출력하지 않았어요\n${body}`);
+  await report(`서비스 토큰 짝 넣기 ${who} (값은 어디에도 기록하지 않음)\n${body}`);
+}
+
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
@@ -1120,6 +1247,8 @@ async function main() {
       return appUpdate(rest);
     case "web-release":
       return webRelease(rest);
+    case "service-token":
+      return serviceToken(rest);
     default:
       die(`서브커맨드: ${SUBCOMMANDS.join(" | ")}`, 2);
   }
