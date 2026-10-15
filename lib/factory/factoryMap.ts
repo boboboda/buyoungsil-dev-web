@@ -182,7 +182,7 @@ export const nodeId = {
 
 // 칸 크기·간격(스튜디오 [구성] 그림보다 약간 낮게: 한 줄 더 들어가도록)
 export const MAP_W = 164;
-export const MAP_H = 96;
+export const MAP_H = 110;
 export const MAP_COL_GAP = 40;
 export const MAP_ROW_GAP = 12;
 export const MAP_PAD = 10;

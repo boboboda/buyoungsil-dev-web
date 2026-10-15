@@ -636,6 +636,9 @@ export async function reportTurn(body: TurnReport): Promise<Result> {
     },
   });
   const halted = ok ? false : await haltIfWaiting(turnId, turn.maintenanceId);
+
+  // 블록별 통계(4-4): 정비 지시 한 줄
+  await import("@/lib/factory/runStatsDb").then((m) => m.recordMaintenanceStat(turn, ok, sessionId ?? (turn.aiEngine === "codex" ? undefined : (thread?.sessionId ?? undefined)))).catch(() => undefined);
   const queueLeft = await prisma.factoryMaintenanceMessage.count({ where: { role: "user", status: { in: QUEUE_STATES } } });
 
   await notifyMaintenance(ok ? "done" : "failed", turn.maintenanceId, turnId, { halted, queueLeft, needsDeploy });

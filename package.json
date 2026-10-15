@@ -37,6 +37,7 @@
     "preview:admin-ui": "node tests/admin-ui-preview.mjs",
     "test:factory-map": "node tests/factory-map.test.mjs",
     "test:plan-first": "node tests/plan-first.test.mjs",
+    "test:run-stats": "node tests/run-stats.test.mjs",
     "test:agents": "node tools/factory-supervisor/tests/agentspec.test.mjs && node tests/agent-defs.test.mjs",
     "test": "node scripts/run-all-tests.mjs",
     "lint": "eslint --fix --color",

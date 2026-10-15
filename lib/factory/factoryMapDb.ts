@@ -6,6 +6,8 @@ import prisma from "@/lib/prisma";
 import { readAgentPerms } from "@/lib/factory/agents";
 import { devicesSnapshot, type DeviceView } from "@/lib/factory/devices";
 import { buildFactoryMap, type MapCard, type MapDevice, type MapInput, type MapJob, type MapGraph } from "@/lib/factory/factoryMap";
+import { nodeUsageLines } from "@/lib/factory/runStats";
+import { readRunStats } from "@/lib/factory/runStatsDb";
 import { parseStoredReport, PROJECT_LINKS_REPORT_KEY } from "@/lib/factory/projectLinks";
 import { readLinksView } from "@/lib/factory/projectLinksDb";
 import { supervisorSnapshot } from "@/lib/factory/supervisor";
@@ -139,5 +141,11 @@ export async function readMapInput(now = Date.now()): Promise<MapInput> {
 export async function readFactoryMap(now = Date.now()): Promise<{ graph: MapGraph; asOf: number; reportAt: string | null; reportStale: boolean }> {
   const input = await readMapInput(now);
 
-  return { graph: buildFactoryMap(input), asOf: now, reportAt: input.links.reportAt, reportStale: input.links.reportStale };
+  const graph = buildFactoryMap(input);
+  // 블록마다 최근 7일 요약 한 줄(4-4). 통계를 못 읽어도 지도는 그대로 나온다
+  const lines = nodeUsageLines(await readRunStats(now, 8), graph.nodes.map((n) => n.id), now);
+
+  for (const node of graph.nodes) if (lines[node.id]) node.usage = lines[node.id];
+
+  return { graph, asOf: now, reportAt: input.links.reportAt, reportStale: input.links.reportStale };
 }

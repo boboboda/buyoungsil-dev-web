@@ -174,6 +174,22 @@ export const FACTORY_TOOLS = [
     annotations: READ_ONLY,
   },
   {
+    name: "get_usage_by_block",
+    description:
+      "블록별 비용·시간 통계를 읽어요(읽기 전용). by 로 묶는 기준(agent=에이전트 종류, app=앱, card=결과물 카드, tool=도구·방법)과 period 로 기간(day=최근 24시간, week=최근 7일, month=최근 30일)을 골라요. " +
+      "묶음마다 실행 횟수(성공·실패·막힘), 토큰(입력+출력+캐시 생성), 대기·실행·일시 중지 시간, 다시 맞추기 횟수, 외부 비용(PixelLab 호출 수)이 나와요. appSlug 로 한 앱만 볼 수도 있어요. 키·토큰 값은 나오지 않아요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        by: { type: "string", enum: ["agent", "app", "card", "tool"], description: "묶는 기준 (기본 agent)" },
+        period: { type: "string", enum: ["day", "week", "month"], description: "기간 (기본 week)" },
+        appSlug: { type: "string", description: "이 앱만 보기 (선택)" },
+      },
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+  },
+  {
     name: "list_secret_names",
     description:
       "앱 기획서에서 쓸 수 있는 키 이름과 설명 목록입니다. 값은 이 서버에 없고 작업 PC에만 있어요. " +
@@ -557,6 +573,8 @@ export async function callFactoryTool(
       return getJob(args);
     case "get_inbox":
       return getInbox(args);
+    case "get_usage_by_block":
+      return getUsageByBlock(args);
     case "list_secret_names":
       return listSecretNames();
     case "enqueue_app_job":
@@ -1104,6 +1122,29 @@ async function getInbox(args: Record<string, unknown>): Promise<ToolResult> {
     단계별: { 막힘_실패: flat.filter((i) => i.tier === "blocked").length, 승인: flat.filter((i) => i.tier === "approval").length, 정보: flat.filter((i) => i.tier === "info").length },
     할_일: flat.map((i) => ({ 단계: TIER_LABEL[i.tier], 종류: i.kind, 제목: i.title, ...(i.appSlug ? { 앱: i.appSlug } : {}), 설명: i.detail, 처리: i.how, key: i.key })),
     안내: "읽기 전용이에요. 승인·확인·다시 시작은 관리자가 통제실 [현황] 할 일이나 텔레그램에서 해요.",
+  });
+}
+
+async function getUsageByBlock(args: Record<string, unknown>): Promise<ToolResult> {
+  const { GROUP_BYS, PERIODS, usageText } = await import("@/lib/factory/runStats");
+  const by = args.by === undefined ? "agent" : GROUP_BYS.find((g) => g === args.by);
+  const period = args.period === undefined ? "week" : PERIODS.find((p) => p === args.period);
+
+  if (!by) return text("by 는 agent, app, card, tool 중 하나여야 해요.", true);
+  if (!period) return text("period 는 day, week, month 중 하나여야 해요.", true);
+  const appSlug = typeof args.appSlug === "string" && APP_SLUG_RE.test(args.appSlug) ? args.appSlug : undefined;
+
+  if (args.appSlug !== undefined && !appSlug) return text("appSlug 형식이 올바르지 않아요.", true);
+  const { readUsageByBlock } = await import("@/lib/factory/runStatsDb");
+  const u = await readUsageByBlock(by, period, Date.now(), appSlug);
+
+  return json({
+    기준: by,
+    기간: period,
+    ...(appSlug ? { 앱: appSlug } : {}),
+    표: usageText(u),
+    묶음: u.rows.map((r) => ({ 이름: r.label, 키: r.key, 횟수: r.runs, 성공: r.success, 실패: r.failed, 막힘: r.blocked, 토큰: r.tokens, 대기초: Math.round(r.waitMs / 1000), 실행초: Math.round(r.runMs / 1000), 중지초: Math.round(r.pausedMs / 1000), 다시맞추기: r.redo, 외부비용: r.externalCost })),
+    안내: "읽기 전용이에요. 토큰은 Claude 기준이고 Codex 일감은 토큰이 0으로 잡혀요. 일시 중지는 서버 배포·업데이트로 보고가 멈춘 시간이에요.",
   });
 }
 

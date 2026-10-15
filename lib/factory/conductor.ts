@@ -542,6 +542,7 @@ export async function readConductorLog(): Promise<CostRecord[]> {
 
 async function appendLog(rec: CostRecord): Promise<void> {
   await writeJson(LOG_KEY, [rec, ...(await readConductorLog())].slice(0, MAX_LOG));
+  await import("@/lib/factory/runStatsDb").then((m) => m.recordConductorStat(rec)).catch(() => undefined); // 블록별 통계(4-4)
 }
 
 export type ApplyResult =

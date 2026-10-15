@@ -409,6 +409,11 @@ export async function reportJob(input: ReportInput): Promise<ReportOutcome> {
   const res = await prisma.factoryJob.updateMany({ where: { id: input.jobId, status: "running" }, data });
   if (res.count === 0) return conflictOf(input.jobId);
 
+  // 블록별 통계(4-4): 끝났거나 멈춘 일감 한 줄(실패해도 보고 처리는 그대로)
+  if (status === "done" || status === "failed" || status === "needs_confirmation" || status === "review" || status === "linkwait") {
+    await import("@/lib/factory/runStatsDb").then((m) => m.recordJobStat(input.jobId, status)).catch(() => undefined);
+  }
+
   // 병행 그룹의 마지막 일감이 합쳐져 완료되면 그룹 요약을 통제실에 남긴다(던지지 않음)
   // 지휘자가 묶은 그룹이면 마지막 전체 점검을 감독 프로그램에 맡긴다(finalCheck)
   const group = status === "done" ? await finishGroupIfDone(input.jobId) : null;

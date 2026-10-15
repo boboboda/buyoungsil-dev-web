@@ -664,6 +664,21 @@ const mapInput = {
 const mapGraph = factoryMapLib.buildFactoryMap(mapInput);
 STATES.map = { ...STATES.live, title: "통제실 지도", map: true };
 
+// 블록별 비용·시간 통계(4-4): [사용량] 탭 아래 표·막대 + 지도 블록의 7일 요약 줄
+const runStatsLib = loadTs("lib/factory/runStats.ts");
+const blockUsageLib = loadTs("components/admin/factory/BlockUsagePanel.tsx", { "@/lib/factory/runStats": runStatsLib });
+const rs = (o) => runStatsLib.cleanStat({ kind: "job", refId: String(Math.random()), agent: "A2", appSlug: "saessak-hub", result: "success", tokens: { input: 40_000, output: 12_000, cacheCreate: 8_000, cacheRead: 500_000 }, waitMs: 2 * MIN, runMs: 14 * MIN, at: now - 5 * 3600_000, ...o });
+const runStatSample = [
+  rs({ agent: "A1", tokens: { input: 300_000, output: 90_000, cacheCreate: 60_000, cacheRead: 0 }, runMs: 55 * MIN }),
+  rs({}), rs({ at: now - 30 * 3600_000 }), rs({ result: "failed", appSlug: "memo-app", redoCount: 2, pausedMs: 6 * MIN }), rs({ agent: "A3", appSlug: "memo-app", result: "blocked", at: now - 3 * 86_400_000 }),
+  rs({ agent: "T", tokens: {}, cardId: "c1", tool: "pixel-art", method: "pixellab", externalCost: 24, externalLabel: "PixelLab 호출", runMs: 3 * MIN }),
+  rs({ agent: "M1", appSlug: null, kind: "maintenance", at: now - 2 * 86_400_000 }), rs({ agent: "C1", kind: "conductor", tokens: { input: 5000, output: 1200, cacheCreate: 0, cacheRead: 0 }, runMs: 20_000, at: now - 86_400_000 }),
+  rs({ at: now - 6 * 86_400_000 }), rs({ at: now - 12 * 86_400_000 }),
+];
+const usageLines = runStatsLib.nodeUsageLines(runStatSample, mapGraph.nodes.map((n) => n.id), now);
+const mapGraphUsage = { ...mapGraph, nodes: mapGraph.nodes.map((n) => (usageLines[n.id] ? { ...n, usage: usageLines[n.id] } : n)) };
+STATES["block-usage"] = { ...STATES.live, title: "블록별 사용량", blockUsage: true };
+
 function page(state) {
   const st = STATES[state];
   // 실제 레이아웃에 실제 상단바·상태줄 '보기' 부품을 가짜 값으로 끼운다(훅 없이)
@@ -687,10 +702,33 @@ function page(state) {
           { className: "fx-split-main" },
           h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
           h(FactoryTabs, { active: "map" }),
-          h(FactoryMapView, { initial: { graph: mapGraph, asOf: now, reportAt: null, reportStale: false } }),
+          h(FactoryMapView, { initial: { graph: mapGraphUsage, asOf: now, reportAt: null, reportStale: false } }),
         ),
       ),
     );
+  if (st.blockUsage) {
+    const agg = (by, period) => runStatsLib.aggregate(runStatSample, { by, period, now, labelOf: (b, k) => (b === "tool" ? k.replace("/", " · ") : k) });
+
+    return h(
+      AdminLayout,
+      null,
+      h(
+        "div",
+        { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+        h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+        h(FactoryTabs, { active: "usage" }),
+        h(
+          "section",
+          { className: "fx-panel mt-3 min-w-0 space-y-3 p-3", "data-block-usage": true },
+          h("h2", { className: "text-base font-semibold" }, "블록별 · 에이전트 종류 · 주(최근 7일)"),
+          h(blockUsageLib.UsageTable, { data: agg("agent", "week") }),
+          h(blockUsageLib.UsageBars, { data: agg("agent", "week") }),
+          h("h2", { className: "text-base font-semibold" }, "도구·방법 · 월(최근 30일)"),
+          h(blockUsageLib.UsageTable, { data: agg("tool", "month") }),
+        ),
+      ),
+    );
+  }
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
   if (st.model) return h(AdminLayout, null, modelApprove());
   if (st.planFirst) return h(AdminLayout, null, planFirstPreview());
@@ -980,7 +1018,7 @@ if (process.argv.includes("--shot")) {
         if (only && only !== k) continue;
         // 헤드리스 창은 최소 폭이 있어(약 500px) 360px 은 iframe 에 넣어 찍는다
         const mobile = path.join(out, `admin-ui-${k}-360.html`);
-        const [tall, tallMobile] = STATES[k].map ? [2300, 3400] : STATES[k].statusMix ? [4200, 7600] : STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : STATES[k].toolbox ? [2600, 5600] : STATES[k].devices ? [2400, 6200] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
+        const [tall, tallMobile] = STATES[k].map ? [2300, 3400] : STATES[k].blockUsage ? [1400, 3000] : STATES[k].statusMix ? [4200, 7600] : STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : STATES[k].toolbox ? [2600, 5600] : STATES[k].devices ? [2400, 6200] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
         fs.writeFileSync(mobile, `<!doctype html><body style="margin:0;background:#333"><iframe src="${path.basename(file)}" width="360" height="${tallMobile}" style="border:0;display:block"></iframe></body>`);
         for (const [w, size, target] of [["1440", `1440,${tall}`, file], ["1024", `1024,${tall}`, file], ["360", `600,${tallMobile}`, mobile]]) {
           const png = path.join(out, `admin-ui-${k}-${w}.png`);

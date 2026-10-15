@@ -10,7 +10,7 @@ import type { LinkRow } from "@/lib/factory/projectLinks";
 import { readManifestsView } from "@/lib/factory/toolManifestDb";
 import type { ManifestsView } from "@/lib/factory/toolManifest";
 import { buildStudioApps, readStudioProjects, splitStudioApps, STUDIO_KIND_LABELS, STUDIO_PROJECTS_KEY, withDefaultShortcuts } from "@/lib/factory/studioProjects";
-import { sortOverview, summarizeUsage, summaryCost, USAGE_DAYS, type CardUsage, type OverviewRow } from "@/lib/studio/dashboard";
+import { blockId, sortOverview, summarizeUsage, summaryCost, USAGE_DAYS, type CardUsage, type OverviewRow } from "@/lib/studio/dashboard";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 const DAY = 24 * 3600 * 1000;
@@ -87,9 +87,23 @@ export interface StudioProjectData {
   cards: CardView[];
   manifest: ManifestsView;
   usage: CardUsage[];
+  weekLines?: Record<string, string>; // 블록 id → 최근 7일 요약 한 줄(4-4)
   pendingReview: number;
   approvedArts: ApprovedArtLite[];
   studioUrl: string | null;
+}
+
+/** [구성] 블록에 붙일 최근 7일 요약 줄. 통계를 못 읽어도 빈 값(그림은 그대로) */
+async function studioWeekLines(appSlug: string, cards: CardView[], manifest: ManifestsView, now: number): Promise<Record<string, string>> {
+  try {
+    const [{ nodeUsageLines }, { readRunStats }] = await Promise.all([import("@/lib/factory/runStats"), import("@/lib/factory/runStatsDb")]);
+    const stats = (await readRunStats(now, 8)).filter((s) => s.appSlug === appSlug);
+    const ids = [blockId.project(appSlug), ...cards.map((c) => blockId.card(c.id)), ...manifest.tools.map((t) => blockId.tool(t.name)), ...cards.map((c) => blockId.method(c.tool, c.method))];
+
+    return nodeUsageLines(stats, ids, now);
+  } catch {
+    return {};
+  }
 }
 
 /** /studio/<앱> 자료. 홈페이지가 모르는 앱이면 null */
@@ -115,6 +129,8 @@ export async function readStudioProject(appSlug: string, now = Date.now()): Prom
     prisma.factoryArt.findMany({ where: { appSlug, status: "approved" }, orderBy: { decidedAt: "desc" }, select: { id: true, subject: true, kind: true, url: true }, take: 200 }),
   ]);
 
+  const weekLines = await studioWeekLines(appSlug, cards, manifest, now);
+
   return {
     appSlug,
     title: latestJob?.title ?? appSlug,
@@ -124,6 +140,7 @@ export async function readStudioProject(appSlug: string, now = Date.now()): Prom
     cards,
     manifest,
     usage: summarizeUsage(arts, cards.map((c) => c.id), now),
+    weekLines,
     pendingReview,
     approvedArts: approved,
     studioUrl: classes[appSlug]?.studioUrl ?? null,

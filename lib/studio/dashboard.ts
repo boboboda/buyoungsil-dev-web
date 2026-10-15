@@ -70,6 +70,7 @@ export interface BlockNode {
   status?: BlockStatus; // 지도 전용
   statusText?: string; // 지도 전용: 상태 글자
   live?: string | null; // 지도 전용: 진행 중 일감 한 줄
+  usage?: string | null; // 최근 7일 요약 한 줄(4-4: 횟수·토큰·실행 시간·실패). 지도와 [구성] 둘 다
 }
 
 export interface BlockEdge {
@@ -116,7 +117,7 @@ export interface GraphTool {
 }
 
 export const NODE_W = 152;
-export const NODE_H = 92;
+export const NODE_H = 106;
 export const COL_GAP = 36;
 export const ROW_GAP = 14;
 export const PAD = 8;

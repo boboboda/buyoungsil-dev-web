@@ -1281,3 +1281,34 @@ model FactoryLayoutBoard {
   @@unique([appSlug, version])
   @@map("factory_layout_boards")
 }
+
+// 블록별 비용·시간 통계(4-4): 일감·정비 지시·지휘자 판단·도구 일감이 끝날 때마다 한 줄. 토큰·시간·결과·다시 맞추기·외부 비용만(비밀값 없음).
+// 이미 기록된 값(시작·끝 시각, 다시 맞추기 횟수, 도구 일감 비용, Claude 사용량)을 끝나는 순간 한 줄로 모아 둔다(사용량 이벤트는 14일 뒤 지워지므로).
+model FactoryRunStat {
+  id            String   @id @default(cuid())
+  kind          String // job | maintenance | conductor
+  refId         String // job: "<일감 id>:<시도 번호>", maintenance: 지시 id, conductor: 판단 시각+앱
+  agent         String // 에이전트 종류(4-2 정의 번호: A1 A2 A3 R1 L1 T M1 C1)
+  appSlug       String?
+  cardId        String?
+  tool          String? // 도구·방법 집계용
+  method        String?
+  result        String // success | failed | blocked
+  inputTokens   BigInt   @default(0)
+  outputTokens  BigInt   @default(0)
+  cacheCreate   BigInt   @default(0)
+  cacheRead     BigInt   @default(0)
+  waitMs        Int      @default(0) // 승인(또는 등록) → 시작
+  runMs         Int      @default(0) // 시작 → 끝 (중지 시간 뺀 값)
+  pausedMs      Int      @default(0) // 서버 배포·업데이트로 보고가 멈춘 시간
+  redoCount     Int      @default(0) // 다시 맞추기(합치기 재시도) 횟수
+  externalCost  Float    @default(0) // 외부 비용(예: PixelLab 호출 수)
+  externalLabel String? // 외부 비용 단위 글자
+  at            DateTime @default(now()) // 끝난 시각
+
+  @@unique([kind, refId])
+  @@index([at])
+  @@index([agent, at])
+  @@index([appSlug, at])
+  @@map("factory_run_stats")
+}

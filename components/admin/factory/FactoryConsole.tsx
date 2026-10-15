@@ -35,6 +35,7 @@ import SupervisorLog from "./SupervisorLog";
 import SupervisorSummary from "./SupervisorSummary";
 import TelegramSetup from "./TelegramSetup";
 import UsageDash from "./UsageDash";
+import BlockUsagePanel from "./BlockUsagePanel";
 import ToolBrokerSettings from "./ToolBrokerSettings";
 import ToolboxPanel from "./ToolboxPanel";
 import ToolkitToolsPanel from "./ToolkitToolsPanel";
@@ -58,7 +59,7 @@ const INTRO: Record<FactoryTab, string> = {
   settings:
     "주제별로 묶여 있어요: 실행·동시성 / 병렬화·지휘자 / 검사 / 도구 / 알림·연결 / 키·계정 / 프로젝트·규칙",
   usage:
-    "서버1·서버2·메인PC 장비 상태와 배포된 프로젝트 수, 내 PC의 Claude Code가 지금 하는 일과 토큰 사용량 (앱별 사용량은 [일감] 상세에 있어요)",
+    "서버1·서버2·메인PC 장비 상태와 배포된 프로젝트 수, 내 PC의 Claude Code가 지금 하는 일과 토큰 사용량, 아래 [블록별]에서 에이전트·앱·카드·도구별 토큰·시간·결과 (앱별 사용량은 [일감] 상세에도 있어요)",
   novels:
     "소설 공장: PC의 글 제작 실행기가 보고한 작품과 화를 읽고 설정 승인·화 승인·수정 요청을 해요. 승인한 화는 예약 시각에 /novel 에 공개돼요.",
 };
@@ -215,6 +216,9 @@ function UsageTab({ initial }: { initial: ClaudeStats | null }) {
       </CardBody>
     </Card>
   ) : (
-    <ClaudeStatusView initial={initial} />
+    <div className="flex min-w-0 flex-col gap-6">
+      <ClaudeStatusView initial={initial} />
+      <BlockUsagePanel />
+    </div>
   );
 }

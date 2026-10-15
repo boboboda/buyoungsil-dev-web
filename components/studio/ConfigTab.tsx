@@ -25,18 +25,19 @@ export default function ConfigTab({ data, canEdit, initialSelected }: { data: St
     () => data.manifest.tools.map((t) => ({ name: t.name, label: t.label, source: t.source, version: t.version, methods: t.methods.map((m) => ({ id: m.id, label: m.label, secrets: m.secretStates })) })),
     [data.manifest],
   );
-  const graph = useMemo(
-    () =>
-      buildBlockGraph({
-        appSlug: data.appSlug,
-        title: data.title,
-        kindLabel: data.kindLabel,
-        cards: data.cards.map((c) => ({ id: c.id, name: c.name, version: c.version, tool: c.tool, method: c.method, enabled: c.enabled, warnings: c.warnings })),
-        tools: graphTools,
-        toolkitCommit: data.manifest.commit,
-      }),
-    [data, graphTools],
-  );
+  const graph = useMemo(() => {
+    const g = buildBlockGraph({
+      appSlug: data.appSlug,
+      title: data.title,
+      kindLabel: data.kindLabel,
+      cards: data.cards.map((c) => ({ id: c.id, name: c.name, version: c.version, tool: c.tool, method: c.method, enabled: c.enabled, warnings: c.warnings })),
+      tools: graphTools,
+      toolkitCommit: data.manifest.commit,
+    });
+
+    // 블록마다 최근 7일 요약 한 줄(4-4)
+    return data.weekLines ? { ...g, nodes: g.nodes.map((n) => (data.weekLines?.[n.id] ? { ...n, usage: data.weekLines[n.id] } : n)) } : g;
+  }, [data, graphTools]);
   const usage = useMemo(() => new Map(data.usage.map((u) => [u.cardId, u])), [data.usage]);
 
   const warningCount = data.cards.reduce((n, c) => n + c.warnings.length, 0);

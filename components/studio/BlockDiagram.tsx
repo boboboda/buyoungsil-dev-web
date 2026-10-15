@@ -100,6 +100,11 @@ export default function BlockDiagram({ graph, selected, onSelect }: { graph: Blo
                 {n.live}
               </span>
             ) : null}
+            {n.usage ? (
+              <span className="block min-w-0 truncate text-xs fx-muted" data-block-usage-line title={n.usage}>
+                {n.usage}
+              </span>
+            ) : null}
             <span className="flex min-w-0 flex-wrap gap-x-2 text-xs">
               {n.badges.map((b) => (
                 <span key={b.text} className={TONE_CLASS[b.tone]} data-badge>
