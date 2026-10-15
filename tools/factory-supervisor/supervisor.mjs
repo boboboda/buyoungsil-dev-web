@@ -68,6 +68,7 @@ import { MAX_REBASES, mergeJob } from "./merge.mjs";
 import { conductorBusy, runConductor } from "./conductor.mjs";
 import { planBusy, runPlanTurn } from "./planturn.mjs";
 import { decideStageResume, saveSession } from "./stageresume.mjs";
+import { createNovelRunner } from "./novelrun.mjs";
 import { LAB_SLUG, compareSnapshots, createLabGuard, deleteLabFolder, discoverRepos, labCodexOptions, labPrompt, prepareLab, snapshotRepos, uploadLabOutputs, writeLabClaudeSettings } from "./lab.mjs";
 
 // 시험 모드(FACTORY_TEST_MODE=1)인데 진짜 주소·토큰·상태 파일이 섞여 있으면 아무것도 하기 전에 거부한다(진짜 감독 보호)
@@ -105,6 +106,7 @@ const DEFAULTS = {
   toolkitDir: "", // 게임 툴킷(파이썬 도구) 폴더. 비우면 <workDir>/game-toolkit (도구 요청 중계의 toolkit.run)
   pythonCmd: IS_WIN ? "python" : "python3",
   appKitDir: "~/dev/factory/app-kit", // 통제실 키를 서버2 .env 에 반영하는 scripts/provision-key.sh 가 있는 폴더(호출만 한다)
+  novelsDir: "", // 소설 작품 폴더들이 있는 곳(작품 폴더 안에 cycle.sh). 비우면 <workDir>/novels (novelrun.mjs)
   bashCmd: "", // provision-key.sh 를 돌릴 bash. 비우면 Windows 는 Git Bash 를 찾고, 그 밖에는 PATH 의 bash
 };
 
@@ -130,6 +132,7 @@ function loadConfig() {
   c.secretsFile = path.resolve(expand(c.secretsFile));
   c.appKitDir = path.resolve(expand(c.appKitDir));
   c.toolkitDir = c.toolkitDir ? path.resolve(expand(c.toolkitDir)) : path.join(c.workDir, "game-toolkit");
+  c.novelsDir = c.novelsDir ? path.resolve(expand(c.novelsDir)) : path.join(c.workDir, "novels");
   c.pcSlots = pcSlots(raw); // { value, custom }: 서버 값이 없을 때 쓰는 PC 값, 사람이 따로 정했는지
   c.slots = c.pcSlots.value;
   c.pollSec = Math.max(5, Number(c.pollSec) || 15);
@@ -2246,20 +2249,30 @@ function updateExtra() {
 }
 
 function maintCtx(incoming = 0) {
-  return { api, outbox, uploadBusy, log, cfg, pauser, runningApps: () => running.size + incoming, updateDraining: () => updateWaiting() || restartPending(), requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) };
+  return { api, outbox, uploadBusy, log, cfg, pauser, runningApps: () => running.size + incoming + (novel.busy() ? 1 : 0), updateDraining: () => updateWaiting() || restartPending(), requestUpdateNow, compactEnabled: () => compactAfterJob, redact: (s) => redactAiText(redactor([cfg.token, ...Object.values(readSecrets())])(s)) };
 }
+
+// 소설 실행기(7-1): 승인된 소설 작업을 가져와 작품 폴더의 cycle.sh 를 대신 돌린다. 앱 일감·정비와 동시에 돌지 않는다(novelrun.mjs)
+const novel = createNovelRunner({
+  api,
+  log,
+  cfg: () => cfg,
+  killTree,
+  redact: (s) => maskText(cfg.token ? String(s).split(cfg.token).join("***") : String(s)),
+  env: () => safeEnv(process.env),
+});
 
 async function loop() {
   let delay = cfg.pollSec * 1000;
   while (!shuttingDown) {
     try {
       // 새 버전 확인(10분마다): 공장이 비었으면 바로, 일감이 돌면 새 커밋을 모았다가(묶기) 받는다. 받기로 하면 진행 중인 AI 를 안전한 지점에서 멈추고(저장) 받아 여기서 exit(0), 새 감독이 이어 준다
-      maybeUpdate({ running: running.size + toolRunning.size + (maintenanceBusy() ? 1 : 0), autoUpdate, pauser, pendingReports: outbox.size() });
+      maybeUpdate({ running: running.size + toolRunning.size + (maintenanceBusy() ? 1 : 0) + (novel.busy() ? 1 : 0), autoUpdate, pauser, pendingReports: outbox.size() });
     } catch (e) {
       log(`자동 업데이트 확인 중 오류: ${e.message}`);
     }
     // 통제실 [감독 재시작]: 일감·정비가 다 끝났으면 여기서 종료(실행기가 다시 띄움)
-    if (maybeRestart({ busy: running.size > 0 || toolRunning.size > 0 || maintenanceBusy(), shutdown, log })) break;
+    if (maybeRestart({ busy: running.size > 0 || toolRunning.size > 0 || maintenanceBusy() || novel.busy(), shutdown, log })) break;
     try {
       const free = appLimit() - running.size - pendingApps(); // 이어 줄 일감 자리도 비워 둔다
       { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
@@ -2272,7 +2285,7 @@ async function loop() {
         // 감독 프로그램 업데이트 대기(slots=0: 홈페이지가 일감을 넘기지 않고 신호만 줌). 서버 배포는 일감을 막지 않는다:
         // 배포 중 보고는 재전송 대기열(outbox)이 지키고, 새 일감도 계속 가져간다(1-1 D-1)
         const drain = updateWaiting() ? "update" : "";
-        const take = planTake({ limit: appLimit(), running: running.size + pendingApps(), draining: !!drain });
+        const take = novel.busy() ? 0 : planTake({ limit: appLimit(), running: running.size + pendingApps(), draining: !!drain }); // 소설 cycle.sh 가 도는 동안은 앱 일감을 새로 받지 않는다(같은 PC, 동시 실행 금지)
         extra.set("toolSlots", String(drain || shuttingDown ? 0 : Math.max(0, toolConcurrency - toolRunning.size))); // 도구 일감 자리(앱 슬롯과 따로)
         const drainQuery = drain ? new URLSearchParams({ drain, drainJobs: String(running.size + toolRunning.size + (maintenanceBusy() ? 1 : 0)) }).toString() : "";
         const r = await api(
@@ -2378,6 +2391,11 @@ async function loop() {
             }
             (job.kind === "lab" ? runLabJob(job) : runJob(job)).catch((e) => log(`[${job.appSlug}] 예기치 못한 오류: ${e.stack || e.message}`));
           }
+          // 소설 작업(7-1): 일시 정지·업데이트·재시작 대기·앱 일감·정비·서버 배포 중이면 시작하지 않는다(앱 일감이 계속 이어지면 소설은 그동안 기다린다). 던지지 않고, 대기열 확인(위)에는 영향 없음
+          {
+            const quiet = !drain && !paused && !restartPending() && offered.length === 0 && running.size === 0 && starting.size === 0 && pendingApps() === 0 && !maintenanceBusy() && !deployRunning() && !deployWaiting();
+            await novel.tick({ canStart: quiet, idle: quiet });
+          }
         } else if (r.status === 401) {
           log("토큰이 거부됐어요(401). 통제실에서 토큰이 지워졌는지 확인하세요. 1분 뒤 다시 시도해요.");
           delay = 60_000;
@@ -2399,6 +2417,7 @@ function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   log(running.size ? "종료합니다. 돌던 작업은 멈추고, 서버가 10분 안에 대기열로 되돌려요." : "종료합니다.");
+  novel.stop(); // 도는 소설 cycle.sh 도 멈춘다(서버는 다음 시작 때 running 을 실패로 정리)
   for (const st of toolRunning.values()) {
     st.stopped = "감독 프로그램 종료";
     killTree(st.child);

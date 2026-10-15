@@ -89,6 +89,7 @@ export const FACTORY_INSTRUCTIONS =
   + "enqueue_release_job(appSlug, kind) 으로 출시 일감을 등록해요(kind: first=첫 출시, store=스토어 자료 수정, project=프로젝트 업데이트. 지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
   + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 앱별 git 원격·배포 서버·도메인·컨테이너는 get_project_links 로 읽어요(읽기 전용). 결과물 카드(프로젝트마다 이런 결과물을 이렇게 만든다는 뜻: 도구·방법·옵션·참고 규칙)는 list_cards·get_card 로 읽고 create_card·update_card 로 만들고 고쳐요(설명서 한계 검사를 통과해야 저장, 키는 저장하지 않고 방법에 맞게 자동). 카드로 일을 시키려면 enqueue_app_job 의 card 에 카드 이름을 적어요. 게임 툴킷 도구의 방법·필요한 키·한계는 list_tools 와 get_tool_manifest 로 읽어요(읽기 전용, 지시문이 설명서 한계를 넘으면 등록이 거절되고 필요한 키는 자동으로 들어가요). 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
   + "일감 템플릿: list_templates 로 자주 쓰는 지시(웹 배포·스토어 문구 수정·의존성 업데이트·버그 재현 후 수정·측정만)를 보고 enqueue_from_template(template, values, appSlug?) 으로 빈칸만 채워 보내요. 일감 작성 규칙: 측정·조사는 실험 일감으로, e2e 시험은 마지막에 한 번만. 관리자가 켠 자동 승인 규칙에 맞는 일감(실험·비용 한도 안 도구·문서만 수정·지정 템플릿)은 승인 없이 바로 대기열에 들어가지만 출시 일감과 배포는 절대 자동 승인되지 않아요. "
+  + "소설: novel_list 로 작품·화 목록과 최근 판정을, novel_get_episode(workSlug, episode, from?, to?) 로 줄 번호 붙은 본문·검수(필수/권장)·열린 메모·최근 작업을 읽어요(본문이 길면 from·to 줄 범위로 나눠 읽으세요). novel_add_note(workSlug, episode, line?, kind, text) 로 줄 메모를 남기고, novel_enqueue(workSlug, episode, mode: check=검수만·revise=메모 반영해 수정·fresh=처음부터 새로 쓰기)로 작업 PC 의 cycle.sh 실행을 요청해요. 작업은 승인 대기로만 만들어지고 승인은 관리자가 통제실 작품 탭에서 해요(하루 비용 한도를 넘으면 한 번 더 확인). 진행 상태·로그는 novel_get_job(id)으로 봐요. "
   + "실험: 도구·방식이 되는지 확인하는 테스트는 앱 수정 일감이 아니라 enqueue_lab_job(title, planMarkdown, aiEngine?, keep?)으로 보내요(앱 이름 없이, 작업 PC 의 실험 폴더에서 무인 실행. 승인은 관리자). "
   + "끝나면 get_factory_job 의 실험_결과에 올라온 이미지·mp4 주소(몇 시간 뒤 만료)와 report.md 본문이 나와요. 이미지 주소를 열어 직접 보고 검수할 수 있어요. "
   + "그림 만들기(결과물 카드): AI 에이전트 없이 카드로 바로 만들려면 앱 수정 일감 대신 generate_with_card(appSlug, card, subject, count, extra?)를 쓰세요. 도구 일감 id 를 돌려주고, get_factory_job 의 도구_결과에 상태·비용·만든 그림 주소가 나와요(비용 한도를 넘으면 확인 대기로 멈춰요). "
@@ -217,6 +218,79 @@ export const FACTORY_TOOLS = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "novel_list",
+    description:
+      "소설 작품과 화 목록을 읽어요(읽기 전용). 작품마다 화 번호·제목·상태·공개 여부·원고 유무·최근 검수 판정(PASS/FAIL)·필수/권장 건수·글자 수·열린 메모 수·대기/진행 중 작업이 나와요. 하루 비용 한도와 오늘 쓴 비용도 같이 나와요.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "novel_get_episode",
+    description:
+      "한 화의 줄 번호 붙은 본문, 검수 결과(필수 지적이 위, 권장은 아래·줄 번호와 수정 제안 포함), 열린 메모, 최근 작업(상태·판정·비용)을 읽어요(읽기 전용). 줄 번호는 검수의 L줄번호와 같은 기준이에요. 본문이 길면 from·to(줄 번호, 포함)로 범위를 나눠 읽으세요. 초안·검수·메모는 관리자 전용 정보라 독자에게는 공개되지 않아요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workSlug: { type: "string", description: "작품 이름(slug). novel_list 로 확인" },
+        episode: { type: "integer", description: "화 번호 (1~9999)" },
+        from: { type: "integer", description: "본문 시작 줄 (선택, 기본 1)" },
+        to: { type: "integer", description: "본문 끝 줄 (선택, 기본 끝까지. 한 번에 최대 400줄)" },
+      },
+      required: ["workSlug", "episode"],
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "novel_add_note",
+    description:
+      "화에 사람 메모를 남겨요(줄 번호는 선택). kind 는 필수(다음 검수에서 지키지 않으면 필수 지적으로 올라가요) 또는 권장이에요. 메모는 다음 실행 때 reviews/NNN-memo.md 에 이어 붙어 집필·검수에 전달되고, 반영되면 applied 가 돼요. 메모만으로는 아무것도 실행되지 않아요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workSlug: { type: "string", description: "작품 이름(slug)" },
+        episode: { type: "integer", description: "화 번호" },
+        line: { type: "integer", description: "메모를 달 본문 줄 번호 (선택)" },
+        kind: { type: "string", enum: ["필수", "권장"], description: "필수 | 권장" },
+        text: { type: "string", description: "메모 내용 (1000자 이내)" },
+      },
+      required: ["workSlug", "episode", "kind", "text"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "novel_enqueue",
+    description:
+      "소설 작업을 만들어요. 만들기만 하고 시작은 관리자가 통제실 작품 탭에서 [승인]해야 해요(관리자가 [검수만] 자동 승인을 켜 둔 경우 그 모드만 바로 대기열로 가요. 하루 비용 한도를 넘으면 승인 때 한 번 더 확인). mode: check=검수만(약 $0.4), revise=열린 메모 반영해 수정(최대 2회 재작성), fresh=처음부터 새로 쓰기. 같은 화에 같은 모드 작업이 이미 대기·진행 중이면 거절해요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workSlug: { type: "string", description: "작품 이름(slug)" },
+        episode: { type: "integer", description: "화 번호" },
+        mode: { type: "string", enum: ["check", "revise", "fresh"], description: "check | revise | fresh" },
+      },
+      required: ["workSlug", "episode", "mode"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "novel_get_job",
+    description:
+      "소설 작업 한 건의 진행 상태와 로그를 읽어요(읽기 전용). 상태(승인 대기·승인됨·실행 중·완료·실패·취소), 모드, 판정, 필수/권장 건수, 글자 수, 비용, 요약, 진행 로그 끝부분(최근 200줄 중 tail 줄)이 나와요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "작업 id (novel_enqueue 응답·novel_get_episode 의 최근 작업)" },
+        tail: { type: "integer", description: "로그 마지막 몇 줄 (선택, 기본 40, 최대 200)" },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
   },
   {
     name: "list_secret_names",
@@ -604,6 +678,16 @@ export async function callFactoryTool(
       return getInbox(args);
     case "get_usage_by_block":
       return getUsageByBlock(args);
+    case "novel_list":
+      return novelList();
+    case "novel_get_episode":
+      return novelGetEpisode(args);
+    case "novel_add_note":
+      return novelAddNote(args);
+    case "novel_enqueue":
+      return novelEnqueue(args);
+    case "novel_get_job":
+      return novelGetJob(args);
     case "list_secret_names":
       return listSecretNames();
     case "enqueue_app_job":
@@ -1185,6 +1269,134 @@ async function enqueueFromTemplateTool(args: Record<string, unknown>): Promise<T
   });
 
   return r.ok ? text(r.message) : text(r.message, true);
+}
+
+// ───────── 소설(7-1): 읽기·메모·작업 요청. 시작(승인)은 관리자가 웹에서 한다 ─────────
+const NOVEL_MAX_LINES = 400;
+
+function novelArgs(args: Record<string, unknown>): { slug: string; episode: number } | string {
+  const slug = typeof args.workSlug === "string" ? args.workSlug.trim() : "";
+  const episode = args.episode;
+
+  if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(slug)) return "workSlug 형식이 올바르지 않아요. novel_list 로 확인하세요.";
+  if (typeof episode !== "number" || !Number.isInteger(episode) || episode < 1 || episode > 9999) return "episode 는 1~9999 정수예요.";
+
+  return { slug, episode };
+}
+
+async function novelList(): Promise<ToolResult> {
+  const { listNovelsForChat, costStatus } = await import("@/lib/novel/jobStore");
+  const [works, cost] = await Promise.all([listNovelsForChat(), costStatus()]);
+
+  return json({
+    작품: works.map((w) => ({
+      workSlug: w.slug,
+      제목: w.title,
+      상태: w.status,
+      화: w.episodes.map((e) => ({ 화: e.number, ...(e.title ? { 제목: e.title } : {}), 상태: e.status, 공개: e.published, 원고: e.hasText, ...(e.verdict ? { 최근_판정: e.verdict, 필수: e.must, 권장: e.rec } : {}), ...(e.chars ? { 글자수: e.chars } : {}), 열린_메모: e.openNotes, ...(e.openJobs.length ? { 작업: e.openJobs } : {}) })),
+    })),
+    비용: { 하루_한도_USD: cost.capUsd, 최근_24시간_사용_USD: cost.spentUsd, 한도_초과: cost.over },
+    안내: "읽기 전용이에요. 본문·검수는 novel_get_episode 로 읽어요.",
+  });
+}
+
+async function novelGetEpisode(args: Record<string, unknown>): Promise<ToolResult> {
+  const a = novelArgs(args);
+
+  if (typeof a === "string") return text(a, true);
+  const from = args.from === undefined ? 1 : args.from;
+  const to0 = args.to;
+
+  if (typeof from !== "number" || !Number.isInteger(from) || from < 1) return text("from 은 1 이상 정수예요.", true);
+  if (to0 !== undefined && (typeof to0 !== "number" || !Number.isInteger(to0) || to0 < from)) return text("to 는 from 이상 정수예요.", true);
+  const { episodeDraftView } = await import("@/lib/novel/jobStore");
+  const to = Math.min(typeof to0 === "number" ? to0 : from + NOVEL_MAX_LINES - 1, from + NOVEL_MAX_LINES - 1);
+  const v = await episodeDraftView(a.slug, a.episode, { from, to });
+
+  if (!v) return text("없는 작품이거나 아직 만들어지지 않은 화예요. novel_list 로 확인하세요.", true);
+  const shownTo = v.lines.length ? v.lines[v.lines.length - 1].line : from;
+
+  return json({
+    작품: v.work.title,
+    화: v.episode.number,
+    ...(v.episode.title ? { 제목: v.episode.title } : {}),
+    상태: v.episode.status,
+    공개: v.episode.published,
+    원고_출처: v.episode.source,
+    전체_줄: v.totalLines,
+    본문_줄_범위: v.lines.length ? `${v.lines[0].line}~${shownTo}` : "없음",
+    본문: v.lines.map((l) => `L${l.line}: ${l.text}`).join("\n"),
+    ...(shownTo < v.totalLines ? { 안내_더_있음: `다음은 from=${shownTo + 1} 로 읽으세요.` } : {}),
+    검수: v.review
+      ? {
+          판정: v.review.verdictLabel ?? v.review.verdict,
+          필수: v.review.must,
+          권장: v.review.rec,
+          지적: v.review.items.map((i) => ({ 등급: i.grade, 유형: i.type, 위치: i.where, 내용: i.text.slice(0, 500), 수정_제안: i.fix.slice(0, 400) })),
+        }
+      : null,
+    열린_메모: v.notes.map((n) => ({ id: n.id, ...(n.line ? { 줄: n.line } : {}), 종류: n.kind, 내용: n.text, 작성: n.createdBy })),
+    최근_작업: v.jobs.map((j) => ({ id: j.id, 모드: j.mode, 상태: j.status, ...(j.verdict ? { 판정: j.verdict } : {}), 필수: j.mustCount, 비용_USD: j.costUsd, 요청: j.requestedBy, 시각: j.createdAt })),
+    비용: { 이_화_합계_USD: v.cost.episodeTotalUsd, 하루_한도_USD: v.cost.capUsd, 최근_24시간_사용_USD: v.cost.spentUsd },
+  });
+}
+
+async function novelAddNote(args: Record<string, unknown>): Promise<ToolResult> {
+  const a = novelArgs(args);
+
+  if (typeof a === "string") return text(a, true);
+  const { parseNoteInput } = await import("@/lib/novel/jobRules");
+  const note = parseNoteInput({ line: args.line, kind: args.kind, text: args.text });
+
+  if (note.ok === false) return text(note.reason, true);
+  const { addNote } = await import("@/lib/novel/jobStore");
+  const r = await addNote({ workSlug: a.slug, episode: a.episode, ...note.value, createdBy: "chat" });
+
+  return r.ok === false ? text(r.message, true) : text(`메모를 남겼어요(id ${r.value.id}). 다음 실행 때 반영돼요. 바로 반영하려면 novel_enqueue(mode=revise)로 작업을 만들어 관리자에게 승인받으세요.`);
+}
+
+async function novelEnqueue(args: Record<string, unknown>): Promise<ToolResult> {
+  const a = novelArgs(args);
+
+  if (typeof a === "string") return text(a, true);
+  const { isJobMode, JOB_MODE_LABELS } = await import("@/lib/novel/jobRules");
+
+  if (!isJobMode(args.mode)) return text("mode 는 check, revise, fresh 중 하나예요.", true);
+  const { createJob } = await import("@/lib/novel/jobStore");
+  const r = await createJob({ workSlug: a.slug, episode: a.episode, mode: args.mode, requestedBy: "chat" });
+
+  if (r.ok === false) return text(r.message, true);
+
+  return text(`${a.slug} ${a.episode}화 ${JOB_MODE_LABELS[args.mode]} 작업을 만들었어요(id ${r.value.id}, 상태 ${r.value.status}). ${r.message ?? ""} 시작은 관리자가 통제실 작품 탭에서 승인해요. 진행은 novel_get_job 으로 봐요.`);
+}
+
+async function novelGetJob(args: Record<string, unknown>): Promise<ToolResult> {
+  if (typeof args.id !== "string" || !/^[A-Za-z0-9_-]{1,40}$/.test(args.id)) return text("id 가 필요해요.", true);
+  const tail = args.tail === undefined ? 40 : args.tail;
+
+  if (typeof tail !== "number" || !Number.isInteger(tail) || tail < 1 || tail > 200) return text("tail 은 1~200 정수예요.", true);
+  const { getJob } = await import("@/lib/novel/jobStore");
+  const { JOB_STATUS_LABELS, JOB_MODE_LABELS } = await import("@/lib/novel/jobRules");
+  const j = await getJob(args.id);
+
+  if (!j) return text("없는 작업이에요.", true);
+
+  return json({
+    id: j.id,
+    작품: j.workSlug,
+    화: j.episode,
+    모드: JOB_MODE_LABELS[j.mode as keyof typeof JOB_MODE_LABELS] ?? j.mode,
+    상태: JOB_STATUS_LABELS[j.status as keyof typeof JOB_STATUS_LABELS] ?? j.status,
+    요청: j.requestedBy,
+    ...(j.autoApproved ? { 자동_승인: true } : {}),
+    만든_시각: j.createdAt,
+    ...(j.startedAt ? { 시작: j.startedAt } : {}),
+    ...(j.finishedAt ? { 끝: j.finishedAt } : {}),
+    ...(j.verdict ? { 판정: j.verdict, 필수: j.mustCount, 권장: j.recCount, 글자수: j.charCount } : {}),
+    비용_USD: j.costUsd,
+    ...(j.summary ? { 요약: j.summary } : {}),
+    로그: (j.logTail ?? "").split("\n").slice(-tail).join("\n"),
+  });
 }
 
 async function getUsageByBlock(args: Record<string, unknown>): Promise<ToolResult> {

@@ -18,7 +18,7 @@ const POST_TIMEOUT_MS = 15_000;
 export const DOCKER_PS_COMMAND = "docker ps --format '{{.Names}}'";
 export const SERVERS = ["serverpc", "serverpc2"];
 // 앱이 아닌 폴더: 실험 폴더, 감독 프로그램 실행 사본, 정비 체크아웃, 오래된 사본
-export const SKIP_DIRS = new Set(["lab", "supervisor-src", "selfdev", "buyoungsil-dev-web", "node_modules"]);
+export const SKIP_DIRS = new Set(["lab", "novels", "supervisor-src", "selfdev", "buyoungsil-dev-web", "node_modules"]);
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,59}$/;
 
 /** 원격 주소에서 자격 증명(user:pass@)을 지운다. scp 꼴(git@host:path)의 사용자 이름은 비밀이 아니라 그대로 둔다 */

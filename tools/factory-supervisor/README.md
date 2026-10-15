@@ -413,3 +413,9 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
 - **실패 단계부터 다시**: 새 앱·수정 일감이 실패하면 AI 세션을 `<앱 폴더>/.factory/sessions/<일감id>.json` 에 기억한다(비밀값 없음). 서버가 `/next` 의 `job.stageResume: { from, note, label }` 을 붙이면, 같은 세션·같은 작업 폴더가 남아 있을 때 같은 세션으로 "이 단계에서 실패했다, 이 오류를 고쳐라" 짧은 지시만 넣어 이어서 한다. 세션·폴더가 없거나 AI 가 다르거나 3일이 지났거나 병행(작업 사본) 일감이거나 이어서 하기가 바로 실패하면 기존 재실행(처음부터)으로 대신하고 이유를 일감 로그에 남긴다. 업데이트 뒤 이어받기(`pause.mjs`)·출시 일감과는 섞이지 않는다.
 - **배포 되돌리기**: `/next` 의 `maintenanceDeploy.revertTo` 가 있으면 정비 폴더에서 되돌리기 커밋(부모 = 지금 GitHub main, 내용 = 대상 커밋, `tools/factory-supervisor` 는 지금 것 유지)을 만들어 일반 push 로 올리고(force push·reset 없음), `deploy_revert_commit` 으로 서버에 알린 뒤 평소 배포 경로로 그 커밋을 서버 배포 저장소에 push 한다. 대상~지금 사이에 `prisma/migrations` 가 바뀌었거나, 정비 폴더에 커밋 안 된 변경·올리지 못한 로컬 커밋이 있으면 만들지 않고 `deploy_done(ok=false)` 로 이유만 보고한다. 일반 배포는 `prevCommit` 대비 마이그레이션 변경 여부를 `deploy_start.migrations` 로 알린다(서버가 되돌리기 가능 여부를 미리 판단). 자세한 내용: `docs/deploy-revert.md`.
 - 시험: `npm run test:stage-revert`, `npm run test:stageresume`, `npm run test:revert`.
+
+## 소설 실행기 (`novelrun.mjs`, 7-1)
+- 홈페이지 [작품] 탭·채팅에서 **승인된** 소설 작업을 15초 폴링 때 가져와(`/api/novel/jobs/next`) 작품 폴더(`<novelsDir>/<작품>`, 기본 `<workDir>/novels`)에서 git Bash 로 `./cycle.sh NNN [--fresh|--skip-write] --max-rewrites N` 을 돌리고, 판정·필수/권장·글자 수·비용·원고·검수를 올린다. 자세한 규칙은 [docs/novel-jobs.md](../../docs/novel-jobs.md).
+- 실행 전 열린 메모를 `reviews/NNN-memo.md` 에 이어 붙인다. cycle.sh 의 동작·git 커밋·푸시는 건드리지 않는다.
+- 앱 일감·정비·서버 배포·일시 정지·업데이트/재시작 대기 중에는 시작하지 않고, 소설이 도는 동안 앱 일감을 새로 받지 않는다. 시작할 때 `recover` 로 running 이던 소설 작업을 failed 로 정리한다. 최대 40분.
+- 서버가 아직 구버전이면(404) 조용히 10분 뒤 다시 본다.

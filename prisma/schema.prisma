@@ -1096,6 +1096,14 @@ model NovelEpisode {
   checkResult  Json? // { pass: boolean, issues: [{ type, detail }] }
   tokens       Json? // 역할별 { model, in, out }
   revisionNote String?   @db.Text // 사람의 수정 요청 메모
+  // cycle.sh(작업 PC) 원고·검수 사본: 공개 본문(body)·상태와 따로 둔다. 관리자 화면·채팅 도구만 읽는다
+  draftBody        String?   @db.Text // chapters/NNN.md 그대로(줄 번호 기준)
+  draftReview      String?   @db.Text // reviews/NNN.md 그대로
+  draftVerdict     String? // PASS | FAIL | UNKNOWN
+  draftMust        Int?
+  draftRec         Int?
+  draftChars       Int?
+  draftSyncedAt    DateTime?
   approvedAt   DateTime?
   publishAt    DateTime? // 예약 발행 시각. approved 이고 publishAt <= now 이면 공개
   createdAt    DateTime  @default(now())
@@ -1121,6 +1129,52 @@ model NovelLog {
 
   @@index([workId, at])
   @@map("novel_logs")
+}
+
+// 소설 실행 일감: 웹·채팅에서 만들고 관리자가 승인하면 작업 PC 감독 프로그램이 cycle.sh 를 돌린다(7-1)
+model NovelJob {
+  id          String    @id @default(cuid())
+  workSlug    String
+  episode     Int
+  kind        String    @default("cycle")
+  params      Json // { fresh, skipWrite, maxRewrites }
+  mode        String    @default("check") // check | revise | fresh (화면 표시용)
+  status      String    @default("pending_approval") // pending_approval | approved | running | done | failed | cancelled
+  requestedBy String    @default("web") // web | chat
+  overrideCap Boolean   @default(false) // 비용 한도를 넘었는데도 관리자가 승인함
+  autoApproved Boolean  @default(false)
+  createdAt   DateTime  @default(now())
+  approvedAt  DateTime?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  updatedAt   DateTime  @updatedAt
+  verdict     String?
+  mustCount   Int?
+  recCount    Int?
+  charCount   Int?
+  costUsd     Float     @default(0)
+  summary     String?   @db.Text
+  logTail     String?   @db.Text
+
+  @@index([status, createdAt])
+  @@index([workSlug, episode, createdAt])
+  @@map("novel_jobs")
+}
+
+// 화·줄 단위 사람 메모. 실행 직전 reviews/NNN-memo.md 에 이어 붙고 반영되면 applied
+model NovelNote {
+  id        String   @id @default(cuid())
+  workSlug  String
+  episode   Int
+  line      Int?
+  kind      String // 필수 | 권장
+  text      String   @db.Text
+  status    String   @default("open") // open | applied
+  createdBy String   @default("admin")
+  createdAt DateTime @default(now())
+
+  @@index([workSlug, episode, status])
+  @@map("novel_notes")
 }
 
 // 프로젝트(앱 이름)별 도구 설정(pixel-art 의 settings 인자). 현재 값은 settings(JSON 글자), 바뀔 때마다 history 에 한 줄씩 쌓는다.

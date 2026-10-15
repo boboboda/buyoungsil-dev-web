@@ -8,6 +8,7 @@ import { Button, Card, CardBody, Chip, Switch, Textarea } from "@heroui/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import NovelCycle from "@/components/admin/novel/NovelCycle";
 import {
   APPROVAL_MODES,
   APPROVAL_MODE_LABELS,
@@ -758,6 +759,8 @@ function EpisodeView({
               )}
             </CardBody>
           </Card>
+
+          <NovelCycle epNumber={epNumber} slug={slug} />
 
           <Card>
             <CardBody>
