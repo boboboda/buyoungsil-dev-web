@@ -342,7 +342,6 @@ function loadOps(db, extra = {}) {
         },
       },
       "@/lib/studio/service": service,
-      "@/lib/factory/artCopy": { copyAfterApprove: async () => null, copyApprovedArts: async () => ({ total: 0, copied: 0, failed: 0, remaining: 0, firstError: "" }), isOnUploadServer: (u, base) => !!base && u.startsWith(base) },
     }),
   };
 }
@@ -577,7 +576,7 @@ test("운영 자료: 그림·필터 선택지·보관함·사용 이력·내보�
   });
   const { mod } = loadOps(db);
   const fetchImpl = async () => ({ status: 200, text: async () => JSON.stringify({ review: 4, held: 0, pending: 1 }) });
-  const data = await mod.readOpsData("one-tiny-frame", { uploadBase: "https://up.example.com", serviceDeps: { readSecret: async () => SECRET, fetchImpl }, healthDeps: { lookupImpl: async () => ["93.184.216.34"], tlsProbe: async () => ({ validTo: "2027-01-01T00:00:00.000Z", authorized: true, error: null }), keysReady: async () => new Set(["REVIEW_STATUS_TOKEN_ONE_TINY_FRAME"]), now: () => Date.parse("2026-10-15T00:00:00Z") } });
+  const data = await mod.readOpsData("one-tiny-frame", { serviceDeps: { readSecret: async () => SECRET, fetchImpl }, healthDeps: { lookupImpl: async () => ["93.184.216.34"], tlsProbe: async () => ({ validTo: "2027-01-01T00:00:00.000Z", authorized: true, error: null }), keysReady: async () => new Set(["REVIEW_STATUS_TOKEN_ONE_TINY_FRAME"]), now: () => Date.parse("2026-10-15T00:00:00Z") } });
 
   assert.equal(data.arts.length, 5, "다른 프로젝트 그림은 없다");
   assert.deepEqual(data.archive.map((g) => [g.subject, g.arts.length]), [["나무", 1], ["싹이", 1]]);
@@ -587,7 +586,6 @@ test("운영 자료: 그림·필터 선택지·보관함·사용 이력·내보�
   assert.match(data.overlap, /자체 생성 일정/);
   assert.equal(data.uploadSupported, true, "업로드 경로가 확인표에 있다(서비스에 없으면 호출할 때 404 → 미지원)");
   assert.equal(data.service.health.api.state, "ok", "health API 결과가 서비스 요약에 붙는다");
-  assert.deepEqual(data.copy, { enabled: true, needed: 2, failed: 0, outsideIds: ["a4", "a5"] }, "승인 그림 a4·a5 모두 업로드 서버 밖");
   assert.equal(data.service.reviewCount.review, 4);
   assert.deepEqual(data.service.adminKey, { name: "SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME", ready: false });
   assert.equal(data.service.capabilities.find((c) => c.key === "review-count").keyReady, true);
@@ -595,7 +593,7 @@ test("운영 자료: 그림·필터 선택지·보관함·사용 이력·내보�
   const off = await loadOps(makeDb({ conn: { exportKind: "folder", exportPath: "a", studioBatch: false, studioService: false, domain: null } })).mod.readOpsData("one-tiny-frame");
 
   assert.equal(off.service, null, "서비스 운영이 꺼져 있고 관리자 열기도 아니면 서비스는 읽지 않는다");
-  const adminOpen = await loadOps(makeDb({ conn: { exportKind: "folder", exportPath: "a", studioBatch: false, studioService: false, domain: null } })).mod.readOpsData("one-tiny-frame", { includeService: true, uploadBase: "", serviceDeps: { readSecret: async () => null }, healthDeps: { lookupImpl: async () => [], keysReady: async () => new Set() } });
+  const adminOpen = await loadOps(makeDb({ conn: { exportKind: "folder", exportPath: "a", studioBatch: false, studioService: false, domain: null } })).mod.readOpsData("one-tiny-frame", { includeService: true, serviceDeps: { readSecret: async () => null }, healthDeps: { lookupImpl: async () => [], keysReady: async () => new Set() } });
 
   assert.equal(adminOpen.service?.appSlug, "one-tiny-frame", "관리자 세션이면 연결 설정의 스위치와 상관없이 서비스 운영을 연다");
   assert.equal(off.overlap, null);
@@ -712,7 +710,6 @@ function viewData(over = {}) {
     uploadSupported: false,
     service: service.buildServiceView({ profile: service.serviceProfileOf("one-tiny-frame"), base: "https://hancut.example.com", keysReady: new Set(["REVIEW_STATUS_TOKEN_ONE_TINY_FRAME"]), reviewCount: { state: "ok", review: 4, held: 1, pending: 2 }, health: HEALTH() }),
     serviceActions: [],
-    copy: { enabled: true, needed: 0, failed: 0, outsideIds: [] },
     ...over,
   };
 }

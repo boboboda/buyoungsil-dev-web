@@ -355,126 +355,20 @@ test("검수: 후보 목록을 그림 주소와 함께 읽고(https 만), 승인
   assert.match(expired.message, /인증서 만료/);
 });
 
-// ───────── 그림 자체 보관 ─────────
+// ───────── 마이그레이션 ─────────
 
-const UP = "https://up.example.com";
-function artDb(rows) {
-  const db = { rows: rows.map((r) => ({ appSlug: "one-tiny-frame", subject: "싹이", kind: "image-prop", status: "approved", sourceUrl: "", copyError: "", decidedAt: new Date("2026-10-14T00:00:00Z"), ...r })) };
-
-  db.factoryArt = {
-    findUnique: async ({ where }) => db.rows.find((r) => r.id === where.id) ?? null,
-    findMany: async ({ where }) => db.rows.filter((r) => (!where.appSlug || r.appSlug === where.appSlug) && (!where.status || r.status === where.status)),
-    update: async ({ where, data }) => Object.assign(db.rows.find((r) => r.id === where.id), data),
-  };
-
-  return db;
-}
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]);
-const imgRes = (type = "image/png", bytes = PNG) => ({ status: 200, headers: new Headers({ "content-type": type }), arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
-const copy = load("lib/factory/artCopy.ts", { ...baseOv, "@/lib/studio/service": service });
-const okForward = (log = []) => async (base, buf, type, name) => (log.push({ base, size: buf.length, type, name }), { ok: true, url: `${base}/files/${name}` });
-
-test("그림 복사: 업로드 서버 밖 그림을 복사하면 주소가 복사본으로 바뀌고 원래 주소는 sourceUrl 에 남는다(원본 서버는 받기만)", async () => {
-  const db = artDb([{ id: "a1", url: "https://hancut.example.com/files/a1.png" }]);
-  const log = [];
-  const hits = [];
-  const r = await copy.copyArtToUpload(db, db.rows[0], { base: UP, lookupImpl: async () => ["93.184.216.34"], fetchImpl: async (u, init) => (hits.push([u, init.method ?? "GET"]), imgRes()), forward: okForward(log) });
-
-  assert.equal(r.ok, true);
-  assert.equal(r.already, false);
-  assert.equal(db.rows[0].url, `${UP}/files/a1.png`, "도구 일감·참고 그림 선택은 이 주소를 쓴다");
-  assert.equal(db.rows[0].sourceUrl, "https://hancut.example.com/files/a1.png");
-  assert.equal(db.rows[0].copyError, "");
-  assert.deepEqual(hits, [["https://hancut.example.com/files/a1.png", "GET"]], "원본 서버에는 읽기(GET)만");
-  assert.deepEqual(log.map((l) => [l.base, l.type, l.name]), [[UP, "image/png", "a1.png"]]);
-  // 이미 업로드 서버에 있으면 아무것도 안 한다 + 옛 오류 비움
-  db.rows[0].copyError = "옛 오류";
-  const again = await copy.copyArtToUpload(db, db.rows[0], { base: UP, fetchImpl: async () => assert.fail("받지 않는다") });
-
-  assert.equal(again.already, true);
-  assert.equal(db.rows[0].copyError, "");
-  assert.equal(db.rows[0].sourceUrl, "https://hancut.example.com/files/a1.png", "원래 주소는 그대로");
-  assert.equal(copy.isOnUploadServer(`${UP}/files/x.png`, `${UP}/`), true);
-  assert.equal(copy.isOnUploadServer("https://hancut.example.com/x.png", UP), false);
-});
-
-test("그림 복사 실패: 인증서 만료 등 이유가 그림에 남고 주소는 그대로, 사설망·이미지 아님·너무 큼은 받지 않는다", async () => {
-  const db = artDb([{ id: "a1", url: "https://hancut.example.com/files/a1.png" }, { id: "a2", url: "https://hancut.example.com/files/a2.png" }]);
-  const dns = async () => ["93.184.216.34"];
-  const expired = await copy.copyArtToUpload(db, db.rows[0], { base: UP, lookupImpl: dns, fetchImpl: async () => { throw certExpired(); }, forward: async () => assert.fail("올리지 않는다") });
-
-  assert.equal(expired.ok, false);
-  assert.match(expired.reason, /원래 주소 접속 실패\(인증서 만료\)/);
-  assert.equal(db.rows[0].copyError, expired.reason, "그림 옆에 보여 줄 이유");
-  assert.equal(db.rows[0].url, "https://hancut.example.com/files/a1.png", "주소는 그대로");
-  assert.equal(db.rows[0].sourceUrl, "");
-  const base = { base: UP, lookupImpl: dns, forward: async () => assert.fail("올리지 않는다") };
-
-  assert.match((await copy.copyArtToUpload(db, db.rows[1], { ...base, lookupImpl: async () => ["10.0.0.2"], fetchImpl: async () => assert.fail("받지 않는다") })).reason, /사설망/);
-  assert.match((await copy.copyArtToUpload(db, db.rows[1], { ...base, fetchImpl: async () => imgRes("text/html", new Uint8Array([60, 104, 116, 109, 108, 62])) })).reason, /이미지/);
-  assert.match((await copy.copyArtToUpload(db, db.rows[1], { ...base, fetchImpl: async () => ({ ...imgRes(), headers: new Headers({ "content-type": "image/png", "content-length": String(11 * 1024 * 1024) }) }) })).reason, /10MB/);
-  assert.match((await copy.copyArtToUpload(db, db.rows[1], { ...base, fetchImpl: async () => ({ status: 404, headers: new Headers() }) })).reason, /HTTP 404/);
-  assert.match((await copy.copyArtToUpload(db, db.rows[1], { base: UP, lookupImpl: dns, fetchImpl: async () => imgRes(), forward: async () => ({ ok: false, message: "업로드 서버가 오류를 돌려줬어요(HTTP 502)." }) })).reason, /업로드 서버에 올리지 못했어요/);
-  const noBase = await copy.copyArtToUpload(db, db.rows[1], { base: "", fetchImpl: async () => assert.fail("받지 않는다") });
-
-  assert.match(noBase.reason, /업로드 서버 주소/);
-});
-
-test("그림 복사: [지금 복사]는 승인 그림 중 업로드 서버 밖의 것만 한 번에(한도 안에서), 실패·남은 수를 알려 준다", async () => {
-  const db = artDb([
-    { id: "in1", url: `${UP}/files/in1.png` },
-    { id: "out1", url: "https://hancut.example.com/files/out1.png" },
-    { id: "out2", url: "https://hancut.example.com/files/out2.png" },
-    { id: "out3", url: "https://old.example.com/files/out3.png" },
-    { id: "cand", url: "https://hancut.example.com/files/cand.png", status: "candidate" },
-    { id: "other", appSlug: "other-app", url: "https://hancut.example.com/files/o.png" },
-  ]);
-  const dns = async () => ["93.184.216.34"];
-  const fetchImpl = async (u) => { if (u.includes("old.example.com")) throw certExpired(); return imgRes(); };
-  const pending = await copy.pendingCopies(db, "one-tiny-frame", UP);
-
-  assert.deepEqual(pending.map((r) => r.id).sort(), ["out1", "out2", "out3"], "후보·다른 프로젝트·이미 있는 그림은 대상이 아니다");
-  const r = await copy.copyApprovedArts(db, "one-tiny-frame", { base: UP, lookupImpl: dns, fetchImpl, forward: okForward() });
-
-  assert.deepEqual({ total: r.total, copied: r.copied, failed: r.failed, remaining: r.remaining }, { total: 3, copied: 2, failed: 1, remaining: 0 });
-  assert.match(r.firstError, /인증서 만료/);
-  assert.equal(db.rows.find((x) => x.id === "out3").copyError.includes("인증서 만료"), true);
-  assert.equal(db.rows.find((x) => x.id === "out1").url, `${UP}/files/out1.png`);
-  assert.equal(db.rows.find((x) => x.id === "cand").url, "https://hancut.example.com/files/cand.png", "후보 그림은 건드리지 않는다");
-  assert.equal(db.rows.find((x) => x.id === "other").sourceUrl, "");
-  const limited = await copy.copyApprovedArts(artDb([{ id: "p1", url: "https://h.example.com/1.png" }, { id: "p2", url: "https://h.example.com/2.png" }, { id: "p3", url: "https://h.example.com/3.png" }]), "one-tiny-frame", { base: UP, lookupImpl: dns, fetchImpl, forward: okForward() }, 2);
-
-  assert.deepEqual({ copied: limited.copied, remaining: limited.remaining }, { copied: 2, remaining: 1 }, "한 번에 옮기는 한도를 넘으면 남은 수를 알려 준다");
-});
-
-test("그림 복사: 승인할 때(통제실·스튜디오)와 기본 그림으로 정할 때 복사하고, 복사 실패는 승인을 막지 않는다", async () => {
-  const db = artDb([{ id: "a1", url: "https://hancut.example.com/files/a1.png", status: "approved" }, { id: "c1", url: "https://hancut.example.com/files/c1.png", status: "candidate" }]);
-  const deps = { base: UP, lookupImpl: async () => ["93.184.216.34"], fetchImpl: async () => imgRes(), forward: okForward() };
-
-  assert.equal(await copy.copyAfterApprove(db, "c1", deps), null, "승인 그림만 복사한다");
-  assert.equal((await copy.copyAfterApprove(db, "a1", deps)).ok, true);
-  assert.equal(await copy.copyAfterApprove(db, "nope", deps), null);
-  assert.equal((await copy.copyAfterApprove(db, "a1", { ...deps, fetchImpl: async () => assert.fail("이미 복사됨") })).already, true);
-  // 호출하는 쪽 배선(소스 확인)
-  const ops = read("lib/studio/opsData.ts");
-
-  assert.match(ops, /action === "approve"[\s\S]{0,400}copyAfterApprove/, "스튜디오 승인");
-  assert.match(ops, /const copied = await copyAfterApprove\(prisma as unknown as ArtDb, art\.id/, "기본 그림 지정");
-  assert.match(read("app/api/admin/factory/arts/route.ts"), /copyAfterApprove\(db, r\.art\.id\)/, "통제실 승인");
-  assert.match(read("app/api/studio/ops/route.ts"), /action === "copy"/, "[지금 복사]");
-  // 마이그레이션은 칸·표 추가뿐
+test("마이그레이션: 서비스 동작 기록 표만 추가하고 기존 데이터를 지우지 않는다(그림 저장소는 바꾸지 않는다)", () => {
   const sql = read("prisma/migrations/20261120090000_studio_service_link/migration.sql");
 
-  assert.equal(/\b(DROP|DELETE|TRUNCATE|UPDATE)\b/i.test(sql), false, "기존 데이터를 지우거나 바꾸지 않는다");
-  assert.match(sql, /ADD COLUMN "sourceUrl" TEXT NOT NULL DEFAULT ''/);
-  assert.match(sql, /ADD COLUMN "copyError" TEXT NOT NULL DEFAULT ''/);
+  assert.equal(/(DROP|DELETE|TRUNCATE|UPDATE)/i.test(sql), false, "기존 데이터를 지우거나 바꾸지 않는다");
   assert.match(sql, /CREATE TABLE "factory_service_actions"/);
+  assert.equal(/factory_arts/.test(sql), false, "그림 저장소는 바꾸지 않는다");
 });
 
 // ───────── 연결·안전 ─────────
 
 test("안전: nginx·.env·인증서 파일·서비스 DB 를 건드리지 않고, 새 서버 코드는 파일·프로세스를 쓰지 않는다", () => {
-  for (const f of ["lib/studio/serviceHealth.ts", "lib/studio/serviceOps.ts", "lib/factory/artCopy.ts", "app/api/studio/service/route.ts"]) {
+  for (const f of ["lib/studio/serviceHealth.ts", "lib/studio/serviceOps.ts", "app/api/studio/service/route.ts"]) {
     const src = read(f).replace(/\/\/.*$/gm, "");
 
     assert.equal(/from "node:fs"|from "fs"|child_process|writeFile|nginx|\.env\.local|certbot/.test(src), false, `${f}: 파일·프로세스·nginx 를 건드리지 않는다`);

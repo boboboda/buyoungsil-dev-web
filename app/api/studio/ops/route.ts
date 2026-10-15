@@ -3,7 +3,6 @@
 //   POST { appSlug, action: approve|reject|reset, ids[] }  → 200 { message, changed }
 //   POST { appSlug, action: redo, ids[], confirmed? }       → 201 { message, jobIds } | 409 { needsConfirm, message } (비용 한도 초과: confirmed:true 로 다시)
 //   POST { appSlug, action: default, artId }                → 200 { message }
-//   POST { appSlug, action: copy }                          → 200 { message, changed } 승인 그림을 업로드 서버로 복사([지금 복사], 원본 서버는 건드리지 않음)
 //   POST { appSlug, action: export, ids[] }                 → 201 { message, jobIds } | 501 서비스 업로드 미지원
 //   POST { appSlug, action: schedule, cardId, schedule: { enabled, hour, count, subjects, extra } } → 200 { message }
 // 앱 폴더는 직접 고치지 않는다(내보내기는 앱 수정 일감으로만). 서비스 DB 는 건드리지 않는다. 키 값은 오가지 않는다.
@@ -11,7 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/lib/auth/get-sesstion";
 import { requireAdmin } from "@/lib/factory/admin";
-import { copyAllArts, decideMany, exportArts, redoMany, saveSchedule, setDefaultArt, type OpsResult } from "@/lib/studio/opsData";
+import { decideMany, exportArts, redoMany, saveSchedule, setDefaultArt, type OpsResult } from "@/lib/studio/opsData";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -42,7 +41,6 @@ export async function POST(req: NextRequest) {
     if (action === "approve" || action === "reject" || action === "reset") return send(await decideMany(appSlug, body.ids, action, who));
     if (action === "redo") return send(await redoMany(appSlug, body.ids, body.confirmed === true), 201);
     if (action === "default") return send(await setDefaultArt(appSlug, body.artId, who));
-    if (action === "copy") return send(await copyAllArts(appSlug));
     if (action === "export") return send(await exportArts(appSlug, body.ids, who), 201);
     if (action === "schedule") {
       const s = (body.schedule ?? {}) as Record<string, unknown>;

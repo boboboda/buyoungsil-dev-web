@@ -71,5 +71,5 @@ export async function checkPickedRefs({ picked, pinnedUrl = null, fetchImpl, tim
 
 /** 고정 기본 그림 실패로 일감을 끝낼 때 쓰는 이유(고칠 곳 포함) */
 export function pinnedFailureMessage(f) {
-  return `기본 그림 주소 접속 실패(${f.reason}): ${f.host}. 고칠 곳: ① 스튜디오 [운영]에서 [지금 복사]로 승인 그림을 홈페이지 업로드 서버에 복사하거나 ② 그 서버의 HTTPS 인증서·서버 상태를 고친 뒤 이 일감을 다시 보내세요. (고정된 기본 그림이라 빼고 진행하지 않아요.)`;
+  return `기본 그림 주소 접속 실패(${f.reason}): ${f.url || f.host}. 고칠 곳: 그 주소의 서버(HTTPS 인증서·서버 상태)를 고치거나 [구성]에서 이 카드의 기본 그림을 업로드 서버에 있는 다른 그림으로 바꾼 뒤 이 일감을 다시 보내세요. (고정된 기본 그림이라 빼고 진행하지 않아요.)`;
 }

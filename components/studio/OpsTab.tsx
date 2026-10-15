@@ -2,7 +2,7 @@
 // /studio/<앱> 의 [운영] 탭: 검수함 · 보관함 · 내보내기 · 생성 일정 · 서비스 운영(프로젝트 연결 설정에서 켜진 프로젝트만).
 // 자료는 서버가 props 로 준다(lib/studio/opsData.ts). 행동은 /api/studio/ops(관리자만)로 보낸다. 관리자가 아니면(접근 키) 읽기 전용: 단추·입력칸이 없다.
 // 앱 폴더는 직접 고치지 않는다(내보내기는 앱 수정 일감으로만). 서비스 키 값은 이 화면에 오지 않는다(이름과 등록 여부만).
-// 서비스 운영 화면은 components/studio/ServiceOps.tsx. 그림 자체 보관(업로드 서버로 복사)의 [지금 복사]·복사 상태는 아래 CopyBar·CopyChip.
+// 서비스 운영 화면은 components/studio/ServiceOps.tsx.
 "use client";
 
 import { useRouter } from "next/navigation";
@@ -64,60 +64,6 @@ function History({ data, art }: { data: OpsData; art: ArtView }) {
   );
 }
 
-// ───────── 그림 자체 보관 ─────────
-
-/** 승인 그림 중 업로드 서버 밖에 있는 것이 있으면 알리고 [지금 복사]. 복사하면 그림 주소가 복사본으로 바뀌고 원래 주소는 sourceUrl 로 남는다 */
-function CopyBar({ data, canEdit }: { data: OpsData; canEdit: boolean }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-
-  if (!data.copy.enabled || (!data.copy.needed && !notice)) return null;
-  const run = async () => {
-    setBusy(true);
-    const r = await post({ appSlug: data.appSlug, action: "copy" });
-
-    setNotice(r.message);
-    router.refresh();
-    setBusy(false);
-  };
-
-  return (
-    <div className="fx-panel flex flex-wrap items-center gap-2 p-2 text-sm" data-copy-bar>
-      {data.copy.needed ? (
-        <span className={data.copy.failed ? "fx-warn" : ""}>
-          승인 그림 {data.copy.needed}장이 홈페이지 업로드 서버 밖(서비스 서버 등)에 있어요{data.copy.failed ? ` — 복사 실패 ${data.copy.failed}장` : ""}. 원래 서버가 막히면 일감이 실패할 수 있어요.
-        </span>
-      ) : null}
-      {canEdit && data.copy.needed ? (
-        <button className={BTN} data-copy-run disabled={busy} type="button" onClick={run}>
-          {busy ? "복사 중…" : "지금 복사"}
-        </button>
-      ) : null}
-      {notice ? (
-        <span className="text-xs" data-copy-notice role="status">
-          {notice}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-/** 그림 옆 복사 상태: 실패 이유 · 업로드 서버 밖 · 복사됨(원래 주소 보관) */
-function CopyChip({ data, art }: { data: OpsData; art: ArtView }) {
-  if (art.copyError) {
-    return (
-      <p className="fx-st fx-st-warn max-w-full whitespace-normal break-words text-xs" data-copy-state="failed" title={art.sourceUrl || art.url}>
-        복사 실패: {art.copyError}
-      </p>
-    );
-  }
-  if (art.status === "approved" && data.copy.outsideIds.includes(art.id)) return <p className="fx-st fx-st-info text-xs" data-copy-state="outside">업로드 서버 밖 — 복사 전</p>;
-  if (art.sourceUrl) return <p className="fx-st fx-st-ok text-xs" data-copy-state="copied" title={`원래 주소: ${art.sourceUrl}`}>자체 보관됨</p>;
-
-  return null;
-}
-
 // ───────── 검수함 ─────────
 
 function ReviewPane({ data, canEdit, focusArt }: { data: OpsData; canEdit: boolean; focusArt?: string }) {
@@ -158,7 +104,6 @@ function ReviewPane({ data, canEdit, focusArt }: { data: OpsData; canEdit: boole
 
   return (
     <div className="space-y-3" data-ops-pane="review">
-      <CopyBar canEdit={canEdit} data={data} />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-review-filters>
         <label className="text-xs fx-muted">
           상태
@@ -276,7 +221,6 @@ function ReviewPane({ data, canEdit, focusArt }: { data: OpsData; canEdit: boole
               {a.cardVersion ? ` 판 ${a.cardVersion}` : ""}
             </p>
             {data.cards.some((x) => x.defaultArtId === a.id) ? <p className="text-xs">★ 기본 그림</p> : null}
-            <CopyChip art={a} data={data} />
             <ExportChips list={data.exportsByArt[a.id] ?? []} />
             <details className="text-xs">
               <summary className="cursor-pointer fx-muted">사용 이력</summary>
@@ -299,7 +243,6 @@ function ArchivePane({ data }: { data: OpsData }) {
 
   return (
     <div className="space-y-3" data-ops-pane="archive">
-      <CopyBar canEdit={false} data={data} />
       {data.archive.map((g) => (
         <section key={g.subject} className="fx-panel space-y-2 p-3" data-archive-subject={g.subject}>
           <h3 className="text-sm font-bold">
@@ -322,7 +265,6 @@ function ArchivePane({ data }: { data: OpsData }) {
             사용 이력 — {openArt.subject} <span className="fx-muted font-normal">{kindLabel(openArt.kind)}</span>
           </h3>
           <History art={openArt} data={data} />
-          <CopyChip art={openArt} data={data} />
           <ExportChips list={data.exportsByArt[openArt.id] ?? []} />
         </section>
       ) : (

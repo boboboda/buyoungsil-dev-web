@@ -338,7 +338,7 @@ test("참고 그림 점검: 고정된 기본 그림이 인증서 만료로 안 �
   assert.equal(out.status, "failed");
   assert.match(out.failReason, /기본 그림 주소 접속 실패\(인증서 만료\)/);
   assert.match(out.failReason, /img\.example/);
-  assert.match(out.failReason, /지금 복사/, "고칠 곳이 적혀 있다");
+  assert.match(out.failReason, /고칠 곳/, "고칠 곳이 적혀 있다");
   assert.equal(spawned.length, 0, "도구를 부르지 않았다");
   assert.equal(forms.length, 0);
   assert.equal(fs.existsSync(toolJobDirOf(f.workDir, j.id)), false, "임시 폴더도 만들지 않았다");

@@ -1219,8 +1219,6 @@ model FactoryArt {
   note       String    @default("")
   cardId     String? // 이 그림을 만든 결과물 카드(factory_cards.id). 카드 없이 만든 그림은 NULL
   cardVersion Int? // 그때의 카드 판 번호
-  sourceUrl  String    @default("") // 업로드 서버로 복사하기 전의 원래 주소(복사했을 때만). 원본 서버의 파일은 건드리지 않는다
-  copyError  String    @default("") // 업로드 서버로 복사하지 못한 이유(인증서 만료 등). 복사에 성공하면 빈 글자
 
   @@index([appSlug, status])
   @@index([cardId])

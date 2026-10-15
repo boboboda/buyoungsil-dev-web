@@ -37,7 +37,6 @@ import {
 import { buildServiceView, callService, reviewKeyName, serviceOrigin, serviceProfileOf, serviceAdminKeyName, type ServiceCallDeps, type ServiceView } from "@/lib/studio/service";
 import { getServiceHealth, type HealthDeps } from "@/lib/studio/serviceHealth";
 import { readServiceActions, type ServiceActionView } from "@/lib/studio/serviceOps";
-import { copyAfterApprove, copyApprovedArts, isOnUploadServer, type CopyDeps } from "@/lib/factory/artCopy";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 const ART_LIMIT = 300;
@@ -83,7 +82,6 @@ export interface OpsData {
   uploadSupported: boolean; // 서비스 업로드 API가 있는지(없으면 '서비스 업로드 미지원')
   service: ServiceView | null;
   serviceActions: ServiceActionView[]; // 서비스 쓰기 동작 기록(누가 언제 무엇을)
-  copy: { enabled: boolean; needed: number; failed: number; outsideIds: string[] }; // 그림 자체 보관: 업로드 서버 밖에 있는 승인 그림 수 · 복사 실패 수 · 그 그림 id
 }
 
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
@@ -97,7 +95,7 @@ export function exportStatus(stored: string, jobStatus: string | undefined): str
   return "requested";
 }
 
-export async function readOpsData(appSlug: string, deps: { readReviewCount?: boolean; serviceDeps?: ServiceCallDeps; healthDeps?: HealthDeps; includeService?: boolean; uploadBase?: string } = {}): Promise<OpsData | null> {
+export async function readOpsData(appSlug: string, deps: { readReviewCount?: boolean; serviceDeps?: ServiceCallDeps; healthDeps?: HealthDeps; includeService?: boolean } = {}): Promise<OpsData | null> {
   if (!SLUG_RE.test(appSlug)) return null;
   const [arts, settingsRow, cards, exportRows, conn, scheduleRows, jobRows] = await Promise.all([
     listArts(prisma as unknown as ArtDb, appSlug, ART_LIMIT),
@@ -148,9 +146,6 @@ export async function readOpsData(appSlug: string, deps: { readReviewCount?: boo
   });
   const profile = serviceProfileOf(appSlug);
   const showService = !!profile && (link.studioService || deps.includeService === true); // 관리자 세션이면 연결 설정의 스위치와 상관없이 서비스 운영을 연다
-  const upBase = deps.uploadBase ?? (await import("@/lib/factory/uploadStream").then((m) => m.uploadBase()).catch(() => ""));
-  const approved = arts.filter((a) => a.status === "approved");
-  const outside = upBase ? approved.filter((a) => !isOnUploadServer(a.url, upBase)) : [];
 
   return {
     appSlug,
@@ -167,7 +162,6 @@ export async function readOpsData(appSlug: string, deps: { readReviewCount?: boo
     uploadSupported: !!profile?.capabilities.some((c) => c.key === "upload" && c.api),
     service: showService ? await readServiceView(appSlug, conn?.domain ?? null, deps.serviceDeps, deps.healthDeps) : null,
     serviceActions: showService ? await readServiceActions(appSlug).catch(() => []) : [],
-    copy: { enabled: !!upBase, needed: outside.length, failed: outside.filter((a) => !!a.copyError).length, outsideIds: outside.map((a) => a.id) },
   };
 }
 
@@ -226,7 +220,7 @@ async function loadArts(appSlug: string, ids: readonly string[]) {
 }
 
 /** 승인·반려·후보로 되돌림: 고른 그림 모두(이 프로젝트 그림만). 상태 전환은 통제실과 같은 decideArt */
-export async function decideMany(appSlug: string, rawIds: unknown, action: ReviewAction, who: string, deps: { copyDeps?: CopyDeps } = {}): Promise<OpsResult> {
+export async function decideMany(appSlug: string, rawIds: unknown, action: ReviewAction, who: string): Promise<OpsResult> {
   const picked = pickIds(rawIds);
 
   if (picked.ok === false) return fail(400, picked.message);
@@ -235,24 +229,15 @@ export async function decideMany(appSlug: string, rawIds: unknown, action: Revie
 
   if (!rows.length) return fail(404, "고른 그림이 이 프로젝트에 없어요.");
   let changed = 0;
-  let copied = 0;
-  const copyFailed: string[] = [];
 
   for (const r of rows) {
     const res = await decideArt(prisma as unknown as ArtDb, r.id, action, who);
 
     if (res.ok) changed++;
-    if (res.ok && action === "approve") {
-      // 그림 자체 보관: 승인한 그림이 업로드 서버 밖에 있으면 업로드 서버로 복사한다(실패해도 승인은 그대로, 이유는 그림 옆에 남는다)
-      const c = await copyAfterApprove(prisma as unknown as ArtDb, r.id, deps.copyDeps);
-
-      if (c && c.ok && !c.already) copied++;
-      if (c && c.ok === false) copyFailed.push(c.reason);
-    }
   }
   const label = action === "approve" ? "승인" : action === "reject" ? "반려" : "후보로 되돌림";
 
-  return { ok: true, changed, message: `${changed}장을 ${label}했어요.${action === "approve" ? " 이후 일감부터 자동 참고 그림으로 쓰여요." : ""}${copied ? ` ${copied}장은 업로드 서버로 복사했어요.` : ""}${copyFailed.length ? ` ${copyFailed.length}장은 복사하지 못했어요(${copyFailed[0]}) — 그림 옆에 이유를 적어 뒀어요.` : ""}${rows.length < picked.ids.length ? ` (${picked.ids.length - rows.length}장은 이 프로젝트 그림이 아니어서 건너뜀)` : ""}` };
+  return { ok: true, changed, message: `${changed}장을 ${label}했어요.${action === "approve" ? " 이후 일감부터 자동 참고 그림으로 쓰여요." : ""}${rows.length < picked.ids.length ? ` (${picked.ids.length - rows.length}장은 이 프로젝트 그림이 아니어서 건너뜀)` : ""}` };
 }
 
 /** 다시 요청: 같은 카드·같은 대상으로 도구 일감을 다시 만든다. 비용 한도를 넘으면 확인을 요구(confirmed 로 다시) */
@@ -283,7 +268,7 @@ export async function redoMany(appSlug: string, rawIds: unknown, confirmed: bool
 }
 
 /** 기본 그림으로 지정: 승인된 그림 하나를 그 그림을 만든 카드의 defaultArtId 로 */
-export async function setDefaultArt(appSlug: string, artId: unknown, who: string, deps: { copyDeps?: CopyDeps } = {}): Promise<OpsResult> {
+export async function setDefaultArt(appSlug: string, artId: unknown, who: string): Promise<OpsResult> {
   if (typeof artId !== "string") return fail(400, "그림 하나를 골라 주세요.");
   const [art] = await loadArts(appSlug, [artId]);
 
@@ -293,13 +278,11 @@ export async function setDefaultArt(appSlug: string, artId: unknown, who: string
   const card = (await listCards(appSlug)).find((c) => c.id === art.cardId);
 
   if (!card) return fail(404, "그림을 만든 카드가 없어졌어요.");
-  const copied = await copyAfterApprove(prisma as unknown as ArtDb, art.id, deps.copyDeps); // 기본 그림은 업로드 서버에 두어야 서비스 서버가 죽어도 일감이 돈다
   const res = await updateCard(appSlug, card.id, { refRules: { ...card.refRules, defaultArtId: art.id } }, "통제실", who, "스튜디오 검수에서 기본 그림 지정");
 
   if (res.ok === false) return fail(res.status, res.errors.join(" "));
-  const copyNote = copied && copied.ok === false ? ` 다만 이 그림을 업로드 서버로 복사하지 못했어요(${copied.reason}). 원래 주소가 막히면 일감이 실패할 수 있어요 — [운영]에서 [지금 복사]를 다시 눌러 주세요.` : copied && copied.ok && !copied.already ? " 그림을 업로드 서버로 복사해 그 주소를 써요." : "";
 
-  return { ok: true, message: `${res.unchanged ? `이미 '${card.name}' 카드의 기본 그림이에요.` : `'${card.name}' 카드의 기본 그림으로 지정했어요(판 ${res.card.version}). 새로 시작하는 일감부터 적용돼요.`}${copyNote}` };
+  return { ok: true, message: res.unchanged ? `이미 '${card.name}' 카드의 기본 그림이에요.` : `'${card.name}' 카드의 기본 그림으로 지정했어요(판 ${res.card.version}). 새로 시작하는 일감부터 적용돼요.` };
 }
 
 // ───────── 내보내기 ─────────
@@ -358,20 +341,6 @@ export async function exportArts(appSlug: string, rawIds: unknown, who: string, 
   if (res.state === "no-api") return fail(501, `${note}서비스 업로드 미지원 — 이 서비스에 그림을 받는 API(/api/admin/art-upload)가 아직 없어요. 필요한 API 모양은 docs/studio-service-api.md 에 적어 뒀어요. 지금은 내보낼 곳을 '앱 폴더 경로'로 바꾸면 앱 수정 일감으로 넣을 수 있어요.`);
 
   return res.state === "ok" ? { ok: true, changed: arts.length, message: `${note}서비스(${profile.name})로 ${arts.length}장을 보냈어요.` } : fail(502, `${note}서비스 업로드에 실패했어요 — ${text}`);
-}
-
-// ───────── 그림 자체 보관 ─────────
-
-/** [지금 복사]: 이 프로젝트 승인 그림 중 업로드 서버 밖에 있는 것을 업로드 서버로 옮긴다(한 번에 최대 40장, 남으면 한 번 더) */
-export async function copyAllArts(appSlug: string, deps: { copyDeps?: CopyDeps } = {}): Promise<OpsResult> {
-  const r = await copyApprovedArts(prisma as unknown as ArtDb, appSlug, deps.copyDeps);
-
-  if (!r.total) return r.firstError ? fail(409, r.firstError) : { ok: true, changed: 0, message: "복사할 그림이 없어요. 승인 그림이 모두 업로드 서버에 있어요." };
-  const tail = r.remaining ? ` ${r.remaining}장이 더 남았으니 한 번 더 눌러 주세요.` : "";
-
-  if (!r.copied) return fail(502, `${r.total}장을 복사하지 못했어요 — ${r.firstError}. 그림 옆에 이유를 적어 뒀어요.${tail}`);
-
-  return { ok: true, changed: r.copied, message: `${r.copied}장을 업로드 서버로 복사했어요.${r.failed ? ` ${r.failed}장은 복사하지 못했어요(${r.firstError}) — 그림 옆에 이유를 적어 뒀어요.` : ""}${tail} 원래 주소는 sourceUrl 로 남겼고 원본 서버의 파일은 건드리지 않았어요.` };
 }
 
 // ───────── 생성 일정 ─────────
