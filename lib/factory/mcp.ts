@@ -88,6 +88,7 @@ export const FACTORY_INSTRUCTIONS =
   + "출시: get_release_status 로 앱별 출시 상태·배포 계정·패키지(스토어 문구·체크리스트)·AAB 정보·테스트 일정을 보고, "
   + "enqueue_release_job(appSlug, kind) 으로 출시 일감을 등록해요(kind: first=첫 출시, store=스토어 자료 수정, project=프로젝트 업데이트. 지시문은 서버가 배포 계정 정보로 만들고, 승인은 관리자). "
   + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 앱별 git 원격·배포 서버·도메인·컨테이너는 get_project_links 로 읽어요(읽기 전용). 결과물 카드(프로젝트마다 이런 결과물을 이렇게 만든다는 뜻: 도구·방법·옵션·참고 규칙)는 list_cards·get_card 로 읽고 create_card·update_card 로 만들고 고쳐요(설명서 한계 검사를 통과해야 저장, 키는 저장하지 않고 방법에 맞게 자동). 카드로 일을 시키려면 enqueue_app_job 의 card 에 카드 이름을 적어요. 게임 툴킷 도구의 방법·필요한 키·한계는 list_tools 와 get_tool_manifest 로 읽어요(읽기 전용, 지시문이 설명서 한계를 넘으면 등록이 거절되고 필요한 키는 자동으로 들어가요). 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
+  + "일감 템플릿: list_templates 로 자주 쓰는 지시(웹 배포·스토어 문구 수정·의존성 업데이트·버그 재현 후 수정·측정만)를 보고 enqueue_from_template(template, values, appSlug?) 으로 빈칸만 채워 보내요. 일감 작성 규칙: 측정·조사는 실험 일감으로, e2e 시험은 마지막에 한 번만. 관리자가 켠 자동 승인 규칙에 맞는 일감(실험·비용 한도 안 도구·문서만 수정·지정 템플릿)은 승인 없이 바로 대기열에 들어가지만 출시 일감과 배포는 절대 자동 승인되지 않아요. "
   + "실험: 도구·방식이 되는지 확인하는 테스트는 앱 수정 일감이 아니라 enqueue_lab_job(title, planMarkdown, aiEngine?, keep?)으로 보내요(앱 이름 없이, 작업 PC 의 실험 폴더에서 무인 실행. 승인은 관리자). "
   + "끝나면 get_factory_job 의 실험_결과에 올라온 이미지·mp4 주소(몇 시간 뒤 만료)와 report.md 본문이 나와요. 이미지 주소를 열어 직접 보고 검수할 수 있어요. "
   + "그림 만들기(결과물 카드): AI 에이전트 없이 카드로 바로 만들려면 앱 수정 일감 대신 generate_with_card(appSlug, card, subject, count, extra?)를 쓰세요. 도구 일감 id 를 돌려주고, get_factory_job 의 도구_결과에 상태·비용·만든 그림 주소가 나와요(비용 한도를 넘으면 확인 대기로 멈춰요). "
@@ -188,6 +189,34 @@ export const FACTORY_TOOLS = [
       additionalProperties: false,
     },
     annotations: READ_ONLY,
+  },
+  {
+    name: "list_templates",
+    description:
+      "일감 템플릿 목록을 읽어요(읽기 전용). 자주 쓰는 지시(웹 배포·스토어 문구 수정·의존성 업데이트·버그 재현 후 수정·측정만 등)를 이름·종류(revision=앱 수정, lab=실험, tool=도구)·지시문 틀·빈칸 목록·기본 우선순위·필요한 키·승인 방식으로 보여 줘요. " +
+      "빈칸은 {{이름}}(꼭 채움) 또는 {{이름=기본값}}(비우면 기본값)이에요. 일감 작성 규칙: 측정·조사는 실험 일감으로, e2e 시험은 마지막에 한 번만. 템플릿으로 보내려면 enqueue_from_template.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "enqueue_from_template",
+    description:
+      "템플릿을 골라 빈칸을 채워 일감을 등록합니다(승인 대기로 쌓여요. 관리자가 승인하거나, 관리자가 켜 둔 자동 승인 규칙에 맞으면 바로 대기열에 들어가요). 출시·배포는 템플릿으로 보낼 수 없고 자동 승인되지도 않아요. " +
+      "revision·tool 템플릿은 appSlug 가 필요하고(수정은 완성된 앱만), lab 템플릿은 앱 이름 없이 보내요. values 에 빈칸 이름별 값을 주세요(list_templates 의 빈칸 목록). 빈칸이 비면 거절해요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template: { type: "string", description: "템플릿 이름 또는 id (list_templates)" },
+        values: { type: "object", description: "빈칸 이름 → 값. 예: { \"증상\": \"저장 버튼을 누르면 앱이 꺼져요\" }", additionalProperties: { type: "string" } },
+        appSlug: { type: "string", description: "대상 앱 이름 (수정·도구 템플릿)" },
+        priority: { type: "integer", description: "우선순위 -100~100 (선택, 생략하면 템플릿 기본값)" },
+        aiEngine: { type: "string", enum: ["claude", "codex"], description: "작업 AI (선택)" },
+        source: { type: "string", description: "어느 기획 대화에서 온 건지 짧게 (선택, 100자 이내)" },
+      },
+      required: ["template"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: "list_secret_names",
@@ -580,7 +609,11 @@ export async function callFactoryTool(
     case "enqueue_app_job":
       // 출시 준비는 서버가 지시문을 만드는 enqueue_release_job 으로만
       if (args.kind === "release") return text("출시 준비 일감은 enqueue_release_job(appSlug) 으로 보내세요.", true);
-      return enqueue(args);
+      return enqueue(args); // 템플릿 출처는 서버 안에서만(enqueueWithId 의 internal) 붙인다: 자동 승인 '지정한 템플릿' 규칙을 외부 인자로 흉내 내지 못한다
+    case "list_templates":
+      return listTemplatesTool();
+    case "enqueue_from_template":
+      return enqueueFromTemplateTool(args);
     case "set_job_priority":
       return setJobPriority(args);
     case "enqueue_lab_job":
@@ -1125,6 +1158,35 @@ async function getInbox(args: Record<string, unknown>): Promise<ToolResult> {
   });
 }
 
+async function listTemplatesTool(): Promise<ToolResult> {
+  const { listTemplates } = await import("@/lib/factory/jobTemplatesDb");
+  const { templateVars, JOB_WRITING_RULES, APPROVAL_MODE_LABELS } = await import("@/lib/factory/jobTemplates");
+  const list = await listTemplates();
+
+  return json({
+    템플릿: list.map((t) => ({ id: t.id, 이름: t.name, 종류: t.kind, 설명: t.description, 빈칸: templateVars(t.body).map((v) => (v.fallback === null ? { 이름: v.name } : { 이름: v.name, 기본값: v.fallback })), 우선순위: t.priority, 필요한_키: t.requiredSecrets, 승인_방식: APPROVAL_MODE_LABELS[t.approvalMode], ...(t.kind === "tool" ? { 카드: t.cardName, 장수: t.toolCount } : {}), 기본_템플릿: t.builtin })),
+    일감_작성_규칙: JOB_WRITING_RULES,
+    안내: "enqueue_from_template(template, values, appSlug?) 으로 보내요. 읽기 전용 목록이에요.",
+  });
+}
+
+async function enqueueFromTemplateTool(args: Record<string, unknown>): Promise<ToolResult> {
+  if (typeof args.template !== "string" || !args.template.trim()) return text("template(템플릿 이름 또는 id)이 필요해요. list_templates 로 확인하세요.", true);
+  if (args.priority !== undefined && (typeof args.priority !== "number" || !Number.isInteger(args.priority) || args.priority < -100 || args.priority > 100)) return text("priority 는 -100 에서 100 사이 정수예요.", true);
+  if (args.aiEngine !== undefined && !isAiEngine(args.aiEngine)) return text("작업 AI는 claude 또는 codex만 쓸 수 있어요.", true);
+  const { enqueueFromTemplate } = await import("@/lib/factory/jobTemplatesDb");
+  const r = await enqueueFromTemplate({
+    template: args.template,
+    values: args.values,
+    appSlug: typeof args.appSlug === "string" ? args.appSlug : undefined,
+    priority: args.priority as number | undefined,
+    aiEngine: args.aiEngine,
+    source: clean(args.source, 100) || "채팅(템플릿)",
+  });
+
+  return r.ok ? text(r.message) : text(r.message, true);
+}
+
 async function getUsageByBlock(args: Record<string, unknown>): Promise<ToolResult> {
   const { GROUP_BYS, PERIODS, usageText } = await import("@/lib/factory/runStats");
   const by = args.by === undefined ? "agent" : GROUP_BYS.find((g) => g === args.by);
@@ -1162,6 +1224,15 @@ async function listSecretNames(): Promise<ToolResult> {
   });
 }
 
+/** 자동 승인 규칙(5-3). 모듈을 못 읽거나 실패해도 등록은 그대로 승인 대기로 남는다 */
+async function maybeAutoApprove(jobId: string): Promise<string | null> {
+  try {
+    return await (await import("@/lib/factory/autoApproveDb")).maybeAutoApprove(jobId);
+  } catch {
+    return null;
+  }
+}
+
 type EnqueueFail = { ok: false; message: string };
 type EnqueueOk = { ok: true; id: string; message: string };
 
@@ -1172,7 +1243,7 @@ export async function enqueue(args: Record<string, unknown>): Promise<ToolResult
 }
 
 /** enqueue 와 같은 검사·저장. 등록되면 일감 id 도 함께 돌려준다(Studio 요청 입구 등 코드에서 부르는 곳용). */
-export async function enqueueWithId(args: Record<string, unknown>): Promise<ToolResult & { jobId?: string }> {
+export async function enqueueWithId(args: Record<string, unknown>, internal: { templateId?: string | null } = {}): Promise<ToolResult & { jobId?: string }> {
   if (args.aiEngine !== undefined && !isAiEngine(args.aiEngine)) return text("작업 AI는 claude 또는 codex만 쓸 수 있어요.", true);
   const aiEngine = isAiEngine(args.aiEngine) ? args.aiEngine : await getDefaultAiEngine();
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
@@ -1446,6 +1517,7 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
           priority,
           source,
           cardId,
+          templateId: internal.templateId && ID_RE.test(internal.templateId) ? internal.templateId : null,
           // 출시 일감 종류(enqueueReleaseJob 만 넘긴다. enqueue_app_job 은 kind=release 를 막는다)
           releaseKind: kind === "release" && typeof args.releaseKind === "string" ? args.releaseKind : null,
           overwriteProject: kind === "release" && args.overwriteProject === true,
@@ -1495,10 +1567,13 @@ export async function enqueueWithId(args: Record<string, unknown>): Promise<Tool
     },
   );
 
-  // 승인 대기 알림. 통제실에서 직접 보낸 지시는 보낸 사람이 이미 아니까 알리지 않는다.
-  if (result.ok && source !== "통제실") void notifyJobEvent(result.id, "pending");
+  // 자동 승인 규칙(5-3): 맞으면 승인 대기 없이 바로 대기열로(출시·새 앱은 늘 제외)
+  const auto = result.ok ? await maybeAutoApprove(result.id) : null;
 
-  return result.ok ? { ...text(result.message), jobId: result.id } : text(result.message, true);
+  // 승인 대기 알림. 통제실에서 직접 보낸 지시는 보낸 사람이 이미 아니까 알리지 않는다.
+  if (result.ok && !auto && source !== "통제실") void notifyJobEvent(result.id, "pending");
+
+  return result.ok ? { ...text(auto ? `${result.message} (자동 승인 규칙에 맞아 이미 승인됐어요.)` : result.message), jobId: result.id } : text(result.message, true);
 }
 
 // 아직 시작하지 않은(승인 대기·승인됨) 지시의 우선순위 변경. 승인은 하지 않는다. 응답에 바뀐 대기 순서를 담는다.
@@ -1523,7 +1598,7 @@ async function generateWithCard(args: Record<string, unknown>): Promise<ToolResu
   return r.ok ? { ...text(`${r.message}\n끝나면 get_factory_job(${r.id}) 의 도구_결과로 상태·비용·만든 그림 주소를 보세요.`), jobId: r.id } : text(r.message, true);
 }
 
-export async function enqueueLabJob(args: Record<string, unknown>): Promise<ToolResult & { jobId?: string }> {
+export async function enqueueLabJob(args: Record<string, unknown>, internal: { templateId?: string | null } = {}): Promise<ToolResult & { jobId?: string }> {
   if (args.aiEngine !== undefined && !isAiEngine(args.aiEngine)) return text("작업 AI는 claude 또는 codex만 쓸 수 있어요.", true);
   const aiEngine = isAiEngine(args.aiEngine) ? args.aiEngine : await getDefaultAiEngine();
   const title = clean(args.title, 80);
@@ -1573,6 +1648,7 @@ export async function enqueueLabJob(args: Record<string, unknown>): Promise<Tool
         stack: "lab",
         source,
         cardId,
+        templateId: internal.templateId && ID_RE.test(internal.templateId) ? internal.templateId : null,
         labResult: args.keep === false ? { keep: false } : undefined,
       },
       select: { id: true },
@@ -1587,7 +1663,9 @@ export async function enqueueLabJob(args: Record<string, unknown>): Promise<Tool
     } as EnqueueOk;
   });
 
-  if (result.ok && source !== "통제실") void notifyJobEvent(result.id, "pending");
+  const auto = result.ok ? await maybeAutoApprove(result.id) : null;
 
-  return result.ok ? { ...text(result.message), jobId: result.id } : text(result.message, true);
+  if (result.ok && !auto && source !== "통제실") void notifyJobEvent(result.id, "pending");
+
+  return result.ok ? { ...text(auto ? `${result.message} (자동 승인 규칙에 맞아 이미 승인됐어요.)` : result.message), jobId: result.id } : text(result.message, true);
 }

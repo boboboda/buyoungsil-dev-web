@@ -118,6 +118,8 @@ interface Overview {
   }[];
   // [현황] 맨 위 '지금 진행 중' 띠(예전 서버에는 없다 → 띠가 '진행 중인 작업 없음'으로 보인다)
   active?: ActiveNow;
+  // 자동 승인 규칙(5-3)으로 승인된 최근 일감(예전 서버에는 없다)
+  autoApproved?: { id: string; appSlug: string; title: string; kind: string; status: string; rule: string; label?: string; at: string }[];
   // 종류별 전체 개수(예전 서버에는 없다. jobs 는 앱 일감을 넣은 서버부터)
   totals?: Partial<Record<HistoryKind, number>>;
   // 기본 모델·주사용 AI(승인 줄의 '기본 설정 사용' 표시)
@@ -487,6 +489,7 @@ export default function FactoryOverview({
   return (
     <>
       <ActiveStrip active={data?.active} deploys={inbox?.deploys} loading={!data} />
+      <AutoApprovedStrip items={data?.autoApproved} />
 
       <Card className="mb-6" data-title="todo · 승인·배포" id="factory-todo">
         <CardBody className="space-y-3">
@@ -1534,6 +1537,31 @@ export function activeItems(active: ActiveNow | undefined, deploys: Overview["in
 
 const activeHref = (it: ActiveItem) => (it.type === "job" ? jobHref(it.id) : it.type === "deploy" ? "#factory-todo" : maintHref(it.threadId));
 const TYPE_ICON = { job: "📦", maintenance: "🛠", deploy: "🚀" } as const;
+
+// [현황] '자동 승인된 일감'(5-3): 자동 승인 규칙이 최근 24시간 안에 승인 대기를 건너뛰게 한 일감. 하나도 없으면 아무것도 그리지 않는다
+function AutoApprovedStrip({ items }: { items: Overview["autoApproved"] }) {
+  if (!items?.length) return null;
+
+  return (
+    <section aria-label="자동 승인된 일감" className="mb-4 space-y-1 rounded-lg border border-default-200 p-3" data-auto-approved-strip data-title="auto · 자동 승인된 일감">
+      <h3 className="text-sm font-semibold">
+        ⚡ 자동 승인된 일감 <span className="text-xs font-normal text-default-500">(최근 24시간)</span>
+      </h3>
+      <ul className="space-y-0.5 text-sm">
+        {items.map((it) => (
+          <li key={it.id} className="flex flex-wrap items-center gap-x-2" data-auto-approved={it.id}>
+            <a className="min-w-0 truncate underline" href={jobHref(it.id)}>
+              {it.title}
+            </a>
+            <span className="text-xs text-default-500">{it.appSlug}</span>
+            <span className="rounded bg-default-100 px-1.5 text-xs">규칙: {it.label || it.rule}</span>
+            <span className="text-xs text-default-500">{new Date(it.at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 // [현황] 맨 위 '지금 진행 중' 띠. 값은 7초마다 읽는 overview(active + inbox.deploys) 하나에서만 온다
 // (아래 이력·할 일과 같은 응답이라 서로 어긋나지 않는다). now 를 주면 그 시각 기준(시험·미리보기), 아니면 10초마다 갱신

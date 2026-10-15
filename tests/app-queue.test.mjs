@@ -284,7 +284,7 @@ test("다른 앱끼리는 대기열이 따로: 한 앱의 실행·순서가 다�
 });
 
 test("화면: 올리기/내리기는 바로 앞(뒤) 일감과 priority 를 1 차이로 바꾸고, 실행 중·한계는 막음", () => {
-  const { movedPriority } = loadTs("components/admin/factory/AppQueue.tsx", { react: { useCallback: (f) => f, useEffect: () => {}, useState: () => [null, () => {}] }, "react/jsx-runtime": { jsx: () => null, jsxs: () => null, Fragment: null } });
+  const { movedPriority } = loadTs("components/admin/factory/AppQueue.tsx", { "./TemplateSender": { TemplateSendButton: () => null }, react: { useCallback: (f) => f, useEffect: () => {}, useState: () => [null, () => {}] }, "react/jsx-runtime": { jsx: () => null, jsxs: () => null, Fragment: null } });
   const items = [
     { id: "r", status: "running", priority: 0, position: 0 },
     { id: "a", status: "approved", priority: 5, position: 1 },

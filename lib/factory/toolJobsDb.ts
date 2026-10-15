@@ -83,7 +83,7 @@ export type ToolEnqueue = { ok: true; id: string; autoApproved: boolean; message
  * 도구 일감 등록. args: { appSlug, card(이름 또는 id), count?, subject|subjects, extra?, refArtIds?, source? }
  * 카드·키·설명서를 검사하고(카드가 꺼져 있거나 AI 턴이 필요한 방법이면 거절), 설정이 허락하면 바로 승인 상태로 둔다.
  */
-export async function enqueueToolJob(args: Record<string, unknown>, who: { source: string | null; autoApproveAllowed?: boolean; askLimit?: boolean } = { source: null }): Promise<ToolEnqueue> {
+export async function enqueueToolJob(args: Record<string, unknown>, who: { source: string | null; autoApproveAllowed?: boolean; askLimit?: boolean; templateId?: string | null } = { source: null }): Promise<ToolEnqueue> {
   const appSlug = typeof args.appSlug === "string" ? args.appSlug.trim() : "";
 
   if (!SLUG_RE.test(appSlug)) return { ok: false, message: "appSlug(카드가 있는 프로젝트 이름)가 필요해요." };
@@ -110,7 +110,7 @@ export async function enqueueToolJob(args: Record<string, unknown>, who: { sourc
   const estimated = estimateToolCost(manifest, data.method, input.value.count, input.value.subjects.length);
   const settings = await getToolSettings();
   const usage = estimated > 0 ? await toolUsage() : { day: 0, month: 0 };
-  const auto = who.autoApproveAllowed !== false && shouldAutoApprove(settings, estimated, usage);
+  let auto = who.autoApproveAllowed !== false && shouldAutoApprove(settings, estimated, usage);
   // 스튜디오(askLimit): 일·월 비용 한도를 넘으면 등록하지 않고 확인을 먼저 받는다. 사람이 확인(confirmed)하면 일감에 confirmed 를 켜서 한도 검사를 건너뛴다(통제실 [그대로 진행]과 같다)
   const limit = checkCostLimit(usage, estimated, settings);
   let confirmed = false;
@@ -118,6 +118,15 @@ export async function enqueueToolJob(args: Record<string, unknown>, who: { sourc
   if (who.askLimit && limit.ok === false) {
     if (args.confirmed !== true) return { ok: false, message: `${limit.reason}. 그래도 만들려면 확인해 주세요.`, needsConfirm: { reason: limit.reason, estimatedCost: estimated, usage } };
     confirmed = true;
+  }
+  // 자동 승인 규칙(5-3) '비용 한도 안의 도구 일감': 설정의 자동 승인이 꺼져 있어도 한도 안이면 승인 없이 시작한다. 한도를 넘으면 평소대로 사람 확인
+  let autoRule: string | null = null;
+
+  const toolRuleOn = !auto && who.autoApproveAllowed !== false && limit.ok !== false ? await (await import("@/lib/factory/autoApproveDb")).getAutoRules().then((r) => r.tool, () => false).catch(() => false) : false;
+
+  if (toolRuleOn) {
+    auto = true;
+    autoRule = "tool";
   }
   const toolInput = { ...input.value, estimatedCost: estimated, ...(confirmed ? { confirmed: true } : {}) };
   const plan = toolJobPlan({ cardName: row.name, cardVersion: row.version, tool: data.tool, method: data.method, input: input.value, estimatedCost: estimated });
@@ -144,6 +153,8 @@ export async function enqueueToolJob(args: Record<string, unknown>, who: { sourc
         toolInput,
         status: auto ? "approved" : "pending",
         approvedAt: auto ? now : null,
+        templateId: who.templateId && /^[A-Za-z0-9_-]{1,60}$/.test(who.templateId) ? who.templateId : null,
+        autoApprovedBy: autoRule,
       },
       select: { id: true },
     });
@@ -151,6 +162,17 @@ export async function enqueueToolJob(args: Record<string, unknown>, who: { sourc
 
   if (!job) return { ok: false, message: `승인 대기 중인 지시가 ${MAX_PENDING_JOBS}개예요. 관리자가 정리한 뒤에 다시 보내세요.` };
   if (picked.length) await savePicks(prisma as unknown as Parameters<typeof savePicks>[0], job.id, picked.map((p) => p.id)).catch(() => undefined);
+  if (autoRule) {
+    const { autoApproveNotice, AUTO_RULE_LABELS } = await import("@/lib/factory/autoApprove");
+
+    await prisma.factoryJobLog.create({ data: { jobId: job.id, level: "info", message: `자동 승인: '${AUTO_RULE_LABELS.tool}' 규칙에 맞아 승인 없이 대기열에 넣었어요.` } }).catch(() => undefined);
+    void (await import("@/lib/factory/telegram")).notifyText(autoApproveNotice(toolJobTitle(row.name, input.value.subjects, input.value.count), appSlug, AUTO_RULE_LABELS.tool), "/admin/factory?tab=jobs");
+  } else if (!auto) {
+    // 지정한 템플릿 규칙(5-3)은 등록 직후 여기서 판단한다(도구 일감의 한도 규칙은 위에서 이미 처리)
+    const viaTemplate = who.templateId ? await import("@/lib/factory/autoApproveDb").then((m) => m.maybeAutoApprove(job.id, { toolWithinLimit: limit.ok !== false })).catch(() => null) : null;
+
+    if (viaTemplate) auto = true;
+  }
   if (!auto && who.source !== "통제실") void notifyJobEvent(job.id, "pending");
 
   return {

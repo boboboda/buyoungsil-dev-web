@@ -15,6 +15,7 @@ import type { HandoffEntry } from "@/lib/factory/handoff";
 import HandoffBox from "./HandoffBox";
 import DiffView from "./DiffView";
 import { PLAN_LABELS, type PlanStatus } from "@/lib/factory/planLabels";
+import { autoRuleLabel } from "@/lib/factory/autoApprove";
 import JobSizeNotice from "./JobSizeNotice";
 import { stageLabel, stageRetryCheck } from "@/lib/factory/stageRetry";
 
@@ -68,6 +69,8 @@ interface JobDetail extends JobRow {
   planFirst?: boolean; // 계획 먼저 승인(5-1)을 쓴 일감
   planStatus?: string | null;
   planText?: string | null;
+  autoApprovedBy?: string | null; // 자동 승인 규칙(5-3)이 승인했으면 규칙 키
+  templateId?: string | null; // 일감 템플릿에서 보낸 일감이면 템플릿 id
 }
 
 // 실험(lab) 일감 결과(상세 API 의 lab). 파일 주소는 관리자 세션으로 열리는 상대 주소
@@ -668,6 +671,12 @@ function JobDetailView({
 
         {/* 실험 결과: 사후 검사·올라온 이미지/영상/report.md·올리지 못한 파일·[폴더 지우기] */}
         {job.kind === "lab" && lab && <LabResultBox busy={busy} job={job} lab={lab} onAct={onAct} />}
+
+        {job.autoApprovedBy && (
+          <p className="rounded-lg bg-default-100 p-2 text-sm" data-auto-approved-badge="">
+            ⚡ 자동 승인됨 <span className="text-xs text-default-500">— 규칙: {autoRuleLabel(job.autoApprovedBy) ?? job.autoApprovedBy}</span>
+          </p>
+        )}
 
         {/* 계획 먼저 승인(5-1): 계획 단계와 계획. 고르기는 [현황] 할 일·텔레그램에서 */}
         {job.planFirst && (

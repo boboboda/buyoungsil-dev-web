@@ -353,7 +353,7 @@ test("대기열: 병행 일감은 실행 중이 여러 개(번호 0), 대기 번
 
 test("통제실 AppQueue: 병행 그룹·worktree 실행 중·잠금 대기·합치는 중·합치기 실패 표시와 묶기·풀기 버튼", async () => {
   const src = read("components/admin/factory/AppQueue.tsx");
-  const mod = loadTs("components/admin/factory/AppQueue.tsx", { react: require("react"), "react/jsx-runtime": require("react/jsx-runtime") });
+  const mod = loadTs("components/admin/factory/AppQueue.tsx", { "./TemplateSender": { TemplateSendButton: () => null }, react: require("react"), "react/jsx-runtime": require("react/jsx-runtime") });
   const since = "2026-10-14T07:00:00.000Z";
   const base = { status: "running", parallelGroup: "g-ui111", parallel: { worktree: true, lockWait: null, merging: false, rebases: 0, mergedAt: null, checks: null }, mergeFailed: false };
 

@@ -245,7 +245,7 @@ test("activeNow: 진행 중 일감·정비 지시, 대기 개수(승인된 일�
 test("overview 응답에 active 가 실리고 관리자 전용·no-store 는 그대로", () => {
   const route = fs.readFileSync(path.join(repo, "app/api/admin/factory/overview/route.ts"), "utf8");
   assert.match(route, /activeNow\(\)/);
-  assert.match(route, /return \{ supervisor, inbox, updates, deploys, threads, totals, active \}/);
+  assert.match(route, /return \{ supervisor, inbox, updates, deploys, threads, totals, active(, autoApproved)? \}/);
   assert.match(route, /requireAdmin/);
   assert.match(route, /dynamic = "force-dynamic"/);
 });

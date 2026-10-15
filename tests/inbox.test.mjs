@@ -434,7 +434,7 @@ test("화면 코드: 비용 한도 줄은 도구/앱 일감을 구분하고, 새
   assert.match(src, /extra\.filter\(\(i\) => i\.tier !== "info"\)\.length/); // 정보 줄은 할 일 수에 넣지 않는다
   const route = read("app/api/admin/factory/overview/route.ts");
   assert.match(route, /readInboxItems\(supervisor\)/);
-  assert.match(route, /return \{ supervisor, inbox, updates, deploys, threads, totals, active \}/);
+  assert.match(route, /return \{ supervisor, inbox, updates, deploys, threads, totals, active(, autoApproved)? \}/);
   const next = read("app/api/factory/next/route.ts");
   assert.match(next, /syncInboxNotices/);
   assert.match(read("lib/factory/approvals.ts"), /title: true, kind: true, failReason: true/); // 확인 대기 일감의 종류

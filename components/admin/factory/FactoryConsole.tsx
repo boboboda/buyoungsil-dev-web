@@ -11,6 +11,9 @@ import ProjectConnections from "./ProjectConnections";
 import AppChecksSettings from "./AppChecksSettings";
 import LoopGuardSettings from "./LoopGuardSettings";
 import PlanFirstSettings from "./PlanFirstSettings";
+import AutoApproveSettings from "./AutoApproveSettings";
+import CommandPalette from "./CommandPalette";
+import TemplateSender from "./TemplateSender";
 import AppSlotsSettings, { ApprovalWaitSettings, ConductorSettings, ParallelPerAppSettings, UpdateBundleSettings } from "./AppSlotsSettings";
 import DefaultAiSettings from "./DefaultAiSettings";
 import DevicePanel from "./DevicePanel";
@@ -91,6 +94,7 @@ export default async function FactoryConsole({
 
   return (
     <div className="fx-wide mx-auto w-full px-4 py-4 sm:py-8">
+      <CommandPalette />
       <div className="fx-split">
         <div className="fx-split-main">
           <header className="mb-4">
@@ -116,6 +120,7 @@ export default async function FactoryConsole({
             <div className="space-y-6">
               <AppQueue />
               <FactoryControl initialJobId={jobId} />
+              <TemplateSender />
               <RevisionSender />
             </div>
           )}
@@ -147,6 +152,7 @@ export default async function FactoryConsole({
                 <DefaultAiSettings />
                 <AppSlotsSettings />
                 <PlanFirstSettings />
+                <AutoApproveSettings />
                 <LoopGuardSettings />
               </SettingsGroup>
               <SettingsGroup hint="새 버전을 받을 때 일감을 잠깐 멈췄다가 이어서 하는 방식" id="settings-update" title="감독 업데이트">

@@ -702,7 +702,7 @@ test("마이그레이션: 칸만 추가하고 기존 데이터를 지우지 않�
 
 test("대기열: 계획을 기다리는 일감에 '📝 계획 …' 표시가 붙고, 계획을 안 쓴 일감은 예전 그대로", () => {
   const queue = loadTs("lib/factory/queue.ts", { "@/lib/prisma": { __esModule: true, default: {} }, "@/lib/factory/parallel": loadTs("lib/factory/parallel.ts", { "@/lib/prisma": { __esModule: true, default: {} } }) });
-  const mod = loadTs("components/admin/factory/AppQueue.tsx", { react: require("react"), "react/jsx-runtime": require("react/jsx-runtime") });
+  const mod = loadTs("components/admin/factory/AppQueue.tsx", { "./TemplateSender": { TemplateSendButton: () => null }, react: require("react"), "react/jsx-runtime": require("react/jsx-runtime") });
   const row = (id, over = {}) => ({ id, title: id, kind: "revision", status: "approved", priority: 0, approvedAt: new Date(1000), createdAt: new Date(1000), parallelGroup: null, ...over });
   const items = queue.numberQueue([row("a", { planFirst: true, planStatus: "ready" }), row("b"), row("c", { planFirst: true, planStatus: "approved" })]);
   const by = (id) => items.find((i) => i.id === id);

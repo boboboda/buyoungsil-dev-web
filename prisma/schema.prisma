@@ -617,6 +617,8 @@ model FactoryJob {
   planText        String?   @db.Text // 읽기 전용 AI 가 낸 계획(3~6줄). 승인하면 작업자 지시문 끝에 붙는다
   planNote        String?   @db.Text // [수정 지시]로 사람이 적은 말(다음 계획에 반영)
   planInfo        Json? // 계획 턴 정보: { model, ms, costUsd, tokens, at, rounds, startedAt, reason }. 비밀값 없음
+  templateId      String? // 일감 템플릿에서 만든 일감이면 템플릿 id(builtin-… 또는 factory_job_templates.id). 자동 승인 "지정한 템플릿" 규칙이 본다. 외부(채팅 커넥터)가 정하지 못한다
+  autoApprovedBy  String? // 자동 승인 규칙이 승인했으면 규칙 키(lab | tool | docs | template). NULL = 사람이 승인했거나 아직 대기
   diffInfo        Json? // 끝난 일감의 변경 내용: 파일 목록·줄 수·파일별 diff(한도·비밀 파일 숨김은 lib/factory/diffReport.ts)
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
@@ -633,6 +635,24 @@ model FactoryJob {
   @@index([appSlug, parallelGroup])
   @@index([createdAt, id]) // 통제실 이력 [앱 일감]: 전체 최신순 쪽 나누기
   @@map("factory_jobs")
+}
+
+// 일감 템플릿(5-3): 자주 쓰는 지시를 이름·종류·지시문 틀({{변수}})·기본 우선순위·필요한 키·승인 방식으로 저장한다. 기본 템플릿은 코드에 있고 여기엔 사람이 만든 것만 쌓인다.
+model FactoryJobTemplate {
+  id              String   @id
+  name            String   @unique
+  kind            String // revision | lab | tool
+  body            String   @db.Text // 지시문 틀. {{변수}} 또는 {{변수=기본값}}
+  description     String   @default("")
+  priority        Int      @default(0)
+  requiredSecrets String[] @default([])
+  approvalMode    String   @default("default") // default(설정 기본값) | now(바로 시작) | plan(계획 먼저)
+  cardName        String? // tool 템플릿: 쓸 카드 이름
+  toolCount       Int? // tool 템플릿: 한 대상당 장 수
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("factory_job_templates")
 }
 
 model FactoryJobImage {

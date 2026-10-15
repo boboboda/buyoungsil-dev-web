@@ -383,7 +383,7 @@ test("대기열 표시: 승인 직후 '다른 승인 기다림 n초'와 '묶음 
   assert.equal(grouped.find((i) => i.id === "g1").groupPendingLeft, 2);
   assert.equal(grouped.find((i) => i.id === "g1").approvalWait, 0, "묶인 일감은 묶음 규칙으로만 기다림");
 
-  const mod = loadTs("components/admin/factory/AppQueue.tsx", { react: require("react"), "react/jsx-runtime": require("react/jsx-runtime") });
+  const mod = loadTs("components/admin/factory/AppQueue.tsx", { "./TemplateSender": { TemplateSendButton: () => null }, react: require("react"), "react/jsx-runtime": require("react/jsx-runtime") });
 
   assert.ok(mod.parallelBadges({ ...grouped[0], parallel: null, mergeFailed: false }).includes("묶음 승인 기다림 (2개 남음)"));
   assert.ok(mod.parallelBadges({ ...items.find((i) => i.id === "a1"), parallel: null, mergeFailed: false }).includes("다른 승인 기다림 40초"));

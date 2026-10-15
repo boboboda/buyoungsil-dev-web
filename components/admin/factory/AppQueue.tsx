@@ -5,6 +5,7 @@
 // 순서는 서버 규칙 그대로: 앱마다 한 번에 하나씩 priority(큰 값 먼저) → 승인 시각 → 등록 시각.
 import { useCallback, useEffect, useState } from "react";
 
+import { TemplateSendButton } from "./TemplateSender";
 import type { GroupReport } from "@/lib/factory/parallel";
 import type { QueueItem } from "@/lib/factory/queue";
 
@@ -132,6 +133,7 @@ export default function AppQueue({ appSlug }: { appSlug?: string }) {
       <section aria-label="대기열" className="min-w-0 space-y-1 border-t border-default-300 pt-3" data-app-queue>
         <h4 className="fx-label">대기열</h4>
         <p className="text-sm fx-muted">이 앱에 대기·진행 중인 일감이 없어요.</p>
+        <TemplateSendButton appSlug={appSlug} />
       </section>
     );
   }
@@ -145,6 +147,7 @@ export default function AppQueue({ appSlug }: { appSlug?: string }) {
       {apps.map(([slug, items]) => (
         <div key={slug} className="space-y-1">
           {appSlug ? null : <div className="font-mono text-sm font-semibold">{slug}</div>}
+          <TemplateSendButton appSlug={slug} />
           {items.filter(groupable).length >= 2 ? (
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <button className="rounded border border-default-300 px-2 py-0.5 disabled:opacity-40" data-queue-group disabled={busy || items.filter((x) => picked.includes(x.id)).length < 2} type="button" onClick={() => void groupAct({ action: "group", jobIds: items.filter((x) => picked.includes(x.id)).map((x) => x.id) }, "고른 일감을 같이 돌릴까요? 서로 다른 파일을 고치는 일감만 묶어야 충돌이 적어요.")}>

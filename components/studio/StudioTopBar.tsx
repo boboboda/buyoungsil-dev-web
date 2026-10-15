@@ -2,6 +2,7 @@
 // 공용 스튜디오 상단바(서버 컴포넌트): 로고 · 프로젝트 목록 · (관리자만) 통제실 · 사이트로. 통제실 상단바와 같은 모양(.fx-topbar).
 import Link from "next/link";
 
+import CommandPalette from "@/components/admin/factory/CommandPalette";
 import { resolveViewer } from "@/lib/studio/pageAccess";
 
 export default async function StudioTopBar() {
@@ -25,6 +26,7 @@ export default async function StudioTopBar() {
           </Link>
         ) : null}
       </nav>
+      {viewer?.kind === "admin" ? <CommandPalette /> : null}
       <div className="fx-topbar-right">
         <Link className="fx-topbar-link" href="/">
           ↗ 사이트로

@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 async function overview() {
-  const [supervisor, approvals, updates, deploys, threads, totals, active] =
+  const [supervisor, approvals, updates, deploys, threads, totals, active, autoApproved] =
     await Promise.all([
       supervisorSnapshot(),
       approvalInbox(),
@@ -35,6 +35,7 @@ async function overview() {
       maintenanceSummary(),
       historyTotals(),
       activeNow(),
+      import("@/lib/factory/autoApproveDb").then((m) => m.recentAutoApproved()).catch(() => []), // 자동 승인 규칙(5-3)으로 승인된 최근 일감
     ]);
 
   // 4-1 할 일 새 항목(막힘·다시 시작 필요·키 부족·묶음 승인·업데이트 상태·스튜디오 검수 대기). 못 읽어도 화면은 기존 목록으로 돈다
@@ -45,7 +46,7 @@ async function overview() {
 
   // 이력은 최근 것만 싣는다. 전체는 /api/admin/factory/history 로 쪽마다 읽는다(totals = 종류별 전체 개수)
   // active: [현황] 맨 위 '지금 진행 중' 띠(읽기 전용)
-  return { supervisor, inbox, updates, deploys, threads, totals, active };
+  return { supervisor, inbox, updates, deploys, threads, totals, active, autoApproved };
 }
 
 export async function GET() {
