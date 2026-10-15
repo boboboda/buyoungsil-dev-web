@@ -13,6 +13,8 @@ import { acquireWorkspace, engineOf, eventDecoder, excludeHarnessState, handoffP
 import { checkSwiftSources } from "../swift-source-check.mjs";
 import { bridgeRequest, hookRequestId, parseFactoryPrompt, runBridge } from "../factory-hook.mjs";
 import { installFactoryHooks, mergeFactoryHooks } from "../install-factory-hooks.mjs";
+import { skipUnlessWebRepo } from "./webrepo.mjs";
+skipUnlessWebRepo(import.meta.url);
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");

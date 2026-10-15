@@ -10,6 +10,8 @@ import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { brokerRules, brokerSettings, createBroker, imageToolRules, jobUsableTools, loadToolkitManifest, neededOptionalSecrets, projectDefaultMethod, readProjectSettings, readRequest, safeAppPath, TOOLREQ_PATH, toolkitSecretNames, validateRequest, writeProjectSettings } from "../toolbroker.mjs";
+import { skipUnlessWebRepo } from "./webrepo.mjs";
+skipUnlessWebRepo(import.meta.url);
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");

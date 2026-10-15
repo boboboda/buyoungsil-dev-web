@@ -10,6 +10,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { APK_CHUNK, apkAbis, judgeSignature, parseApksigner, readApkInfo, uploadTestApk, isDebugCert, why } from "../apk.mjs";
+import { skipUnlessWebRepo } from "./webrepo.mjs";
+skipUnlessWebRepo(import.meta.url);
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");

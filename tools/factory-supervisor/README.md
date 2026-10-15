@@ -436,3 +436,11 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
 - 실행 전 열린 메모를 `reviews/NNN-memo.md` 에 이어 붙인다. cycle.sh 의 동작·git 커밋·푸시는 건드리지 않는다.
 - 앱 일감·정비·서버 배포·일시 정지·업데이트/재시작 대기 중에는 시작하지 않고, 소설이 도는 동안 앱 일감을 새로 받지 않는다. 시작할 때 `recover` 로 running 이던 소설 작업을 failed 로 정리한다. 최대 40분.
 - 서버가 아직 구버전이면(404) 조용히 10분 뒤 다시 본다.
+
+## 정비 대상 전환 (`maintswitch.mjs`, 4-5b)
+- 명령(신뢰된 serverctl 사본, 정비 보호 훅 허용): `maint-switch [--dry-run]`, `maint-switch --status`, `maint-switch --revert`. 정비 폴더를 감독 전용 저장소 clone(`~/dev/factory/factory-supervisor`)으로, 자동 업데이트 원본(감독 실행 폴더의 origin)을 그 bare(`~/dev/git/factory-supervisor.git`)로 옮긴다.
+  1. 점검: 정비 clone 이 깨끗하고 origin=bare, HEAD=bare main. 실행 폴더가 main·깨끗함. bare main 을 실행 폴더로 fetch 해서 `tools/factory-supervisor/` 내용(CRLF 제외)이 같을 때만 진행(다르면 아무것도 안 바꿈). `--dry-run` 은 여기까지만 하고 바뀔 값을 보여 줌.
+  2. 실행: `supervisor.config.json`·실행 폴더 origin·HEAD 를 `~/dev/factory/switch-backups/maint-<시각>/` 에 백업 → 상태 파일(`supervisor-maint-switch.json`, armed) → `maintDir`=정비 clone, `maintPushRemote`=origin → 실행 폴더 origin=bare → bare main 커밋으로 로컬만 맞춤(`reset --hard`, push 없음) → `fetch origin main` 으로 "새 버전 없음"(update.mjs 와 같은 판정) 확인. 어느 단계든 실패하면 바로 되돌림.
+  3. 돌고 있는 감독이 상태를 보고 일감이 끝나면 스스로 재시작(`maintSwitchRestartWanted`). 새 설정으로 켜지면 5분 시험(`startMaintSwitchGuard`): 대기열 확인이 200 이면 done, 아니면 이 PC 안에서 설정·origin·HEAD 를 되돌리고 재시작, 되돌린 사실은 다음 대기열 확인 note 로 알림.
+  4. `--revert`: done/trial/armed 상태에서 이전 값으로 되돌리고 재시작을 부탁.
+- 감독 전용 저장소에는 `tools/factory-supervisor/package.json`(typescript 개발 의존성)이 있다. `npm ci` 뒤 `npm test`(= `node tests/run-all.mjs`, 동시 3개)로 감독 시험을 전부 돌린다. 홈페이지 소스(`lib/factory`)를 읽는 시험 10개는 `tests/webrepo.mjs` 가 소스가 없으면 건너뛴다(홈페이지가 있는 selfdev 에서는 그대로 돈다).

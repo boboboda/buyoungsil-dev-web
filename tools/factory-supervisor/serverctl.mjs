@@ -59,6 +59,13 @@
 //                                    ③ 재시작 뒤 5분 안에 새 주소로 일감 확인·하트비트가 한 번도 성공하지 못하면 감독이 이 PC 안에서 이전 주소로 되돌리고 재시작. --dry-run 은 ①만
 //   server-switch --status           전환 기록(준비·시험 중·되돌림) 보기
 //
+// 정비 대상 전환(이 PC 의 감독 설정·실행 폴더를 바꾼다. 자세한 건 maintswitch.mjs):
+//   maint-switch [--dry-run]         정비 폴더를 감독 전용 저장소 clone(~/dev/factory/factory-supervisor)으로, 자동 업데이트 원본(실행 폴더 origin)을 그 bare 로.
+//                                    ① bare main 을 실행 폴더로 받아 tools/factory-supervisor/ 내용(CRLF 제외)이 같을 때만 진행 ② config·origin·HEAD 백업 후
+//                                    maintDir·maintPushRemote=origin 설정, origin 을 bare 로, 로컬만 bare main 커밋으로 맞춤(push 없음), "새 버전 없음" 확인
+//                                    ③ 감독이 일감이 끝나면 스스로 재시작, 5분 안에 대기열 확인이 성공하지 않으면 이 PC 안에서 이전 값으로 되돌림. --dry-run 은 점검만
+//   maint-switch --status | --revert 전환 기록 보기 | 이전 값으로 되돌리기(+재시작)
+//
 // 안전 절차: 바꾸기 전에 백업(작업 폴더 밖, 최근 20개) → 바꾸고 검증(nginx -t, reload, 헬스체크 / rebuild, 헬스체크)
 //           → 실패하면 자동 되돌림. 바꿀 때마다 정비 대화와 텔레그램에 "무엇을·백업·검증 결과"를 남긴다(값 제외).
 //           새 사이트 명령은 서버의 ~/serverctl-actions.log 에도 한 줄씩 남긴다(값 제외).
@@ -67,12 +74,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { healthPassed, healthRedirect, resolveDeploy } from "./deploycfg.mjs";
 import { runServerSwitch } from "./serverswitch.mjs";
+import { runMaintSwitch } from "./maintswitch.mjs";
 
 // 정비 보호 훅(pcguard.mjs)도 이 목록으로 "신뢰된 serverctl 호출"을 가린다
-export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "nginx-find", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token", "server-switch", "backup-init"];
+export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "nginx-find", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token", "server-switch", "maint-switch", "backup-init"];
 const HOST = "serverpc";
 const HOSTS = ["serverpc", "serverpc2"]; // 우리 서버 두 대만(serveraccess.mjs 의 SERVER_HOSTS 와 같게)
 // 시험 모드(FACTORY_TEST_MODE=1)에서만 가짜 ssh·가짜 홈페이지 주소를 쓴다. 진짜 실행에서는 환경변수로 바꿀 수 없다
@@ -1415,6 +1424,8 @@ async function main() {
       return serviceToken(rest);
     case "server-switch":
       return runServerSwitch({ args: rest, configPath: CONFIG, test: TEST, say, die, report });
+    case "maint-switch":
+      return runMaintSwitch({ args: rest, configPath: CONFIG, srcDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."), say, die, report });
     default:
       die(`서브커맨드: ${SUBCOMMANDS.join(" | ")}`, 2);
   }
