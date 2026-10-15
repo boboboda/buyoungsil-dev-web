@@ -1,4 +1,6 @@
--- 스튜디오 ↔ 서비스 연결: 서비스 동작 기록 표. 표만 추가하고 기존 데이터는 지우지 않는다.
+-- 스튜디오 ↔ 서비스 연결: 그림 자체 보관(원래 주소·복사 실패 이유)과 서비스 동작 기록. 칸·표만 추가하고 기존 데이터는 지우지 않는다.
+ALTER TABLE "factory_arts" ADD COLUMN "sourceUrl" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "factory_arts" ADD COLUMN "copyError" TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE "factory_service_actions" (
     "id" TEXT NOT NULL,

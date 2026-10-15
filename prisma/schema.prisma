@@ -1219,6 +1219,9 @@ model FactoryArt {
   note       String    @default("")
   cardId     String? // 이 그림을 만든 결과물 카드(factory_cards.id). 카드 없이 만든 그림은 NULL
   cardVersion Int? // 그때의 카드 판 번호
+  // 아래 두 칸은 사용 안 함: 마이그레이션 20261120090000 으로 DB 에 이미 있다. 코드에서 읽고 쓰지 않는다. 칸을 지우는 마이그레이션은 만들지 않는다.
+  sourceUrl  String    @default("") // 사용 안 함
+  copyError  String    @default("") // 사용 안 함
 
   @@index([appSlug, status])
   @@index([cardId])

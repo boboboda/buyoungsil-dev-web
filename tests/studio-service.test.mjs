@@ -357,12 +357,14 @@ test("검수: 후보 목록을 그림 주소와 함께 읽고(https 만), 승인
 
 // ───────── 마이그레이션 ─────────
 
-test("마이그레이션: 서비스 동작 기록 표만 추가하고 기존 데이터를 지우지 않는다(그림 저장소는 바꾸지 않는다)", () => {
+test("마이그레이션: 이미 적용된 파일이라 고치지 않는다 — 데이터를 지우지 않고, 동작 기록 표를 만들고, 쓰지 않는 칸 두 개는 DB에 남는다", () => {
   const sql = read("prisma/migrations/20261120090000_studio_service_link/migration.sql");
 
   assert.equal(/(DROP|DELETE|TRUNCATE|UPDATE)/i.test(sql), false, "기존 데이터를 지우거나 바꾸지 않는다");
   assert.match(sql, /CREATE TABLE "factory_service_actions"/);
-  assert.equal(/factory_arts/.test(sql), false, "그림 저장소는 바꾸지 않는다");
+  assert.match(sql, /ALTER TABLE "factory_arts" ADD COLUMN "sourceUrl"/);
+  assert.match(sql, /ALTER TABLE "factory_arts" ADD COLUMN "copyError"/);
+  assert.match(read("prisma/schema.prisma"), /sourceUrl.*사용 안 함/);
 });
 
 // ───────── 연결·안전 ─────────
