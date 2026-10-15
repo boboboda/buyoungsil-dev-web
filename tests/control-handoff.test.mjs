@@ -12,12 +12,15 @@ const { jwtVerify } = require("jose");
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 let session = null;
-const fakeNext = {
-  NextResponse: {
-    redirect: (url, status) => new Response(null, { status, headers: { location: String(url) } }),
-    json: (body, init) => Response.json(body, init),
-  },
-};
+class FakeNextResponse extends Response {
+  static redirect(url, status) {
+    return new Response(null, { status, headers: { location: String(url) } });
+  }
+  static json(body, init) {
+    return Response.json(body, init);
+  }
+}
+const fakeNext = { NextResponse: FakeNextResponse };
 const MOCKS = { "next/server": fakeNext, "@/lib/auth/get-sesstion": { auth: async () => session } };
 
 function load(rel, cache = {}) {
@@ -94,7 +97,12 @@ test("비로그인: /signin?callbackUrl=<handoff 주소> 로(같은 도메인), 
   const res = await route.GET(req("?to=/admin/factory"));
   assert.equal(res.status, 303);
   assert.equal(res.headers.get("cache-control"), "no-store");
-  const loc = new URL(res.headers.get("location"));
+  // 상대 경로 Location: 프록시가 http 헤더를 넘겨도 http 주소가 만들어지지 않는다
+  const raw = res.headers.get("location");
+  assert.ok(raw.startsWith("/signin?"), raw);
+  const httpRes = await route.GET({ ...req("?to=/admin/factory"), headers: new Headers({ host: "www.buyoungsilcoding.com", "x-forwarded-proto": "http" }) });
+  assert.ok(httpRes.headers.get("location").startsWith("/signin?"));
+  const loc = new URL(raw, "https://www.buyoungsilcoding.com");
   assert.equal(loc.origin, "https://www.buyoungsilcoding.com");
   assert.equal(loc.pathname, "/signin");
   assert.equal(loc.searchParams.get("callbackUrl"), "/api/admin/handoff?to=%2Fadmin%2Ffactory");

@@ -5,12 +5,9 @@ import { HANDOFF_PATH, handoffUrl, safeHandoffTo, signHandoffTicket } from "@/li
 
 export const dynamic = "force-dynamic";
 
-// 프록시 뒤에서도 올바른 주소로 리다이렉트하도록 원래 호스트를 계산한다.
-function getOrigin(request: NextRequest): string {
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  const proto = request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", "");
-
-  return host ? `${proto}://${host}` : request.nextUrl.origin;
+// 프록시가 http 로 넘겨도 http 주소가 만들어지지 않게 상대 경로 Location 으로 보낸다(브라우저가 지금 보는 https 주소 기준으로 해석).
+function relativeRedirect(path: string): NextResponse {
+  return new NextResponse(null, { status: 303, headers: { Location: path } });
 }
 
 function noStore<T extends NextResponse>(response: T): T {
@@ -29,9 +26,7 @@ export async function GET(request: NextRequest) {
   if (!session?.user) {
     const back = `${HANDOFF_PATH}?to=${encodeURIComponent(to)}`;
 
-    return noStore(
-      NextResponse.redirect(new URL(`/signin?callbackUrl=${encodeURIComponent(back)}`, getOrigin(request)), 303),
-    );
+    return noStore(relativeRedirect(`/signin?callbackUrl=${encodeURIComponent(back)}`));
   }
 
   const user = session.user as { id?: string; email?: string | null; name?: string | null; role?: string };
