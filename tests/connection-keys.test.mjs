@@ -52,14 +52,12 @@ function setup({ session = { user: { role: "admin", email: "admin@example.test",
   };
   const state = { session };
   const prisma = { controlConnectionKey: model };
-  const access = { getPepper: async () => pepper, isSameOriginRequest: (get) => get("sec-fetch-site") === "same-origin" };
-  const adminKeys = loadTs("lib/connect/adminKeys.ts", { "@/lib/prisma": { __esModule: true, default: prisma }, "@/lib/studio/access": access, "@/lib/connection-keys": keys });
+  const adminKeys = loadTs("lib/connect/adminKeys.ts", { "@/lib/prisma": { __esModule: true, default: prisma }, "@/lib/connect/pepper": { getPepper: async () => pepper }, "@/lib/connection-keys": keys });
   const route = loadTs("app/api/admin/factory/connection-keys/route.ts", {
     "@/lib/auth/get-sesstion": { auth: async () => state.session },
     "@/lib/auth/requireAdmin": loadTs("lib/auth/requireAdmin.ts", { "@/lib/auth/get-sesstion": { auth: async () => state.session } }),
     "@/lib/connect/adminKeys": adminKeys,
-    "@/lib/factory/http": { hit: () => false },
-    "@/lib/studio/access": access,
+    "@/lib/connect/guard": { hit: () => false, isSameOriginRequest: (get) => get("sec-fetch-site") === "same-origin" },
   });
   const req = (method, body, site = "same-origin") =>
     new NextRequest("http://localhost/api/admin/factory/connection-keys", { method, headers: { "sec-fetch-site": site, "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -85,16 +83,14 @@ test("통제실과 같은 해시: 고정 입력의 HMAC 값이 같고, 통제실
   };
 
   same("lib/connection-keys.ts");
-  same("lib/studio/access.ts"); // getPepper(pepper 선택 순서) 포함
 });
 
-test("pepper 선택 순서가 access.ts 에 그대로 있다(환경변수 → 서버 보관 키 → 유도)", () => {
-  const src = fs.readFileSync(path.join(repo, "lib/studio/access.ts"), "utf8");
+test("pepper 선택 순서가 pepper.ts 에 있다(환경변수 → 유도)", () => {
+  const src = fs.readFileSync(path.join(repo, "lib/connect/pepper.ts"), "utf8");
   const i1 = src.indexOf("process.env[PEPPER_NAME]");
-  const i2 = src.indexOf("readServerSecret(PEPPER_NAME)");
-  const i3 = src.indexOf("derivedPepper();", i2);
+  const i2 = src.indexOf("derivedPepper()", i1);
 
-  assert.ok(i1 > 0 && i2 > i1 && i3 > i2);
+  assert.ok(i1 > 0 && i2 > i1);
 });
 
 test("만들기: ck_ 형식, 원문은 응답에만, 저장은 해시·앞 8자", async () => {

@@ -1,4 +1,4 @@
-// MCP JSON-RPC 껍데기 분리(lib/mcp/rpc.ts) 시험: /api/mcp 가 지금처럼 33개 도구를 한 토큰으로 제공한다.
+// MCP JSON-RPC 껍데기 분리(lib/mcp/rpc.ts) 시험: /api/mcp 는 초안함 도구 4개만 제공한다.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -29,25 +29,25 @@ function load(rel, cache = {}) {
   return module.exports;
 }
 
-const NAMES = ["list_categories","list_existing_titles","create_sub_category","save_draft","list_factory_jobs","get_factory_job","get_inbox","get_usage_by_block","list_templates","enqueue_from_template","novel_list","novel_get_episode","novel_add_note","novel_enqueue","novel_get_job","list_secret_names","enqueue_app_job","set_job_priority","enqueue_lab_job","generate_with_card","get_release_status","get_project_links","list_tools","get_tool_manifest","list_cards","get_card","create_card","update_card","enqueue_release_job","supervisor_control","maintenance_list","maintenance_get","maintenance_send"];
+const NAMES = ["list_categories", "list_existing_titles", "create_sub_category", "save_draft"];
 const mcp = load("lib/drafts/mcp.ts");
 
-test("tools/list: 33개, 이름과 순서가 이전과 같다(초안함 4 + 공장·정비 29)", async () => {
+test("tools/list: 초안함 도구 4개만, 이름과 순서가 이전과 같다(공장·정비 도구 없음)", async () => {
   const r = await mcp.handleRpc({ jsonrpc: "2.0", id: 1, method: "tools/list" });
   assert.equal(r.status, 200);
   const names = r.body.result.tools.map((t) => t.name);
-  assert.equal(names.length, 33);
+  assert.equal(names.length, 4);
   assert.deepEqual(names, NAMES);
-  assert.deepEqual(mcp.DRAFT_TOOLS.map((t) => t.name), NAMES.slice(0, 4));
-  assert.deepEqual(mcp.FACTORY_BUNDLE_TOOLS.map((t) => t.name), NAMES.slice(4));
+  assert.deepEqual(mcp.DRAFT_TOOLS.map((t) => t.name), NAMES);
 });
 
-test("initialize: 안내문은 초안함 + 공장 순서로 이어지고 서버 이름·버전이 그대로다", async () => {
+test("initialize: 안내문은 초안함 문구뿐(공장 문구 없음)이고 서버 이름·버전이 그대로다", async () => {
   const r = await mcp.handleRpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26" } });
   const res = r.body.result;
   assert.equal(res.protocolVersion, "2025-03-26");
   assert.deepEqual(res.serverInfo, { name: "buyoungsil-drafts", version: "1.1.0" });
-  assert.equal(res.instructions, mcp.DRAFT_INSTRUCTIONS + mcp.FACTORY_BUNDLE_INSTRUCTIONS);
+  assert.equal(res.instructions, mcp.DRAFT_INSTRUCTIONS);
+  assert.doesNotMatch(res.instructions, /공장|정비|통제실/);
   assert.ok(res.instructions.startsWith("부영실 개발 홈페이지의 초안함 커넥터예요."));
 });
 

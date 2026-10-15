@@ -65,9 +65,6 @@ for (const file of [
   "app/contact/page.tsx",
   "app/stories/[slug]/page.tsx",
   "app/api/public/projects/route.ts",
-  "app/admin/factory/page.tsx",
-  "app/admin/factory/release/page.tsx",
-  "app/admin/factory/settings/page.tsx",
 ]) {
   assert.ok(existsSync(new URL(file, root)), `${file} 이 없음`);
 }

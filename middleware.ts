@@ -3,8 +3,6 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-import { isStudioPath, studioGate } from "@/lib/studio/gate";
-
 
 // 🔒 악성 패턴 감지 (완화됨)
 const MALICIOUS_PATTERNS = [
@@ -214,24 +212,6 @@ export async function middleware(request: NextRequest) {
     }
       }
 
-  // 공용 스튜디오(/studio): 관리자 또는 Studio 접근 키. 키 확인은 화면에서 DB 로 한다(lib/studio/pageAccess.ts)
-  if (isStudioPath(pathname)) {
-    const gate = studioGate(pathname, {
-      signedIn: !!session,
-      isAdmin: session?.role === "admin",
-      hasAuthHeader: !!request.headers.get("authorization"),
-    });
-
-    if (gate.action === "signin") return NextResponse.redirect(new URL("/signin", request.url));
-    if (gate.action === "home") return NextResponse.redirect(new URL("/", request.url));
-    if (gate.action === "challenge") {
-      return new NextResponse("Unauthorized", {
-        status: 401,
-        headers: { "WWW-Authenticate": 'Basic realm="Studio", charset="UTF-8"', "Cache-Control": "no-store" },
-      });
-    }
-  }
-
     // ========================================
   // 4️⃣ 방문자 기록
   // ========================================
@@ -250,7 +230,5 @@ export const config = {
     "/signin",
     "/signup",
     "/app/:path*", // ✅ 추가
-    "/studio",
-    "/studio/:path*",
   ],
 };

@@ -17,8 +17,6 @@ export interface AdminNavItem {
   key: string;
   short: string;
   href: string;
-  /** 링크 주소와 "지금 위치" 판정 주소가 다를 때(통제실 로그인 넘김 링크) */
-  activeHref?: string;
 }
 
 /** 상단바 메뉴: adminNavItems + 콘솔 전용 메뉴를 adminConsoleNavOrder 순서로 */
@@ -37,7 +35,6 @@ export function adminNavList(): AdminNavItem[] {
       key: item.key,
       short: item.short,
       href: item.href,
-      ...("activeHref" in item ? { activeHref: item.activeHref as string } : {}),
     }));
 }
 
@@ -76,7 +73,7 @@ export function AdminTopBarView({
             // 통제실로 넘기는 로그인 주소: 페이지가 아니라 서버 리다이렉트라 일반 링크로 연다
             <a
               key={item.key}
-              aria-current={isAdminNavActive(pathname, item.activeHref ?? item.href) ? "page" : undefined}
+              aria-current={isAdminNavActive(pathname, item.href) ? "page" : undefined}
               className="fx-topbar-link"
               href={item.href}
             >
@@ -85,7 +82,7 @@ export function AdminTopBarView({
           ) : (
             <Link
               key={item.key}
-              aria-current={isAdminNavActive(pathname, item.activeHref ?? item.href) ? "page" : undefined}
+              aria-current={isAdminNavActive(pathname, item.href) ? "page" : undefined}
               className="fx-topbar-link"
               href={item.href}
             >

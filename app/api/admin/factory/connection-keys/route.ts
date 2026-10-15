@@ -6,8 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth/get-sesstion";
 import { requireAdmin } from "@/lib/auth/requireAdmin";
 import { createConnectionKey, listConnectionKeys, revokeConnectionKey } from "@/lib/connect/adminKeys";
-import { hit } from "@/lib/factory/http";
-import { isSameOriginRequest } from "@/lib/studio/access";
+import { hit, isSameOriginRequest } from "@/lib/connect/guard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

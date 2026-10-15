@@ -341,9 +341,3 @@ test("관리자 메뉴·상단바에 '가입자'(/admin/users), 지금 위치 �
   assert.match(html, /href="\/admin\/users" aria-current="page" class="fx-topbar-link">가입자</);
   assert.equal((html.match(/aria-current="page"/g) ?? []).length, 1);
 });
-
-test("requireAdmin 은 lib/auth/requireAdmin.ts 에 있고, lib/factory/admin.ts 는 다시 내보내기만 한다", () => {
-  const re = fs.readFileSync(path.join(repo, "lib/factory/admin.ts"), "utf8");
-  assert.match(re, /export \{ requireAdmin \} from "@\/lib\/auth\/requireAdmin"/);
-  assert.doesNotMatch(re, /auth\(\)/);
-});

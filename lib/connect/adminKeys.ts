@@ -4,7 +4,7 @@
 // 키 원문·해시·비밀값은 목록·로그·오류에 넣지 않는다.
 import { connectionKeyPrefix, generateConnectionKey, hashConnectionKey } from "@/lib/connection-keys";
 import prisma from "@/lib/prisma";
-import { getPepper } from "@/lib/studio/access";
+import { getPepper } from "@/lib/connect/pepper";
 
 export const MAX_LABEL = 40;
 export const MAX_ACTIVE_KEYS = 20;

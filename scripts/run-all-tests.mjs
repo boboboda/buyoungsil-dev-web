@@ -1,4 +1,4 @@
-// 모든 시험(tests/*.test.mjs, tools/factory-supervisor/tests/*.test.mjs)을 하나씩 돌리고 표로 요약한다.
+// 모든 시험(tests/*.test.mjs)을 하나씩 돌리고 표로 요약한다.
 // 실행: npm test            (전부, 차례로)
 //       npm test -- name    (파일 이름에 name 이 들어간 것만)
 //       npm test -- --jobs=4  (동시에 4개씩. 기본 1)
@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dirs = ["tests", "tools/factory-supervisor/tests"];
+const dirs = ["tests"];
 const args = process.argv.slice(2);
 const jobs = Math.max(1, Number(args.find((a) => a.startsWith("--jobs="))?.slice(7)) || 1);
 const filters = args.filter((a) => !a.startsWith("--"));

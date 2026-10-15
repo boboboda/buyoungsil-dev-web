@@ -5,13 +5,12 @@ import { PropsWithChildren, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import * as ChannelService from "@channel.io/channel-web-sdk-loader";
 
-import { isStudioPath } from "@/lib/studio/gate";
 import { isAdminPath, isAppPath } from "@/lib/utils/appPath";
 
 const ChannelProvider = ({ children }: PropsWithChildren) => {
   const pathname = usePathname();
   const isApp = isAppPath(pathname);
-  const isAdmin = isAdminPath(pathname) || isStudioPath(pathname); // 공용 스튜디오도 관리자 화면처럼 채팅 버튼을 숨긴다
+  const isAdmin = isAdminPath(pathname);
   const booted = useRef(false);
 
   useEffect(() => {
