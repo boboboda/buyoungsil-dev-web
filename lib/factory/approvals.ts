@@ -119,7 +119,7 @@ export async function approvalInbox() {
       where: { status: "needs_confirmation" },
       orderBy: { updatedAt: "asc" },
       take: 50,
-      select: { id: true, appSlug: true, title: true, failReason: true, source: true, updatedAt: true },
+      select: { id: true, appSlug: true, title: true, kind: true, failReason: true, source: true, updatedAt: true },
     }),
   ]);
   // 서버 배포는 정비 대기열 단위로 하나로 묶는다(배포 안 된 지시 목록 + 가장 최근 정비 커밋)
@@ -144,7 +144,7 @@ export async function approvalInbox() {
 
   return {
     jobs: jobs.map((j) => ({ ...j, kindLabel: KIND_LABELS[j.kind] ?? j.kind })),
-    confirmations: confirmJobs.map((j) => ({ id: j.id, appSlug: j.appSlug, title: j.title, reason: excerpt(j.failReason, 300), source: j.source, at: j.updatedAt })),
+    confirmations: confirmJobs.map((j) => ({ id: j.id, appSlug: j.appSlug, title: j.title, kind: j.kind, reason: excerpt(j.failReason, 300), source: j.source, at: j.updatedAt })),
     turns: turns.map((t) => ({
       id: t.id,
       threadId: t.maintenance.id,

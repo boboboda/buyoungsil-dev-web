@@ -48,6 +48,7 @@
     "test:lab": "node tests/lab-jobs.test.mjs && node tools/factory-supervisor/tests/lab.test.mjs",
     "test:stale-copies": "node tests/stale-copies.test.mjs",
     "test:project-links": "node tests/project-links.test.mjs",
+    "test:inbox": "node tests/inbox.test.mjs",
     "test:tool-manifests": "node tests/tool-manifests.test.mjs && node tools/factory-supervisor/tests/toolmanifest.test.mjs",
     "test:result-cards": "node tests/result-cards.test.mjs && node tools/factory-supervisor/tests/cards.test.mjs",
     "test:studio-hub": "node tests/studio-hub.test.mjs",

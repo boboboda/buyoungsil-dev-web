@@ -20,12 +20,13 @@ import {
   type ApprovalAction,
 } from "@/lib/factory/approvals";
 import { supervisorSnapshot } from "@/lib/factory/supervisor";
+import { readInboxItems, syncInboxNotices } from "@/lib/factory/inbox";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 async function overview() {
-  const [supervisor, inbox, updates, deploys, threads, totals, active] =
+  const [supervisor, approvals, updates, deploys, threads, totals, active] =
     await Promise.all([
       supervisorSnapshot(),
       approvalInbox(),
@@ -35,6 +36,12 @@ async function overview() {
       historyTotals(),
       activeNow(),
     ]);
+
+  // 4-1 할 일 새 항목(막힘·다시 시작 필요·키 부족·묶음 승인·업데이트 상태·스튜디오 검수 대기). 못 읽어도 화면은 기존 목록으로 돈다
+  const items = await readInboxItems(supervisor).catch(() => []);
+  const inbox = { ...approvals, items };
+
+  void syncInboxNotices({ items }); // 텔레그램에 없던 알림을 한 번만(30초에 한 번까지)
 
   // 이력은 최근 것만 싣는다. 전체는 /api/admin/factory/history 로 쪽마다 읽는다(totals = 종류별 전체 개수)
   // active: [현황] 맨 위 '지금 진행 중' 띠(읽기 전용)

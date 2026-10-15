@@ -14,7 +14,8 @@ import { getDefaultAiEngine } from "@/lib/factory/settings";
 import { knownSecretNames } from "@/lib/factory/secretEntries";
 import { notifyJobEvent } from "@/lib/factory/telegram";
 import { LAB_KIND, LAB_SLUG, labResultView } from "@/lib/factory/lab";
-import { runSupervisorAction, SUPERVISOR_ACTIONS, type SupervisorAction } from "@/lib/factory/supervisor";
+import { runSupervisorAction, SUPERVISOR_ACTIONS, supervisorSnapshot, type SupervisorAction } from "@/lib/factory/supervisor";
+import type { InboxTier } from "@/lib/factory/inbox"; // 타입만. 값은 getInbox 안에서 불러온다(다른 시험이 이 파일을 가볍게 불러올 수 있게)
 import {
   OVERWRITE_KINDS,
   RELEASE_KIND_LABELS,
@@ -89,7 +90,8 @@ export const FACTORY_INSTRUCTIONS =
   + "출시 준비는 enqueue_app_job 이 아니라 이 도구로만 보내요. 앱별 git 원격·배포 서버·도메인·컨테이너는 get_project_links 로 읽어요(읽기 전용). 결과물 카드(프로젝트마다 이런 결과물을 이렇게 만든다는 뜻: 도구·방법·옵션·참고 규칙)는 list_cards·get_card 로 읽고 create_card·update_card 로 만들고 고쳐요(설명서 한계 검사를 통과해야 저장, 키는 저장하지 않고 방법에 맞게 자동). 카드로 일을 시키려면 enqueue_app_job 의 card 에 카드 이름을 적어요. 게임 툴킷 도구의 방법·필요한 키·한계는 list_tools 와 get_tool_manifest 로 읽어요(읽기 전용, 지시문이 설명서 한계를 넘으면 등록이 거절되고 필요한 키는 자동으로 들어가요). 결과는 get_factory_job 과 get_release_status 로 확인하세요. "
   + "실험: 도구·방식이 되는지 확인하는 테스트는 앱 수정 일감이 아니라 enqueue_lab_job(title, planMarkdown, aiEngine?, keep?)으로 보내요(앱 이름 없이, 작업 PC 의 실험 폴더에서 무인 실행. 승인은 관리자). "
   + "끝나면 get_factory_job 의 실험_결과에 올라온 이미지·mp4 주소(몇 시간 뒤 만료)와 report.md 본문이 나와요. 이미지 주소를 열어 직접 보고 검수할 수 있어요. "
-  + "그림 만들기(결과물 카드): AI 에이전트 없이 카드로 바로 만들려면 앱 수정 일감 대신 generate_with_card(appSlug, card, subject, count, extra?)를 쓰세요. 도구 일감 id 를 돌려주고, get_factory_job 의 도구_결과에 상태·비용·만든 그림 주소가 나와요(비용 한도를 넘으면 확인 대기로 멈춰요).";
+  + "그림 만들기(결과물 카드): AI 에이전트 없이 카드로 바로 만들려면 앱 수정 일감 대신 generate_with_card(appSlug, card, subject, count, extra?)를 쓰세요. 도구 일감 id 를 돌려주고, get_factory_job 의 도구_결과에 상태·비용·만든 그림 주소가 나와요(비용 한도를 넘으면 확인 대기로 멈춰요). "
+  + "통제실 할 일 목록은 get_inbox 로 읽어요(읽기 전용: 막힘·다시 시작 필요·키 부족 > 승인 대기·비용 한도 확인·묶음 승인·스튜디오 검수 > 업데이트 상태. 처리는 관리자가 통제실·텔레그램에서 해요).";
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -152,6 +154,20 @@ export const FACTORY_TOOLS = [
         },
       },
       required: ["id"],
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "get_inbox",
+    description:
+      "통제실 [현황] '할 일' 목록을 읽어요(읽기 전용). 우선순위순: 막힘·실패(막힘, 다시 시작 필요, 키 부족) > 승인(일감·정비 지시·묶음·비용 한도 확인·스튜디오 검수 대기·서버 배포) > 정보(업데이트로 일시 중지, 업데이트 묶는 중). " +
+      "항목마다 종류·제목·설명과 사람이 어디서 무엇을 누르면 되는지(처리)가 나와요. 처리는 이 도구로 못 하고 관리자가 통제실·텔레그램에서 해요. 값(키·토큰)은 나오지 않아요.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tier: { type: "string", enum: ["blocked", "approval", "info"], description: "이 단계만 보기 (선택). blocked=막힘·실패, approval=승인, info=정보" },
+      },
       additionalProperties: false,
     },
     annotations: READ_ONLY,
@@ -538,6 +554,8 @@ export async function callFactoryTool(
       return listJobs(args);
     case "get_factory_job":
       return getJob(args);
+    case "get_inbox":
+      return getInbox(args);
     case "list_secret_names":
       return listSecretNames();
     case "enqueue_app_job":
@@ -1062,6 +1080,24 @@ async function getJob(args: Record<string, unknown>): Promise<ToolResult> {
     ...(job.kind === LAB_KIND ? { 실험_결과: await labResultView(job.id, job.labResult, { signed: true }) } : {}),
     ...(job.kind === TOOL_KIND ? { 도구_결과: toolResultView(job.toolInput, job.toolResult, job.status, job.cardId) } : {}),
     ...(args.includePlan === true ? { planMarkdown: job.planMarkdown } : {}),
+  });
+}
+
+/** 통제실 '할 일' 목록(읽기 전용): 기존 승인 목록 + 새 항목(막힘·키 부족·묶음 승인·업데이트 상태·스튜디오 검수 대기)을 우선순위순으로 */
+async function getInbox(args: Record<string, unknown>): Promise<ToolResult> {
+  const tier = args.tier === undefined ? null : typeof args.tier === "string" && ["blocked", "approval", "info"].includes(args.tier) ? (args.tier as InboxTier) : undefined;
+
+  if (tier === undefined) return text("tier 는 blocked, approval, info 중 하나여야 해요.", true);
+  const [{ approvalInbox }, { flattenInbox, readInboxItems, TIER_LABEL }] = await Promise.all([import("@/lib/factory/approvals"), import("@/lib/factory/inbox")]);
+  const [lists, sup] = await Promise.all([approvalInbox(), supervisorSnapshot().catch(() => null)]);
+  const items = await readInboxItems(sup).catch(() => []);
+  const flat = flattenInbox(lists, items).filter((i) => !tier || i.tier === tier);
+
+  return json({
+    할_일_수: flat.length,
+    단계별: { 막힘_실패: flat.filter((i) => i.tier === "blocked").length, 승인: flat.filter((i) => i.tier === "approval").length, 정보: flat.filter((i) => i.tier === "info").length },
+    할_일: flat.map((i) => ({ 단계: TIER_LABEL[i.tier], 종류: i.kind, 제목: i.title, ...(i.appSlug ? { 앱: i.appSlug } : {}), 설명: i.detail, 처리: i.how, key: i.key })),
+    안내: "읽기 전용이에요. 승인·확인·다시 시작은 관리자가 통제실 [현황] 할 일이나 텔레그램에서 해요.",
   });
 }
 

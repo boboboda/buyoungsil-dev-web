@@ -67,7 +67,8 @@ const MemoryStatus = loadTs("components/admin/factory/MemoryStatus.tsx", { "@/li
 const { TurnLogs } = loadTs("components/admin/factory/MaintenancePanel.tsx", { "./AiEngineSelect": () => null, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib, "./HandoffBox": { __esModule: true, default: () => null }, "@heroui/react": heroui });
 const slotsCard = loadTs("components/admin/factory/AppSlotsSettings.tsx");
 const settingsCard = loadTs("components/admin/factory/SettingsCard.tsx");
-const { HistoryPanelView, ActiveStrip } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
+const { HistoryPanelView, ActiveStrip, InboxItemRow, TIER_ORDER } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
+const inboxLib = loadTs("lib/factory/inbox.ts", { "@/lib/prisma": {}, "@/lib/factory/cards": {}, "@/lib/factory/parallel": {}, "@/lib/factory/secretEntries": {}, "@/lib/factory/toolManifestDb": {}, "@/lib/factory/toolManifest": {}, "@/lib/factory/telegram": {}, "@/lib/factory/inboxNotice": {} });
 const { default: DefaultAiSettings } = loadTs("components/admin/factory/DefaultAiSettings.tsx", {
   "@/lib/factory/ai": aiLib,
   "./AiEngineSelect": loadTs("components/admin/factory/AiEngineSelect.tsx", { "@/lib/factory/ai": aiLib }),
@@ -82,7 +83,7 @@ const runningPanel = loadTs("components/admin/factory/RunningPanel.tsx", { "@/co
 const { DevicePanelView } = loadTs("components/admin/factory/DevicePanel.tsx", { "@/components/admin/ui/meters": meters, "./RunningPanel": runningPanel });
 const toolkitLib = loadTs("lib/factory/toolkit.ts", { "@/lib/factory/mask": mask });
 const studioLib = loadTs("lib/factory/studioProjects.ts", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/appRoles": loadTs("lib/factory/appRoles.ts") });
-const { default: StudioWorkbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/studioProjects": studioLib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null }, "./StudioArtsCard": { __esModule: true, default: () => null }, "./AppQueue": { __esModule: true, default: () => null } });
+const { default: StudioWorkbench } = loadTs("components/admin/factory/StudioWorkbench.tsx", { "@/lib/factory/toolkit": toolkitLib, "@/lib/factory/studioProjects": studioLib, "./ProjectToolSettingsCard": { __esModule: true, default: () => null }, "./CardsPanel": { __esModule: true, default: () => null }, "./AppQueue": { __esModule: true, default: () => null }, "./StudioArtsCard": { __esModule: true, default: () => null }, "./AppQueue": { __esModule: true, default: () => null } });
 const { ToolkitToolsView } = loadTs("components/admin/factory/ToolkitToolsPanel.tsx", {
   "@/lib/prisma": { __esModule: true, default: null },
   "@/lib/factory/toolkit": toolkitLib,
@@ -304,6 +305,55 @@ const handoffPage = () =>
   ));
 // 승인할 때 모델 고르기: 앱 일감(opus 고름)·정비 지시(기본 설정 사용)·Codex 출시 일감(모델 칸 없음) + 일감 이력 + 설정 탭 기본 모델
 STATES["model-approve"] = { ...STATES.live, title: "승인 · 모델 고르기", model: true };
+// [현황] 할 일 넓히기(4-1): 막힘·키 부족·다시 시작 필요 > 승인(묶음·비용 한도·스튜디오 검수) > 정보(업데이트 일시 중지·묶는 중) + 보드의 일시 중지 표시
+STATES.inbox = { ...STATES.live, title: "[현황] 할 일 넓히기", inbox: true };
+function inboxPage() {
+  const items = inboxLib.buildInboxItems({
+    failedJobs: [
+      { id: "j1", appSlug: "timer-app", title: "타이머 화면 다듬기", failStage: "stuck", failReason: "같은 시험(flutter test)을 4번 반복했어요" },
+      { id: "j2", appSlug: "memo-app", title: "메모 검색 추가", failStage: "resume", failReason: "세션을 못 찾음" },
+    ],
+    jobsWithKeys: [{ id: "j3", appSlug: "timer-app", title: "아이콘 그림 만들기", requiredSecrets: ["PIXELLAB_TOKEN"] }],
+    cardsWithKeys: [{ id: "c1", appSlug: "saessak-hub", name: "기본 카드", secrets: ["PIXELLAB_TOKEN"] }],
+    registered: new Set(),
+    groupJobs: [
+      { id: "g1", appSlug: "memo-app", title: "색상 수정", status: "pending", parallelGroup: "g-1" },
+      { id: "g2", appSlug: "memo-app", title: "글씨 크기", status: "pending", parallelGroup: "g-1" },
+      { id: "g3", appSlug: "memo-app", title: "아이콘", status: "approved", parallelGroup: "g-1" },
+    ],
+    studioReview: [{ appSlug: "saessak-hub", count: 12 }, { appSlug: "timer-app", count: 3 }],
+    supervisor: { pausedJobs: 2, bundleLeftMin: 18 },
+  });
+  const cost = h(
+    "div",
+    { className: "fx-row flex flex-col gap-2 rounded-lg border border-warning-300 p-2 sm:flex-row sm:items-center sm:justify-between", "data-st": "approval", style: { order: TIER_ORDER.approval } },
+    h("div", { className: "min-w-0 text-sm" }, h("div", { className: "flex flex-wrap items-center gap-2" }, h(fx.StatusChip, { kind: "approval", label: "확인 필요(비용 한도)" }), h(fx.KindChip, { label: "📱 앱 일감" }), h("span", { className: "font-medium" }, "도트 그림 30장 만들기"), h("span", { className: "font-mono text-xs text-default-500" }, "saessak-hub")), h("div", { className: "mt-1 text-xs text-default-600" }, "일 한도 100회 중 82회 사용 — 30회를 더하면 넘어요")),
+    h("div", { className: "flex gap-2" }, h(Button, { color: "warning", size: "sm" }, "그대로 진행"), h(Button, { size: "sm", variant: "flat" }, "취소")),
+  );
+  const board = {
+    active: { running: [{ type: "job", id: "r1", title: "설정 화면 만들기", sub: "timer-app", kindLabel: "수정", startedAt: new Date(Date.now() - 600000).toISOString(), aiEngine: "claude", aiModel: "sonnet" }], queued: 1, next: null },
+    inbox: { jobs: [], turns: [], deploys: [] },
+    jobs: [],
+    threads: [],
+    supervisor: { pausedJobs: 2, bundleLeftMin: 18 },
+  };
+
+  return h(
+    "div",
+    { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+    h("div", { className: "fx-split-main" },
+      h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-bad" }), "앱 공장 통제실"),
+      h(FactoryTabs, { active: "status" }),
+      h(Card, { className: "mb-6", "data-title": "todo · 승인·배포" },
+        h(CardBody, { className: "space-y-3" },
+          h("div", { className: "flex flex-wrap items-center gap-2 font-semibold" }, h(fx.StatusDot, { tone: "bad" }), "승인·배포 할 일", h("span", { className: "font-mono" }, "(" + (items.filter((i) => i.tier !== "info").length + 1) + ")"), h("span", { className: "font-mono text-xs text-danger" }, "막힘·실패 " + items.filter((i) => i.tier === "blocked").length)),
+          h("div", { className: "flex flex-col gap-3", "data-todo-list": true }, cost, ...items.map((it) => h(InboxItemRow, { key: it.key, item: it, busy: false, onRetry() {}, onGroupApprove() {} }))),
+        ),
+      ),
+      h(HistoryPanelView, { data: { deploys: [], updates: [], threads: [], totals: {} }, open: true, tab: "progress", full: null, board, now: Date.now(), onToggle() {}, onTab() {}, onShowAll() {}, onMore() {}, onShowRecent() {} }),
+    ),
+  );
+}
 // Fable 사용량: Fable 주간 한도 카드(37%) + 오늘 모델별 비율 막대 + 상태바 'Fable 주 37%' / Fable 값을 못 받음('값 없음(한도 정보 못 받음)')
 const claudeFable = { ...claudeLive, extra: [{ key: "weekly_scoped · Fable", usedPct: 37, resetsAt: now + 4 * 24 * HOUR + 3 * HOUR, reset: false }, { key: "seven_day_opus", usedPct: 3, resetsAt: null, reset: false }], modelTokens: { date: "d-13", asOf: now - MIN, models: { fable: 812_000, opus: 455_000, sonnet: 120_000, haiku: 30_000, other: 3_000 } } };
 STATES["fable-usage"] = { ...STATES.live, title: "Fable 사용량", stats: { ...STATES.live.stats, limits: claudeFable }, bar: { ...STATES.live.bar, claude: claudeFable } };
@@ -570,6 +620,7 @@ function page(state) {
 
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
   if (st.model) return h(AdminLayout, null, modelApprove());
+  if (st.inbox) return h(AdminLayout, null, inboxPage());
   if (st.maintLog) return h(AdminLayout, null, maintLogPage());
   if (st.handoff) return h(AdminLayout, null, handoffPage());
   if (st.statusMix) return h(AdminLayout, null, statusMixPage());

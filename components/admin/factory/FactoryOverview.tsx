@@ -22,8 +22,17 @@ import {
 } from "./fx";
 
 import { AI_LABELS, isAiEngine, isClaudeModel, type AiEngine, type TaskModel } from "@/lib/factory/ai";
+import type { InboxItem, InboxTier } from "@/lib/factory/inbox"; // 타입만(서버 코드는 화면에 싣지 않는다)
 
 type Action = "job_approve" | "maintenance_approve" | "deploy" | "deploy_now";
+
+// 할 일 우선순위(4-1): 막힘·실패 > 승인 > 정보. 화면 안에서 CSS order 로 줄 세운다(같은 단계는 들어온 순서 그대로)
+export const TIER_ORDER: Record<InboxTier, number> = { blocked: 0, approval: 1, info: 2 };
+const TIER_CHIP: Record<InboxTier, { kind: StatusKind; label: string }> = {
+  blocked: { kind: "fail", label: "막힘·실패" },
+  approval: { kind: "approval", label: "승인 필요" },
+  info: { kind: "info", label: "알림" },
+};
 
 interface Overview {
   inbox: {
@@ -39,7 +48,9 @@ interface Overview {
       createdAt: string;
     }[];
     // 도구 일감(2-3)이 PixelLab 비용 한도에 걸려 확인을 기다리는 것(예전 서버에는 없다)
-    confirmations?: { id: string; appSlug: string; title: string; reason: string; source: string | null; at: string }[];
+    confirmations?: { id: string; appSlug: string; title: string; kind?: string; reason: string; source: string | null; at: string }[];
+    // 4-1 새 항목: 막힘·다시 시작 필요·키 부족·묶음 승인·스튜디오 검수 대기·업데이트 상태(예전 서버에는 없다)
+    items?: InboxItem[];
     turns: {
       id: string;
       threadId: string;
@@ -103,7 +114,7 @@ interface Overview {
   // 종류별 전체 개수(예전 서버에는 없다. jobs 는 앱 일감을 넣은 서버부터)
   totals?: Partial<Record<HistoryKind, number>>;
   // 기본 모델·주사용 AI(승인 줄의 '기본 설정 사용' 표시)
-  supervisor?: { defaultClaudeModel?: string | null; defaultAiEngine?: string };
+  supervisor?: { defaultClaudeModel?: string | null; defaultAiEngine?: string; pausedJobs?: number; bundleLeftMin?: number | null; drainState?: string | null };
   message?: string;
 }
 
@@ -390,12 +401,28 @@ export default function FactoryOverview({
   };
 
   // 도구 일감 확인 대기: [그대로 진행]·[취소] (통제실 지시 동작과 같은 주소)
-  const jobAction = async (action: "confirm" | "cancel", id: string, confirmText?: string) => {
+  const jobAction = async (action: "confirm" | "cancel" | "retry", id: string, confirmText?: string) => {
     if (confirmText && !window.confirm(confirmText)) return;
     setBusy(`${action}:${id}`);
     setNotice(null);
     try {
       const res = await fetch(`/api/admin/factory/jobs/${encodeURIComponent(id)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      const d = (await res.json().catch(() => ({}))) as { message?: string };
+
+      setNotice(d.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."));
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    }
+    setBusy(null);
+    load();
+  };
+  // 묶음 승인: 묶음 안의 승인 대기 일감을 한 번에 승인한다(일감 탭의 [묶음 승인]과 같은 주소)
+  const groupApprove = async (jobId: string, confirmText?: string) => {
+    if (confirmText && !window.confirm(confirmText)) return;
+    setBusy(`approve_group:${jobId}`);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/factory/queue", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve-group", jobId }) });
       const d = (await res.json().catch(() => ({}))) as { message?: string };
 
       setNotice(d.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."));
@@ -411,12 +438,16 @@ export default function FactoryOverview({
     model: isClaudeModel(sup?.defaultClaudeModel) ? sup.defaultClaudeModel : null,
     engine: isAiEngine(sup?.defaultAiEngine) ? sup.defaultAiEngine : null,
   };
+  const extra = inbox?.items ?? [];
+  // 할 일 수 = 사람이 정할 것(막힘·실패 + 승인). 정보 줄(업데이트 상태)은 세지 않는다
   const todo = inbox
     ? inbox.jobs.length +
       (inbox.confirmations?.length ?? 0) +
       inbox.turns.length +
-      inbox.deploys.filter((d) => !d.inProgress && d.canDeploy !== false).length
+      inbox.deploys.filter((d) => !d.inProgress && d.canDeploy !== false).length +
+      extra.filter((i) => i.tier !== "info").length
     : 0;
+  const blockedCount = extra.filter((i) => i.tier === "blocked").length;
 
   return (
     <>
@@ -426,9 +457,10 @@ export default function FactoryOverview({
         <CardBody className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-semibold">
-              <StatusDot tone={todo > 0 ? "warn" : "idle"} />
+              <StatusDot tone={blockedCount > 0 ? "bad" : todo > 0 ? "warn" : "idle"} />
               승인·배포 할 일
-              {inbox && <span className="font-mono">({todo})</span>}
+              {inbox && <span className="font-mono" data-todo-count>({todo})</span>}
+              {blockedCount > 0 && <span className="font-mono text-xs text-danger" data-blocked-count>막힘·실패 {blockedCount}</span>}
             </div>
             <span className="text-xs text-default-500">
               텔레그램 버튼과 같은 동작이에요. 어느 쪽에서 먼저 눌러도 한 번만
@@ -437,18 +469,24 @@ export default function FactoryOverview({
           </div>
           {!inbox && <p className="text-sm text-default-500">읽는 중…</p>}
           {inbox &&
-            inbox.jobs.length + (inbox.confirmations?.length ?? 0) + inbox.turns.length + inbox.deploys.length ===
+            inbox.jobs.length + (inbox.confirmations?.length ?? 0) + inbox.turns.length + inbox.deploys.length + extra.length ===
               0 && (
               <p className="text-sm text-default-500">
                 기다리는 승인·배포가 없어요.
               </p>
             )}
 
+          {/* 줄 순서: 막힘·실패(order 0) > 승인(1) > 정보(2). 아래 기존 승인 줄은 모두 승인(1) 단계다 */}
+          <div className="flex flex-col gap-3" data-todo-list>
+          {extra.map((it) => (
+            <InboxItemRow key={it.key} busy={!!busy} item={it} onGroupApprove={groupApprove} onRetry={(id) => jobAction("retry", id, "이 일감을 처음부터 다시 시도할까요?")} />
+          ))}
           {inbox?.deploys.map((d) => (
             <div
               key={`d-${d.threadId}`}
               className="fx-row flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between"
               data-st={d.inProgress ? "run" : "approval"}
+              style={{ order: TIER_ORDER.approval }}
             >
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
@@ -525,6 +563,7 @@ export default function FactoryOverview({
               key={`t-${t.id}`}
               className="fx-row flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between"
               data-st="approval"
+              style={{ order: TIER_ORDER.approval }}
             >
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
@@ -568,11 +607,12 @@ export default function FactoryOverview({
               className="fx-row flex flex-col gap-2 rounded-lg border border-warning-300 p-2 sm:flex-row sm:items-center sm:justify-between"
               data-confirm={c.id}
               data-st="approval"
+              style={{ order: TIER_ORDER.approval }}
             >
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip kind="approval" label="확인 필요(비용 한도)" />
-                  <KindChip label="🛠 도구" />
+                  <KindChip label={c.kind === "tool" ? "🛠 도구 일감" : "📱 앱 일감"} />
                   <span className="font-medium">{c.title}</span>
                   <span className="font-mono text-xs text-default-500">
                     {c.appSlug} · {when(c.at)}
@@ -595,6 +635,7 @@ export default function FactoryOverview({
               key={`j-${j.id}`}
               className="fx-row flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between"
               data-st="approval"
+              style={{ order: TIER_ORDER.approval }}
             >
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
@@ -633,6 +674,7 @@ export default function FactoryOverview({
               </div>
             </div>
           ))}
+          </div>
           {notice && <p className="text-sm text-default-600">{notice}</p>}
         </CardBody>
       </Card>
@@ -648,7 +690,7 @@ export default function FactoryOverview({
       <HistoryPanelView
         data={data}
         full={full}
-        board={{ active: data?.active, inbox: data?.inbox, jobs: boardJobs, threads: data?.threads }}
+        board={{ active: data?.active, inbox: data?.inbox, jobs: boardJobs, threads: data?.threads, supervisor: data?.supervisor }}
         open={historyOpen}
         tab={tab}
         onMore={() => full && full.nextCursor && loadAll(full.kind, full)}
@@ -665,6 +707,53 @@ export default function FactoryOverview({
         onToggle={toggleHistory}
       />
     </>
+  );
+}
+
+// 새 '할 일' 한 줄(4-1): 막힘·다시 시작 필요·키 부족·묶음 승인·스튜디오 검수 대기·업데이트 상태. 단추는 그 자리에서 바로 처리하거나 이동한다
+export function InboxItemRow({ item, busy, onRetry, onGroupApprove }: { item: InboxItem; busy: boolean; onRetry: (jobId: string) => void; onGroupApprove: (jobId: string, confirmText?: string) => void }) {
+  const chip = TIER_CHIP[item.tier];
+
+  return (
+    <div
+      className={`fx-row flex flex-col gap-2 rounded-lg border p-2 sm:flex-row sm:items-center sm:justify-between ${item.tier === "blocked" ? "border-danger-300" : "border-default-200"}`}
+      data-inbox-item={item.key}
+      data-inbox-kind={item.kind}
+      data-inbox-tier={item.tier}
+      data-st={chip.kind}
+      style={{ order: TIER_ORDER[item.tier] }}
+    >
+      <div className="min-w-0 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusChip kind={chip.kind} label={chip.label} />
+          <span className="font-medium">{item.title}</span>
+          {item.appSlug && <span className="font-mono text-xs text-default-500">{item.appSlug}</span>}
+        </div>
+        <div className="mt-1 break-words text-xs text-default-600">{item.detail}</div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {item.actions.map((a) =>
+          a.id === "link" ? (
+            <a key={a.label} className="inline-flex min-h-11 items-center rounded-lg border border-default-300 px-3 text-sm underline sm:min-h-0 sm:py-1" href={a.href}>
+              {a.label} →
+            </a>
+          ) : (
+            <Button
+              key={a.label}
+              className="min-h-11 sm:min-h-0"
+              color={a.id === "retry" ? "danger" : "primary"}
+              data-inbox-action={a.id}
+              isDisabled={busy || !a.jobId}
+              size="sm"
+              variant={a.id === "retry" ? "flat" : "solid"}
+              onPress={() => a.jobId && (a.id === "retry" ? onRetry(a.jobId) : onGroupApprove(a.jobId, "묶음의 승인 대기 일감을 한 번에 승인할까요?"))}
+            >
+              {a.label}
+            </Button>
+          ),
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -942,6 +1031,20 @@ export interface BoardInput {
   inbox?: Overview["inbox"];
   jobs: JobHistoryItem[] | null;
   threads?: HistoryData["threads"];
+  supervisor?: Overview["supervisor"]; // 업데이트로 일시 중지·묶는 중 표시(4-1)
+}
+
+/** 보드 '진행 중' 구역에 붙이는 업데이트 상태 줄(없으면 빈 목록). 일시 중지된 일감은 진행 중 구역에 그대로 있고, 이 줄이 이유를 알려 준다 */
+export function boardUpdateNotes(sup: Overview["supervisor"] | undefined): { key: string; text: string }[] {
+  const out: { key: string; text: string }[] = [];
+  const paused = Math.max(0, Math.floor(Number(sup?.pausedJobs) || 0));
+  const left = Math.floor(Number(sup?.bundleLeftMin));
+
+  if (paused > 0) out.push({ key: "paused", text: `⏸ 업데이트로 일시 중지 ${paused}개 — 새 버전이 켜지면 같은 세션으로 이어서 해요` });
+  else if (sup?.drainState === "update") out.push({ key: "updating", text: "⏸ 감독 프로그램 업데이트 중 — 진행 중 일감을 안전한 지점에서 멈추는 중이에요(새 일감은 잠깐 받지 않아요)" });
+  if (Number.isFinite(left) && left > 0) out.push({ key: "bundle", text: `◷ 업데이트 대기(묶는 중, 남은 ${left}분) — 일감은 계속 돌아요` });
+
+  return out;
 }
 export type BoardSectionKey = "run" | "approval" | "wait" | "recent";
 export interface BoardRow {
@@ -1038,6 +1141,7 @@ function ProgressBoard({ board, now }: { board?: BoardInput; now?: number }) {
 
   if (!board || !board.active || !board.inbox) return <p className="text-sm text-default-500">읽는 중…</p>;
   const secs = boardSections(board);
+  const notes = boardUpdateNotes(board.supervisor);
 
   return (
     <div className="space-y-3" data-history="progress">
@@ -1067,6 +1171,12 @@ function ProgressBoard({ board, now }: { board?: BoardInput; now?: number }) {
                 ))}
               </>
             )}
+            {sec.key === "run" &&
+              notes.map((n) => (
+                <p key={n.key} className="rounded-lg border border-dashed border-default-300 p-2 text-xs text-default-600" data-board-update={n.key}>
+                  {n.text}
+                </p>
+              ))}
           </section>
         );
       })}

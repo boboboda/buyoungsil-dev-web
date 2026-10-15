@@ -155,6 +155,8 @@ export async function GET(req: NextRequest) {
         restart,
       ).catch(() => undefined);
     }
+    // 할 일 알림(4-1): 키 부족·묶음 승인을 텔레그램으로 한 번만 알리고, 풀린 할 일의 알림 기록을 지운다(30초에 한 번까지). 실패해도 일감 처리에는 영향 없음
+    void import("@/lib/factory/inbox").then((m) => m.syncInboxNotices()).catch(() => undefined);
     if (hold || restart) {
       // 재시작을 넘기는 응답과 재시작 대기 중에는 다른 것을 넘기지 않는다(일감·정비·1회성 신호는 다시 켜진 뒤 받아 간다)
       return NextResponse.json({ jobs: [], ...(restart ? { restart: true } : { restartHold: true }), autoUpdate: await isAutoUpdateEnabled() });

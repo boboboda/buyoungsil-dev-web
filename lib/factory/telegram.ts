@@ -13,6 +13,7 @@ import { runApproval } from "@/lib/factory/approvals"; // 통제실 버튼과 �
 import { maskSecrets } from "@/lib/factory/mask";
 import { releaseAppName } from "@/lib/factory/appName";
 import { CLAUDE_MODELS } from "@/lib/factory/ai";
+import { claimNotice, releaseNotice } from "@/lib/factory/inboxNotice";
 
 const API_TIMEOUT_MS = 5000;
 // lib/factory/release.ts 의 라벨과 같게(그 파일이 이 파일을 불러서, 순환을 피하려고 여기 따로 둔다)
@@ -120,6 +121,11 @@ export async function notifyJobEvent(
 
     const kind = (KIND_LABELS[job.kind] ?? "수정") + (job.kind === "release" ? `(${RELEASE_KIND_TEXT[job.releaseKind ?? "first"] ?? "첫 출시"})` : "");
     const stage = job.failStage ?? job.phase;
+    // 같은 알림은 한 번만(4-1): 비용 한도·막힘·다시 시작 필요는 일감마다 한 번. 그 일이 풀리면 기록을 지워(inbox.ts) 다시 생기면 새로 알린다
+    const noticeKey =
+      event === "needs_confirmation" ? `job:${job.id}:cost` : event === "failed" && (job.failStage === "stuck" || job.failStage === "resume") ? `job:${job.id}:${job.failStage}` : null;
+
+    if (noticeKey && !(await claimNotice(noticeKey))) return;
     // 출시 일감은 앱 이름(출시 카드 제목과 같은 이름)으로 알린다
     const name = job.kind === "release" ? await releaseAppName(job.appSlug, job.title) : job.title;
     let text: string;
@@ -142,7 +148,10 @@ ${cut(maskSecrets(job.failReason), 200) || "비용 한도를 넘었어요."}
     } else {
       const mergeFail = job.failStage === "merge"; // 병행 일감을 기본 브랜치에 합치지 못함(다시 맞추기를 해도 안 됨). 이미 합쳐진 다른 일감은 그대로
       const resumeNeeded = job.failStage === "resume"; // 감독 프로그램 업데이트로 멈췄다가 같은 세션으로 이어 주지 못함: 실패가 아니라 다시 시작이 필요(한 번만 알림)
-      text = resumeNeeded
+      const stuck = job.failStage === "stuck"; // 같은 시험·빌드를 계속 반복해서 멈춘 '막힘'(1-3)
+      text = stuck
+        ? `🚧 막힘\n${name} (${job.appSlug}) · ${kind}\n같은 시험·빌드를 계속 반복해서 멈췄어요. 작업 파일은 그대로예요. 지시를 줄이거나 나눠서 통제실에서 [다시 시도]해 주세요.\n${cut(maskSecrets(job.failReason), 200) || "(사유 없음)"}`
+        : resumeNeeded
         ? `⏸ 다시 시작 필요\n${name} (${job.appSlug}) · ${kind}\n업데이트로 멈춘 일감을 이어 주지 못했어요. 파일은 그대로예요. 통제실에서 [다시 시도]를 눌러 주세요.\n${cut(maskSecrets(job.failReason), 200) || "(사유 없음)"}`
         : `❌ ${mergeFail ? "합치기 실패" : "실패"}\n${name} (${job.appSlug}) · ${kind}${mergeFail ? "\n이미 합쳐진 다른 일감은 그대로예요. 이 일감만 멈췄어요." : ""}${job.kind === "release" && stage ? `\n실패 단계: ${STAGE_TEXT[stage] ?? stage}` : ""}\n${cut(maskSecrets(job.failReason), 200) || "(사유 없음)"}`;
     }
@@ -160,13 +169,47 @@ ${cut(maskSecrets(job.failReason), 200) || "비용 한도를 넘었어요."}
       row.unshift({ text: "✅ 승인(기본 모델)", callback_data: `a:${job.id}` });
     }
 
-    await tg("sendMessage", {
+    const sent = await tg("sendMessage", {
       chat_id: chatId(),
       text,
       reply_markup: { inline_keyboard: [row] },
     });
+
+    // 보내지 못했으면 '보냈다' 기록을 지워서 다음에 다시 알릴 수 있게 한다
+    if (noticeKey && !sent?.ok) await releaseNotice(noticeKey);
   } catch {
     console.error("[telegram] 알림 처리 실패");
+  }
+}
+
+/** 텔레그램으로 알릴 준비가 됐는지(토큰·chat id) */
+export const telegramReady = () => token() !== "" && chatId() !== "";
+
+/**
+ * 이름(key)이 같은 알림은 한 번만 보낸다(4-1). 처음이면 보내고 true, 이미 보냈거나 텔레그램이 꺼져 있으면 false.
+ * 보내기에 실패하면 기록을 지워 다음 확인 때 다시 시도한다. 절대 던지지 않는다.
+ */
+export async function notifyOnce(key: string, text: string, path = "/admin/factory"): Promise<boolean> {
+  try {
+    if (!telegramReady()) return false;
+    if (!(await claimNotice(key))) return false;
+    const sent = await tg("sendMessage", {
+      chat_id: chatId(),
+      text: text.slice(0, 900),
+      reply_markup: { inline_keyboard: [[{ text: "통제실 열기", url: `${publicUrl()}${path}` }]] },
+    });
+
+    if (!sent?.ok) {
+      await releaseNotice(key);
+
+      return false;
+    }
+
+    return true;
+  } catch {
+    console.error("[telegram] 알림 처리 실패");
+
+    return false;
   }
 }
 

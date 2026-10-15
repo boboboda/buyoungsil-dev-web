@@ -312,6 +312,7 @@ const overviewRoute = loadTs("app/api/admin/factory/overview/route.ts", {
   "@/lib/factory/admin": { requireAdmin },
   "@/lib/factory/ai": ai,
   "@/lib/factory/approvals": approvals,
+  "@/lib/factory/inbox": { readInboxItems: async () => [], syncInboxNotices: async () => ({ sent: [] }) },
   "@/lib/factory/supervisor": supervisor,
 });
 const jobRoute = loadTs("app/api/admin/factory/jobs/[id]/route.ts", {
@@ -445,6 +446,7 @@ test("텔레그램: [🧠 모델 골라 승인] → 같은 알림의 버튼이 �
       "@/lib/factory/approvals": { runApproval: async (...a) => (calls.push(a), { ok: true, status: 200, message: "승인했어요." }) },
       "@/lib/factory/mask": mask,
       "@/lib/factory/appName": { releaseAppName: async (_s, t) => t },
+      "@/lib/factory/inboxNotice": { claimNotice: async () => true, releaseNotice: async () => {} },
       "@/lib/factory/ai": ai,
     });
     // 승인 대기 알림: 기본 승인 + 모델 골라 승인
