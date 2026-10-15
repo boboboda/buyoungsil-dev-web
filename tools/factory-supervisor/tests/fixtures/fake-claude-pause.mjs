@@ -53,4 +53,4 @@ for (const step of (cfg.calls ?? [])[earlier] ?? []) {
   }
 }
 emit({ type: "assistant", session_id: resume ?? session, message: { content: [{ type: "text", text: `${id} 호출 ${earlier} 처리` }] } });
-emit({ type: "result", is_error: false, result: `${id} 완료(호출 ${earlier})`, num_turns: 1, session_id: resume ?? session });
+emit({ type: "result", is_error: false, result: cfg.resultText ?? `${id} 완료(호출 ${earlier})`, num_turns: 1, session_id: resume ?? session });

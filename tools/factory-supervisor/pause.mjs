@@ -11,7 +11,23 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const RESUME_MESSAGE = "공장 업데이트로 잠시 멈췄다. 파일은 그대로다. 멈추기 직전 명령이 끊겼다면 다시 실행하고 이어서 진행해.";
+export const NO_BACKGROUND_RULE = "백그라운드 명령 금지. 끊긴 명령은 전경에서 다시 실행하고 끝까지 기다린 뒤 보고·커밋까지 마쳐라.";
+export const RESUME_MESSAGE = `공장 업데이트로 잠시 멈췄다. 파일은 그대로다. 멈추기 직전 명령이 끊겼다면 다시 실행하고 이어서 진행해. ${NO_BACKGROUND_RULE}`;
+export const BACKGROUND_FAIL_REASON = "백그라운드 대기 중 종료 — 마무리 필요";
+// 마지막 결과 글이 "백그라운드에서 돌고 있어요 / 끝나면 이어서 / 알림이 오면" 같은 미완료 문구인가
+const UNFINISHED_PATTERNS = [
+  /백그라운드[^\n]{0,40}(돌고|돌아가|실행\s*중|진행\s*중)/,
+  /(끝나|완료되|마치|끝나는)[^\n]{0,20}(면|는\s*대로|으면)[^\n]{0,20}(이어서|이어|계속|마저)/,
+  /(알림|통지)[^\n]{0,12}(오면|이\s*오|도착)/,
+  /(still running in the background|will (continue|resume) (once|when|after)|when (it|they) (finish|complete)|once (it|they) (finish|complete)s?)/i,
+];
+export const looksUnfinished = (text) => {
+  const t = String(text ?? "").trim();
+  return !!t && UNFINISHED_PATTERNS.some((re) => re.test(t));
+};
+// 완료로 두면 안 되는 결과인가: 미완료 문구거나, 결과 뒤 정리(graceKilled)로 끝났다(남은 백그라운드 작업이 있었다는 뜻)
+// 이면 BACKGROUND_FAIL_REASON 을, 아니면 null 을 돌려준다
+export const backgroundFailure = ({ text, graceKilled }) => (graceKilled || looksUnfinished(text) ? BACKGROUND_FAIL_REASON : null);
 export const LONG_COMMAND_MS = 5 * 60_000; // 남은 명령이 이보다 길면 끊는다 / 멈추라고 한 지 이만큼 지나면 끊는다
 export const BASH_DEFAULT_TIMEOUT_MS = 2 * 60_000; // Claude Code Bash 도구의 기본 제한(timeout 을 안 적었을 때)
 export const MAX_SAVED_AGE_MS = 30 * 60_000; // 저장한 지 이만큼 지나면 서버가 임대를 거둬 대기열로 되돌렸을 수 있어 이어 주지 않는다

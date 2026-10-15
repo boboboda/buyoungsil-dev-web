@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { RESUME_MESSAGE } from "../pause.mjs";
+import { BACKGROUND_FAIL_REASON, RESUME_MESSAGE } from "../pause.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SUP = path.resolve(HERE, "..");
@@ -134,4 +134,20 @@ test("정비 턴: 이어서 하기가 바로 실패하면 결과에 '다시 시�
   assert.equal(done[0].ok, false);
   assert.match(done[0].text, /^다시 시작 필요/);
   assert.equal(s.calls().length, 2);
+});
+
+test("정비 턴: 결과 글이 '백그라운드에서 돌고 있어요 / 끝나면 이어서'면 done 이 아니라 실패(백그라운드 대기 중 종료)", { skip, timeout: 200_000 }, () => {
+  const s = setup({ M1: { resultText: "시험이 백그라운드에서 돌고 있어요. 끝나면 이어서 할게요.", calls: [[{ say: "시험을 띄웠어요" }]] } });
+  const r = s.drive("plain");
+  const done = doneOf(r.posts);
+  assert.equal(done.length, 1);
+  assert.equal(done[0].ok, false);
+  assert.ok(done[0].text.startsWith(BACKGROUND_FAIL_REASON), done[0].text);
+});
+
+test("정비 턴: 정상 결과는 그대로 완료", { skip, timeout: 200_000 }, () => {
+  const s = setup({ M1: { calls: [[{ say: "바꾼 것 없이 확인만 했어요. 검사 통과." }]] } });
+  const done = doneOf(s.drive("plain").posts);
+  assert.equal(done.length, 1);
+  assert.equal(done[0].ok, true, done[0].text);
 });

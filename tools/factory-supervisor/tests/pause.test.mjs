@@ -10,7 +10,11 @@ import { invocation } from "../ai-runner.mjs";
 import {
   BUNDLE_DEFAULT_MIN,
   LONG_COMMAND_MS,
+  BACKGROUND_FAIL_REASON,
+  NO_BACKGROUND_RULE,
   RESUME_MESSAGE,
+  backgroundFailure,
+  looksUnfinished,
   bundleDecision,
   bundleMinutes,
   clearSavedState,
@@ -26,8 +30,26 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "pause-unit-"));
 const use = (id, name, input = {}) => ({ type: "assistant", message: { content: [{ type: "tool_use", id, name, input }] } });
 const done = (id) => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
 
-test("이어 줄 때 하는 말은 지시한 그대로다", () => {
-  assert.equal(RESUME_MESSAGE, "공장 업데이트로 잠시 멈췄다. 파일은 그대로다. 멈추기 직전 명령이 끊겼다면 다시 실행하고 이어서 진행해.");
+test("이어 줄 때 하는 말: 기존 말에 '백그라운드 금지, 전경에서 끝까지' 규칙이 붙는다", () => {
+  assert.ok(RESUME_MESSAGE.startsWith("공장 업데이트로 잠시 멈췄다. 파일은 그대로다. 멈추기 직전 명령이 끊겼다면 다시 실행하고 이어서 진행해."));
+  assert.equal(NO_BACKGROUND_RULE, "백그라운드 명령 금지. 끊긴 명령은 전경에서 다시 실행하고 끝까지 기다린 뒤 보고·커밋까지 마쳐라.");
+  assert.ok(RESUME_MESSAGE.endsWith(NO_BACKGROUND_RULE));
+});
+
+test("백그라운드 대기로 끝난 결과 판정: 미완료 문구 → 실패 사유, 90초 정리 → 실패 사유, 정상 결과 → null", () => {
+  for (const text of [
+    "테스트를 백그라운드에서 돌고 있어요. 끝나면 이어서 할게요.",
+    "생성 스크립트가 백그라운드에서 실행 중이에요.",
+    "빌드가 끝나면 이어서 마무리할게요.",
+    "알림이 오면 결과를 확인해 보고할게요.",
+  ]) assert.equal(backgroundFailure({ text, graceKilled: false }), BACKGROUND_FAIL_REASON, text);
+  assert.equal(BACKGROUND_FAIL_REASON, "백그라운드 대기 중 종료 — 마무리 필요");
+  // 결과 글이 멀쩡해도 90초 정리로 끝났으면(남은 백그라운드 작업이 있었다) 완료가 아니다
+  assert.equal(backgroundFailure({ text: "다 끝났어요. 커밋 abc123.", graceKilled: true }), BACKGROUND_FAIL_REASON);
+  for (const text of ["", undefined, "바꾼 파일 2개, 시험 7개 통과, 커밋 abc123이에요.", "개발 서버는 직접 껐고 백그라운드 프로세스는 남지 않았어요."]) {
+    assert.equal(backgroundFailure({ text, graceKilled: false }), null, String(text));
+  }
+  assert.equal(looksUnfinished("정상 결과"), false);
 });
 
 test("도구 호출 추적(Claude): 시작·끝을 짝지어 끝나지 않은 호출만 센다", () => {

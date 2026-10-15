@@ -19,7 +19,7 @@ import { enforceTestMode } from "./testmode.mjs";
 import { BIG_UPLOAD_BYTES, createOutbox, trackUpload, uploadBusy } from "./outbox.mjs";
 import { bundleStatus, maybeUpdate, notePoll, reportInfo, requestUpdateNow, setUpdateBundle, startupGuard, updateWaiting } from "./update.mjs";
 import { SCREENSHOT_CUT_MESSAGE, STUCK_PREFIX, WARN_MESSAGE, cleanLoopGuard, commandEvents, createLoopGuard, screenshotBudget, snapshotWorkdir } from "./loopguard.mjs";
-import { RESUME_MESSAGE, clearSavedState, createPauser, readSavedState, resumeFailed } from "./pause.mjs";
+import { BACKGROUND_FAIL_REASON, NO_BACKGROUND_RULE, RESUME_MESSAGE, backgroundFailure, clearSavedState, createPauser, readSavedState, resumeFailed } from "./pause.mjs";
 import {
   maskText,
   prepareReleaseKey,
@@ -322,6 +322,7 @@ ${stackRules(job)}
 - 외부 서비스 키는 환경변수로만 읽을 수 있습니다(이 지시에 허용된 이름만). 키 값을 파일, 로그, 커밋에 쓰거나 출력하지 마세요.
 - 키 파일(.jks/.keystore/.p12/.pfx, key.properties, secrets.env 와 확장자 없는 키스토어)은 절대 git add 하지 마세요. 감독 프로그램이 발견하면 앱 폴더 커밋을 멈춰요.
 - 에뮬레이터, 개발 서버, 감시 프로세스처럼 백그라운드로 띄운 것은 마지막 응답 전에 반드시 직접 끄세요. 남아 있으면 작업이 끝나지 않아 감독 프로그램이 강제로 정리해요.
+- ${NO_BACKGROUND_RULE} "끝나면 이어서 할게요"라며 턴을 끝내지 마세요. 이 환경에는 알림이 오지 않아요.
 - 진행 단계가 바뀔 때마다 .factory/phase.txt 에 한 단어(scaffold, code, build, screenshots, done 중 하나)를 덮어써 주세요.
 - 화면 스크린샷을 만들 수 있으면 .factory/screenshots/ 에 png 로 저장하세요(예: home.png, result.png). 못 만들면 건너뛰세요.
 - 중간 확인은 빌드·린트·단위 시험으로 한다. 스크린샷 e2e는 마지막에 한 번만 돌린다. 측정·시뮬레이션은 지시문이 요구할 때만, 요구한 범위만 한다.
@@ -1255,6 +1256,7 @@ async function runAiProcess(st, prompt, resumeSession) {
   st.result = null;
   st.resultTimer = null;
   st.killedAfterResult = false;
+  st.graceKilled = false;
   st.stderrTail = "";
   st.resumeProblem = null;
   if (!st.guard && ["new", "revision"].includes(job.kind)) st.guard = createLoopGuard(effectiveLoopGuard());
@@ -1349,6 +1351,7 @@ async function runAiProcess(st, prompt, resumeSession) {
         st.resultTimer = setTimeout(() => {
           if (child.exitCode !== null || st.stopped) return;
           st.killedAfterResult = true;
+          st.graceKilled = true;
           addLog(st, "warn", `결과를 낸 뒤 ${RESULT_GRACE_SEC}초가 지나도 Claude 가 끝나지 않아 정리해요(남은 백그라운드 작업 종료).`);
           log(`[${st.job.appSlug}] 결과 뒤 종료되지 않아 프로세스 정리`);
           killTree(child);
@@ -1544,6 +1547,12 @@ async function runJobUnlocked(job, lock, resume = null) {
     } else if (st.stopped) {
       if (/^시간 초과/.test(st.stopped)) await finish(st, "failed", { failReason: st.stopped, ...(rel ? { failStage: st.phase } : {}) });
       // 취소·종료·서버 쪽 상태 변경이면 서버가 이미 정리했거나(또는 곧 정리) 하므로 보고하지 않는다
+    } else if (st.result && !st.result.is_error && (code === 0 || st.killedAfterResult) && backgroundFailure({ text: st.result.result ?? st.lastText, graceKilled: st.graceKilled })) {
+      // 백그라운드 명령을 기다리다 끝난 것은 완료가 아니다(커밋·보고 없이 done 이 되던 문제): 실패로 남겨 통제실 할 일에 띄우고 [실패 단계부터 다시]를 쓸 수 있게 한다
+      if (rel) readPhase(st);
+      addLog(st, "warn", BACKGROUND_FAIL_REASON);
+      await finish(st, "failed", { failReason: st.redact(`${BACKGROUND_FAIL_REASON}
+${String(st.result.result ?? st.lastText ?? "").trim()}`).slice(-1800), ...(rel ? { failStage: st.phase } : {}) });
     } else if (rel && st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) {
       // 출시 일감: Claude 가 남긴 실패 표시(fail.json) → 그 단계 실패. 아니면 outbox 를 보내고, 거절되면 홈페이지 반영 실패
       const text = st.redact(String(st.result.result ?? st.lastText ?? "").trim());

@@ -59,6 +59,13 @@ if (mode === "second") {
 }
 
 onNext({ maintenance: turn }, ctx);
+if (mode === "plain") {
+  // 멈추지 않고 그냥 끝까지 돈다
+  await sleep(300);
+  await waitFor(() => !maintenanceBusy(), 60_000, "정비 턴이 끝남");
+  dump();
+  process.exit(0);
+}
 // 가짜 AI 가 첫 도구 호출을 낸 뒤 멈추라고 한다
 await sleep(Number(process.env.PAUSE_AFTER_MS || 1500));
 pauser.requestPause();

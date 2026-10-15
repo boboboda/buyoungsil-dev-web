@@ -24,7 +24,7 @@ import { keyFilesToCommit } from "./keyguard.mjs";
 import { compactSession } from "./compact.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
-import { RESUME_MESSAGE, resumeFailed } from "./pause.mjs";
+import { BACKGROUND_FAIL_REASON, RESUME_MESSAGE, backgroundFailure, resumeFailed } from "./pause.mjs";
 import { buildRevertCommit, migrationsChanged } from "./revert.mjs";
 
 const IS_WIN = process.platform === "win32";
@@ -362,6 +362,7 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
   let lastText = "";
   let stderrTail = "";
   let killedAfterResult = false;
+  let graceKilled = false; // 결과 뒤 90초 정리로 끝났다(남은 백그라운드 작업이 있었다는 뜻)
   let graceTimer = null;
   let timeLeftMs = resume ? resume.timeLeftMs : TURN_TIMEOUT_MIN * 60_000; // 멈춰 있던 시간은 시간 한도에서 뺀다
   let resumeProblem = null;
@@ -382,6 +383,7 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
     if (unit && ctx.pauser.mode() === "pausing") await ctx.pauser.gate(unit); // 업데이트하려고 멈추는 중이면 AI 를 띄우지 않고 기다린다
     result = null;
     killedAfterResult = false;
+    graceKilled = false;
     stderrTail = "";
     const segStart = Date.now();
     const usedResume = !!resumeId || promptText === RESUME_MESSAGE;
@@ -427,6 +429,7 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
           graceTimer = setTimeout(() => {
             if (child.exitCode === null) {
               killedAfterResult = true;
+              graceKilled = true;
               addLog(`결과 뒤 ${RESULT_GRACE_SEC}초가 지나도 끝나지 않아 정리해요(남은 백그라운드 작업 종료).`);
               kill();
             }
@@ -476,6 +479,16 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
   if (!okRun) {
     noteCheck("감독 문법·타입 검사", "건너뜀", "AI 실행이 정상 종료되지 않음");
     return finish({ ok: false, text: `${ENGINE_LABELS[m.aiEngine]}가 정상적으로 끝나지 않았어요(코드 ${code}${model ? `, 모델 ${model}` : ""}).\n${claudeText || tail(stderrTail, 1500)}`, sessionId });
+  }
+
+  // 백그라운드 명령을 기다리다 끝난 턴은 완료가 아니다(커밋·보고 없이 done 이 되던 문제): 실패로 남겨 통제실 할 일에 띄운다
+  const bgFail = backgroundFailure({ text: claudeText, graceKilled });
+  if (bgFail) {
+    noteCheck("감독 문법·타입 검사", "건너뜀", bgFail);
+    return finish({ ok: false, text: `${BACKGROUND_FAIL_REASON}
+${claudeText}
+
+— 정비 폴더 파일은 그대로예요. 같은 정비 대화에 "끊긴 명령을 전경에서 다시 실행하고 끝까지 기다린 뒤 커밋까지 마무리해 줘"라고 지시해 주세요.`, sessionId });
   }
 
   // 커밋 안 된 변경은 올리지 않고 따로 보관(다음 지시가 깨끗한 폴더에서 시작하게)
