@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkLocalCommand, isProtectedPath } from "../pcguard.mjs";
+import { checkLocalCommand, isProtectedPath, isTrustedServerctlCall } from "../pcguard.mjs";
 import { enforceTestMode, isFakeServerUrl, testModeProblems } from "../testmode.mjs";
 import { guardHookSettings } from "../serveraccess.mjs";
 import { maintenanceSettings } from "../maintenance.mjs";
@@ -125,6 +125,52 @@ test("정비 훅 스크립트: 금지 명령은 deny, 평범한 명령과 서버
   assert.match(server.permissionDecisionReason, /서버 접근 규칙/);
   // 앱·실험 일감용 훅은 이번 규칙의 영향을 받지 않는다(권한 변경 범위는 정비뿐)
   assert.equal(hook("taskkill //F //IM node.exe", "ssh-guard.mjs"), null);
+});
+
+// ───────── 서버 작업은 신뢰된 serverctl 로만 ─────────
+const SCTL = "C:/Users/x/dev/factory/supervisor-src/tools/factory-supervisor/serverctl.mjs";
+const SERVER_CALLS = [
+  `node "${SCTL}" site-init factoryWeb --from developWeb`,
+  `node "${SCTL}" env-clone "~/git-server/work/developWeb" "~/git-server/work/factoryWeb" --set FACTORY_PUBLIC_URL=https://factory.buyoungsilcoding.com --gen FACTORY_MCP_TOKEN`,
+  `node "${SCTL}" nginx-site factory-web --domain factory.buyoungsilcoding.com --port 5100 --body 300m`,
+  `node "${SCTL}" cert factory.buyoungsilcoding.com`,
+  `node "${SCTL}" deploy-push C:/Users/x/dev/factory/factory-web prod serverpc:git-server/repo/factoryWeb.git`,
+  `SERVERCTL_VALUE=x node ${SCTL} env-set FOO`,
+];
+
+test("신뢰된 serverctl 호출 판정: 감독 실행 폴더 사본·정해진 서브커맨드·단일 명령만", () => {
+  for (const c of SERVER_CALLS) assert.equal(isTrustedServerctlCall(c), true, c);
+  for (const c of [
+    `node "C:/Users/x/dev/factory/selfdev/tools/factory-supervisor/serverctl.mjs" cert a.example.com`, // 정비 폴더 사본(고칠 수 있음)
+    `node "${SCTL}" shell-exec ls`, // 없는 서브커맨드
+    `node "${SCTL}" cert a.com; ssh serverpc "cat ~/git-server/work/developWeb/.env.local"`,
+    `node "${SCTL}" cert a.com && rm -rf ~/x`,
+    `node "${SCTL}" cert $(cat x)`,
+    `node "${SCTL}" env-keys > keys.txt`,
+    `echo hi | node "${SCTL}" env-set FOO`,
+    `python "${SCTL}" cert a.com`,
+  ])
+    assert.equal(isTrustedServerctlCall(c), false, c);
+});
+
+test("정비 훅: serverctl 서버 작업 명령은 통과, 같은 일을 직접 하면 계속 막힘", { skip }, () => {
+  for (const c of SERVER_CALLS) assert.equal(hook(c), null, c);
+  for (const c of [
+    'ssh serverpc "cat ~/git-server/work/developWeb/.env.local"',
+    'ssh serverpc "cp ~/git-server/work/developWeb/.env.local ~/git-server/work/factoryWeb/.env.local"',
+    'ssh serverpc "sudo tee /etc/nginx/sites-available/factory-web"',
+    'ssh serverpc "sudo ln -s /etc/nginx/sites-available/x /etc/nginx/sites-enabled/x"',
+    'ssh serverpc "sudo certbot --nginx -d factory.buyoungsilcoding.com"',
+    'ssh serverpc "cat /etc/letsencrypt/live/x/privkey.pem"',
+    "git push serverpc:git-server/repo/factoryWeb.git main",
+    'ssh serverpc "rm -rf ~/git-server/work/factoryWeb"',
+    'ssh serverpc "cd ~/git-server/work/developWeb && docker compose down"',
+    "git push --force claude-backup main",
+    `node "${SCTL}" cert a.com; ssh serverpc "cat ~/git-server/work/developWeb/.env.local"`,
+  ]) {
+    const out = hook(c);
+    assert.equal(out?.permissionDecision, "deny", c);
+  }
 });
 
 test("정비 권한 설정: 금지가 들어갔고 훅이 정비 훅이며 앱·실험 훅은 그대로", () => {

@@ -5,6 +5,24 @@
 //   3) 프로세스 종료 (kill, pkill, killall, taskkill, Stop-Process …)
 // 한계: 명령줄에 드러난 것만 본다. 파이썬·노드 스크립트 파일/히어독 본문 안에서 하는 일은 못 본다(그래서 권한 deny 규칙·규칙 문서·시험 모드 거부와 겹쳐서 막는다).
 import { base, splitCommands, unwrap } from "./serveraccess.mjs";
+import { SUBCOMMANDS } from "./serverctl.mjs";
+
+const TRUSTED_SERVERCTL = /(^|\/)supervisor-src\/tools\/factory-supervisor\/serverctl\.mjs$/i;
+
+/**
+ * 신뢰된 serverctl 호출인지: 감독 실행 폴더(supervisor-src)의 serverctl.mjs 를 node 로 부르는 단순 명령 하나뿐이고,
+ * 정해진 서브커맨드이며, 다른 명령·치환($( )·``)·파이프·리다이렉트가 섞이지 않았을 때만 true.
+ * 서버 작업(배포 저장소·.env.local·nginx·인증서·배포 push)은 이 경로로만 연다. 직접 ssh·scp 로 같은 일을 하면 계속 막는다.
+ */
+export function isTrustedServerctlCall(command) {
+  const { cmds, subs } = splitCommands(command);
+  if (subs.length || cmds.length !== 1 || cmds[0].stdin) return false;
+  const raw = cmds[0].argv;
+  if (raw.some((w) => /^[0-9]*[<>]+&?$|^&>{1,2}$/.test(w))) return false;
+  const argv = unwrap(raw);
+  if (!["node", "nodejs"].includes(base(argv[0] ?? ""))) return false;
+  return TRUSTED_SERVERCTL.test(String(argv[1] ?? "").replace(/\\/g, "/")) && SUBCOMMANDS.includes(argv[2]);
+}
 
 export const PC_GUARD_NOTE = "실행기·작업 스케줄러 변경이나 진짜 감독 조작이 꼭 필요하면 바꿀 내용만 결과에 적고 멈추세요(사람이 로컬에서 적용해요).";
 

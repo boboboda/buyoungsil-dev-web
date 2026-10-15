@@ -4,7 +4,7 @@
 // 앱·실험 일감은 계속 ssh-guard.mjs 만 쓴다. 감독 프로그램이 정비마다 만드는 --settings 파일이 이 파일(실행 전용 체크아웃의 사본)을 부른다.
 // 막을 때만 deny 를 내고, 상관없는 명령은 아무것도 출력하지 않는다. 검사 중 오류가 나면 위험 단어가 있는 명령은 막는다(fail closed).
 import { checkCommand } from "./serveraccess.mjs";
-import { checkLocalCommand } from "./pcguard.mjs";
+import { checkLocalCommand, isTrustedServerctlCall } from "./pcguard.mjs";
 
 const deny = (reason, tag) => {
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `[${tag}] ${reason}` } }));
@@ -19,6 +19,8 @@ process.stdin.on("end", () => {
     const input = JSON.parse(raw || "{}");
     if (input.tool_name && input.tool_name !== "Bash") return;
     command = String(input.tool_input?.command ?? "");
+    // 서버 작업(배포 저장소·.env.local·nginx·인증서·배포 push)은 신뢰된 serverctl 명령 하나일 때만 통과. 백업·검증·되돌림은 도구가 한다
+    if (isTrustedServerctlCall(command)) return;
     const local = checkLocalCommand(command);
     if (local.decision === "deny") return deny(local.reason, "정비 보호 규칙");
     const server = checkCommand(command);

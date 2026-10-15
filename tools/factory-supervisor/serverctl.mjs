@@ -12,15 +12,31 @@
 //   restore TIMESTAMP                백업으로 복원(nginx 면 검증·reload, .env 면 rebuild 필요)
 //   backups                          백업 목록
 //
+// 새 사이트 만들기(서버 작업 권한을 공장에 넘긴 뒤, 2026-10-15). 대상 서버는 --host serverpc(기본)·serverpc2 만:
+//   site-init NAME --from SRC        ~/git-server/repo/NAME.git(bare) + SRC 의 post-receive 훅 복사(이름 4곳 치환) + work/NAME clone. 이미 있으면 멈춤
+//   env-clone SRC_WORK DST_WORK [--set KEY=VALUE]… [--gen KEY]…
+//                                    서버 안에서만 .env.local 복사(600). --set 은 같은 이름 줄을 지우고 새로, --gen 은 서버에서 openssl rand -hex 32.
+//                                    값은 서버 밖으로 나오지 않고, 결과는 변수 이름만. 대상이 있으면 백업 후 진행
+//   nginx-site NAME --domain D --port P [--body 300m]
+//                                    sites-available/NAME 새로 만들고 링크 → nginx -t → reload → 헬스체크, 실패하면 지움. 기존 사이트 파일은 고치지 않음
+//   cert DOMAIN                      certbot --nginx --redirect(사이트 파일 백업, 실패하면 복원). 인증서 내용은 출력하지 않음
+//   deploy-push APP_DIR REMOTE URL   작업 PC 앱 폴더에 배포 원격을 추가하고 main push → 서버 배포 로그 끝·컨테이너 확인
+//
 // 안전 절차: 바꾸기 전에 백업(작업 폴더 밖, 최근 20개) → 바꾸고 검증(nginx -t, reload, 헬스체크 / rebuild, 헬스체크)
 //           → 실패하면 자동 되돌림. 바꿀 때마다 정비 대화와 텔레그램에 "무엇을·백업·검증 결과"를 남긴다(값 제외).
+//           새 사이트 명령은 서버의 ~/serverctl-actions.log 에도 한 줄씩 남긴다(값 제외).
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+// 정비 보호 훅(pcguard.mjs)도 이 목록으로 "신뢰된 serverctl 호출"을 가린다
+export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push"];
 const HOST = "serverpc";
-const SITE_URL = "https://www.buyoungsilcoding.com/";
+const HOSTS = ["serverpc", "serverpc2"]; // 우리 서버 두 대만(serveraccess.mjs 의 SERVER_HOSTS 와 같게)
+// 시험 모드(FACTORY_TEST_MODE=1)에서만 가짜 ssh·가짜 홈페이지 주소를 쓴다. 진짜 실행에서는 환경변수로 바꿀 수 없다
+const TEST = process.env.FACTORY_TEST_MODE === "1";
+const SITE_URL = (TEST && process.env.SERVERCTL_SITE_URL) || "https://www.buyoungsilcoding.com/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 const KEY_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const TS_RE = /^\d{8}-\d{6}$/;
@@ -34,22 +50,38 @@ const NGINX_DIRECTIVES = {
   keepalive_timeout: /^\d{1,5}[smh]?$/,
 };
 const LOCATION_RE = /^(=\s|~\s|\^~\s)?\/[A-Za-z0-9_\-./]*$/;
+const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{0,40}$/; // 저장소·작업 폴더·nginx 사이트 이름
+const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/;
+const BODY_RE = /^\d{1,4}[kKmMgG]?$/;
+const REMOTE_NAME_RE = /^[a-z][a-z0-9_-]{0,30}$/;
+const DEPLOY_URL_RE = /^(serverpc|serverpc2):git-server\/repo\/([A-Za-z][A-Za-z0-9_-]{0,40})\.git$/;
 const home = os.homedir();
-const STATE = path.join(home, "dev", "factory", "serverctl-state.json");
+const STATE = (TEST && process.env.SERVERCTL_STATE) || path.join(home, "dev", "factory", "serverctl-state.json");
 const CONFIG = path.join(home, "dev", "factory", "supervisor.config.json");
 
 // ───────── 서버 쪽 고정 스크립트(인자는 아래에서 형식 검사 후에만 넘긴다) ─────────
 const REMOTE = String.raw`
 set -u
 WORK="$HOME/git-server/work/developWeb"; ENVF="$WORK/.env.local"
-ENVB="$HOME/env-backups/developWeb"; NGF=/etc/nginx/sites-enabled/default; NGB="$HOME/nginx-backups"
+NGE=/etc/nginx; NGBIN=/usr/sbin/nginx
+# 시험(가짜 ssh)에서만 주는 경로. 진짜 서버에는 ssh 가 이 환경변수를 넘기지 않아 기본값을 쓴다
+[ -n "$(printenv SERVERCTL_NGINX_ETC)" ] && NGE=$(printenv SERVERCTL_NGINX_ETC)
+[ -n "$(printenv SERVERCTL_NGINX_BIN)" ] && NGBIN=$(printenv SERVERCTL_NGINX_BIN)
+ENVB="$HOME/env-backups/developWeb"; NGF="$NGE/sites-enabled/default"; NGB="$HOME/nginx-backups"
 TS=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$ENVB" "$NGB"; chmod 700 "$HOME/env-backups" "$ENVB" "$NGB"; chmod 600 "$ENVB"/.env.local.bak-* "$NGB"/default.bak-* 2>/dev/null
 prune() { ls -1t "$1"/$2.bak-* 2>/dev/null | tail -n +21 | xargs -r rm -f; }
 env_backup() { B="$ENVB/.env.local.bak-$TS"; cp "$ENVF" "$B"; chmod 600 "$B"; prune "$ENVB" .env.local; echo "BACKUP $B"; }
 ng_backup() { B="$NGB/default.bak-$TS"; sudo -n cat "$NGF" > "$B"; chmod 600 "$B"; prune "$NGB" default; echo "BACKUP $B"; }
 ng_put() { sudo -n tee "$NGF" < "$1" > /dev/null; }
-ng_test() { OUT=$(sudo -n /usr/sbin/nginx -t 2>&1); R=$?; echo "$OUT" | tail -3; return $R; }
+ng_test() { OUT=$(sudo -n "$NGBIN" -t 2>&1); R=$?; echo "$OUT" | tail -3; return $R; }
+act() { echo "$(date '+%F %T') $*" >> "$HOME/serverctl-actions.log"; }
+dom_re() { printf %s "$1" | sed 's/\./\\./g'; }
+site_of() { sudo -n grep -RlsE "server_name[^;]*[[:space:]]$(dom_re "$1")([[:space:];]|$)" "$NGE/sites-enabled/" | head -1; }
+hook_info() {
+  H="$HOME/git-server/repo/$1.git/hooks/post-receive"; [ -f "$H" ] || { echo "NO_HOOK"; exit 2; }
+  LF=$(grep -oE '^LOG_FILE="[^"]+"' "$H" | head -1 | cut -d'"' -f2); CN=$(grep -oE 'docker logs [A-Za-z0-9_.-]+' "$H" | head -1 | cut -d' ' -f3)
+}
 case "$1" in
   env-keys) grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$ENVF" | sed 's/=$//' ;;
   env-set|env-unset)
@@ -91,15 +123,102 @@ case "$1" in
     cd "$WORK" || exit 2
     IMG=$(docker inspect developWeb --format '{{.Config.Image}}' | cut -d: -f1)
     docker tag "$IMG:$2" "$IMG:latest" && docker-compose up -d > /dev/null 2>&1 && echo "ROLLED_BACK $2" ;;
+  site-init)
+    N="$2"; F="$3"; R="$HOME/git-server/repo"; W="$HOME/git-server/work"
+    for P in "$R/$N.git" "$W/$N"; do [ -e "$P" ] && { echo "EXISTS $P"; exit 6; }; done
+    SH="$R/$F.git/hooks/post-receive"; [ -f "$SH" ] || { echo "NO_SOURCE_HOOK $SH"; exit 2; }
+    FL=$(printf %s "$F" | tr 'A-Z' 'a-z'); NL=$(printf %s "$N" | tr 'A-Z' 'a-z'); HT=$(mktemp)
+    sed -E -e "s#^REPO_DIR=\"(.*)/git-server/repo/$F\.git\"#REPO_DIR=\"\1/git-server/repo/$N.git\"#" \
+      -e "s#^WORK_DIR=\"(.*)/git-server/work/$F\"#WORK_DIR=\"\1/git-server/work/$N\"#" \
+      -e "s#^LOG_FILE=\"(.*)/deploy-$FL\.log\"#LOG_FILE=\"\1/deploy-$NL.log\"#" \
+      -e "s#docker logs $F( |\$)#docker logs $N\1#" "$SH" > "$HT"
+    C=0
+    for P in "^REPO_DIR=\"[^\"]*/git-server/repo/$N\.git\"" "^WORK_DIR=\"[^\"]*/git-server/work/$N\"" "^LOG_FILE=\"[^\"]*/deploy-$NL\.log\"" "docker logs $N( |$)"; do grep -qE "$P" "$HT" && C=$((C+1)); done
+    LEFT=$(grep -ci "$F" "$HT")
+    if [ "$C" != 4 ] || [ "$LEFT" != 0 ]; then rm -f "$HT"; echo "RENAME_FAIL replaced=$C/4 left=$LEFT"; exit 7; fi
+    mkdir -p "$W"
+    if ! git init -q --bare "$R/$N.git"; then rm -f "$HT"; echo "INIT_FAIL"; exit 8; fi
+    cp "$HT" "$R/$N.git/hooks/post-receive"; chmod 755 "$R/$N.git/hooks/post-receive"; rm -f "$HT"
+    # 방금 만든 것만 되돌린다(위에서 둘 다 없던 것을 확인했다)
+    if ! git clone -q "$R/$N.git" "$W/$N" 2>&1; then rm -rf "$R/$N.git" "$W/$N"; echo "CLONE_FAIL ROLLED_BACK"; exit 8; fi
+    act "site-init $N from $F"
+    echo "CREATED $R/$N.git"; echo "CLONED $W/$N"
+    grep -nE '^(REPO_DIR|WORK_DIR|LOG_FILE)=|docker logs' "$R/$N.git/hooks/post-receive" ;;
+  env-clone)
+    S="$HOME/git-server/work/$2/.env.local"; DD="$HOME/git-server/work/$3"; D="$DD/.env.local"
+    [ -f "$S" ] || { echo "NO_SOURCE"; exit 2; }
+    [ -d "$DD" ] || { echo "NO_TARGET_DIR"; exit 2; }
+    umask 077
+    if [ -e "$D" ]; then
+      EB="$HOME/env-backups/$3"; mkdir -p "$EB"; chmod 700 "$HOME/env-backups" "$EB"
+      B="$EB/.env.local.bak-$TS"; cp "$D" "$B" && chmod 600 "$B" || { echo "BACKUP_FAIL"; exit 3; }
+      prune "$EB" .env.local; echo "BACKUP $B"
+    fi
+    T="$DD/.env.local.serverctl-$TS"
+    cp "$S" "$T" && chmod 600 "$T" || { rm -f "$T"; echo "COPY_FAIL"; exit 3; }
+    [ -n "$(tail -c1 "$T")" ] && echo >> "$T"
+    DONE=""
+    while IFS=$'\t' read -r OP K V; do
+      [ -z "$OP" ] && continue
+      if [ "$OP" = gen ]; then V=$(openssl rand -hex 32 2>/dev/null); [[ "$V" =~ ^[0-9a-f]{64}$ ]] || { rm -f "$T"; V=""; echo "GEN_FAIL $K"; exit 3; }; fi
+      grep -v "^$K=" "$T" > "$T.n"; cat "$T.n" > "$T"; rm -f "$T.n"
+      printf '%s=%s\n' "$K" "$V" >> "$T"; V=""
+      echo "$(printf %s "$OP" | tr 'a-z' 'A-Z') $K"; DONE="$DONE $OP:$K"
+    done
+    mv -f "$T" "$D" && chmod 600 "$D" || { rm -f "$T"; echo "MOVE_FAIL"; exit 3; }
+    act "env-clone $2 -> $3$DONE"
+    echo "MODE $(stat -c %a "$D")"; echo "KEYS"; grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$D" | sed 's/=$//' ;;
+  nginx-site)
+    N="$2"; DOM="$3"; A="$NGE/sites-available/$N"; E="$NGE/sites-enabled/$N"
+    if sudo -n test -e "$A" || sudo -n test -e "$E" || sudo -n test -L "$E"; then echo "EXISTS $N"; exit 6; fi
+    [ -n "$(site_of "$DOM")" ] && { echo "DOMAIN_TAKEN $(site_of "$DOM")"; exit 6; }
+    NB="$NGB/.site-$N-$TS"; cat > "$NB"; chmod 600 "$NB"
+    if ! { sudo -n tee "$A" < "$NB" > /dev/null && sudo -n ln -s "$A" "$E"; }; then sudo -n rm -f "$E" "$A"; rm -f "$NB"; echo "WRITE_FAIL"; exit 3; fi
+    rm -f "$NB"
+    if ! ng_test; then sudo -n rm -f "$E" "$A"; echo "TEST_FAIL"; ng_test > /dev/null && echo "RESTORED"; exit 3; fi
+    if ! sudo -n systemctl reload nginx; then sudo -n rm -f "$E" "$A"; sudo -n systemctl reload nginx; echo "RELOAD_FAIL RESTORED"; exit 4; fi
+    act "nginx-site $N $DOM"; echo "APPLIED $A" ;;
+  nginx-site-undo)
+    # 헬스체크 실패 때: 이 도구가 만든 파일(첫 줄 표시)만 지운다
+    N="$2"; A="$NGE/sites-available/$N"; E="$NGE/sites-enabled/$N"
+    sudo -n head -1 "$A" | grep -q "^# serverctl nginx-site $N " || { echo "NOT_OURS"; exit 2; }
+    sudo -n rm -f "$E" "$A"; ng_test > /dev/null && sudo -n systemctl reload nginx && { act "nginx-site-undo $N"; echo "REMOVED $N"; } ;;
+  cert)
+    DOM="$2"; F=$(site_of "$DOM"); [ -n "$F" ] || { echo "NO_SITE"; exit 2; }
+    RF=$(readlink -f "$F"); BN=$(basename "$RF"); CB="$NGB/$BN.bak-$TS"
+    sudo -n cat "$RF" > "$CB" && chmod 600 "$CB" || { echo "BACKUP_FAIL"; exit 3; }
+    prune "$NGB" "$BN"; echo "BACKUP $CB"; echo "SITE $BN"
+    OUT=$(sudo -n certbot --nginx -d "$DOM" --redirect --non-interactive --agree-tos --keep-until-expiring 2>&1); R=$?
+    echo "$OUT" | grep -vE 'BEGIN|END|PRIVATE|-----|^[A-Za-z0-9+/=]{16,}$' | grep -vE '^\s*$' | tail -6
+    if [ $R != 0 ] || ! ng_test > /dev/null; then
+      sudo -n tee "$RF" < "$CB" > /dev/null; ng_test > /dev/null && sudo -n systemctl reload nginx && echo "RESTORED $CB"
+      act "cert $DOM FAILED"; echo "CERT_FAIL"; exit 5
+    fi
+    sudo -n systemctl reload nginx; act "cert $DOM"; echo "CERT_OK" ;;
+  cert-undo)
+    F="$NGB/$2.bak-$3"; RF=$(readlink -f "$NGE/sites-enabled/$2"); [ -f "$F" ] && [ -n "$RF" ] || { echo "NO_BACKUP"; exit 2; }
+    sudo -n tee "$RF" < "$F" > /dev/null; ng_test > /dev/null && sudo -n systemctl reload nginx && { act "cert-undo $2"; echo "RESTORED $F"; } ;;
+  deploy-info)
+    hook_info "$2"; echo "LOG $LF"; echo "CONTAINER $CN"
+    if [ -f "$LF" ]; then echo "LINES $(wc -l < "$LF")"; else echo "LINES 0"; fi ;;
+  deploy-status)
+    hook_info "$2"; FROM=$(( $3 + 1 ))
+    [ -f "$LF" ] && tail -n +$FROM "$LF" | grep -aqE '^\[[0-9:]+\] === .*\([0-9]+[^)]*\) ===' && echo "LOG_END"
+    [ -f "$LF" ] && tail -n +$FROM "$LF" | tail -25 | sed 's/^/| /'
+    docker ps --filter "name=^$CN\$" --format 'RUNNING {{.Names}} {{.Status}}' ;;
   *) echo "UNKNOWN"; exit 9 ;;
 esac
 `;
 
 // 서버에서 고정 스크립트 실행. args 는 호출 전에 형식 검사를 마친 값만. stdin 은 값(.env)·설정 본문 전달에만 쓴다.
-function remote(args, input) {
+// 시험 모드에서만 가짜 ssh(node 스크립트)를 쓴다
+const sshCmd = () => (TEST && process.env.SERVERCTL_SSH ? [process.execPath, [process.env.SERVERCTL_SSH]] : ["ssh", []]);
+function remote(args, input, host = HOST) {
+  if (!HOSTS.includes(host)) die(`대상 서버는 ${HOSTS.join("·")} 만이에요: ${host}`);
   const b64 = Buffer.from(REMOTE.replace(/\r\n/g, "\n")).toString("base64");
   const quoted = args.map((a) => `'${String(a).replace(/'/g, "")}'`).join(" ");
-  const r = spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", HOST, `LC_ALL=C bash -c "$(echo ${b64} | base64 -d)" serverctl ${quoted}`], {
+  const [bin, pre] = sshCmd();
+  const r = spawnSync(bin, [...pre, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, `LC_ALL=C bash -c "$(echo ${b64} | base64 -d)" serverctl ${quoted}`], {
     input: input ?? "",
     encoding: "utf8",
     timeout: 120_000,
@@ -124,7 +243,7 @@ const die = (s, code = 1) => {
 };
 
 // 홈페이지 헬스체크(브라우저 UA 로 200). 몇 번 다시 시도한다.
-async function health(tries = 6, gapMs = 10_000) {
+async function health(tries = 6, gapMs = TEST ? 50 : 10_000) {
   let last = "";
   for (let i = 0; i < tries; i++) {
     try {
@@ -141,6 +260,11 @@ async function health(tries = 6, gapMs = 10_000) {
 
 // 정비 대화(진행 중인 지시가 있으면)와 텔레그램에 남긴다. 값은 담지 않는다.
 async function report(text) {
+  if (TEST) {
+    // 시험: 진짜 홈페이지에 보내지 않고, 주어진 파일에만 남긴다(값이 섞이지 않았는지 시험이 본다)
+    if (process.env.SERVERCTL_REPORT_FILE) fs.appendFileSync(process.env.SERVERCTL_REPORT_FILE, `${mask(text)}\n---\n`);
+    return;
+  }
   try {
     const cfg = JSON.parse(fs.readFileSync(CONFIG, "utf8"));
     await fetch(`${String(cfg.serverUrl).replace(/\/+$/, "")}/api/factory/maintenance`, {
@@ -321,6 +445,279 @@ async function envChange(cmd, key) {
   await report(`.env.local ${cmd === "env-set" ? "설정" : "삭제"}: ${key} (${label}, 값은 기록하지 않음)\n백업: ${b}\n반영: rebuild 대기`);
 }
 
+// ───────── 새 사이트 만들기 ─────────
+
+// 위치 인자와 --옵션 값(--set·--gen 은 여러 번)을 나눈다
+export function parseOpts(args, multi = ["set", "gen"]) {
+  const pos = [];
+  const opts = Object.fromEntries(multi.map((k) => [k, []]));
+  for (let i = 0; i < args.length; i++) {
+    const m = /^--([a-z]+)(?:=(.*))?$/.exec(args[i]);
+    if (!m) {
+      pos.push(args[i]);
+      continue;
+    }
+    const v = m[2] ?? args[++i];
+    if (v === undefined) die(`--${m[1]} 에 값이 없어요.`);
+    if (multi.includes(m[1])) opts[m[1]].push(v);
+    else opts[m[1]] = v;
+  }
+  return { pos, opts };
+}
+
+const hostOpt = (opts) => {
+  const h = opts.host ?? HOST;
+  if (!HOSTS.includes(h)) die(`대상 서버는 ${HOSTS.join("·")} 만이에요: ${h}`);
+  return h;
+};
+
+// 서버 작업 폴더 인자 → 이름. ~/git-server/work/X, $HOME/…, 이 PC 셸이 ~ 를 풀어 버린 경로, 이름만 모두 받는다
+export function workName(p) {
+  const s = String(p ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const m = /(?:^|\/)git-server\/work\/([^/]+)$/.exec(s);
+  const name = m ? m[1] : s;
+  if (!NAME_RE.test(name)) die(`작업 폴더는 ~/git-server/work/<이름> 꼴이어야 해요: ${p}`);
+  return name;
+}
+
+const say2 = (what, out) => say(`${what}\n${out}`);
+const probe = async (url) => {
+  if (TEST) return "시험 모드 생략";
+  try {
+    const r = await fetch(url, { headers: { "User-Agent": UA }, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+    return String(r.status);
+  } catch (e) {
+    return `응답 없음(${e.message})`;
+  }
+};
+
+async function siteInit(args) {
+  const { pos, opts } = parseOpts(args);
+  const [name] = pos;
+  const from = opts.from;
+  const host = hostOpt(opts);
+  if (!NAME_RE.test(name ?? "") || !NAME_RE.test(from ?? "")) die("site-init <이름> --from <원본 이름> (영문·숫자·_- 로, 영문으로 시작)");
+  if (name.toLowerCase() === from.toLowerCase()) die("원본과 같은 이름은 쓸 수 없어요.");
+  const r = remote(["site-init", name, from], "", host);
+  if (/EXISTS/.test(r.out)) {
+    say2(`site-init ${name}: 이미 있어서 아무것도 바꾸지 않았어요.`, r.out);
+    process.exit(6);
+  }
+  if (r.code !== 0) {
+    say2(`site-init ${name}: 실패(코드 ${r.code}). 만든 것은 되돌렸어요.`, r.out);
+    await report(`서버 site-init ${name} (${host}, 원본 ${from})\n결과: 실패(${r.out.split("\n").pop()})`);
+    process.exit(r.code || 1);
+  }
+  say2(`site-init ${name}: ${host} 에 배포 저장소·훅·작업 폴더를 만들었어요(원본 ${from}, 이름 4곳 치환, 원본 이름 남은 곳 0).`, r.out);
+  await report(`서버 site-init ${name} (${host}, 원본 ${from})\n결과: bare 저장소 + post-receive 훅(이름 4곳 치환) + 작업 폴더 clone`);
+}
+
+async function envClone(args) {
+  const { pos, opts } = parseOpts(args);
+  if (pos.length !== 2) die("env-clone <원본 작업폴더> <대상 작업폴더> [--set KEY=VALUE]… [--gen KEY]…");
+  const host = hostOpt(opts);
+  const src = workName(pos[0]);
+  const dst = workName(pos[1]);
+  if (src === dst) die("원본과 대상이 같아요.");
+  const lines = [];
+  const names = [];
+  for (const kv of opts.set) {
+    const i = kv.indexOf("=");
+    const k = i > 0 ? kv.slice(0, i) : "";
+    const v = i > 0 ? kv.slice(i + 1) : "";
+    if (!KEY_RE.test(k)) die(`--set 은 KEY=VALUE 꼴이에요(KEY 는 영문 대문자·숫자·_): ${k || "(없음)"}`);
+    if (!v || /[\t\r\n\0]/.test(v) || v.length > 4096) die(`${k} 값이 비었거나, 탭·줄바꿈이 있거나, 4096자를 넘어요.`);
+    lines.push(`set\t${k}\t${v}`);
+    names.push(k);
+  }
+  for (const k of opts.gen) {
+    if (!KEY_RE.test(k)) die(`--gen KEY 형식이 올바르지 않아요: ${k}`);
+    lines.push(`gen\t${k}`);
+    names.push(k);
+  }
+  if (new Set(names).size !== names.length) die("같은 KEY 를 두 번 지정했어요.");
+  // 값은 ssh 인자가 아니라 표준입력으로만 넘긴다(서버 프로세스 목록·로그에 남지 않게)
+  const r = remote(["env-clone", src, dst], lines.join("\n") + "\n", host);
+  const b = /BACKUP (\S+)/.exec(r.out)?.[1] ?? null;
+  if (r.code !== 0) {
+    say2(`env-clone ${src} → ${dst}: 실패(코드 ${r.code}). 대상 .env.local 은 바뀌지 않았어요.`, r.out);
+    await report(`서버 .env.local 복사 ${src} → ${dst} (${host})\n결과: 실패, 대상은 그대로${b ? `\n백업: ${b}` : ""}`);
+    process.exit(r.code || 1);
+  }
+  // 결과는 변수 이름만 보여 준다(KEYS 아래 줄 중 이름 꼴만)
+  const keys = r.out.split("KEYS").pop().split("\n").map((s) => s.trim()).filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
+  const mode = /MODE (\d+)/.exec(r.out)?.[1] ?? "?";
+  const done = [...opts.set.map((kv) => `${kv.split("=")[0]}(설정)`), ...opts.gen.map((k) => `${k}(새로 생성, 값은 서버에만)`)];
+  say(`env-clone ${src} → ${dst}: 완료(권한 ${mode})${b ? `\n백업: ${b}` : "\n대상에 원래 .env.local 이 없었어요(백업 없음)"}\n바꾼 변수: ${done.join(", ") || "없음"}\n변수 이름 ${keys.length}개: ${keys.join(", ")}`);
+  await report(`서버 .env.local 복사 ${src} → ${dst} (${host}, 값은 서버 밖으로 나가지 않음)\n바꾼 변수: ${done.join(", ") || "없음"}\n백업: ${b ?? "없음(새 파일)"}`);
+}
+
+export function siteConfig(name, domain, port, body, ts = "") {
+  return `# serverctl nginx-site ${name} ${ts}
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    client_max_body_size ${body};
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:${port};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+`;
+}
+
+async function nginxSite(args) {
+  const { pos, opts } = parseOpts(args);
+  const [name] = pos;
+  const host = hostOpt(opts);
+  const domain = String(opts.domain ?? "").toLowerCase();
+  const port = Number(opts.port);
+  const body = opts.body ?? "300m";
+  if (!NAME_RE.test(name ?? "") || /^default$/i.test(name)) die("nginx-site <이름> --domain <도메인> --port <포트> [--body 300m]");
+  if (!DOMAIN_RE.test(domain)) die(`도메인 형식이 올바르지 않아요: ${opts.domain}`);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) die(`포트는 1024~65535 정수예요: ${opts.port}`);
+  if (!BODY_RE.test(body)) die(`--body 형식이 올바르지 않아요(예: 300m): ${body}`);
+  const ts = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  const r = remote(["nginx-site", name, domain], siteConfig(name, domain, port, body, ts), host);
+  const what = `nginx 새 사이트 ${name} (${domain} → 127.0.0.1:${port}, body ${body}, ${host})`;
+  if (/EXISTS|DOMAIN_TAKEN/.test(r.out)) {
+    say2(`${what}: 이미 있는 사이트·도메인이라 아무것도 바꾸지 않았어요.`, r.out);
+    process.exit(6);
+  }
+  if (r.code !== 0) {
+    const res = /TEST_FAIL/.test(r.out) ? `nginx -t 실패 → 새 파일 지움(${/RESTORED/.test(r.out) ? "nginx -t 다시 통과" : "다시 검사 실패!"})` : `적용 실패(코드 ${r.code}) → 새 파일 지움`;
+    say2(`${what}: ${res}`, r.out);
+    await report(`${what}\n결과: ${res}`);
+    process.exit(3);
+  }
+  // 헬스체크: 기존 사이트(블로그)가 그대로 200 이어야 한다. 새 도메인은 앱이 아직 없을 수 있어 응답만 적는다
+  const h = await health();
+  if (!h.ok) {
+    const back = remote(["nginx-site-undo", name], "", host);
+    const h2 = await health();
+    const res = `reload 후 헬스체크 실패(${h.detail}) → 새 사이트 지우고 reload(${back.code === 0 && /REMOVED/.test(back.out) ? "됨" : "실패"}), 되돌린 뒤 헬스체크 ${h2.ok ? "200" : `실패(${h2.detail})`}`;
+    say(`${what}: ${res}`);
+    await report(`${what}\n결과: ${res}`);
+    process.exit(4);
+  }
+  const p = await probe(`http://${domain}/`);
+  say(`${what}: 적용됨(nginx -t 통과, reload, 기존 사이트 헬스체크 200). 새 도메인 http 응답: ${p}\n되돌리기: 새로 만든 파일이라 백업 대신 nginx-site-undo 로 지울 수 있어요.`);
+  await report(`${what}\n결과: nginx -t 통과, reload, 헬스체크 200, 새 도메인 http ${p}`);
+}
+
+async function cert(args) {
+  const { pos, opts } = parseOpts(args);
+  const host = hostOpt(opts);
+  const domain = String(pos[0] ?? "").toLowerCase();
+  if (!DOMAIN_RE.test(domain)) die(`cert <도메인>: 도메인 형식이 올바르지 않아요: ${pos[0] ?? ""}`);
+  const r = remote(["cert", domain], "", host);
+  const b = backupOf(r.out);
+  const site = /SITE (\S+)/.exec(r.out)?.[1];
+  const what = `인증서 ${domain} (${host})`;
+  // 인증서·키 내용은 원래 출력되지 않지만, 혹시 섞이면 PEM 줄을 뺀다
+  const out = r.out.split("\n").filter((l) => !/BEGIN|END|PRIVATE|-----|^[A-Za-z0-9+/=]{16,}$/.test(l.trim())).join("\n");
+  if (r.code !== 0) {
+    const res = /NO_SITE/.test(r.out) ? "이 도메인의 nginx 사이트가 없어요(nginx-site 먼저)" : `certbot 실패 → 사이트 파일 백업으로 복원(${/RESTORED/.test(r.out) ? "됨" : "복원 확인 실패!"})`;
+    say2(`${what}: ${res}\n백업: ${b}`, out);
+    await report(`${what}\n결과: ${res}\n백업: ${b}`);
+    process.exit(5);
+  }
+  const h = await health();
+  if (!h.ok) {
+    const back = site ? remote(["cert-undo", site, tsOf(b)], "", host) : { code: 1, out: "" };
+    const res = `헬스체크 실패(${h.detail}) → 사이트 파일 백업으로 복원(${back.code === 0 && /RESTORED/.test(back.out) ? "됨" : "실패"})`;
+    say(`${what}: ${res}\n백업: ${b}`);
+    await report(`${what}\n결과: ${res}\n백업: ${b}`);
+    process.exit(4);
+  }
+  const p = await probe(`https://${domain}/`);
+  say2(`${what}: 발급·설치됨(https 리다이렉트, nginx -t 통과, reload, 기존 사이트 헬스체크 200). 새 도메인 https 응답: ${p}\n백업: ${b}`, out);
+  await report(`${what}\n결과: certbot --nginx --redirect 성공, 헬스체크 200, https ${p}\n백업: ${b}`);
+}
+
+const gitIn = (dir, args, extra = {}) =>
+  spawnSync("git", args, {
+    cwd: dir,
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 50 * 1024 * 1024,
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_SSH_COMMAND: TEST && process.env.SERVERCTL_SSH ? `"${process.execPath.replace(/\\/g, "/")}" "${process.env.SERVERCTL_SSH.replace(/\\/g, "/")}"` : "ssh -o BatchMode=yes",
+    },
+    ...extra,
+  });
+
+async function deployPush(args) {
+  const { pos } = parseOpts(args);
+  const [dirArg, remoteName, url] = pos;
+  if (pos.length !== 3) die("deploy-push <앱 폴더> <원격 이름> <원격 주소(serverpc:git-server/repo/<이름>.git)>");
+  const dir = path.resolve(String(dirArg));
+  const um = DEPLOY_URL_RE.exec(url ?? "");
+  if (!um) die(`원격 주소는 serverpc:git-server/repo/<이름>.git 또는 serverpc2:… 꼴만이에요: ${url}`);
+  const [, host, name] = um;
+  if (!REMOTE_NAME_RE.test(remoteName ?? "")) die(`원격 이름 형식이 올바르지 않아요: ${remoteName}`);
+  if (!fs.existsSync(dir) || gitIn(dir, ["rev-parse", "--git-dir"]).status !== 0) die(`git 앱 폴더가 아니에요: ${dir}`);
+  if (gitIn(dir, ["rev-parse", "--verify", "-q", "refs/heads/main"]).status !== 0) die("앱 폴더에 main 브랜치가 없어요.");
+  const cur = gitIn(dir, ["remote", "get-url", remoteName]);
+  let added = false;
+  if (cur.status === 0) {
+    if (cur.stdout.trim() !== url) die(`원격 ${remoteName} 이 이미 다른 주소예요(${cur.stdout.trim()}). 바꾸지 않았어요.`);
+  } else {
+    if (gitIn(dir, ["remote", "add", remoteName, url]).status !== 0) die(`원격 ${remoteName} 을 추가하지 못했어요.`);
+    added = true;
+  }
+  const info = remote(["deploy-info", name], "", host);
+  if (info.code !== 0) {
+    if (added) gitIn(dir, ["remote", "remove", remoteName]);
+    die(`서버에 배포 저장소 훅이 없어요(site-init 먼저): ${info.out}`);
+  }
+  const container = /CONTAINER (\S+)/.exec(info.out)?.[1] ?? "?";
+  const from = Number(/LINES (\d+)/.exec(info.out)?.[1] ?? 0);
+  const head = gitIn(dir, ["rev-parse", "--short", "main"]).stdout.trim();
+  say(`deploy-push: ${path.basename(dir)} main(${head}) → ${remoteName}(${url}). 서버 배포 훅이 끝날 때까지 기다려요(보통 5~6분).`);
+  // 강제 push 없음. post-receive 훅이 빌드·교체를 마칠 때까지 push 가 끝나지 않는다
+  const p = gitIn(dir, ["push", remoteName, "main:main"], { timeout: 40 * 60_000 });
+  const full = `${p.stdout ?? ""}\n${p.stderr ?? ""}`.replace(/\x1b\[[0-9;]*m/g, "");
+  let st = { out: "" };
+  for (let i = 0; i < (TEST ? 3 : 90); i++) {
+    st = remote(["deploy-status", name, from], "", host);
+    if (/LOG_END/.test(st.out) || p.status !== 0) break;
+    await new Promise((res) => setTimeout(res, TEST ? 50 : 10_000));
+  }
+  const logEnd = /LOG_END/.test(st.out);
+  const running = new RegExp(`RUNNING ${container}\\b`).test(st.out);
+  const failed = /Failed to compile|Type error|\[rejected\]|error: failed to push|ERROR: /i.test(full);
+  const ok = p.status === 0 && logEnd && running && !failed;
+  if (p.status !== 0 && added && !/->\s+main/.test(full)) gitIn(dir, ["remote", "remove", remoteName]); // 서버까지 가지 못했으면 추가한 원격도 되돌린다
+  const tailOf = (s, n) => (s.length > n ? `…${s.slice(-n)}` : s);
+  const res = ok
+    ? `배포 완료: push 성공, 배포 로그 끝, 컨테이너 ${container} 실행 중`
+    : p.status !== 0
+      ? `push 실패(코드 ${p.status ?? p.error?.message})`
+      : !logEnd
+        ? "배포 로그가 끝나지 않았어요(시간 초과)"
+        : failed
+          ? "서버 빌드 실패(기존 컨테이너가 있으면 그대로)"
+          : `컨테이너 ${container} 가 실행 중이 아니에요`;
+  say(`deploy-push ${name}: ${res}\n--- 배포 로그 끝부분 ---\n${tailOf(st.out.split("\n").filter((l) => l.startsWith("| ") || l.startsWith("RUNNING")).join("\n"), 2500)}${ok ? "" : `\n--- push 출력 끝부분 ---\n${tailOf(full.trim(), 2500)}`}`);
+  await report(`배포 push ${path.basename(dir)} main(${head}) → ${url}\n결과: ${res}`);
+  if (!ok) process.exit(5);
+}
+
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
@@ -387,8 +784,18 @@ async function main() {
     }
     case "backups":
       return say(remote(["backups"]).out);
+    case "site-init":
+      return siteInit(rest);
+    case "env-clone":
+      return envClone(rest);
+    case "nginx-site":
+      return nginxSite(rest);
+    case "cert":
+      return cert(rest);
+    case "deploy-push":
+      return deployPush(rest);
     default:
-      die("서브커맨드: env-keys | env-set KEY | env-unset KEY | nginx-show | nginx-set-directive NAME VALUE [LOCATION] | nginx-apply FILE | rebuild | restore TIMESTAMP | backups", 2);
+      die(`서브커맨드: ${SUBCOMMANDS.join(" | ")}`, 2);
   }
 }
 
