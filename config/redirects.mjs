@@ -10,6 +10,6 @@ export const legacyRedirects = [
   { source: "/release/:path*", destination: "/project", statusCode: 301 },
   // 외주 신청 → 문의·의뢰 페이지의 '외주 의뢰'
   { source: "/work-request", destination: "/contact?type=work", statusCode: 301 },
-  // 클로드 작업 현황 → 앱 공장 통제실 [사용량] 탭
-  { source: "/admin/claude", destination: "/admin/factory?tab=usage", statusCode: 301 },
+  // 클로드 작업 현황 → factory 통제실 [사용량] 탭(외부 주소)
+  { source: "/admin/claude", destination: "https://factory.buyoungsilcoding.com/admin/factory?tab=usage", statusCode: 301 },
 ];

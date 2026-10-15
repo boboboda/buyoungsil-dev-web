@@ -29,7 +29,7 @@ const moved = {
   "/release/post/abc123": "/project",
   "/release/some-app": "/project",
   "/work-request": "/contact?type=work",
-  "/admin/claude": "/admin/factory?tab=usage",
+  "/admin/claude": "https://factory.buyoungsilcoding.com/admin/factory?tab=usage",
 };
 
 for (const [from, to] of Object.entries(moved)) {
