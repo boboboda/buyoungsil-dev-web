@@ -325,6 +325,7 @@ const jobRoute = loadTs("app/api/admin/factory/jobs/[id]/route.ts", {
 });
 const maintRoute = loadTs("app/api/admin/factory/maintenance/route.ts", {
   "@/lib/factory/admin": { requireAdmin },
+  "@/lib/factory/deployRevert": { requestRevert: async () => ({ ok: true, status: 200, message: "" }) }, // 배포 되돌리기(5-2)는 이 시험과 상관없다
   "@/lib/factory/ai": ai,
   "@/lib/factory/approvals": approvals,
   "@/lib/factory/maintenance": { maintenanceOverview: async () => ({}), sendMaintenance: async (i) => (approvalCalls.push(["send", i]), { ok: true, status: 200, message: "" }), setTurnEngine: async () => ({}), cancelTurn: async () => ({}), closeThread: async () => ({}), queueAction: async () => ({}) },

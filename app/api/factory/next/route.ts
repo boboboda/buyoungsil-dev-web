@@ -35,6 +35,7 @@
 //   출시 일감(kind=release)에는 release: { kind, stages, outbox, resumeFrom, resumeNote, key } 가 붙는다(lib/factory/release.ts releaseJobExtras).
 //   도구 일감(kind=tool, 2-3): 감독 프로그램이 toolSlots=N(지금 더 받을 수 있는 도구 일감 수, 0~4)을 보내면 앱 슬롯과 따로 N개까지 내준다. 각 job 에 toolInput({ count, subjects, extra, refArtIds, estimatedCost, confirmed })·card·projectToolSettings·approvedArts·pickedArts 가 붙는다(작업 규칙·첫 지시문은 없음: AI 턴이 없다).
 //     응답에는 toolJobs: { concurrency, autoApprove } 도 붙어 감독 프로그램이 도구 슬롯 수를 정한다. toolSlots 를 안 보내는 예전 감독 프로그램은 도구 일감을 받지 않는다.
+//   실패 단계부터 다시(5-2): [실패 단계부터 다시]로 승인된 새 앱·수정 일감에는 stageResume: { from, note, label } 이 붙는다(lib/factory/stageRetry.ts). PC 에 같은 세션·작업 폴더가 남아 있으면 같은 세션으로 이어서, 없으면 처음부터.
 //   병행 실행(단계 C-1): 각 job 에 parallelGroup(문자열 또는 null)이 붙는다. 수정(revision) 일감이 그룹을 가지면 감독 프로그램은 앱 폴더가 아니라 git worktree 에서 실행하고
 //   끝난 순서대로 기본 브랜치에 합친다. 같은 앱·같은 그룹의 승인된 수정 일감은 설정 '같은 앱에서 같이 돌릴 수'(parallelPerApp, 기본 2)개까지 같이 내준다. 그룹이 없으면 앱당 1개.
 //   지휘자(단계 C-2): 감독 프로그램이 conductor=1(지금 판단을 맡을 수 있음) 또는 conductor=busy(판단 중)를 보내면, 같은 앱의 승인된 수정 일감이 그룹 없이 2개 이상일 때 응답에
@@ -242,8 +243,11 @@ export async function GET(req: NextRequest) {
     const appChecks = claimed.length ? await getAppChecks().catch(() => ({} as Record<string, string[]>)) : {};
     // 결과물 카드(2-2): 카드를 부른 일감은 그 카드로 만든 설정을 projectToolSettings 로 내려 주고(감독 프로그램이 .factory/project-settings.json 으로 씀), 기본 그림 고정은 picked 맨 앞에 붙인다. 카드 정보는 card 로
     const cardRuns = await cardRunForJobs(claimed.flatMap((j) => (j.cardId ? [j.cardId] : []))).catch(() => new Map<string, CardRun>());
+    // 실패 단계부터 다시(5-2): 단계부터 다시 하라고 승인된 새 앱·수정 일감에 stageResume: { from, note, label } 을 붙인다(PC 에 같은 세션이 있으면 이어서, 없으면 처음부터)
+    const stageResumes = await import("@/lib/factory/stageRetry").then((m) => m.stageResumeForJobs(prisma as never, claimed)).catch(() => new Map<string, { from: string; note: string | null; label: string }>());
     const jobs = claimed.map((j) => {
       const release = releases.get(j.id);
+      const stageResume = stageResumes.get(j.id);
       const cardRun = j.cardId ? cardRuns.get(j.cardId) : undefined;
       const projectToolSettings = cardRun ? { version: cardRun.version, settings: cardRun.settings } : toolSettings.get(j.appSlug);
       const checks = appChecks[j.appSlug]?.length ? { checkCommands: appChecks[j.appSlug] } : {};
@@ -255,9 +259,9 @@ export async function GET(req: NextRequest) {
       if (j.kind === LAB_KIND) return { ...j, ...card, ...(cardRun ? { projectToolSettings } : {}) }; // 실험은 앱 작업 규칙·첫 지시문을 붙이지 않는다(감독 프로그램이 머리말을 만든다). 카드를 불렀으면 카드 정보와 설정만
 
       try {
-        return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...card, ...arts };
+        return { ...j, ...renderRules(j, overrides), ...(release ? { release } : {}), ...(stageResume ? { stageResume } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...card, ...arts };
       } catch {
-        return { ...j, ...(release ? { release } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...card, ...arts };
+        return { ...j, ...(release ? { release } : {}), ...(stageResume ? { stageResume } : {}), ...(projectToolSettings ? { projectToolSettings } : {}), ...card, ...arts };
       }
     });
 

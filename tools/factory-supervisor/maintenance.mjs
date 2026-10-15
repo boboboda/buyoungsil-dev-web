@@ -25,6 +25,7 @@ import { compactSession } from "./compact.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
 import { RESUME_MESSAGE, resumeFailed } from "./pause.mjs";
+import { buildRevertCommit, migrationsChanged } from "./revert.mjs";
 
 const IS_WIN = process.platform === "win32";
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -570,20 +571,41 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
 // 사람이 [배포]를 누른 것: 그 커밋을 서버 배포 저장소로 push(서버 훅이 빌드·교체). 정해진 명령 하나뿐이다.
 async function deploy(d, ctx) {
   const { log, cfg } = ctx;
-  const commit = typeof d?.commit === "string" ? d.commit : "";
+  let commit = typeof d?.commit === "string" ? d.commit : "";
   const threadId = typeof d?.threadId === "string" ? d.threadId : "";
   if (!COMMIT_RE.test(commit) || !threadId) return;
+  const revertTo = typeof d?.revertTo === "string" && COMMIT_RE.test(d.revertTo) ? d.revertTo : ""; // 배포 되돌리기(5-2): 이 커밋의 내용으로 되돌리는 커밋을 만들어 배포한다
   const dir = path.resolve(expand(cfg.selfdevDir || "~/dev/factory/selfdev"));
   const git = makeGit(dir);
   git(["fetch", "-q", "origin", "main"]);
-  if (git(["merge-base", "--is-ancestor", commit, "origin/main"]).status !== 0) {
-    log(`[정비 배포] ${short(commit)} 는 GitHub main 에 없는 커밋이라 배포하지 않아요.`);
-    const s = await post(ctx, { action: "deploy_start", threadId, commit });
-    if (s.status === 200) await post(ctx, { action: "deploy_done", threadId, ok: false, output: "GitHub main 에 없는 커밋이라 배포하지 않았어요." });
-    return;
+  if (revertTo) {
+    const s0 = await post(ctx, { action: "deploy_start", threadId, commit });
+    if (s0.status !== 200) return log(`[정비 되돌리기] 시작 거절(${s0.status}): ${s0.data?.message ?? ""}`);
+    log(`[정비 되돌리기] ${short(revertTo)} 버전 상태로 되돌리는 커밋을 만들어요.`);
+    const made = buildRevertCommit({ dir, target: revertTo, log });
+    if (!made.ok) {
+      log(`[정비 되돌리기] 하지 않았어요: ${made.reason}`);
+      await sendDeployDone(ctx, threadId, false, `되돌리기를 하지 않았어요. 서버는 그대로예요.\n${made.reason}`);
+      return;
+    }
+    const rc = await post(ctx, { action: "deploy_revert_commit", threadId, from: revertTo, commit: made.commit });
+    if (rc.status !== 200) {
+      await sendDeployDone(ctx, threadId, false, `되돌리기 커밋(${short(made.commit)})은 만들었지만 홈페이지에 알리지 못해 배포하지 않았어요(${rc.status}). 서버는 그대로예요. [이전 버전으로]를 다시 누르면 이어서 해요.`);
+      return;
+    }
+    commit = made.commit;
+  } else {
+    if (git(["merge-base", "--is-ancestor", commit, "origin/main"]).status !== 0) {
+      log(`[정비 배포] ${short(commit)} 는 GitHub main 에 없는 커밋이라 배포하지 않아요.`);
+      const s = await post(ctx, { action: "deploy_start", threadId, commit });
+      if (s.status === 200) await post(ctx, { action: "deploy_done", threadId, ok: false, output: "GitHub main 에 없는 커밋이라 배포하지 않았어요." });
+      return;
+    }
+    // 앞선 배포 대비 DB 마이그레이션이 바뀌었는지(배포 되돌리기를 막는 판단에 쓴다). 모르면 보내지 않는다
+    const migrations = typeof d?.prevCommit === "string" ? migrationsChanged(git, d.prevCommit, commit) : null;
+    const s = await post(ctx, { action: "deploy_start", threadId, commit, ...(typeof migrations === "boolean" ? { migrations } : {}) });
+    if (s.status !== 200) return log(`[정비 배포] 시작 거절(${s.status}): ${s.data?.message ?? ""}`);
   }
-  const s = await post(ctx, { action: "deploy_start", threadId, commit });
-  if (s.status !== 200) return log(`[정비 배포] 시작 거절(${s.status}): ${s.data?.message ?? ""}`);
   const remote = cfg.deployRemote || "serverpc:git-server/repo/developWeb.git";
   log(`[정비 배포] ${short(commit)} → ${remote}`);
   const output = await new Promise((res) => {
@@ -624,13 +646,19 @@ async function deploy(d, ctx) {
             : "배포 결과를 확인하지 못했어요(컨테이너 교체 표시가 없음).";
   const report = `${summary}\n\n--- 배포 로그 끝부분 ---\n${tail(full, ok ? 600 : 2500)}`;
   // 결과 보고는 받아들여질 때까지 다시 보낸다(최대 5분)
+  const sent = await sendDeployDone(ctx, threadId, ok, report);
+  log(`[정비 배포] ${ok ? "완료" : "실패"} (${short(commit)}) ${summary}${sent ? "" : " — 결과를 홈페이지에 보고하지 못했어요"}`);
+}
+
+// 배포 결과 보고: 받아들여질 때까지 다시 보낸다(최대 5분). 받아들여졌으면 true
+async function sendDeployDone(ctx, threadId, ok, output) {
   let sent = false;
   for (let i = 0; i < 20 && !sent; i++) {
-    const r = await post(ctx, { action: "deploy_done", threadId, ok, output: report });
+    const r = await post(ctx, { action: "deploy_done", threadId, ok, output });
     sent = r.status === 200 || r.status === 404 || r.status === 409;
     if (!sent) await new Promise((res) => setTimeout(res, 15_000));
   }
-  log(`[정비 배포] ${ok ? "완료" : "실패"} (${short(commit)}) ${summary}${sent ? "" : " — 결과를 홈페이지에 보고하지 못했어요"}`);
+  return sent;
 }
 
 // 홈페이지가 다시 200 을 줄 때까지 기다린다(브라우저 UA). 배포 직후 컨테이너가 바뀌는 동안은 502 가 난다.

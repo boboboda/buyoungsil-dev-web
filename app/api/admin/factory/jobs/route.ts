@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
       phase: true,
       summary: true,
       failReason: true,
+      failStage: true,
       attempts: true,
       maxAttempts: true,
       workerId: true,

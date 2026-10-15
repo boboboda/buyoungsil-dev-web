@@ -568,6 +568,24 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
       return res.count > 0 ? done("재시도하도록 승인했어요.") : explainNoChange(id, "재시도");
     }
 
+    case "retry-stage": {
+      // 실패 단계부터 다시(5-2): 같은 세션이 PC 에 남아 있으면 그 단계의 오류만 고치게 이어서 한다. 없으면 감독 프로그램이 처음부터 다시 한다
+      const job = await prisma.factoryJob.findUnique({ where: { id }, select: { kind: true, status: true, failStage: true, failReason: true } });
+      if (!job) return refuse(404, "없는 지시예요.");
+      const { stageRetryCheck, stageRetryData, stageLabel } = await import("@/lib/factory/stageRetry");
+      const check = stageRetryCheck(job);
+      if (check.ok === false) return refuse(409, check.reason);
+
+      const res = await prisma.factoryJob.updateMany({
+        where: { id, status: "failed" },
+        data: { ...(Object.hasOwn(body, "aiModel") ? modelData : {}), ...engineData, ...stageRetryData(job, now)! },
+      });
+      if (res.count > 0) {
+        await prisma.factoryJobLog.create({ data: { jobId: id, level: "info", message: `단계부터 다시 승인: '${stageLabel(check.stage)}' 단계 (PC 에 같은 세션이 남아 있으면 이어서, 없으면 처음부터)` } }).catch(() => undefined);
+      }
+      return res.count > 0 ? done(`'${stageLabel(check.stage)}' 단계부터 다시 하도록 승인했어요. PC 에 이전 세션이 남아 있으면 이어서, 없으면 처음부터 해요.`) : explainNoChange(id, "재시도");
+    }
+
     case "confirm": {
       // 도구 일감(2-3): 비용 한도로 멈춘 일감을 [그대로 진행]. 한 번 확인된 일감은 한도 검사 없이 다시 대기열에 들어간다
       const job = await prisma.factoryJob.findUnique({ where: { id }, select: { kind: true, status: true, toolInput: true } });

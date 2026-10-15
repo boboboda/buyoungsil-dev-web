@@ -2,7 +2,8 @@
 // 감독 프로그램 ↔ 공장 정비. 작업 PC 토큰으로만.
 //   { action: "start", turnId }                                   대기 중인 정비 지시를 시작으로 표시
 //   { action: "report", turnId, logs?: string[], done?: { ok, text, sessionId?, pushedCommit?, needsDeploy? } }
-//   { action: "deploy_start", threadId, commit }                  사람이 누른 배포를 시작
+//   { action: "deploy_start", threadId, commit, migrations? }     사람이 누른 배포를 시작(migrations: 앞선 배포 대비 DB 마이그레이션이 바뀌었나, 감독 프로그램이 git 으로 확인)
+//   { action: "deploy_revert_commit", threadId, from, commit }    배포 되돌리기(5-2): 감독 프로그램이 되돌리기 커밋(commit)을 GitHub main 에 올렸다(from = 되돌릴 커밋). 이 커밋을 배포한다
 //   { action: "deploy_done", threadId, ok, output }               배포 결과
 //   { action: "server_change", turnId?, text }                    serverctl 이 서버 설정을 바꿀 때 기록(값 없음)
 // report 는 헤더 X-Request-Id 가 같으면 한 번만 처리한다(감독 프로그램의 재전송 대기열 중복 방지).
@@ -12,11 +13,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { fail, guardWorker } from "@/lib/factory/http";
 import { markRequest, requestIdOf, seenRequest } from "@/lib/factory/requestSeen";
 import { deployFinished, deployStarted, noteServerChange, reportTurn, startTurn } from "@/lib/factory/maintenance";
+import { revertCommitMade } from "@/lib/factory/deployRevert";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
+const COMMIT = /^[0-9a-f]{7,40}$/;
 
 export async function POST(req: NextRequest) {
   const blocked = await guardWorker(req);
@@ -40,7 +43,9 @@ export async function POST(req: NextRequest) {
       if (r.ok) await markRequest(requestId);
     }
     else if (body.action === "deploy_start" && typeof body.threadId === "string" && ID.test(body.threadId) && typeof body.commit === "string") {
-      r = await deployStarted(body.threadId, body.commit);
+      r = await deployStarted(body.threadId, body.commit, { migrations: typeof body.migrations === "boolean" ? body.migrations : undefined });
+    } else if (body.action === "deploy_revert_commit" && typeof body.threadId === "string" && ID.test(body.threadId) && typeof body.from === "string" && COMMIT.test(body.from) && typeof body.commit === "string" && COMMIT.test(body.commit)) {
+      r = await revertCommitMade(body.threadId, body.from, body.commit);
     } else if (body.action === "deploy_done" && typeof body.threadId === "string" && ID.test(body.threadId)) {
       r = await deployFinished(body.threadId, body.ok === true, typeof body.output === "string" ? body.output : "");
     } else if (body.action === "server_change" && typeof body.text === "string") {

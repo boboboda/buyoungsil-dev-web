@@ -16,6 +16,7 @@ import HandoffBox from "./HandoffBox";
 import DiffView from "./DiffView";
 import { PLAN_LABELS, type PlanStatus } from "@/lib/factory/planLabels";
 import JobSizeNotice from "./JobSizeNotice";
+import { stageLabel, stageRetryCheck } from "@/lib/factory/stageRetry";
 
 type Status =
   | "pending"
@@ -44,6 +45,7 @@ interface JobRow {
   phase: string | null;
   summary: string | null;
   failReason: string | null;
+  failStage?: string | null; // 실패한 단계(없으면 [실패 단계부터 다시]를 안 보인다)
   attempts: number;
   maxAttempts: number;
   workerId: string | null;
@@ -544,6 +546,19 @@ function JobDetailView({
               onPress={() => onAct(job.id, { action: "retry", aiEngine, ...modelBody })}
             >
               다시 시도
+            </Button>
+          )}
+          {job.status === "failed" && stageRetryCheck(job).ok && (
+            <Button
+              className="min-h-11 flex-1 sm:flex-none"
+              color="primary"
+              data-retry-stage=""
+              isDisabled={busy}
+              size="sm"
+              variant="flat"
+              onPress={() => onAct(job.id, { action: "retry-stage", aiEngine, ...modelBody }, `'${stageLabel(job.failStage)}' 단계에서 실패했어요. 같은 세션으로 이어서 그 오류만 고치게 할까요? (이 PC 에 세션·작업 폴더가 없으면 처음부터 다시 해요)`)}
+            >
+              실패 단계부터 다시{job.failStage ? ` (${stageLabel(job.failStage)})` : ""}
             </Button>
           )}
           {active && (

@@ -550,7 +550,12 @@ export async function maintenanceForNext(engines: readonly AiEngine[] = ["claude
   }
   const dep = await prisma.factoryMaintenance.findFirst({ where: { deployRequestedAt: { not: null }, deployStartedAt: null, deployResult: null } });
 
-  if (dep?.deployCommit) out.maintenanceDeploy = { threadId: dep.id, commit: dep.deployCommit };
+  if (dep?.deployCommit) {
+    // prevCommit: 가장 최근에 성공한 배포 커밋(감독 프로그램이 그 사이 DB 마이그레이션이 바뀌었는지 보고하려고). revertTo: 배포 되돌리기(5-2)면 되돌릴 커밋 — 감독 프로그램이 되돌리기 커밋을 만든 뒤 그걸 배포한다
+    const prev = await prisma.factoryDeploy.findFirst({ where: { ok: true }, orderBy: { requestedAt: "desc" }, select: { commit: true } }).catch(() => null);
+
+    out.maintenanceDeploy = { threadId: dep.id, commit: dep.deployCommit, ...(dep.deployRevertTo ? { revertTo: dep.deployRevertTo } : {}), ...(prev?.commit ? { prevCommit: prev.commit } : {}) };
+  }
 
   return out;
 }
@@ -647,7 +652,7 @@ export async function reportTurn(body: TurnReport): Promise<Result> {
   return { ok: true, status: 200, message: "결과 저장" };
 }
 
-export async function deployStarted(threadId: string, commit: string): Promise<Result> {
+export async function deployStarted(threadId: string, commit: string, extra: { migrations?: boolean | null } = {}): Promise<Result> {
   const now = new Date();
   const r = await prisma.factoryMaintenance.updateMany({
     where: { id: threadId, deployCommit: commit, deployRequestedAt: { not: null }, deployStartedAt: null, deployResult: null },
@@ -657,7 +662,7 @@ export async function deployStarted(threadId: string, commit: string): Promise<R
   if (r.count) {
     const d = await openDeploy(threadId, commit);
 
-    if (d) await prisma.factoryDeploy.update({ where: { id: d.id }, data: { startedAt: now } });
+    if (d) await prisma.factoryDeploy.update({ where: { id: d.id }, data: { startedAt: now, ...(typeof extra.migrations === "boolean" ? { migrations: extra.migrations } : {}) } });
   }
 
   return r.count ? { ok: true, status: 200, message: "배포 시작" } : fail(409, "배포 요청이 없거나 이미 시작됐어요.");
@@ -702,10 +707,20 @@ export async function deployFinished(threadId: string, ok: boolean, output: stri
   }
   const list = items?.length ? `\n포함된 지시:\n${itemsText(items)}` : "";
 
+  const revert = d?.kind === "revert"; // 배포 되돌리기(5-2): 결과를 되돌리기 문구로 알린다
+  const revertText = ok ? `배포 되돌리기 완료(${short(d?.revertTo)} 버전 상태, 되돌리기 커밋 ${short(t.deployCommit)}).` : `배포 되돌리기 실패: ${clean(output, 1500)}`;
+
   await prisma.factoryMaintenanceMessage.create({
-    data: { maintenanceId: threadId, role: "system", text: ok ? `서버 배포 완료(${short(t.deployCommit)}${d?.via ? `, ${d.via}` : ""}).${list}` : `서버 배포 실패: ${clean(output, 1500)}${list}` },
+    data: { maintenanceId: threadId, role: "system", text: revert ? revertText : ok ? `서버 배포 완료(${short(t.deployCommit)}${d?.via ? `, ${d.via}` : ""}).${list}` : `서버 배포 실패: ${clean(output, 1500)}${list}` },
   });
-  await notifyMaintenance(ok ? "deployed" : "deploy_failed", threadId, undefined, { items: items ?? undefined, via: d?.via ?? undefined });
+  if (revert) {
+    await notifyText(
+      ok
+        ? `↩️ 배포 되돌리기 완료\n${short(d?.revertTo)} 버전 상태로 돌아갔어요(되돌리기 커밋 ${short(t.deployCommit)}).`
+        : `↩️ 배포 되돌리기 실패\n${short(d?.revertTo)} 버전으로 돌아가지 못했어요. ${clean(output, 400)}`,
+      "/admin/factory",
+    ).catch(() => undefined);
+  } else await notifyMaintenance(ok ? "deployed" : "deploy_failed", threadId, undefined, { items: items ?? undefined, via: d?.via ?? undefined });
   // 배포가 실패했으면 다시 '배포 필요'를 알릴 수 있게 한다
   if (!ok) await setSettingValue(NOTIFIED_KEY, null);
 

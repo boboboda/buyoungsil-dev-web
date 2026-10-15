@@ -853,6 +853,7 @@ model FactoryMaintenance {
   deployStartedAt   DateTime?
   deployedAt        DateTime?
   deployResult      String?                     @db.Text
+  deployRevertTo    String? // 배포 되돌리기(5-2): 되돌릴 커밋(그 상태로 다시 배포). 되돌리기 커밋은 감독 프로그램이 만든 뒤 deployCommit 으로 바뀌고 이 값은 지운다
   createdAt         DateTime                    @default(now())
   updatedAt         DateTime                    @updatedAt
   messages          FactoryMaintenanceMessage[]
@@ -899,6 +900,9 @@ model FactoryDeploy {
   ok            Boolean? // null = 아직 결과 없음
   result        String?            @db.Text
   items         String?            @db.Text // 이 배포에 포함된 지시 목록 JSON [{ turnId, threadId, title, commit }]
+  kind          String             @default("deploy") // deploy | revert(배포 되돌리기, 5-2)
+  revertTo      String? // revert: 되돌린 대상 커밋(그 상태로 돌아감). commit 은 감독 프로그램이 만든 되돌리기 커밋
+  migrations    Boolean? // 이 배포가 앞선 배포 대비 DB 마이그레이션(prisma/migrations)을 바꿨는가. null = 모름(예전 배포). true 인 배포 사이로는 되돌릴 수 없다
   maintenance   FactoryMaintenance @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
 
   @@index([requestedAt])

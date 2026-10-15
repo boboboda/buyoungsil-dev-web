@@ -99,6 +99,9 @@ interface Overview {
     ok: boolean | null;
     result: string | null;
     items?: { title: string; commit: string }[] | null;
+    kind?: string; // deploy | revert(배포 되돌리기, 5-2)
+    revertTo?: string | null;
+    revert?: { allowed: boolean; reason: string | null } | null; // 성공한 배포의 [이전 버전으로] 가능 여부(예전 서버에는 없다)
   }[];
   threads: {
     id: string;
@@ -427,6 +430,26 @@ export default function FactoryOverview({
     setBusy(null);
     load();
   };
+  // 배포 되돌리기(5-2): 배포 기록의 [이전 버전으로]. 확인창을 거쳐 정비 주소의 revert 로 보낸다(서버가 조건을 다시 검사한다)
+  const revertDeploy = async (d: { id: string; commit: string }) => {
+    if (!window.confirm(`${short(d.commit)} 버전 상태로 되돌려서 다시 배포할까요?
+
+• 되돌리기 커밋을 새로 만들어 올려요(기록은 지워지지 않아요).
+• DB 마이그레이션은 되돌리지 않아요.
+• 빌드 3~4분 동안 홈페이지가 잠깐 끊길 수 있어요.`)) return;
+    setBusy(`revert:${d.id}`);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/factory/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "revert", deployId: d.id }) });
+      const r = (await res.json().catch(() => ({}))) as { message?: string };
+
+      setNotice(r.message ?? (res.ok ? "되돌리기를 요청했어요." : "되돌리지 못했어요."));
+    } catch {
+      setNotice("서버에 연결하지 못했어요.");
+    }
+    setBusy(null);
+    load();
+  };
   // 묶음 승인: 묶음 안의 승인 대기 일감을 한 번에 승인한다(일감 탭의 [묶음 승인]과 같은 주소)
   const groupApprove = async (jobId: string, confirmText?: string) => {
     if (confirmText && !window.confirm(confirmText)) return;
@@ -730,6 +753,7 @@ export default function FactoryOverview({
         onMore={() => full && full.nextCursor && loadAll(full.kind, full)}
         onShowAll={() => tab !== "progress" && loadAll(tab)}
         onShowRecent={() => setFull(null)}
+        onRevert={revertDeploy}
         onTab={(k) => {
           // 접혀 있을 때 탭을 누르면 펼친다
           if (!historyOpen) setOpen(true);
@@ -848,6 +872,7 @@ export function HistoryPanelView({
   onShowAll,
   onMore,
   onShowRecent,
+  onRevert,
   initialLiveOnly = false,
 }: {
   data: HistoryData | null;
@@ -861,6 +886,7 @@ export function HistoryPanelView({
   onShowAll: () => void;
   onMore: () => void;
   onShowRecent: () => void;
+  onRevert?: (d: HistoryData["deploys"][number]) => void; // 배포 기록의 [이전 버전으로](5-2). 없으면 버튼을 안 그린다(시험·미리보기)
   initialLiveOnly?: boolean; // '진행 중만 보기' 처음 값(시험·미리보기용)
 }) {
   const [liveOnly, setLiveOnly] = useState(initialLiveOnly);
@@ -978,7 +1004,7 @@ export function HistoryPanelView({
             )}
             {tab === "deploys" &&
               (list as HistoryData["deploys"]).map((d) => (
-                <DeployRow key={d.id} d={d} />
+                <DeployRow key={d.id} d={d} onRevert={onRevert} />
               ))}
             {tab === "updates" &&
               (list as HistoryData["updates"]).map((u) => (
@@ -1264,9 +1290,11 @@ function BoardRowView({ r, section, at }: { r: BoardRow; section: BoardSectionKe
 function DeployRow({
   d,
   badge,
+  onRevert,
 }: {
   d: HistoryData["deploys"][number];
   badge?: ReactNode;
+  onRevert?: (d: HistoryData["deploys"][number]) => void;
 }) {
   const st = deployStatus(d);
 
@@ -1276,6 +1304,11 @@ function DeployRow({
         <StatusChip kind={st.kind} label={st.label} />
         {badge}
         <span className="font-mono text-xs">{short(d.commit)}</span>
+        {d.kind === "revert" && (
+          <span className="rounded bg-warning-100 px-1.5 text-xs" data-deploy-revert="">
+            ↩ 되돌리기{d.revertTo ? ` (${short(d.revertTo)} 버전)` : ""}
+          </span>
+        )}
         <span className="font-medium">{d.threadTitle}</span>
         {d.via && (
           <span className="text-xs text-default-500">
@@ -1297,6 +1330,30 @@ function DeployRow({
         {when(d.finishedAt)}
       </div>
       {d.result && <ResultText fail={st.kind === "fail"} text={d.result} />}
+      {d.revert && (
+        <div className="mt-1 text-xs" data-deploy-revert-box="">
+          {d.revert.allowed ? (
+            onRevert && (
+              <button
+                className="min-h-11 rounded border border-warning-300 px-2 sm:min-h-0"
+                data-deploy-revert-button=""
+                type="button"
+                onClick={() => onRevert(d)}
+              >
+                ↩ 이전 버전으로 ({short(d.commit)} 상태로 다시 배포)
+              </button>
+            )
+          ) : (
+            d.revert.reason && d.revert.reason !== "지금 서버에 올라가 있는 버전이에요." ? (
+              <span className="text-default-500" data-deploy-revert-blocked="">
+                ↩ 되돌릴 수 없어요: {d.revert.reason}
+              </span>
+            ) : (
+              <span className="text-default-500">{d.revert.reason}</span>
+            )
+          )}
+        </div>
+      )}
     </div>
   );
 }

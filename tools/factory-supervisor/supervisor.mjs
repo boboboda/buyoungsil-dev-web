@@ -67,6 +67,7 @@ import { branchName, cleanupLeftovers, createWorktree, defaultBranch, currentBra
 import { MAX_REBASES, mergeJob } from "./merge.mjs";
 import { conductorBusy, runConductor } from "./conductor.mjs";
 import { planBusy, runPlanTurn } from "./planturn.mjs";
+import { decideStageResume, saveSession } from "./stageresume.mjs";
 import { LAB_SLUG, compareSnapshots, createLabGuard, deleteLabFolder, discoverRepos, labCodexOptions, labPrompt, prepareLab, snapshotRepos, uploadLabOutputs, writeLabClaudeSettings } from "./lab.mjs";
 
 // 시험 모드(FACTORY_TEST_MODE=1)인데 진짜 주소·토큰·상태 파일이 섞여 있으면 아무것도 하기 전에 거부한다(진짜 감독 보호)
@@ -722,6 +723,10 @@ async function flush(st, extra = {}) {
 
 async function finish(st, status, fields) {
   st.job.aiOutcome = { ...st.job.aiOutcome, status, summary: fields?.summary, failReason: fields?.failReason, sessionId: st.sessionId };
+  // 실패 단계부터 다시(5-2): 실패한 새 앱·수정 일감의 AI 세션을 작업 폴더에 기억해 둔다. [실패 단계부터 다시]를 누르면 같은 세션으로 이어 준다(못 쓰면 조용히 건너뜀)
+  if (status === "failed" && st.sessionId && st.dir !== cfg.workDir && !st.lab && !st.tool && ["new", "revision"].includes(st.job.kind)) {
+    saveSession(st.dir, { jobId: st.job.id, engine: st.job.aiEngine, sessionId: st.sessionId, stage: fields?.failStage ?? st.phase });
+  }
   if (st.dir !== cfg.workDir && !st.lab && !st.tool) recordLifecycle(st.home ?? st.dir, st.job.aiEngine, status, st.job.id);
   // 인계 기록 항목: Git·변경 파일·검사 같은 사실은 여기서 직접 채우고, 요청·남은 작업·주의는 AI 최종 답변의 '## 인계' 블록에서 읽는다.
   // 실패한 일감도 남긴다. 같은 항목을 통제실에 보고하고(일감 상세 '인계 기록'), 폴더의 .factory/handoff.json 에도 쓴다
@@ -1506,7 +1511,23 @@ async function runJobUnlocked(job, lock, resume = null) {
   if (job.aiEngine === "claude") addLog(st, "info", `모델: ${model ?? "기본 설정(--model 없음)"}`);
   st.turnCfg = { appSettings, aiSecrets, model, reqSecrets: job.requiredSecrets ?? [], secrets, lock };
   if (resume) addLog(st, "info", `업데이트 뒤 이어서 시작: ${resume.sessionId ? "같은 세션으로 이어 줘요" : "AI 를 띄우기 전에 멈췄어서 처음부터 시작해요"} (남은 시간 한도 ${fmtLeft(resume.timeLeftMs ?? 0)})`);
-  const code = await runAiTurn(st, resume?.sessionId ? RESUME_MESSAGE : promptFor(job));
+  // 실패 단계부터 다시(5-2): 같은 세션이 남아 있으면 그 단계의 오류만 고치게 이어서 한다. 아니면 처음부터(기존 재실행)
+  const stageDecision = !resume && !rel ? decideStageResume({ job, dir }) : null;
+  if (stageDecision?.mode === "resume") {
+    st.resumeSession = stageDecision.sessionId;
+    st.stageResumed = true;
+    addLog(st, "info", `실패 단계부터 다시: '${stageDecision.label}' 단계에서 실패한 일감을 같은 세션으로 이어 줘요(오류를 고치는 짧은 지시만 넣어요).`);
+  } else if (stageDecision) addLog(st, "info", `실패 단계부터 다시를 요청받았지만 ${stageDecision.reason}`);
+  let code = await runAiTurn(st, resume?.sessionId ? RESUME_MESSAGE : stageDecision?.mode === "resume" ? stageDecision.message : promptFor(job));
+  if (st.stageResumed && st.resumeProblem && !st.stopped && !st.stuck) {
+    // 이어서 하기가 바로 오류로 끝났다(세션이 지워짐 등): 실패로 두지 않고 기존 재실행(처음부터)으로 대신한다
+    addLog(st, "warn", `같은 세션으로 이어 주지 못해서(${st.resumeProblem}) 처음부터 다시 해요.`);
+    st.stageResumed = false;
+    st.resumeProblem = null;
+    st.result = null;
+    st.sessionId = null;
+    code = await runAiTurn(st, promptFor(job));
+  }
 
   try {
     if (st.stuck) {
@@ -1535,7 +1556,7 @@ async function runJobUnlocked(job, lock, resume = null) {
       try {
         verification = await verifyWorkspace(dir, job.stack, (m) => addLog(st, "info", m), 15 * 60_000, (child) => { st.child = child; lock.setChild(child.pid || null); });
       } finally { clearInterval(checkBeat); }
-      if (!verification.ok) return finish(st, "failed", { failReason: st.redact(`필수 검증 실패: ${verification.reason}`).slice(-1800) });
+      if (!verification.ok) return finish(st, "failed", { failReason: st.redact(`필수 검증 실패: ${verification.reason}`).slice(-1800), failStage: "check" });
       if (st.stopped) return;
       addLog(st, "info", "필수 검증 통과");
       if (verification.scope === "source-only") addLog(st, "warn", "Swift 소스·구성 확인만 완료했습니다. 컴파일과 앱 실행은 Mac에서 별도 검증해야 합니다.");

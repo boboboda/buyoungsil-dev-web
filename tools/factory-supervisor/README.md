@@ -408,3 +408,8 @@ MSYS_NO_PATHCONV=1 schtasks /Delete /TN "FactoryAiLimits" /F
 - 만든 그림은 `/api/factory/art` 에 후보로(카드 id·판 번호 포함). 업로드 확인 뒤 `deleteToolJobFolder`(그 폴더 하나만, `rm -rf` 아님)로 정리. 못 올리면 폴더를 남기고 실패 보고.
 - 비용 한도에 걸리면 `status: needs_confirmation` 으로 보고(`toolResult` 에 비용·그림·메시지). 사람이 확인한 일감(`toolInput.confirmed`)은 카드 설정의 비용 한도를 건너뛴다.
 - AI 턴이 필요한 방법(`AI_TURN_METHODS`)은 「지원 안 함」으로 거절한다. 자세한 규칙: `docs/tool-jobs.md`. 시험: `npm run test:tool-jobs`.
+
+## 실패 단계부터 다시 · 배포 되돌리기 (5-2: `stageresume.mjs`, `revert.mjs`)
+- **실패 단계부터 다시**: 새 앱·수정 일감이 실패하면 AI 세션을 `<앱 폴더>/.factory/sessions/<일감id>.json` 에 기억한다(비밀값 없음). 서버가 `/next` 의 `job.stageResume: { from, note, label }` 을 붙이면, 같은 세션·같은 작업 폴더가 남아 있을 때 같은 세션으로 "이 단계에서 실패했다, 이 오류를 고쳐라" 짧은 지시만 넣어 이어서 한다. 세션·폴더가 없거나 AI 가 다르거나 3일이 지났거나 병행(작업 사본) 일감이거나 이어서 하기가 바로 실패하면 기존 재실행(처음부터)으로 대신하고 이유를 일감 로그에 남긴다. 업데이트 뒤 이어받기(`pause.mjs`)·출시 일감과는 섞이지 않는다.
+- **배포 되돌리기**: `/next` 의 `maintenanceDeploy.revertTo` 가 있으면 정비 폴더에서 되돌리기 커밋(부모 = 지금 GitHub main, 내용 = 대상 커밋, `tools/factory-supervisor` 는 지금 것 유지)을 만들어 일반 push 로 올리고(force push·reset 없음), `deploy_revert_commit` 으로 서버에 알린 뒤 평소 배포 경로로 그 커밋을 서버 배포 저장소에 push 한다. 대상~지금 사이에 `prisma/migrations` 가 바뀌었거나, 정비 폴더에 커밋 안 된 변경·올리지 못한 로컬 커밋이 있으면 만들지 않고 `deploy_done(ok=false)` 로 이유만 보고한다. 일반 배포는 `prevCommit` 대비 마이그레이션 변경 여부를 `deploy_start.migrations` 로 알린다(서버가 되돌리기 가능 여부를 미리 판단). 자세한 내용: `docs/deploy-revert.md`.
+- 시험: `npm run test:stage-revert`, `npm run test:stageresume`, `npm run test:revert`.

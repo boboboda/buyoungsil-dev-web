@@ -141,7 +141,7 @@ test("연결 지점: 정비·앱 일감·터미널이 끝날 때 인계 기록�
   const supervisor = read("tools/factory-supervisor/supervisor.mjs");
   assert.match(supervisor, /makeHandoffEntry\(st\.home \?\? st\.dir/); // 병행 일감은 사본이 사라지므로 인계 기록은 앱 폴더(home)에 남긴다
   assert.match(supervisor, /handoffPrompt\(dir, prompt, \{ appScope: true \}\)/); // runAiTurn 이 지시문(prompt)을 받는다
-  assert.match(supervisor, /runAiTurn\(st, resume\?\.sessionId \? RESUME_MESSAGE : promptFor\(job\)\)/); // 업데이트로 멈춘 일감을 이어 줄 때는 이어 주는 말(1-2 D-2)
+  assert.match(supervisor, /runAiTurn\(st, resume\?\.sessionId \? RESUME_MESSAGE : stageDecision\?\.mode === "resume" \? stageDecision\.message : promptFor\(job\)\)/); // 업데이트로 멈춘 일감을 이어 줄 때는 이어 주는 말(1-2 D-2), 실패 단계부터 다시(5-2)는 짧은 오류 수정 지시
   assert.match(supervisor, /kind: "job"/);
   assert.match(read("tools/factory-supervisor/ai.mjs"), /handoff: \{ kind: "terminal"/);
   // 실패한 일감도 기록(검증 실패 → failed 항목), 검사는 감독이 직접 돌린 결과만(AI 의 말은 증거 아님)

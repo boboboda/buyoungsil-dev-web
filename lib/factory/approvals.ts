@@ -282,8 +282,13 @@ export async function deployHistory(limit = 40, cursor?: string) {
     include: { maintenance: { select: { id: true, title: true } } },
   });
 
+  const revert = await import("@/lib/factory/deployRevert").then((m) => m.revertInfoFor(rows.filter((d) => d.ok === true))).catch(() => new Map<string, { allowed: boolean; reason: string | null }>());
+
   return rows.map((d) => ({
     id: d.id,
+    kind: d.kind, // deploy | revert(배포 되돌리기, 5-2)
+    revertTo: d.revertTo,
+    revert: revert.get(d.id) ?? null, // 성공한 배포: [이전 버전으로] 가능 여부와 막힌 이유
     threadId: d.maintenance.id,
     threadTitle: d.maintenance.title,
     commit: d.commit,
