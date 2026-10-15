@@ -79,7 +79,7 @@ test("설정 탭: 주제별 묶음 8개, 카드는 모두 한 묶음에만 들�
   const src = read("components/admin/factory/FactoryConsole.tsx");
   const groups = [...src.matchAll(/<SettingsGroup[^>]*title="([^"]+)"[^>]*>([\s\S]*?)<\/SettingsGroup>/g)];
   assert.deepEqual(groups.map((m) => m[1]), ["실행·동시성", "감독 업데이트", "병렬화·지휘자", "검사", "도구", "알림·연결", "키·계정", "프로젝트·규칙"]);
-  const cards = ["ToolkitToolsPanel", "ToolboxPanel", "DefaultAiSettings", "AppSlotsSettings", "UpdateBundleSettings", "ParallelPerAppSettings", "ApprovalWaitSettings", "AppChecksSettings", "ConductorSettings", "ToolBrokerSettings", "TelegramSetup", "WorkerTokens", "SecretEntries", "SecretNames", "StudioAccessKeys", "ReleaseAccounts", "AppProjectLinks", "WorkRules"];
+  const cards = ["ToolkitToolsPanel", "ToolboxPanel", "DefaultAiSettings", "AppSlotsSettings", "UpdateBundleSettings", "ParallelPerAppSettings", "ApprovalWaitSettings", "AppChecksSettings", "ConductorSettings", "ToolBrokerSettings", "TelegramSetup", "WorkerTokens", "SecretEntries", "SecretNames", "StudioAccessKeys", "ReleaseAccounts", "AppProjectLinks", "WorkRules", "AgentDefsPanel"];
   for (const n of cards) assert.equal(groups.filter((m) => m[2].includes(`<${n} />`)).length, 1, `${n} 가 한 묶음에만 있어야 함`);
 });
 

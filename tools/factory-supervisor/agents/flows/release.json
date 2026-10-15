@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "type": "flow",
+  "id": "release",
+  "label": "출시",
+  "appliesTo": {
+    "jobKind": "release"
+  },
+  "steps": [
+    {
+      "id": "approve",
+      "label": "출시 승인",
+      "gate": "approval"
+    },
+    {
+      "id": "release",
+      "label": "출시 작업자",
+      "agent": "R1"
+    },
+    {
+      "id": "review",
+      "label": "검토 승인",
+      "gate": "approval",
+      "when": "release-review-required",
+      "optional": true
+    }
+  ]
+}

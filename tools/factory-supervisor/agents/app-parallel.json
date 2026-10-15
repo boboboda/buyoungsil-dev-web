@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "type": "agent",
+  "id": "A3",
+  "kind": "parallel",
+  "label": "병행",
+  "summary": "같은 앱의 다른 수정과 같이 도는 수정. 앱 폴더의 작업 사본(git worktree)에서 돌고 끝나면 합친다.",
+  "migrated": true,
+  "engine": {
+    "allowed": [
+      "claude",
+      "codex"
+    ],
+    "default": "claude",
+    "model": {
+      "claude": "job",
+      "codex": "config"
+    }
+  },
+  "workspace": {
+    "type": "app-worktree",
+    "root": ".worktrees"
+  },
+  "tools": {
+    "mode": "acceptEdits",
+    "allow": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [],
+    "allowFromConfig": true
+  },
+  "cli": {
+    "style": "stream",
+    "output": "stream-json"
+  },
+  "paths": {
+    "allow": [],
+    "deny": [
+      "edit:@protected/**",
+      "edit:@factory/*.json",
+      "edit:@factory/*.sh",
+      "edit:@factory/secrets.env",
+      "read:@factory/supervisor.config.json",
+      "read:@factory/secrets.env",
+      "read:~/.ssh/**",
+      "read:~/.aws/**"
+    ],
+    "settingsFile": "app-claude-settings.json"
+  },
+  "network": {
+    "codex": "off"
+  },
+  "hooks": [
+    "ssh-guard"
+  ],
+  "env": {
+    "filter": "safeEnv",
+    "set": {
+      "FACTORY_APP_SLUG": "@job.appSlug",
+      "FACTORY_JOB_ID": "@job.id",
+      "FACTORY_LOCK_DIR": "@lockDir",
+      "FACTORY_WAIT_FILE": "@waitFile"
+    }
+  },
+  "keys": {
+    "decision": "job-required"
+  },
+  "prompt": {
+    "template": "app-revision",
+    "rules": "app-rules-block"
+  },
+  "after": [
+    "merge",
+    "report"
+  ],
+  "limits": {
+    "timeoutFrom": "config.jobTimeoutMin"
+  },
+  "next": [
+    "merge-check"
+  ]
+}

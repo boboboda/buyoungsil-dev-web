@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "type": "flow",
+  "id": "maintenance",
+  "label": "정비",
+  "appliesTo": {
+    "jobKind": "maintenance"
+  },
+  "steps": [
+    {
+      "id": "approve",
+      "label": "지시 승인",
+      "gate": "approval"
+    },
+    {
+      "id": "fix",
+      "label": "정비자",
+      "agent": "M1"
+    },
+    {
+      "id": "check",
+      "label": "검사",
+      "gate": "verify"
+    },
+    {
+      "id": "deploy",
+      "label": "배포",
+      "gate": "deploy"
+    }
+  ]
+}

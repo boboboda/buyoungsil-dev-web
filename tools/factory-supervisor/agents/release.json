@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "type": "agent",
+  "id": "R1",
+  "kind": "release",
+  "label": "출시",
+  "summary": "출시 준비·스토어 자료·앱 업데이트. 출시 키와 스토어 환경을 일감 키 결정에 더해 받는다.",
+  "migrated": true,
+  "engine": {
+    "allowed": [
+      "claude",
+      "codex"
+    ],
+    "default": "claude",
+    "model": {
+      "claude": "job",
+      "codex": "config"
+    }
+  },
+  "workspace": {
+    "type": "app-folder"
+  },
+  "tools": {
+    "mode": "acceptEdits",
+    "allow": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [],
+    "allowFromConfig": true
+  },
+  "cli": {
+    "style": "stream",
+    "output": "stream-json"
+  },
+  "paths": {
+    "allow": [],
+    "deny": [
+      "edit:@protected/**",
+      "edit:@factory/*.json",
+      "edit:@factory/*.sh",
+      "edit:@factory/secrets.env",
+      "read:@factory/supervisor.config.json",
+      "read:@factory/secrets.env",
+      "read:~/.ssh/**",
+      "read:~/.aws/**"
+    ],
+    "settingsFile": "app-claude-settings.json"
+  },
+  "network": {
+    "codex": "off"
+  },
+  "hooks": [
+    "ssh-guard"
+  ],
+  "env": {
+    "filter": "safeEnv",
+    "set": {
+      "FACTORY_APP_SLUG": "@job.appSlug",
+      "FACTORY_JOB_ID": "@job.id"
+    }
+  },
+  "keys": {
+    "decision": "job-required+release-key"
+  },
+  "prompt": {
+    "template": "release",
+    "rules": "app-rules-block"
+  },
+  "after": [
+    "outbox",
+    "release-finish",
+    "report"
+  ],
+  "limits": {
+    "timeoutFrom": "config.jobTimeoutMin"
+  },
+  "next": [
+    "approval"
+  ]
+}

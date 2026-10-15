@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "type": "flow",
+  "id": "app-new",
+  "label": "새 앱",
+  "appliesTo": {
+    "jobKind": "new"
+  },
+  "steps": [
+    {
+      "id": "approve",
+      "label": "기획 승인",
+      "gate": "approval"
+    },
+    {
+      "id": "build",
+      "label": "작업자(새 앱)",
+      "agent": "A1"
+    },
+    {
+      "id": "check",
+      "label": "필수 검증",
+      "gate": "verify"
+    },
+    {
+      "id": "deploy",
+      "label": "배포",
+      "gate": "deploy",
+      "optional": true
+    }
+  ]
+}

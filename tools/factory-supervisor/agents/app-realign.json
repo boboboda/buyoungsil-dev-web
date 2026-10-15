@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "type": "agent",
+  "id": "A4",
+  "kind": "realign",
+  "label": "다시 맞추기",
+  "summary": "합칠 때 기본 브랜치가 앞서 있으면 작업 사본을 새 기준에 다시 맞추게 하는 턴(같은 작업 사본·같은 권한).",
+  "migrated": true,
+  "engine": {
+    "allowed": [
+      "claude",
+      "codex"
+    ],
+    "default": "claude",
+    "model": {
+      "claude": "job",
+      "codex": "config"
+    }
+  },
+  "workspace": {
+    "type": "app-worktree",
+    "root": ".worktrees"
+  },
+  "tools": {
+    "mode": "acceptEdits",
+    "allow": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [],
+    "allowFromConfig": true
+  },
+  "cli": {
+    "style": "stream",
+    "output": "stream-json"
+  },
+  "paths": {
+    "allow": [],
+    "deny": [
+      "edit:@protected/**",
+      "edit:@factory/*.json",
+      "edit:@factory/*.sh",
+      "edit:@factory/secrets.env",
+      "read:@factory/supervisor.config.json",
+      "read:@factory/secrets.env",
+      "read:~/.ssh/**",
+      "read:~/.aws/**"
+    ],
+    "settingsFile": "app-claude-settings.json"
+  },
+  "network": {
+    "codex": "off"
+  },
+  "hooks": [
+    "ssh-guard"
+  ],
+  "env": {
+    "filter": "safeEnv",
+    "set": {
+      "FACTORY_APP_SLUG": "@job.appSlug",
+      "FACTORY_JOB_ID": "@job.id",
+      "FACTORY_LOCK_DIR": "@lockDir",
+      "FACTORY_WAIT_FILE": "@waitFile"
+    }
+  },
+  "keys": {
+    "decision": "job-required"
+  },
+  "prompt": {
+    "template": "app-realign",
+    "rules": "app-rules-block"
+  },
+  "after": [
+    "merge",
+    "report"
+  ],
+  "limits": {
+    "timeoutFrom": "config.jobTimeoutMin"
+  },
+  "next": [
+    "merge-check"
+  ]
+}

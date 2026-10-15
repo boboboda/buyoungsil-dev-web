@@ -240,7 +240,7 @@ test("연결 지점: 커넥터 도구·앱 이름 보호·앱 목록 제외·감
   // 앱 일감 실행 경로(runJobUnlocked)에는 실험 권한 코드가 없다
   const appPath = sup.slice(sup.indexOf("async function runJobUnlocked"), sup.indexOf("const MARK = "));
   assert.doesNotMatch(appPath, /writeLabClaudeSettings|labCodexOptions|labPrompt/);
-  assert.match(appPath, /appPermissionSettings\(\)/);
+  assert.match(appPath, /appPermissionSettings\(job\)/);
   // 실험 실행 경로
   const labPath = sup.slice(sup.indexOf("async function runLabUnlocked"), sup.indexOf("async function runLabCleanups"));
   assert.match(labPath, /writeLabClaudeSettings/);

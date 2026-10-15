@@ -44,6 +44,7 @@ import { maybeRestart, onRestartSignal, readRestartMark, restartPending, restart
 import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
 import { safeEnv } from "./envfilter.mjs";
+import { agentSpec, cfgOf, envOf, writeSettings as writeAgentSettings } from "./agentrun.mjs";
 import { acquireWorkspace, advertisedEngines, recoverWorkspace, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, makeHandoffEntry, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 import { checksFromVerification, headOf } from "./handoff.mjs";
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames, writeArtRefs, writeCardFiles, writeProjectSettings } from "./toolbroker.mjs";
@@ -325,8 +326,18 @@ ${releaseRules(job)}${RULES_END}
 
 // 앱 일감 Claude 가 정비 쪽 폴더(정비 체크아웃·감독 프로그램 실행 체크아웃)와 공장 설정·비밀 파일을 건드리지 않게 막는 설정.
 // 정비는 앱 폴더를, 앱 일감은 정비 폴더를 고치지 않는다(작업과 커밋이 서로 섞이지 않게). 못 만들면 null(설정 없이 실행)
-function appPermissionSettings() {
+// 앱 일감이 쓸 에이전트 정의 번호: 새 앱 A1, 수정 A2, 병행(작업 사본) A3, 합칠 때 다시 맞추는 턴 A4, 출시 R1
+function appSpecId(job, st) {
+  if (job.kind === "release") return "R1";
+  if (job.kind === "new") return "A1";
+  return job.worktree ? (st?.realign ? "A4" : "A3") : "A2";
+}
+
+function appPermissionSettings(job) {
   try {
+    // 에이전트 정의가 있으면 거기서 만든다(예전 코드와 같은 결과인지는 tests/agentspec.test.mjs 가 비교). 없거나 거절됐으면 아래 예전 코드 그대로
+    const spec = agentSpec(appSpecId(job));
+    if (spec) return writeAgentSettings(spec, { workDir: cfg.workDir, protectedDirs: [expand(cfg.selfdevDir || "~/dev/factory/selfdev"), path.join(cfg.workDir, "supervisor-src")] });
     const file = path.join(cfg.workDir, "app-claude-settings.json");
     // 권한 규칙의 절대 경로는 //경로. 윈도우 경로는 POSIX 꼴로(C:\Users\x → //c/Users/x)
     const abs = (p) => path.resolve(p).replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_, d) => d.toLowerCase()).replace(/^\/+/, "");
@@ -959,6 +970,8 @@ async function runLabJob(job) {
 
 // AI 에게 넘길 환경: 키·토큰 모양 변수는 뺀다(인터넷이 열려 있는 무인 실행이라)
 function labEnv(job, dir, shared) {
+  const spec = agentSpec("L1"); // 에이전트 정의(L1)가 있으면 거기서, 없거나 거절됐으면 아래 예전 값 그대로
+  if (spec) return envOf(spec, process.env, { jobId: job.id, dir, shared });
   return safeEnv(process.env, { FACTORY_JOB_ID: job.id, FACTORY_LAB_JOB_ID: job.id, FACTORY_LAB_DIR: dir, FACTORY_LAB_SHARED: shared });
 }
 
@@ -988,7 +1001,8 @@ async function runLabUnlocked(job, lock, { dir, shared }) {
   const model = job.aiEngine === "claude" ? job.aiModel || null : null;
   if (job.aiEngine === "claude") addLog(st, "info", `모델: ${model ?? "기본 설정(--model 없음)"}`);
   // 허용 도구에서 아무 곳이나 고칠 수 있는 Edit·Write 는 뺀다(쓰기는 설정 파일의 Edit(실험 폴더) 규칙으로만 허용). 명령(Bash)은 승인 없이
-  const child = startAi(job.aiEngine, { ...cfg, allowedTools: "Bash,Read,Glob,Grep,WebFetch,WebSearch" }, {
+  const labSpec = agentSpec("L1");
+  const child = startAi(job.aiEngine, labSpec ? cfgOf(labSpec, cfg) : { ...cfg, allowedTools: "Bash,Read,Glob,Grep,WebFetch,WebSearch" }, {
     model,
     settings,
     lab: job.aiEngine === "codex" ? labCodexOptions(shared) : undefined,
@@ -1221,12 +1235,15 @@ async function runAiProcess(st, prompt, resumeSession) {
   st.resumeProblem = null;
   if (!st.guard && ["new", "revision"].includes(job.kind)) st.guard = createLoopGuard(effectiveLoopGuard());
   const segStart = Date.now();
-  const child = startAi(job.aiEngine, cfg, {
+  const appSpec = agentSpec(appSpecId(job, st)); // 에이전트 정의(A1~A4·R1)가 있으면 거기서, 없거나 거절됐으면 예전 값 그대로
+  const child = startAi(job.aiEngine, appSpec ? cfgOf(appSpec, cfg) : cfg, {
     model,
     settings: job.aiEngine === "claude" ? appSettings : undefined,
     sessionId: resumeSession || undefined,
     cwd: dir,
-    env: safeEnv(process.env, { ...aiSecrets, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id, ...(job.worktree ? { FACTORY_LOCK_DIR: lockDir(), FACTORY_WAIT_FILE: st.waitFile } : {}) }),
+    env: appSpec
+      ? envOf(appSpec, process.env, { jobId: job.id, appSlug: job.appSlug, lockDir: lockDir(), waitFile: st.waitFile }, aiSecrets)
+      : safeEnv(process.env, { ...aiSecrets, FACTORY_APP_SLUG: job.appSlug, FACTORY_JOB_ID: job.id, ...(job.worktree ? { FACTORY_LOCK_DIR: lockDir(), FACTORY_WAIT_FILE: st.waitFile } : {}) }),
   });
   lock.setChild(child.pid || null);
   const decode = eventDecoder(job.aiEngine);
@@ -1462,7 +1479,7 @@ async function runJobUnlocked(job, lock, resume = null) {
     if (key.note) addLog(st, "info", key.note);
   }
 
-  const appSettings = appPermissionSettings();
+  const appSettings = appPermissionSettings(job);
   // 도구 요청 중계가 켜져 있으면 툴킷 도구에 선언된 키는 AI 환경에서 빼고 도구 프로세스에만 준다(꺼짐이면 예전 그대로)
   const toolOnly = toolBroker.mode === "off" ? [] : toolkitSecretNames(cfg.toolkitDir);
   const aiSecrets = Object.fromEntries(Object.entries(allowed).filter(([k]) => !toolOnly.includes(k)));
@@ -1581,7 +1598,9 @@ async function finishWorktree(st) {
         }),
       commit: (message) => safeCommit(dir, job, message),
       askFix: async (prompt) => {
+        st.realign = true; // 다시 맞추기·고치기 턴: 에이전트 정의 A4 (권한은 병행 A3 와 같다)
         const code = await runAiTurn(st, prompt);
+        st.realign = false;
 
         if (st.stopped) return { ok: false, reason: st.stopped };
         if (st.result && !st.result.is_error && (code === 0 || st.killedAfterResult)) return { ok: true };

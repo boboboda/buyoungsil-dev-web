@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "type": "agent",
+  "id": "C1",
+  "kind": "conductor",
+  "label": "지휘자",
+  "migrated": true,
+  "summary": "같은 앱에 쌓인 수정 일감이 서로 겹치는지 앱 폴더를 읽기만 해서 판단하는 한 번짜리 AI 턴.",
+  "engine": {
+    "allowed": [
+      "claude"
+    ],
+    "default": "claude",
+    "model": {
+      "claude": "task"
+    }
+  },
+  "workspace": {
+    "type": "app-folder"
+  },
+  "tools": {
+    "mode": "default",
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "Task",
+      "Agent"
+    ],
+    "only": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "allowFromConfig": false
+  },
+  "cli": {
+    "style": "oneshot",
+    "output": "json",
+    "strictMcp": true,
+    "noSessionPersistence": true
+  },
+  "paths": {
+    "allow": [],
+    "deny": []
+  },
+  "network": {
+    "codex": "off"
+  },
+  "hooks": [],
+  "env": {
+    "filter": "safeEnv",
+    "set": {
+      "FACTORY_LAUNCHER": "1",
+      "FACTORY_ROLE": "conductor"
+    }
+  },
+  "keys": {
+    "decision": "none"
+  },
+  "prompt": {
+    "template": "conductor-verdict",
+    "rules": null
+  },
+  "after": [
+    "report"
+  ],
+  "limits": {
+    "timeoutMs": 240000
+  },
+  "next": [
+    "A3"
+  ]
+}

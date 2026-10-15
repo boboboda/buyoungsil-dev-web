@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "type": "agent",
+  "id": "M1",
+  "kind": "maintenance",
+  "label": "정비",
+  "migrated": false,
+  "summary": "공장 자체(홈페이지·감독 프로그램 코드)를 고치는 정비. 정비 흐름 자체를 바꾸게 되므로 이번에는 정의로 옮기지 않았고, 정의는 기록용이다.",
+  "engine": {
+    "allowed": [
+      "claude",
+      "codex"
+    ],
+    "default": "claude",
+    "model": {
+      "claude": "job",
+      "codex": "config"
+    }
+  },
+  "workspace": {
+    "type": "maintenance-checkout"
+  },
+  "tools": {
+    "mode": "acceptEdits",
+    "allow": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [],
+    "allowFromConfig": true
+  },
+  "cli": {
+    "style": "stream",
+    "output": "stream-json"
+  },
+  "paths": {
+    "managedBy": "maintenance.mjs maintenanceSettings"
+  },
+  "network": {
+    "codex": "off"
+  },
+  "hooks": [
+    "maintenance-guard"
+  ],
+  "env": {
+    "filter": "safeEnv",
+    "set": {
+      "FACTORY_MAINTENANCE": "@threadId",
+      "FACTORY_MAINTENANCE_TURN": "@turnId"
+    }
+  },
+  "keys": {
+    "decision": "none"
+  },
+  "prompt": {
+    "template": "maintenance",
+    "rules": "maintenance-local"
+  },
+  "after": [
+    "verify",
+    "commit",
+    "compact",
+    "report"
+  ],
+  "limits": {
+    "timeoutFrom": "config.jobTimeoutMin"
+  },
+  "next": [
+    "verify"
+  ]
+}

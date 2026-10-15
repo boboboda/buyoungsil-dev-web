@@ -8,6 +8,7 @@ import { spawn, spawnSync } from "node:child_process";
 
 import { CLAUDE_MODELS } from "./ai-runner.mjs";
 import { safeEnv } from "./envfilter.mjs";
+import { agentSpec, envOf, oneshotArgs } from "./agentrun.mjs";
 
 export const CONDUCTOR_TIMEOUT_MS = 4 * 60_000;
 export const MAX_FILE_LIST = 1500;
@@ -29,8 +30,13 @@ export function conductorModelOf(value) {
   return value;
 }
 
-/** claude 실행 인자(셸 문자열로 잇지 않고 칸으로만 넘긴다). 프롬프트는 표준입력 */
-export function conductorArgs(model) {
+/**
+ * claude 실행 인자(셸 문자열로 잇지 않고 칸으로만 넘긴다). 프롬프트는 표준입력.
+ * 에이전트 정의(agents/conductor.json, C1)가 있으면 거기서 만들고, 없거나 거절됐으면 아래 예전 값 그대로(둘이 같은지는 시험이 비교한다)
+ */
+export function conductorArgs(model, spec = agentSpec("C1")) {
+  if (spec) return oneshotArgs(spec, conductorModelOf(model));
+
   return [
     "-p",
     "--output-format", "json",
@@ -174,11 +180,12 @@ export async function runConductor(task, cwd, opts = {}) {
     const { files, truncated } = listRepoFiles(cwd);
     const prompt = conductorPrompt(task, files, truncated);
     const command = opts.claudeCmd || "claude";
-    const args = conductorArgs(model);
+    const spec = opts.spec === undefined ? agentSpec("C1") : opts.spec;
+    const args = conductorArgs(model, spec);
 
     if (IS_WIN && (/[&|<>^%\r\n]/.test(command) || args.some((a) => /[&|<>^%\r\n]/.test(a)))) return { ok: false, reason: "AI 실행 명령에 허용하지 않는 셸 문자가 있어요" };
     const run = await new Promise((resolve) => {
-      const child = (opts.spawnImpl ?? spawn)(command, args, { cwd, env: safeEnv(process.env, { ...(opts.env ?? {}), FACTORY_LAUNCHER: "1", FACTORY_ROLE: "conductor" }), shell: IS_WIN, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      const child = (opts.spawnImpl ?? spawn)(command, args, { cwd, env: spec ? envOf(spec, process.env, {}, opts.env ?? {}) : safeEnv(process.env, { ...(opts.env ?? {}), FACTORY_LAUNCHER: "1", FACTORY_ROLE: "conductor" }), shell: IS_WIN, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       let out = "";
       let err = "";
       let done = false;
@@ -198,7 +205,7 @@ export async function runConductor(task, cwd, opts = {}) {
           /* 이미 끝남 */
         }
         finish({ timeout: true, out, err });
-      }, opts.timeoutMs ?? CONDUCTOR_TIMEOUT_MS);
+      }, opts.timeoutMs ?? spec?.limits.timeoutMs ?? CONDUCTOR_TIMEOUT_MS);
 
       child.stdout.on("data", (d) => (out = (out + d.toString()).slice(-400_000)));
       child.stderr.on("data", (d) => (err = (err + d.toString()).slice(-2000)));
@@ -213,7 +220,7 @@ export async function runConductor(task, cwd, opts = {}) {
     const changed = snapshotChange(before, repoSnapshot(cwd));
 
     if (changed) return { ok: false, reason: `읽기 전용 위반: ${changed}. 판단을 쓰지 않아요`, usage: usageOf(null, ms) };
-    if (run.timeout) return { ok: false, reason: `시간 초과(${Math.round((opts.timeoutMs ?? CONDUCTOR_TIMEOUT_MS) / 60000)}분)`, usage: usageOf(null, ms) };
+    if (run.timeout) return { ok: false, reason: `시간 초과(${Math.round((opts.timeoutMs ?? spec?.limits.timeoutMs ?? CONDUCTOR_TIMEOUT_MS) / 60000)}분)`, usage: usageOf(null, ms) };
     if (run.error) return { ok: false, reason: `AI 를 실행하지 못했어요: ${run.error}`.slice(0, 300) };
     let ev = null;
 

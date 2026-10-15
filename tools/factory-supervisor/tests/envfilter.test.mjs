@@ -53,9 +53,10 @@ test("호출 지점이 모두 safeEnv 를 쓴다(원본 process.env 를 통째�
   assert.doesNotMatch(read("maintenance.mjs"), /env: \{ \.\.\.process\.env, FACTORY_MAINTENANCE/);
   assert.match(read("maintenance.mjs"), /childEnv: safeEnv\(/);
   assert.match(read("maintenance.mjs"), /env: safeEnv\(process\.env, \{ FACTORY_MAINTENANCE/);
-  assert.match(read("conductor.mjs"), /env: safeEnv\(process\.env/);
+  assert.match(read("conductor.mjs"), /: safeEnv\(process\.env/); // 정의가 없을 때의 예전 경로
+  assert.match(read("agentrun.mjs"), /return safeEnv\(base, /); // 정의에서 만드는 환경도 같은 거르기를 거친다
   const sup = read("supervisor.mjs");
-  assert.match(sup, /env: safeEnv\(process\.env, \{ \.\.\.aiSecrets/);
+  assert.match(sup, /: safeEnv\(process\.env, \{ \.\.\.aiSecrets/);
   assert.match(sup, /return safeEnv\(process\.env, \{ FACTORY_JOB_ID/);
   assert.doesNotMatch(sup, /env: \{ \.\.\.process\.env, \.\.\.aiSecrets/);
 });

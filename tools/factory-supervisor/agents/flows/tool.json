@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "type": "flow",
+  "id": "tool",
+  "label": "도구 일감",
+  "appliesTo": {
+    "jobKind": "tool"
+  },
+  "steps": [
+    {
+      "id": "confirm",
+      "label": "비용 한도 확인",
+      "gate": "approval",
+      "optional": true,
+      "when": "cost-over-limit"
+    },
+    {
+      "id": "run",
+      "label": "도구 실행",
+      "agent": "T"
+    },
+    {
+      "id": "report",
+      "label": "결과 보고",
+      "gate": "report"
+    }
+  ]
+}

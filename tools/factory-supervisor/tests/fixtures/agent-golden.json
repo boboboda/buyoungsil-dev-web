@@ -1,0 +1,614 @@
+{
+  "_source": "커밋 2ee39b2 의 코드가 만든 실행 설정(에이전트 정의를 도입하기 전). 정의에서 만든 설정이 이것과 완전히 같아야 한다.",
+  "C1": {
+    "engine": "claude",
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "json",
+      "--permission-mode",
+      "default",
+      "--tools",
+      "Read,Glob,Grep",
+      "--allowedTools",
+      "Read,Glob,Grep",
+      "--disallowedTools",
+      "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent",
+      "--strict-mcp-config",
+      "--no-session-persistence",
+      "--model",
+      "haiku"
+    ],
+    "settings": null,
+    "hooks": null,
+    "envNames": [
+      "FACTORY_LAUNCHER",
+      "FACTORY_MAINTENANCE",
+      "FACTORY_ROLE",
+      "FOO",
+      "HOME",
+      "LANG",
+      "PATH"
+    ],
+    "envFactory": {
+      "FACTORY_LAUNCHER": "1",
+      "FACTORY_ROLE": "conductor"
+    },
+    "cwd": "<ROOT>/factory/app-a",
+    "timeoutMs": 240000
+  },
+  "L1": {
+    "engine": "claude",
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "Bash,Read,Glob,Grep,WebFetch,WebSearch",
+      "--settings",
+      "<ROOT>/factory/lab/.settings/cmjob00000000001.json",
+      "--model",
+      "opus"
+    ],
+    "settings": {
+      "permissions": {
+        "allow": [
+          "Read(//<ROOT>/factory/**)",
+          "Edit(//<ROOT>/factory/lab/cmjob00000000001/**)",
+          "Edit(//<ROOT>/factory/lab/shared/**)",
+          "Bash"
+        ],
+        "deny": [
+          "Edit(//<ROOT>/factory/app-a/**)",
+          "Edit(//<ROOT>/factory/run-supervisor.sh)",
+          "Edit(//<ROOT>/factory/secrets.env)",
+          "Edit(//<ROOT>/factory/selfdev/**)",
+          "Edit(//<ROOT>/factory/supervisor-src/**)",
+          "Edit(//<ROOT>/factory/supervisor.config.json)",
+          "Edit(//<ROOT>/factory/tooljobs/**)",
+          "Edit(//<ROOT>/factory/x.json)",
+          "Edit(//<ROOT>/factory/*.json)",
+          "Edit(//<ROOT>/factory/*.sh)",
+          "Edit(//<ROOT>/factory/secrets.env*)",
+          "Read(//<ROOT>/factory/supervisor.config.json)",
+          "Read(//<ROOT>/factory/secrets.env*)",
+          "Read(~/.ssh/**)",
+          "Read(~/.aws/**)"
+        ],
+        "additionalDirectories": [
+          "<ROOT>/factory/lab/shared"
+        ]
+      },
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node \"<SUP>/ssh-guard.mjs\"",
+                "timeout": 15
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node \"<SUP>/ssh-guard.mjs\"",
+              "timeout": 15
+            }
+          ]
+        }
+      ]
+    },
+    "envNames": [
+      "FACTORY_JOB_ID",
+      "FACTORY_LAB_DIR",
+      "FACTORY_LAB_JOB_ID",
+      "FACTORY_LAB_SHARED",
+      "FACTORY_MAINTENANCE",
+      "FOO",
+      "HOME",
+      "LANG",
+      "PATH"
+    ],
+    "envFactory": {
+      "FACTORY_JOB_ID": "cmjob00000000001",
+      "FACTORY_LAB_DIR": "<ROOT>/factory/lab/cmjob00000000001",
+      "FACTORY_LAB_JOB_ID": "cmjob00000000001",
+      "FACTORY_LAB_SHARED": "<ROOT>/factory/lab/shared"
+    },
+    "cwd": "<ROOT>/factory/lab/cmjob00000000001"
+  },
+  "L1_codex": {
+    "engine": "codex",
+    "command": "codex.cmd",
+    "args": [
+      "exec",
+      "--json",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_mode=\"workspace-write\"",
+      "-c",
+      "sandbox_workspace_write.network_access=true",
+      "-c",
+      "project_doc_fallback_filenames=[\"CLAUDE.local.md\",\"CLAUDE.md\"]",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/factory/lab/shared\"]",
+      "-"
+    ],
+    "settings": null,
+    "hooks": null,
+    "envNames": [
+      "FACTORY_JOB_ID",
+      "FACTORY_LAB_DIR",
+      "FACTORY_LAB_JOB_ID",
+      "FACTORY_LAB_SHARED",
+      "FACTORY_MAINTENANCE",
+      "FOO",
+      "HOME",
+      "LANG",
+      "PATH"
+    ],
+    "envFactory": {
+      "FACTORY_JOB_ID": "cmjob00000000001",
+      "FACTORY_LAB_DIR": "<ROOT>/factory/lab/cmjob00000000001",
+      "FACTORY_LAB_JOB_ID": "cmjob00000000001",
+      "FACTORY_LAB_SHARED": "<ROOT>/factory/lab/shared"
+    },
+    "cwd": "<ROOT>/factory/lab/cmjob00000000001"
+  },
+  "T": {
+    "engine": "none",
+    "command": null,
+    "args": [],
+    "settings": null,
+    "hooks": null,
+    "envNames": [],
+    "envFactory": {},
+    "cwd": "<ROOT>/factory/tooljobs/cmjob00000000001"
+  },
+  "A1": {
+    "engine": "claude",
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
+      "--settings",
+      "<ROOT>/factory/app-claude-settings.json"
+    ],
+    "settings": {
+      "permissions": {
+        "deny": [
+          "Edit(//<ROOT>/factory/selfdev/**)",
+          "Edit(//<ROOT>/factory/supervisor-src/**)",
+          "Edit(//<ROOT>/factory/*.json)",
+          "Edit(//<ROOT>/factory/*.sh)",
+          "Edit(//<ROOT>/factory/secrets.env)",
+          "Read(//<ROOT>/factory/supervisor.config.json)",
+          "Read(//<ROOT>/factory/secrets.env)",
+          "Read(~/.ssh/**)",
+          "Read(~/.aws/**)"
+        ]
+      },
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node \"<SUP>/ssh-guard.mjs\"",
+                "timeout": 15
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node \"<SUP>/ssh-guard.mjs\"",
+              "timeout": 15
+            }
+          ]
+        }
+      ]
+    },
+    "envNames": [
+      "FACTORY_APP_SLUG",
+      "FACTORY_JOB_ID",
+      "FACTORY_MAINTENANCE",
+      "FOO",
+      "HOME",
+      "LANG",
+      "PATH",
+      "PIXELLAB_TOKEN",
+      "STORE_API_KEY"
+    ],
+    "envFactory": {
+      "FACTORY_APP_SLUG": "app-a",
+      "FACTORY_JOB_ID": "cmjob00000000001"
+    },
+    "cwd": "<ROOT>/factory/app-a"
+  },
+  "A2": {
+    "engine": "claude",
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
+      "--settings",
+      "<ROOT>/factory/app-claude-settings.json",
+      "--model",
+      "sonnet"
+    ],
+    "settings": {
+      "permissions": {
+        "deny": [
+          "Edit(//<ROOT>/factory/selfdev/**)",
+          "Edit(//<ROOT>/factory/supervisor-src/**)",
+          "Edit(//<ROOT>/factory/*.json)",
+          "Edit(//<ROOT>/factory/*.sh)",
+          "Edit(//<ROOT>/factory/secrets.env)",
+          "Read(//<ROOT>/factory/supervisor.config.json)",
+          "Read(//<ROOT>/factory/secrets.env)",
+          "Read(~/.ssh/**)",
+          "Read(~/.aws/**)"
+        ]
+      },
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node \"<SUP>/ssh-guard.mjs\"",
+                "timeout": 15
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node \"<SUP>/ssh-guard.mjs\"",
+              "timeout": 15
+            }
+          ]
+        }
+      ]
+    },
+    "envNames": [
+      "FACTORY_APP_SLUG",
+      "FACTORY_JOB_ID",
+      "FACTORY_MAINTENANCE",
+      "FOO",
+      "HOME",
+      "LANG",
+      "PATH",
+      "PIXELLAB_TOKEN",
+      "STORE_API_KEY"
+    ],
+    "envFactory": {
+      "FACTORY_APP_SLUG": "app-a",
+      "FACTORY_JOB_ID": "cmjob00000000001"
+    },
+    "cwd": "<ROOT>/factory/app-a"
+  },
+  "A3": {
+    "engine": "claude",
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
+      "--settings",
+      "<ROOT>/factory/app-claude-settings.json",
+      "--model",
+      "sonnet"
+    ],
+    "settings": {
+      "permissions": {
+        "deny": [
+          "Edit(//<ROOT>/factory/selfdev/**)",
+          "Edit(//<ROOT>/factory/supervisor-src/**)",
+          "Edit(//<ROOT>/factory/*.json)",
+          "Edit(//<ROOT>/factory/*.sh)",
+          "Edit(//<ROOT>/factory/secrets.env)",
+          "Read(//<ROOT>/factory/supervisor.config.json)",
+          "Read(//<ROOT>/factory/secrets.env)",
+          "Read(~/.ssh/**)",
+          "Read(~/.aws/**)"
+        ]
+      },
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node \"<SUP>/ssh-guard.mjs\"",
+                "timeout": 15
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node \"<SUP>/ssh-guard.mjs\"",
+              "timeout": 15
+            }
+          ]
+        }
+      ]
+    },
+    "envNames": [
+      "FACTORY_APP_SLUG",
+      "FACTORY_JOB_ID",
+      "FACTORY_LOCK_DIR",
+      "FACTORY_MAINTENANCE",
+      "FACTORY_WAIT_FILE",
+      "FOO",
+      "HOME",
+      "LANG",
+      "PATH",
+      "PIXELLAB_TOKEN",
+      "STORE_API_KEY"
+    ],
+    "envFactory": {
+      "FACTORY_APP_SLUG": "app-a",
+      "FACTORY_JOB_ID": "cmjob00000000001",
+      "FACTORY_LOCK_DIR": "<ROOT>/factory/.locks",
+      "FACTORY_WAIT_FILE": "<ROOT>/factory/.worktrees/app-a-cmjob00000000001/.factory/lock-wait.json"
+    },
+    "cwd": "<ROOT>/factory/.worktrees/app-a-cmjob00000000001"
+  },
+  "A4": {
+    "engine": "claude",
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
+      "--settings",
+      "<ROOT>/factory/app-claude-settings.json",
+      "--resume",
+      "0f25374d-65f8-4ec9-8bac-76b99879517b",
+      "--model",
+      "sonnet"
+    ],
+    "settings": {
+      "permissions": {
+        "deny": [
+          "Edit(//<ROOT>/factory/selfdev/**)",
+          "Edit(//<ROOT>/factory/supervisor-src/**)",
+          "Edit(//<ROOT>/factory/*.json)",
+          "Edit(//<ROOT>/factory/*.sh)",
+          "Edit(//<ROOT>/factory/secrets.env)",
+          "Read(//<ROOT>/factory/supervisor.config.json)",
+          "Read(//<ROOT>/factory/secrets.env)",
+          "Read(~/.ssh/**)",
+          "Read(~/.aws/**)"
+        ]
+      },
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node \"<SUP>/ssh-guard.mjs\"",
+                "timeout": 15
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node \"<SUP>/ssh-guard.mjs\"",
+              "timeout": 15
+            }
+          ]
+        }
+      ]
+    },
+    "envNames": [
+      "FACTORY_APP_SLUG",
+      "FACTORY_JOB_ID",
+      "FACTORY_LOCK_DIR",
+      "FACTORY_MAINTENANCE",
+      "FACTORY_WAIT_FILE",
+      "FOO",
+      "HOME",
+      "LANG",
+      "PATH",
+      "PIXELLAB_TOKEN",
+      "STORE_API_KEY"
+    ],
+    "envFactory": {
+      "FACTORY_APP_SLUG": "app-a",
+      "FACTORY_JOB_ID": "cmjob00000000001",
+      "FACTORY_LOCK_DIR": "<ROOT>/factory/.locks",
+      "FACTORY_WAIT_FILE": "<ROOT>/factory/.worktrees/app-a-cmjob00000000001/.factory/lock-wait.json"
+    },
+    "cwd": "<ROOT>/factory/.worktrees/app-a-cmjob00000000001"
+  },
+  "R1": {
+    "engine": "claude",
+    "command": "claude",
+    "args": [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
+      "--settings",
+      "<ROOT>/factory/app-claude-settings.json",
+      "--model",
+      "opus"
+    ],
+    "settings": {
+      "permissions": {
+        "deny": [
+          "Edit(//<ROOT>/factory/selfdev/**)",
+          "Edit(//<ROOT>/factory/supervisor-src/**)",
+          "Edit(//<ROOT>/factory/*.json)",
+          "Edit(//<ROOT>/factory/*.sh)",
+          "Edit(//<ROOT>/factory/secrets.env)",
+          "Read(//<ROOT>/factory/supervisor.config.json)",
+          "Read(//<ROOT>/factory/secrets.env)",
+          "Read(~/.ssh/**)",
+          "Read(~/.aws/**)"
+        ]
+      },
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node \"<SUP>/ssh-guard.mjs\"",
+                "timeout": 15
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node \"<SUP>/ssh-guard.mjs\"",
+              "timeout": 15
+            }
+          ]
+        }
+      ]
+    },
+    "envNames": [
+      "ANDROID_KEYSTORE_PASSWORD",
+      "ANDROID_KEY_ALIAS",
+      "FACTORY_APP_SLUG",
+      "FACTORY_JOB_ID",
+      "FACTORY_MAINTENANCE",
+      "FOO",
+      "HOME",
+      "LANG",
+      "PATH",
+      "PIXELLAB_TOKEN",
+      "STORE_API_KEY"
+    ],
+    "envFactory": {
+      "FACTORY_APP_SLUG": "app-a",
+      "FACTORY_JOB_ID": "cmjob00000000001"
+    },
+    "cwd": "<ROOT>/factory/app-a"
+  },
+  "A2_codex": {
+    "engine": "codex",
+    "command": "codex.cmd",
+    "args": [
+      "exec",
+      "--json",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_mode=\"workspace-write\"",
+      "-c",
+      "sandbox_workspace_write.network_access=false",
+      "-c",
+      "project_doc_fallback_filenames=[\"CLAUDE.local.md\",\"CLAUDE.md\"]",
+      "-"
+    ],
+    "settings": null,
+    "hooks": null,
+    "envNames": [
+      "FACTORY_APP_SLUG",
+      "FACTORY_JOB_ID",
+      "FACTORY_MAINTENANCE",
+      "FOO",
+      "HOME",
+      "LANG",
+      "PATH",
+      "PIXELLAB_TOKEN",
+      "STORE_API_KEY"
+    ],
+    "envFactory": {
+      "FACTORY_APP_SLUG": "app-a",
+      "FACTORY_JOB_ID": "cmjob00000000001"
+    },
+    "cwd": "<ROOT>/factory/app-a"
+  }
+}

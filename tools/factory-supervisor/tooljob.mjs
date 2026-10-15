@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { pickArtOutputs, createArtRegistrar } from "./artregister.mjs";
 import { ADAPTERS, loadToolkitManifest, writeArtRefs, writeProjectSettings } from "./toolbroker.mjs";
+import { agentSpec } from "./agentrun.mjs";
 
 export const TOOLJOBS_DIR = "tooljobs";
 export const TOOLJOB_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
@@ -17,6 +18,8 @@ const ART_KINDS = ["image-prop", "image-scene", "motion-game", "motion-clip"];
 const MAX_SUBJECTS = 8;
 const MAX_COUNT = 8;
 const MAX_TOTAL = 16;
+// 입력 한도: 에이전트 정의(agents/tool.json, T)의 limits.input 이 있으면 그 값(서버 한도보다 크게는 못 둔다), 없거나 거절됐으면 위 값 그대로
+const inputLimit = (name, fallback) => agentSpec("T")?.limits.input?.[name] ?? fallback;
 
 const isLink = (p) => {
   try {
@@ -69,9 +72,12 @@ export function readToolInput(raw) {
   if (!isRecord(raw)) return { error: "도구 일감 입력(toolInput)이 없어요." };
   const subjects = (Array.isArray(raw.subjects) ? raw.subjects : []).filter((s) => typeof s === "string" && s.trim() && !/[\u0000-\u001f]/.test(s) && s.length <= 60).map((s) => s.trim());
   const count = Number.isInteger(raw.count) ? raw.count : NaN;
-  if (!subjects.length || subjects.length > MAX_SUBJECTS) return { error: `대상은 1~${MAX_SUBJECTS}개여야 해요.` };
-  if (!(count >= 1 && count <= MAX_COUNT)) return { error: `장 수는 1~${MAX_COUNT}이어야 해요.` };
-  if (count * subjects.length > MAX_TOTAL) return { error: `한 일감은 전체 ${MAX_TOTAL}장까지예요.` };
+  const maxSubjects = inputLimit("maxSubjects", MAX_SUBJECTS);
+  const maxCount = inputLimit("maxCount", MAX_COUNT);
+  const maxTotal = inputLimit("maxTotal", MAX_TOTAL);
+  if (!subjects.length || subjects.length > maxSubjects) return { error: `대상은 1~${maxSubjects}개여야 해요.` };
+  if (!(count >= 1 && count <= maxCount)) return { error: `장 수는 1~${maxCount}이어야 해요.` };
+  if (count * subjects.length > maxTotal) return { error: `한 일감은 전체 ${maxTotal}장까지예요.` };
   const extra = typeof raw.extra === "string" ? raw.extra.replace(/[\u0000-\u001f]+/g, " ").trim().slice(0, 500) : "";
   return { subjects, count, extra, confirmed: raw.confirmed === true };
 }

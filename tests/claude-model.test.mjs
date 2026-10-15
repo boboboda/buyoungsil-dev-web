@@ -83,7 +83,7 @@ test("감독 프로그램 코드: 일감·정비 지시의 모델을 startAi 로
   const sup = fs.readFileSync(path.join(repo, "tools/factory-supervisor/supervisor.mjs"), "utf8");
   const maint = fs.readFileSync(path.join(repo, "tools/factory-supervisor/maintenance.mjs"), "utf8");
   assert.match(sup, /const model = job\.aiEngine === "claude" \? job\.aiModel \|\| null : null;/);
-  assert.match(sup, /startAi\(job\.aiEngine, cfg, \{\s*model,/);
+  assert.match(sup, /startAi\(job\.aiEngine, (?:appSpec \? cfgOf\(appSpec, cfg\) : )?cfg, \{\s*model,/); // 에이전트 정의(A1~A4·R1)가 있으면 그 기본값을 깐 cfg
   assert.match(sup, /modelNote/);
   assert.match(maint, /const model = m\.aiEngine === "claude" \? m\.aiModel \|\| null : null;/);
   assert.match(maint, /startAi\(m\.aiEngine, cfg, \{[^}]*\bmodel,/);

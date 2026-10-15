@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
+import { agentSpec, codexOptionsOf, writeSettings } from "./agentrun.mjs";
 import { isTransient } from "./outbox.mjs";
 
 const TRANSIENT_RETRY_MS = 8 * 60_000; // 서버 배포(3~5분) 동안 결과 파일 올리기를 다시 시도하는 시간
@@ -135,7 +136,9 @@ export function labPrompt({ job, dir, shared, workDir }) {
  * - deny: 공장 폴더 안 실험 폴더 밖 모든 항목에 Edit 금지(deny 가 allow 보다 먼저), 감독 프로그램·정비 폴더, 설정·비밀 파일 읽기.
  * 설정 파일은 쓰기 허용 폴더 밖(lab/.settings/)에 둔다. 못 만들면 던진다(실험은 권한 없이 돌리지 않는다).
  */
-export function writeLabClaudeSettings({ workDir, dir, shared, jobId, extraProtected = [] }) {
+export function writeLabClaudeSettings({ workDir, dir, shared, jobId, extraProtected = [], spec = agentSpec("L1") }) {
+  // 에이전트 정의(agents/lab.json, L1)가 있으면 거기서 만든다(예전 코드와 같은 결과인지는 tests/agentspec.test.mjs 가 비교). 없거나 거절됐으면 아래 예전 코드 그대로
+  if (spec) return writeSettings(spec, { workDir, dir, shared, jobId, protectedDirs: extraProtected });
   const root = labRootOf(workDir);
   const folder = path.join(root, ".settings");
   fs.mkdirSync(folder, { recursive: true });
@@ -165,7 +168,7 @@ export function writeLabClaudeSettings({ workDir, dir, shared, jobId, extraProte
 }
 
 /** Codex 실행 옵션: 쓰기 가능 루트는 공용 폴더(작업 폴더는 cwd 라서 자동), 네트워크 허용 (ai-runner.mjs invocation 의 옵션) */
-export const labCodexOptions = (shared) => ({ writableRoots: [slash(shared)], network: true });
+export const labCodexOptions = (shared, spec = agentSpec("L1")) => (spec ? codexOptionsOf(spec, { shared }) : { writableRoots: [slash(shared)], network: true });
 
 // ───────────── 사후 검사: 공장 안 저장소 git status 비교 ─────────────
 
