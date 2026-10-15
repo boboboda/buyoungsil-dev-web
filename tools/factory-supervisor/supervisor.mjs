@@ -18,6 +18,7 @@ import { createInterface } from "node:readline/promises";
 import { enforceTestMode } from "./testmode.mjs";
 import { BIG_UPLOAD_BYTES, createOutbox, trackUpload, uploadBusy } from "./outbox.mjs";
 import { bundleStatus, maybeUpdate, notePoll, reportInfo, requestUpdateNow, setUpdateBundle, startupGuard, updateWaiting } from "./update.mjs";
+import { createWorkCounter } from "./workrules.mjs";
 import { SCREENSHOT_CUT_MESSAGE, STUCK_PREFIX, WARN_MESSAGE, cleanLoopGuard, commandEvents, createLoopGuard, screenshotBudget, snapshotWorkdir } from "./loopguard.mjs";
 import { BACKGROUND_FAIL_REASON, NO_BACKGROUND_RULE, RESUME_MESSAGE, backgroundFailure, clearSavedState, createPauser, readSavedState, resumeFailed } from "./pause.mjs";
 import {
@@ -773,6 +774,13 @@ async function finish(st, status, fields) {
     addLog(st, "warn", msg);
     if (typeof fields?.summary === "string") fields = { ...fields, summary: `${msg}\n${fields.summary}`.slice(0, 3990) };
   }
+  // 일감이 돌린 정적 검사·빌드·시험·스크린샷 횟수와 상한 초과(경고만)를 결과에 붙인다
+  const workLine = st.work?.summary();
+  if (workLine) {
+    addLog(st, st.work.over().length ? "warn" : "info", workLine.split("\n").join(" · "));
+    if (typeof fields?.summary === "string") fields = { ...fields, summary: [fields.summary, workLine].join("\n").slice(0, 3990) };
+    else if (typeof fields?.failReason === "string") fields = { ...fields, failReason: [fields.failReason, workLine].join("\n").slice(0, 3990) };
+  }
   // 마지막 스크린샷이 아직 안 올라갔으면 완료를 보고하기 전에 몇 번 더 시도한다
   for (let i = 0; i < 3 && st.reportable; i++) {
     if ((await uploadShots(st)) === 0) break;
@@ -1225,7 +1233,12 @@ const shotMaxMin = () => (process.env.FACTORY_TEST_MODE === "1" && Number(proces
 
 // 일감 시간 낭비 막기: AI 원본 이벤트의 명령을 보고 같은 시험 반복을 감지한다(앱 일감 new·revision 만)
 function watchLoop(st, raw) {
-  if (!st.guard || st.inMerge) return; // 합치기 뒤 다시 맞추기 턴은 보지 않는다
+  if (st.inMerge) return; // 합치기 뒤 다시 맞추기 턴은 보지 않는다
+  if (["new", "revision"].includes(st.job.kind)) {
+    st.work ??= createWorkCounter(); // 검사·시험·스크린샷 횟수(결과에 표시, 상한 초과는 경고만)
+    try { st.work.feed(commandEvents(st.job.aiEngine, raw)); } catch { /* 집계 실패는 일감에 영향 없음 */ }
+  }
+  if (!st.guard) return;
   for (const e of commandEvents(st.job.aiEngine, raw)) {
     if (e.type === "end") {
       st.guard.end(e.id, e.output);

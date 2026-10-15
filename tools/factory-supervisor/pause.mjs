@@ -10,9 +10,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { WORK_RULES_SHORT } from "./workrules.mjs";
 
 export const NO_BACKGROUND_RULE = "백그라운드 명령 금지. 끊긴 명령은 전경에서 다시 실행하고 끝까지 기다린 뒤 보고·커밋까지 마쳐라.";
-export const RESUME_MESSAGE = `공장 업데이트로 잠시 멈췄다. 파일은 그대로다. 멈추기 직전 명령이 끊겼다면 다시 실행하고 이어서 진행해. ${NO_BACKGROUND_RULE}`;
+export const RESUME_MESSAGE = `공장 업데이트로 잠시 멈췄다. 파일은 그대로다. 멈추기 직전 명령이 끊겼다면 다시 실행하고 이어서 진행해. ${WORK_RULES_SHORT} ${NO_BACKGROUND_RULE}`;
 export const BACKGROUND_FAIL_REASON = "백그라운드 대기 중 종료 — 마무리 필요";
 // 마지막 결과 글이 "백그라운드에서 돌고 있어요 / 끝나면 이어서 / 알림이 오면" 같은 미완료 문구인가
 const UNFINISHED_PATTERNS = [

@@ -24,6 +24,8 @@ import { keyFilesToCommit } from "./keyguard.mjs";
 import { compactSession } from "./compact.mjs";
 import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
+import { commandEvents } from "./loopguard.mjs";
+import { createWorkCounter } from "./workrules.mjs";
 import { BACKGROUND_FAIL_REASON, RESUME_MESSAGE, backgroundFailure, resumeFailed } from "./pause.mjs";
 import { buildRevertCommit, migrationsChanged } from "./revert.mjs";
 import { DEFAULT_MAINT_REMOTE, DEPLOY_DEFAULTS, deploySuccessRe, healthPassed, healthRedirect, maintDirOf, maintRemoteOf, resolveDeploy } from "./deploycfg.mjs";
@@ -318,8 +320,11 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
     const r = await post(ctx, { action: "report", turnId: m.turnId, logs: batch });
     if (r.status === 0) logs.unshift(...batch);
   };
+  const work = createWorkCounter(); // 검사·빌드·시험·스크린샷 횟수(결과에 표시, 상한 초과는 경고만)
   const finish = async (done) => {
     done.text = redact(done.text);
+    const workLine = work.summary();
+    if (workLine) { const oneLine = workLine.split("\n").join(" · "); done.text = [done.text, `— ${oneLine}`].join("\n"); addLog(oneLine); }
     recordLifecycle(dir, m.aiEngine, done.ok ? "done" : "failed", m.turnId);
     // 인계 기록(.factory/handoff.json): 사실은 여기서 채우고, 요청·남은 작업·주의는 AI 답변의 '## 인계' 블록에서. 실패한 지시도 남긴다
     try {
@@ -408,6 +413,7 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
       try {
         const raw = JSON.parse(line);
         unit?.feed(raw); // 끝나지 않은 도구 호출 추적(업데이트로 멈출 안전한 지점)
+        try { work.feed(commandEvents(m.aiEngine, raw)); } catch { /* 집계 실패는 정비에 영향 없음 */ }
         ev = decode(raw);
       } catch {
         return addLog(line);
