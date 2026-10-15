@@ -174,6 +174,11 @@ node supervisor.mjs      # 끄려면 Ctrl+C
 
 ## 서버 설정 도구 (`serverctl.mjs`, 공장 정비 전용)
 - 정비 Claude 는 서버 설정(nginx, 서버 `.env.local`, 재빌드)을 이 도구로만 바꿔요. 이 PC 의 docker·sudo·nginx·systemctl 직접 호출, sftp·rsync, `~/.ssh` 읽기, 실행 폴더 수정은 `--settings` 권한 규칙으로 막혀 있어요. 서버 접속(ssh·scp·git)은 아래 「서버 접근 규칙」을 따라요.
+- 대상 사이트 설정(통합-분리 4-2, 동작 변화 없음): 블로그(`developWeb`·www)로 박혀 있던 값을 감독 설정으로 뺐어요(`deploycfg.mjs`). 비우면 예전 값 그대로예요.
+  - `deploy.workName`(서버 작업 폴더·env 백업 폴더, 기본 `developWeb`) · `deploy.containerName`([배포] 성공 문구 `Recreating <이름> ... done`·rebuild 이미지 조회, 기본 `developWeb`) · `deploy.healthUrl`(배포·재빌드 뒤 헬스체크, 기본 `https://www.buyoungsilcoding.com/`) · `deploy.healthExpect`(합격 응답 코드 배열, 기본 `[200]`, 3xx 를 넣으면 리다이렉트를 따라가지 않고 그 코드를 봐요) · `deploy.nginxDomain`(nginx-apply 내용 검사, 기본 `buyoungsilcoding.com`) · `deploy.repoDescription`(정비 규칙의 저장소 설명).
+  - `maintDir`(정비 작업 폴더, 기본 `selfdevDir`) · `maintPushRemote`(정비 결과를 올리는 git 원격 이름, 기본 `origin`). 앱·실험 AI 의 보호 폴더 목록은 `selfdevDir`·`maintDir`·`supervisor-src` 를 모두 봐요.
+  - serverctl 의 env-keys·env-set KEY·env-unset·nginx-*·rebuild·restore·backups 는 `--site <작업 폴더 이름>`(작업 폴더·컨테이너·env 백업 폴더)과 `--host serverpc|serverpc2` 를 받아요(`--site` 가 `deploy.workName` 보다 먼저). `--site` 를 줘도 헬스체크 주소·합격 코드는 `deploy.*` 를 따르니 그 사이트용으로 맞춰 두세요. nginx 사이트 파일 이름(`sites-enabled/default`)은 아직 고정이에요(전환 단계에서).
+  - `service-token` 의 키 보관함 주소는 `deploy` 가 아니라 감독 설정의 `serverUrl`(+ 감독 토큰)을 따라요. 전환 전에는 블로그, `serverUrl` 을 바꾼 뒤에는 새 홈페이지의 `/api/factory/service-token` 이에요.
 
 ## 서버 접근 규칙 (`serveraccess.mjs`, `ssh-guard.mjs`)
 - 공장 AI 세션(정비·앱 new/revision·출시·실험)은 `~/.ssh/config` 의 우리 서버 두 대(`serverpc` 서버1, `serverpc2` 서버2)로만 ssh·scp·git 접속을 할 수 있어요. 다른 호스트, `-J`·`-F`·`ProxyCommand`·터널 옵션, sftp·rsync 는 막혀요.

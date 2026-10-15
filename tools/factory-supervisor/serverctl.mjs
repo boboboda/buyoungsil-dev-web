@@ -2,6 +2,11 @@
 // 공장 정비 전용 서버 설정 도구. 정비 Claude 는 서버 설정을 이 도구로만 바꾼다(ssh·docker·.env 직접 접근 금지).
 // 정해진 서브커맨드만 있고, 임의 명령 실행 옵션은 없다. ssh 는 이 도구 안에서만(BatchMode, 고정 호스트·경로) 쓴다.
 //
+// 아래 env-keys ~ backups 는 기본이 블로그(작업 폴더·컨테이너 developWeb, 서버 serverpc, 헬스체크 www)다. 다른 사이트(통합-분리 전환 뒤 factory)는
+// 감독 설정(supervisor.config.json)의 deploy.workName·containerName·healthUrl·healthExpect·nginxDomain(deploycfg.mjs)으로 바꾸거나,
+// 명령에 `--site <작업 폴더 이름>`(작업 폴더·컨테이너·env 백업 폴더가 그 이름) 과 `--host serverpc|serverpc2` 를 줘서 고른다.
+// --site 를 줘도 헬스체크 주소·합격 코드는 deploy.healthUrl·healthExpect 를 따르니, 그 사이트용으로 설정해 둬야 한다.
+//
 //   env-keys                         .env.local 의 키 이름만(값은 절대 출력하지 않음)
 //   env-set KEY                      값은 환경변수 SERVERCTL_VALUE 또는 stdin 으로만(명령줄·로그에 값 없음). 반영은 rebuild 로
 //   env-set <작업폴더…> [--gen-shared KEY]… [--gen KEY]… [--put KEY] [--host H]
@@ -37,6 +42,7 @@
 //                                    서비스 관리자 토큰 짝 맞추기(한 컷): 이 PC 프로세스 메모리에서 32바이트 값을 한 번 만들어
 //                                    ① 서버 작업 폴더 .env(.local) 의 KEY 에 넣고(백업·600) ② 홈페이지 키 보관함(/api/factory/service-token, 감독 토큰)에 저장
 //                                    ③ 컨테이너를 다시 만들어(compose up -d --force-recreate) 새 값을 읽게 하고 첫 경로 200·나머지 경로(토큰 없이) 401 확인.
+//                                    보관함 주소는 deploy 설정이 아니라 감독 설정의 serverUrl 을 따른다(그 홈페이지의 /api/factory/service-token). 전환 전에는 블로그, 전환 뒤에는 새 serverUrl.
 //                                    어느 단계든 실패하면 둘 다 되돌림(.env 백업 복원, 보관함 이전 값 복원 또는 삭제, 컨테이너 재시작). 값은 출력·로그·파일·인자에 남지 않음
 //
 // 안전 절차: 바꾸기 전에 백업(작업 폴더 밖, 최근 20개) → 바꾸고 검증(nginx -t, reload, 헬스체크 / rebuild, 헬스체크)
@@ -48,6 +54,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
+import { healthPassed, healthRedirect, resolveDeploy } from "./deploycfg.mjs";
 
 // 정비 보호 훅(pcguard.mjs)도 이 목록으로 "신뢰된 serverctl 호출"을 가린다
 export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token"];
@@ -55,7 +62,6 @@ const HOST = "serverpc";
 const HOSTS = ["serverpc", "serverpc2"]; // 우리 서버 두 대만(serveraccess.mjs 의 SERVER_HOSTS 와 같게)
 // 시험 모드(FACTORY_TEST_MODE=1)에서만 가짜 ssh·가짜 홈페이지 주소를 쓴다. 진짜 실행에서는 환경변수로 바꿀 수 없다
 const TEST = process.env.FACTORY_TEST_MODE === "1";
-const SITE_URL = (TEST && process.env.SERVERCTL_SITE_URL) || "https://www.buyoungsilcoding.com/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 const KEY_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const TS_RE = /^\d{8}-\d{6}$/;
@@ -80,15 +86,38 @@ const STATE = (TEST && process.env.SERVERCTL_STATE) || path.join(home, "dev", "f
 // 시험 모드는 임시 설정(FACTORY_CONFIG)만 쓰고 진짜 설정으로 되돌아가지 않는다(시험이 진짜 홈페이지에 닿지 않게)
 const CONFIG = TEST ? process.env.FACTORY_CONFIG || "" : path.join(home, "dev", "factory", "supervisor.config.json");
 
+// 대상 사이트(작업 폴더·컨테이너·헬스체크·nginx 도메인). 기본 = 블로그. main 이 감독 설정의 deploy 와 --site 로 채운다(loadSite)
+const SITE = { work: "developWeb", container: "developWeb", healthUrl: "https://www.buyoungsilcoding.com/", healthExpect: [200], nginxDomain: "buyoungsilcoding.com" };
+let DEFAULT_HOST = HOST;
+export function loadSite(siteOpt, raw) {
+  const d = resolveDeploy(raw, { local: TEST });
+  if (d.problems.length) die("감독 설정의 deploy 가 올바르지 않아요: " + d.problems.join("; "));
+  if (siteOpt !== undefined && !NAME_RE.test(siteOpt)) die("--site 는 서버 작업 폴더 이름이에요: " + siteOpt);
+  SITE.work = siteOpt ?? d.workName;
+  SITE.container = siteOpt === undefined || siteOpt === d.workName ? d.containerName : siteOpt;
+  // 시험 모드에서만 SERVERCTL_SITE_URL 로 가짜 홈페이지를 가리킨다. 설정에 healthUrl 이 있으면 그것이 먼저
+  SITE.healthUrl = raw?.deploy?.healthUrl ? d.healthUrl : (TEST && process.env.SERVERCTL_SITE_URL) || d.healthUrl;
+  SITE.healthExpect = d.healthExpect;
+  SITE.nginxDomain = d.nginxDomain;
+  return SITE;
+}
+const readRawConfig = () => {
+  if (!CONFIG) return {};
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG, "utf8"));
+  } catch {
+    return {}; // 설정이 없거나 깨졌으면 기본값(기존 동작). service-token 은 따로 설정을 요구하고 막는다
+  }
+};
 // ───────── 서버 쪽 고정 스크립트(인자는 아래에서 형식 검사 후에만 넘긴다) ─────────
 const REMOTE = String.raw`
 set -u
-WORK="$HOME/git-server/work/developWeb"; ENVF="$WORK/.env.local"
+WORK="$HOME/git-server/work/$SC_WORK"; ENVF="$WORK/.env.local"
 NGE=/etc/nginx; NGBIN=/usr/sbin/nginx
 # 시험(가짜 ssh)에서만 주는 경로. 진짜 서버에는 ssh 가 이 환경변수를 넘기지 않아 기본값을 쓴다
 [ -n "$(printenv SERVERCTL_NGINX_ETC)" ] && NGE=$(printenv SERVERCTL_NGINX_ETC)
 [ -n "$(printenv SERVERCTL_NGINX_BIN)" ] && NGBIN=$(printenv SERVERCTL_NGINX_BIN)
-ENVB="$HOME/env-backups/developWeb"; NGF="$NGE/sites-enabled/default"; NGB="$HOME/nginx-backups"
+ENVB="$HOME/env-backups/$SC_WORK"; NGF="$NGE/sites-enabled/default"; NGB="$HOME/nginx-backups"
 TS=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$ENVB" "$NGB"; chmod 700 "$HOME/env-backups" "$ENVB" "$NGB"; chmod 600 "$ENVB"/.env.local.bak-* "$NGB"/default.bak-* 2>/dev/null
 prune() { ls -1t "$1"/$2.bak-* 2>/dev/null | tail -n +21 | xargs -r rm -f; }
@@ -176,7 +205,7 @@ case "$1" in
     echo "[nginx]"; ls -1t "$NGB"/default.bak-* 2>/dev/null | head -20 | sed 's#.*/##' ;;
   rebuild-start)
     cd "$WORK" || exit 2
-    IMG=$(docker inspect developWeb --format '{{.Config.Image}}' | cut -d: -f1)
+    IMG=$(docker inspect "$SC_CONTAINER" --format '{{.Config.Image}}' | cut -d: -f1)
     docker tag "$IMG:latest" "$IMG:rollback-$TS" && echo "ROLLBACK_TAG rollback-$TS"
     docker images "$IMG" --format '{{.Tag}}' | grep '^rollback-' | sort -r | tail -n +4 | xargs -r -I{} docker rmi "$IMG:{}" > /dev/null 2>&1
     nohup bash -c 'export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 BUILDKIT_PROGRESS=plain; cp .env.local .env.temp && docker-compose build --build-arg ENV_FILE=.env.temp && docker-compose up -d && echo REBUILD_OK; rm -f .env.temp; echo REBUILD_END' > "$HOME/serverctl-rebuild.log" 2>&1 < /dev/null &
@@ -184,7 +213,7 @@ case "$1" in
   rebuild-status) grep -aE 'REBUILD_OK|REBUILD_END|Failed to compile|ERROR' "$HOME/serverctl-rebuild.log" | tail -5 ;;
   image-rollback)
     cd "$WORK" || exit 2
-    IMG=$(docker inspect developWeb --format '{{.Config.Image}}' | cut -d: -f1)
+    IMG=$(docker inspect "$SC_CONTAINER" --format '{{.Config.Image}}' | cut -d: -f1)
     docker tag "$IMG:$2" "$IMG:latest" && docker-compose up -d > /dev/null 2>&1 && echo "ROLLED_BACK $2" ;;
   site-init)
     N="$2"; F="$3"; R="$HOME/git-server/repo"; W="$HOME/git-server/work"
@@ -388,14 +417,14 @@ esac
 // 서버에서 고정 스크립트 실행. args 는 호출 전에 형식 검사를 마친 값만. stdin 은 값(.env)·설정 본문 전달에만 쓴다.
 // 시험 모드에서만 가짜 ssh(node 스크립트)를 쓴다
 const sshCmd = () => (TEST && process.env.SERVERCTL_SSH ? [process.execPath, [process.env.SERVERCTL_SSH]] : ["ssh", []]);
-function remote(args, input, host = HOST) {
+function remote(args, input, host = DEFAULT_HOST) {
   const script = /^(app-(update|health|restart)|env-restore-work)/.test(args[0]) ? REMOTE_APP : args[0] === "web-release" ? REMOTE_WEB : REMOTE;
   if (!HOSTS.includes(host)) die(`대상 서버는 ${HOSTS.join("·")} 만이에요: ${host}`);
   // 윈도우 ssh 명령줄은 길면 잘린다(원격 셸이 "unmatched \"" 로 실패) → 스크립트를 gzip 한 뒤 base64 로 보낸다
   const b64 = gzipSync(Buffer.from(script.replace(/\r\n/g, "\n")), { level: 9 }).toString("base64");
   const quoted = args.map((a) => `'${String(a).replace(/'/g, "")}'`).join(" ");
   const [bin, pre] = sshCmd();
-  const r = spawnSync(bin, [...pre, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, `LC_ALL=C bash -c "$(echo ${b64} | base64 -d | gunzip)" serverctl ${quoted}`], {
+  const r = spawnSync(bin, [...pre, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, `LC_ALL=C SC_WORK='${SITE.work}' SC_CONTAINER='${SITE.container}' bash -c "$(echo ${b64} | base64 -d | gunzip)" serverctl ${quoted}`], {
     input: input ?? "",
     encoding: "utf8",
     timeout: 120_000,
@@ -424,8 +453,8 @@ async function health(tries = 6, gapMs = TEST ? 50 : 10_000) {
   let last = "";
   for (let i = 0; i < tries; i++) {
     try {
-      const r = await fetch(SITE_URL, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
-      if (r.status === 200) return { ok: true, detail: "200" };
+      const r = await fetch(SITE.healthUrl, { headers: { "User-Agent": UA }, redirect: healthRedirect(SITE.healthExpect), signal: AbortSignal.timeout(15_000) });
+      if (healthPassed(r.status, SITE.healthExpect)) return { ok: true, detail: String(r.status) };
       last = String(r.status);
     } catch (e) {
       last = e.message;
@@ -532,7 +561,7 @@ export function setDirective(text, name, value, location) {
 }
 
 async function applyNginx(content, what) {
-  if (content.length > 200_000 || !/server\s*\{/.test(content) || !content.includes("buyoungsilcoding.com")) die("nginx 설정 내용이 대상 사이트 설정으로 보이지 않아요.");
+  if (content.length > 200_000 || !/server\s*\{/.test(content) || !content.includes(SITE.nginxDomain)) die("nginx 설정 내용이 대상 사이트 설정으로 보이지 않아요.");
   const r = remote(["nginx-apply"], content.replace(/\r\n/g, "\n"));
   const b = backupOf(r.out);
   if (r.code !== 0) {
@@ -594,11 +623,11 @@ async function rebuild() {
   process.exit(5);
 }
 
-async function envChange(cmd, key) {
+async function envChange(cmd, key, positional = 1) {
   if (!KEY_RE.test(key ?? "")) die("KEY 는 영문 대문자·숫자·_ 로(대문자로 시작, 64자 이하).");
   let value;
   if (cmd === "env-set") {
-    if (process.argv.length > 4) die("값은 명령줄 인자로 받지 않아요(로그에 남아요). SERVERCTL_VALUE 환경변수나 stdin 으로 넘겨 주세요.");
+    if (positional > 1) die("값은 명령줄 인자로 받지 않아요(로그에 남아요). SERVERCTL_VALUE 환경변수나 stdin 으로 넘겨 주세요.");
     value = process.env.SERVERCTL_VALUE;
     if (value === undefined) {
       if (process.stdin.isTTY) die("값은 환경변수 SERVERCTL_VALUE 또는 stdin 으로 넘겨 주세요(명령줄 인자 금지).");
@@ -935,7 +964,7 @@ async function envMulti(args) {
   const skip = [...r.out.matchAll(/^SKIP (\S+) (\S+)$/gm)].map((m) => m[2] + " → " + m[1] + "(이미 있어 건너뜀)");
   const modes = [...r.out.matchAll(/^MODE (\S+) (\d+)$/gm)].map((m) => m[1] + "=" + m[2]);
   // developWeb 을 바꿨으면 다음 rebuild 가 실패할 때 이 백업으로 되돌린다
-  const own = backups.find((b) => b.includes("/env-backups/developWeb/"));
+  const own = backups.find((b) => b.includes(`/env-backups/${SITE.work}/`));
   if (own) {
     const st = readState();
     if (!st.envBaseline) {
@@ -1165,8 +1194,25 @@ async function serviceToken(args) {
   await report(`서비스 토큰 짝 넣기 ${who} (값은 어디에도 기록하지 않음)\n${body}`);
 }
 
+// 블로그 계열 명령(env-keys·env-set KEY·env-unset·nginx-*·rebuild·restore·backups)의 --site·--host 읽기
+function legacyArgs(rest) {
+  const { pos, opts } = parseOpts(rest, []);
+  for (const k of Object.keys(opts)) if (k !== "site" && k !== "host") die("알 수 없는 옵션이에요: --" + k);
+  if (opts.host !== undefined) DEFAULT_HOST = hostOpt(opts);
+  return { pos, site: opts.site };
+}
+
 async function main() {
-  const [cmd, ...rest] = process.argv.slice(2);
+  const [cmd, ...rawRest] = process.argv.slice(2);
+  const LEGACY = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups"];
+  let rest = rawRest;
+  let site;
+  if (LEGACY.includes(cmd) && !(cmd === "env-set" && rest.some((a) => /^--(gen|gen-shared|put)(=|$)/.test(a)))) {
+    const a = legacyArgs(rest);
+    rest = a.pos;
+    site = a.site;
+  }
+  loadSite(site, readRawConfig());
   switch (cmd) {
     case "env-keys": {
       const r = remote(["env-keys"]);
@@ -1175,9 +1221,9 @@ async function main() {
     }
     case "env-set":
       if (rest.some((a) => a.startsWith("--"))) return envMulti(rest);
-      return envChange(cmd, rest[0]);
+      return envChange(cmd, rest[0], rest.length);
     case "env-unset":
-      return envChange(cmd, rest[0]);
+      return envChange(cmd, rest[0], rest.length);
     case "nginx-show": {
       const r = remote(["nginx-show"]);
       if (r.code !== 0) die(r.out);

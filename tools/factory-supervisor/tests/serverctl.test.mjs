@@ -786,3 +786,73 @@ test("service-token: 값 한 번 생성 → 서버 .env --put → 보관함 저�
     fs.rmSync(ctx.root, { recursive: true, force: true });
   }
 });
+
+test("대상 사이트 설정: 기본은 developWeb·200, deploy 설정(factory 값)·--site·--host 를 주면 작업 폴더·백업·헬스체크 기준이 바뀐다", { skip }, async () => {
+  const ctx = setup();
+  try {
+    const fw = `${ctx.home}/git-server/work/factoryWeb`;
+    fs.mkdirSync(fw, { recursive: true });
+    fs.writeFileSync(`${fw}/.env.local`, "FACTORY_ONLY_KEY=1\nFACTORY_PUBLIC_URL=https://factory.example.com\n");
+    fs.writeFileSync(`${ctx.ngx}/sites-enabled/default`, "server {\n    listen 443 ssl;\n    server_name factory.example.com;\n}\n");
+    const cfgPath = path.join(ctx.root, "factory.config.json");
+    const url = `http://127.0.0.1:${server.address().port}/api/factory/next`;
+    const deploy = { workName: "factoryWeb", containerName: "factoryWeb", healthUrl: url, healthExpect: [401], nginxDomain: "factory.example.com" };
+    const withCfg = (d) => {
+      fs.writeFileSync(cfgPath, JSON.stringify({ serverUrl: "http://127.0.0.1:1", token: "tttttttt", deploy: d }));
+      return { FACTORY_CONFIG: cfgPath };
+    };
+    // 기본(설정 없음): 블로그 작업 폴더
+    let r = await run(ctx, ["env-keys"]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /DATABASE_URL/);
+    assert.ok(!r.out.includes("FACTORY_ONLY_KEY"));
+    // 설정의 workName
+    r = await run(ctx, ["env-keys"], withCfg(deploy));
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /FACTORY_ONLY_KEY/);
+    assert.ok(!r.out.includes("DATABASE_URL"));
+    // --site 가 설정보다 먼저(설정이 없어도 됨), --host 는 우리 서버 두 대만
+    r = await run(ctx, ["env-keys", "--site", "factoryWeb", "--host", "serverpc2"]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /FACTORY_ONLY_KEY/);
+    assert.equal(read(ctx.sshLog).split("\n").filter(Boolean).pop(), "serverpc2");
+    r = await run(ctx, ["env-keys", "--site", "developWeb"], withCfg(deploy));
+    assert.match(r.out, /DATABASE_URL/, "--site 가 설정의 workName 을 이긴다");
+    for (const bad of [["--site", "a b"], ["--site", "../x"], ["--host", "evil.example.com"], ["--nope", "1"]]) {
+      r = await run(ctx, ["env-keys", ...bad]);
+      assert.notEqual(r.code, 0, bad.join(" ") + r.out);
+    }
+    // env-set KEY: 값은 환경변수로, 백업 폴더는 그 사이트 이름
+    r = await run(ctx, ["env-set", "FACTORY_PUBLIC_URL", "--site", "factoryWeb"], { SERVERCTL_VALUE: "https://f2.example.com" });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /env-backups\/factoryWeb\/\.env\.local\.bak-/);
+    assert.match(read(`${fw}/.env.local`), /FACTORY_PUBLIC_URL=https:\/\/f2\.example\.com/);
+    assert.ok(!read(`${ctx.home}/git-server/work/developWeb/.env.local`).includes("f2.example.com"), "블로그 .env 는 그대로");
+    r = await run(ctx, ["env-set", "KEY", "value", "--site", "factoryWeb"]);
+    assert.notEqual(r.code, 0, "값을 인자로 주면 여전히 거절");
+    // 잘못된 deploy 설정은 서버에 가기 전에 멈춤
+    const before = read(ctx.sshLog);
+    r = await run(ctx, ["env-keys"], withCfg({ containerName: "bad name" }));
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /deploy 가 올바르지 않아요/);
+    assert.equal(read(ctx.sshLog), before);
+    // 헬스체크: 설정(401 합격)이면 401 에서 적용됨, 기본(200)이면 같은 응답으로 실패해 되돌림
+    healthStatus = 401;
+    r = await run(ctx, ["nginx-set-directive", "client_max_body_size", "50m"], withCfg(deploy));
+    assert.equal(r.code, 0, r.out);
+    assert.match(read(`${ctx.ngx}/sites-enabled/default`), /client_max_body_size 50m;/);
+    // 기본 헬스(200)는 401 을 합격으로 보지 않는다(nginxDomain 만 설정해 도메인 검사는 통과)
+    r = await run(ctx, ["nginx-set-directive", "client_max_body_size", "60m"], withCfg({ nginxDomain: "factory.example.com" }));
+    assert.equal(r.code, 4, r.out);
+    assert.match(r.out, /헬스체크 실패\(401\)/);
+    assert.match(read(`${ctx.ngx}/sites-enabled/default`), /client_max_body_size 50m;/, "실패하면 백업으로 복원");
+    // nginxDomain 기본(buyoungsilcoding.com)이면 factory 설정 파일은 대상 사이트로 보지 않는다
+    healthStatus = 200;
+    r = await run(ctx, ["nginx-set-directive", "client_max_body_size", "70m"]);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /대상 사이트 설정으로 보이지 않아요/);
+  } finally {
+    healthStatus = 200;
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});

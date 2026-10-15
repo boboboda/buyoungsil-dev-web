@@ -45,7 +45,7 @@ export function migrationsChanged(git, from, to) {
  * 되돌리기 커밋을 만들어 GitHub main 에 올린다.
  *   → { ok: true, commit, reused } 또는 { ok: false, reason, blocked? }  (blocked: 마이그레이션 때문에 막음)
  */
-export function buildRevertCommit({ dir, target, git = gitRunner(dir), log = () => {} }) {
+export function buildRevertCommit({ dir, target, git = gitRunner(dir), log = () => {}, remoteName = "origin" }) {
   if (!COMMIT_RE.test(String(target ?? ""))) return { ok: false, reason: "되돌릴 커밋 형식이 올바르지 않아요." };
   const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 
@@ -54,22 +54,22 @@ export function buildRevertCommit({ dir, target, git = gitRunner(dir), log = () 
   const dirty = git(["status", "--porcelain", "--untracked-files=no"]);
 
   if (dirty.status !== 0 || dirty.stdout.trim()) return fail(`정비 폴더에 커밋 안 된 변경이 있어요. 먼저 정리해 주세요:\n${tail(dirty.stdout, 300)}`);
-  const f = git(["fetch", "-q", "origin", "main"]);
+  const f = git(["fetch", "-q", remoteName, "main"]);
 
   if (f.status !== 0) return fail(`git fetch 실패: ${errText(f)}`);
   let head = out(git(["rev-parse", "HEAD"]));
-  const remote = out(git(["rev-parse", "origin/main"]));
+  const remote = out(git(["rev-parse", `${remoteName}/main`]));
 
   if (!head || !remote) return fail("커밋을 읽지 못했어요.");
   if (head !== remote) {
     // 로컬이 뒤처진 것뿐이면 따라가고, 갈라졌거나 로컬에만 커밋이 있으면 멈춘다(그 위에 만들면 올리지 못한 커밋이 섞인다)
     if (git(["merge-base", "--is-ancestor", head, remote]).status !== 0) return fail("정비 폴더의 main 이 GitHub main 과 달라요(올리지 못한 로컬 커밋이 있어요). 정리한 뒤 다시 눌러 주세요.");
-    const ff = git(["merge", "--ff-only", "-q", "origin/main"]);
+    const ff = git(["merge", "--ff-only", "-q", `${remoteName}/main`]);
 
     if (ff.status !== 0) return fail(`정비 폴더를 GitHub main 으로 맞추지 못했어요: ${errText(ff)}`);
     head = remote;
   }
-  if (git(["merge-base", "--is-ancestor", target, "origin/main"]).status !== 0) return fail(`${target.slice(0, 7)} 는 GitHub main 에 없는 커밋이에요.`);
+  if (git(["merge-base", "--is-ancestor", target, `${remoteName}/main`]).status !== 0) return fail(`${target.slice(0, 7)} 는 GitHub main 에 없는 커밋이에요.`);
 
   // 마이그레이션 검사(권위 있는 검사): 대상과 지금 main 사이에 하나라도 바뀌었으면 되돌리지 않는다
   const mig = git(["diff", "--name-only", target, head, "--", MIGRATIONS_PATH]);
@@ -124,12 +124,12 @@ export function buildRevertCommit({ dir, target, git = gitRunner(dir), log = () 
 
     if (diff.status !== 0 || diff.stdout.trim()) return fail(`만든 커밋이 ${target.slice(0, 7)} 와 다릅니다. 올리지 않았어요:\n${tail(diff.stdout || diff.stderr, 300)}`);
     // 일반 push(부모가 지금 main 이라 빨리감기). force push 가 아니다. 거절되면 그대로 멈춘다
-    const p = git(["push", "origin", `${commit}:refs/heads/main`], { timeout: 300_000 });
+    const p = git(["push", remoteName, `${commit}:refs/heads/main`], { timeout: 300_000 });
 
     if (p.status !== 0) return fail(`GitHub main 에 올리지 못했어요(거절됨 — force push 는 하지 않아요): ${errText(p)}`);
     log(`[정비 되돌리기] 되돌리기 커밋 ${commit.slice(0, 7)} 을 GitHub main 에 올렸어요(대상 ${target.slice(0, 7)}).`);
     // 로컬 main 도 따라간다(안 돼도 배포는 그 커밋으로 하므로 계속)
-    if (git(["fetch", "-q", "origin", "main"]).status === 0) git(["merge", "--ff-only", "-q", "origin/main"]);
+    if (git(["fetch", "-q", remoteName, "main"]).status === 0) git(["merge", "--ff-only", "-q", `${remoteName}/main`]);
 
     return { ok: true, commit, reused: false };
   } finally {

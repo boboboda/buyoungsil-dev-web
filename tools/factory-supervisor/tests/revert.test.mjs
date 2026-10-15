@@ -220,7 +220,7 @@ test("maintenance.mjs 연결: 되돌리기 요청이면 시작을 알리고 커�
 
   assert.match(src, /import \{ buildRevertCommit, migrationsChanged \} from "\.\/revert\.mjs"/);
   assert.match(src, /const revertTo = typeof d\?\.revertTo === "string" && COMMIT_RE\.test\(d\.revertTo\) \? d\.revertTo : ""/);
-  assert.match(src, /const made = buildRevertCommit\(\{ dir, target: revertTo, log \}\)/);
+  assert.match(src, /const made = buildRevertCommit\(\{ dir, target: revertTo, log, remoteName: mr \}\)/);
   assert.match(src, /if \(!made\.ok\) \{[\s\S]*?sendDeployDone\(ctx, threadId, false, `되돌리기를 하지 않았어요\. 서버는 그대로예요\./, "못 만들면 배포하지 않고 실패 보고");
   assert.match(src, /action: "deploy_revert_commit", threadId, from: revertTo, commit: made\.commit/);
   assert.match(src, /commit = made\.commit;/, "이후 평소 배포 경로로 그 커밋을 push 한다");
@@ -239,16 +239,16 @@ test("maintenance.mjs 연결: 되돌리기 요청이면 시작을 알리고 커�
 // 서버(홈페이지)는 호출을 기록하는 가짜, 배포 저장소는 임시 bare 저장소(훅이 "컨테이너 교체 완료" 문구를 찍는다), 건강 확인은 가짜 fetch(200)다.
 const { onNext } = await import("../maintenance.mjs");
 
-function deployRig(r) {
+function deployRig(r, { hookText = "Recreating developWeb ... done", cfg = {} } = {}) {
   const deployRepo = path.join(r.root, "deploy.git");
 
   fs.mkdirSync(deployRepo);
   git(deployRepo, "init", "-q", "--bare", "-b", "main");
-  fs.writeFileSync(path.join(deployRepo, "hooks", "pre-receive"), "#!/bin/sh\necho 'Recreating developWeb ... done' >&2\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(deployRepo, "hooks", "pre-receive"), `#!/bin/sh\necho '${hookText}' >&2\nexit 0\n`, { mode: 0o755 });
   const calls = [];
   const logs = [];
   const ctx = {
-    cfg: { selfdevDir: r.dir, deployRemote: deployRepo },
+    cfg: { selfdevDir: r.dir, deployRemote: deployRepo, ...cfg },
     log: (m) => logs.push(m),
     uploadBusy: () => 0,
     api: async (method, url, body) => {
@@ -369,5 +369,53 @@ test("연결: 일반 배포는 앞선 배포(prevCommit) 대비 마이그레이�
   } finally {
     globalThis.fetch = realFetch;
     r.cleanup();
+  }
+});
+
+test("연결: deploy 설정(factory 값)이면 성공 문구·헬스 주소·합격 코드가 설정을 따른다(기본값은 위 시험들이 그대로 통과)", { skip }, async () => {
+  const dep = { containerName: "factoryWeb", healthUrl: "https://factory.example.com/api/factory/next", healthExpect: [401] };
+  const realFetch = globalThis.fetch;
+  try {
+    // 설정한 컨테이너 문구 + 설정한 주소가 401 → 성공
+    let r = makeRepo();
+    const urls = [];
+    globalThis.fetch = async (u, o) => (urls.push([String(u), o?.redirect]), { status: 401 });
+    let rig = deployRig(r, { hookText: "Recreating factoryWeb ... done", cfg: { deploy: dep } });
+    onNext({ maintenanceDeploy: { threadId: "th1", commit: r.c2 } }, rig.ctx);
+    let done = await rig.done();
+    assert.equal(done.ok, true, done.output);
+    assert.match(done.output, /헬스체크 401/);
+    assert.deepEqual(urls[0], ["https://factory.example.com/api/factory/next", "follow"]);
+    assert.ok(!urls.some(([u]) => u.includes("buyoungsilcoding")), "블로그 주소로 확인하지 않는다");
+    r.cleanup();
+    // 기본 문구(developWeb)만 찍는 훅은 factory 설정에서는 교체 표시로 인정하지 않는다
+    r = makeRepo();
+    rig = deployRig(r, { hookText: "Recreating developWeb ... done", cfg: { deploy: dep } });
+    onNext({ maintenanceDeploy: { threadId: "th1", commit: r.c2 } }, rig.ctx);
+    done = await rig.done();
+    assert.equal(done.ok, false);
+    assert.match(done.output, /교체 표시가 없음/);
+    r.cleanup();
+    // 3xx 를 합격으로 두면 리다이렉트를 따라가지 않고 그 코드를 본다(factory 의 미로그인 / 는 307)
+    r = makeRepo();
+    urls.length = 0;
+    globalThis.fetch = async (u, o) => (urls.push([String(u), o?.redirect]), { status: 307 });
+    rig = deployRig(r, { hookText: "Recreating factoryWeb ... done", cfg: { deploy: { ...dep, healthUrl: "https://factory.example.com/", healthExpect: [307] } } });
+    onNext({ maintenanceDeploy: { threadId: "th1", commit: r.c2 } }, rig.ctx);
+    done = await rig.done();
+    assert.equal(done.ok, true, done.output);
+    assert.equal(urls[0][1], "manual");
+    r.cleanup();
+    // 설정이 잘못되면 push 하지 않고 실패로 알린다
+    r = makeRepo();
+    rig = deployRig(r, { cfg: { deploy: { containerName: "bad name;x" } } });
+    onNext({ maintenanceDeploy: { threadId: "th1", commit: r.c2 } }, rig.ctx);
+    done = await rig.done();
+    assert.equal(done.ok, false);
+    assert.match(done.output, /deploy.containerName/);
+    assert.equal(spawnSync("git", ["rev-parse", "--verify", "-q", "main"], { cwd: rig.deployRepo, windowsHide: true }).status, 1, "배포 저장소에 올리지 않았다");
+    r.cleanup();
+  } finally {
+    globalThis.fetch = realFetch;
   }
 });

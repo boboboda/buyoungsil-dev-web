@@ -26,6 +26,7 @@ import { noteRateLimitEvent, refreshAfterTask } from "./ai-limits.mjs";
 import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
 import { BACKGROUND_FAIL_REASON, RESUME_MESSAGE, backgroundFailure, resumeFailed } from "./pause.mjs";
 import { buildRevertCommit, migrationsChanged } from "./revert.mjs";
+import { DEFAULT_MAINT_REMOTE, DEPLOY_DEFAULTS, deploySuccessRe, healthPassed, healthRedirect, maintDirOf, maintRemoteOf, resolveDeploy } from "./deploycfg.mjs";
 
 const IS_WIN = process.platform === "win32";
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -37,7 +38,7 @@ const SUPERVISOR_DIR = "tools/factory-supervisor/";
 // 정비 Claude 에게 주는 규칙. 정비 폴더의 CLAUDE.local.md 에 쓰고 .git/info/exclude 로 커밋에서 뺀다.
 const RULES = `# 공장 정비 규칙 (감독 프로그램이 자동으로 쓰는 파일, 커밋되지 않음)
 
-너는 앱 공장(부영실 홈페이지 buyoungsil-dev-web: Next.js 서버 + tools/factory-supervisor 감독 프로그램)의 정비 담당이다.
+너는 앱 공장({{REPO}})의 정비 담당이다.
 이 폴더는 정비 전용 체크아웃(main)이다. 사람이 홈페이지 통제실·채팅에서 보낸 정비 지시를 처리한다.
 
 - 지시한 것만 고친다. 범위를 넓히지 말고, 모르는 건 합리적으로 가정해서 결과에 적는다. 사람에게 질문하지 않는다.
@@ -191,7 +192,7 @@ function writeUnpushed(dir, m, head) {
 }
 
 // 정비 폴더를 origin/main 최신으로(깨끗해야 함). 실패하면 이유 문자열. notes 에는 사람에게 알릴 것을 넣는다.
-function prepare(dir, git, m, notes = []) {
+function prepare(dir, git, m, notes = [], mr = DEFAULT_MAINT_REMOTE, repoDescription = DEPLOY_DEFAULTS.repoDescription) {
   if (!fs.existsSync(path.join(dir, ".git"))) return `정비 폴더가 없어요: ${dir} (git clone 이 필요해요)`;
   if (out(git(["rev-parse", "--abbrev-ref", "HEAD"])) !== "main") return "정비 폴더가 main 브랜치가 아니에요.";
   const pending = pendingChangesPolicy(m?.aiEngine, readUnpushed(dir)?.threadId, m?.threadId);
@@ -200,33 +201,33 @@ function prepare(dir, git, m, notes = []) {
   const resumeDirty = !!dirty.stdout.trim() && pending.resumeOwnChanges;
   if (dirty.stdout.trim() && !resumeDirty) return `정비 폴더에 커밋 안 된 변경이 있어요:\n${tail(dirty.stdout, 500)}`;
   if (resumeDirty) notes.push("이 정비의 검증 실패 변경 파일을 보존한 상태로 이어갑니다. 원격 동기화는 변경 검사 후에 처리합니다.");
-  const f = resumeDirty ? { status: 0 } : git(["fetch", "-q", "origin", "main"]);
+  const f = resumeDirty ? { status: 0 } : git(["fetch", "-q", mr, "main"]);
   if (f.status !== 0) return `git fetch 실패: ${err(f)}`;
   // 로컬에만 있는 커밋(검사 실패로 못 올린 것)이 있으면 그 위에서 이어서 한다.
   // 대기열 서버에서는 다른 정비 대화가 남긴 것이면 백업 브랜치로 옮기고 origin/main 에서 시작한다(건너뛴 실패 지시의 커밋이 섞이지 않게).
-  let ahead = out(git(["rev-list", "--count", "origin/main..HEAD"]));
+  let ahead = out(git(["rev-list", "--count", `${mr}/main..HEAD`]));
   const left = readUnpushed(dir);
   if (m?.deployBundling && Number(ahead) > 0 && left?.threadId && left.threadId !== m.threadId) {
     const head = out(git(["rev-parse", "HEAD"]));
     const branch = `factory-unpushed/${String(left.turnId || Date.now()).replace(/[^A-Za-z0-9_-]/g, "")}`;
     const b = git(["branch", "-f", branch, "HEAD"]);
     if (b.status !== 0) return `못 올린 로컬 커밋을 백업하지 못했어요: ${err(b)}`;
-    const r = git(["reset", "-q", "--hard", "origin/main"]);
-    if (r.status !== 0) return `origin/main 으로 되돌리지 못했어요: ${err(r)}`;
+    const r = git(["reset", "-q", "--hard", `${mr}/main`]);
+    if (r.status !== 0) return `${mr}/main 으로 되돌리지 못했어요: ${err(r)}`;
     writeUnpushed(dir, m, null);
     notes.push(`다른 정비 대화가 못 올리고 남긴 로컬 커밋 ${ahead}개(${short(head)})는 정비 폴더의 ${branch} 브랜치로 옮겨 두고, GitHub main 최신에서 시작했어요.`);
     ahead = "0";
   }
-  const behind = out(git(["rev-list", "--count", "HEAD..origin/main"]));
+  const behind = out(git(["rev-list", "--count", `HEAD..${mr}/main`]));
   if (!resumeDirty && Number(behind) > 0) {
-    const r = Number(ahead) > 0 ? git(["rebase", "-q", "origin/main"]) : git(["merge", "-q", "--ff-only", "origin/main"]);
+    const r = Number(ahead) > 0 ? git(["rebase", "-q", `${mr}/main`]) : git(["merge", "-q", "--ff-only", `${mr}/main`]);
     if (r.status !== 0) {
       git(["rebase", "--abort"]);
-      return `origin/main 을 받지 못했어요(충돌): ${err(r)}`;
+      return `${mr}/main 을 받지 못했어요(충돌): ${err(r)}`;
     }
   }
   // 정비 규칙 파일(커밋되지 않게 로컬 제외 목록에)
-  fs.writeFileSync(path.join(dir, "CLAUDE.local.md"), RULES.replace(/\{\{SERVERCTL\}\}/g, SERVERCTL));
+  fs.writeFileSync(path.join(dir, "CLAUDE.local.md"), RULES.replace(/\{\{SERVERCTL\}\}/g, SERVERCTL).replace(/\{\{REPO\}\}/g, () => repoDescription));
   const ex = path.join(dir, ".git", "info", "exclude");
   const have = fs.existsSync(ex) ? fs.readFileSync(ex, "utf8") : "";
   if (!have.split(/\r?\n/).includes("CLAUDE.local.md")) fs.appendFileSync(ex, (have && !have.endsWith("\n") ? "\n" : "") + "CLAUDE.local.md\n");
@@ -266,7 +267,7 @@ function gate(dir, git, fromRef, workingTree = false) {
 async function runTurn(m, ctx, resume = null) {
   let lock;
   m.aiStarted = !!resume; // 이어 주는 정비는 서버에 이미 시작을 알렸다
-  const dir = path.resolve(expand(ctx.cfg.selfdevDir || "~/dev/factory/selfdev"));
+  const dir = maintDirOf(ctx.cfg);
   try {
     m.aiEngine = engineOf(m.aiEngine);
     lock = acquireWorkspace(dir, { engine: m.aiEngine, taskId: m.turnId });
@@ -291,7 +292,8 @@ async function runTurn(m, ctx, resume = null) {
 async function runTurnUnlocked(m, ctx, lock, resume = null) {
   const { log, cfg } = ctx;
   const redact = ctx.redact || redactAiText;
-  const dir = path.resolve(expand(cfg.selfdevDir || "~/dev/factory/selfdev"));
+  const dir = maintDirOf(cfg);
+  const mr = maintRemoteOf(cfg);
   const git = makeGit(dir);
   if (!resume) {
     const s = await post(ctx, { action: "start", turnId: m.turnId, aiEngine: m.aiEngine });
@@ -346,7 +348,7 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
     prepNotes.push(...(resume.notes ?? []));
     addLog(`업데이트 뒤 이어서 시작: ${resume.sessionId ? "같은 세션으로 이어 줘요" : "AI 를 띄우기 전에 멈췄어서 처음부터 시작해요"} (남은 시간 한도 ${(resume.timeLeftMs ?? 0) >= 600_000 ? `${Math.round((resume.timeLeftMs ?? 0) / 60000)}분` : `${Math.round((resume.timeLeftMs ?? 0) / 1000)}초`})`);
   } else {
-    const why = prepare(dir, git, m, prepNotes);
+    const why = prepare(dir, git, m, prepNotes, mr, resolveDeploy(cfg).repoDescription);
     if (why) return finish({ ok: false, text: `정비를 시작하지 못했어요. ${why}` });
     startHead = out(git(["rev-parse", "HEAD"]));
     addLog(`정비 폴더 준비: ${dir} (main ${short(startHead)})`);
@@ -502,7 +504,7 @@ ${claudeText}
     if (keys.length) { keepLocal(); return finish({ ok: false, text: `키 파일 커밋 차단: ${keys.join(", ")}`, sessionId }); }
     addLog("Codex 변경 검사: 통과하면 감독 프로그램이 로컬 커밋합니다.");
     await flush();
-    const failure = gate(dir, git, out(git(["rev-parse", "origin/main"])) || startHead, true);
+    const failure = gate(dir, git, out(git(["rev-parse", `${mr}/main`])) || startHead, true);
     noteCheck("감독 문법·타입 검사", failure ? "실패" : "통과", failure || undefined);
     if (failure) { keepLocal(); return finish({ ok: false, text: [claudeText, `검증 실패 — 변경 파일을 정비 폴더에 보존했어요.\n${failure}`].join("\n"), sessionId }); }
     const added = git(["add", "-A"]);
@@ -518,9 +520,9 @@ ${claudeText}
     return finish({ ok: false, text: [claudeText, "", `— 미완료(이어서 필요): 정비 폴더에 커밋하지 않은 변경이 남아 있어요. 올리지 않았고 파일은 그대로 보존했어요. 같은 정비 대화에 "이어서 마무리하고 커밋해 줘"라고 지시해 주세요.\n${tail(dirty, 500)}`].join("\n"), sessionId });
   }
 
-  git(["fetch", "-q", "origin", "main"]);
-  const remoteBefore = out(git(["rev-parse", "origin/main"]));
-  const newCommits = Number(out(git(["rev-list", "--count", "origin/main..HEAD"])) || 0);
+  git(["fetch", "-q", mr, "main"]);
+  const remoteBefore = out(git(["rev-parse", `${mr}/main`]));
+  const newCommits = Number(out(git(["rev-list", "--count", `${mr}/main..HEAD`])) || 0);
   if (newCommits === 0) {
     writeUnpushed(dir, m, null);
     notes.push("코드 변경(새 커밋)이 없어서 GitHub 에 올릴 것이 없어요.");
@@ -529,8 +531,8 @@ ${claudeText}
   }
 
   // origin 이 그새 앞서 갔으면 그 위로 옮긴다
-  if (git(["merge-base", "--is-ancestor", "origin/main", "HEAD"]).status !== 0) {
-    const r = git(["rebase", "-q", "origin/main"]);
+  if (git(["merge-base", "--is-ancestor", `${mr}/main`, "HEAD"]).status !== 0) {
+    const r = git(["rebase", "-q", `${mr}/main`]);
     if (r.status !== 0) {
       git(["rebase", "--abort"]);
       keepLocal();
@@ -551,7 +553,7 @@ ${claudeText}
     return finish({ ok: false, text: [claudeText, "", ...notes.map((n) => `— ${n}`)].join("\n"), sessionId });
   }
 
-  const p = git(["push", "-q", "origin", "HEAD:main"]);
+  const p = git(["push", "-q", mr, "HEAD:main"]);
   if (p.status !== 0) {
     keepLocal();
     notes.push(`GitHub 에 올리지 못했어요: ${err(p)}`);
@@ -589,15 +591,24 @@ async function deploy(d, ctx) {
   let commit = typeof d?.commit === "string" ? d.commit : "";
   const threadId = typeof d?.threadId === "string" ? d.threadId : "";
   if (!COMMIT_RE.test(commit) || !threadId) return;
+  const dep = resolveDeploy(cfg);
   const revertTo = typeof d?.revertTo === "string" && COMMIT_RE.test(d.revertTo) ? d.revertTo : ""; // 배포 되돌리기(5-2): 이 커밋의 내용으로 되돌리는 커밋을 만들어 배포한다
-  const dir = path.resolve(expand(cfg.selfdevDir || "~/dev/factory/selfdev"));
+  const dir = maintDirOf(cfg);
+  const mr = maintRemoteOf(cfg);
   const git = makeGit(dir);
-  git(["fetch", "-q", "origin", "main"]);
+  if (dep.problems.length) {
+    // 설정이 잘못됐으면 push 하지 않는다(엉뚱한 대상에 배포·판정하지 않게). 사람에게는 실패로 알린다
+    log(`[정비 배포] 하지 않았어요: ${dep.problems.join("; ")}`);
+    const s0 = await post(ctx, { action: "deploy_start", threadId, commit });
+    if (s0.status === 200) await sendDeployDone(ctx, threadId, false, `배포 설정(deploy)이 올바르지 않아 배포하지 않았어요. 서버는 그대로예요.\n${dep.problems.join("\n")}`);
+    return;
+  }
+  git(["fetch", "-q", mr, "main"]);
   if (revertTo) {
     const s0 = await post(ctx, { action: "deploy_start", threadId, commit });
     if (s0.status !== 200) return log(`[정비 되돌리기] 시작 거절(${s0.status}): ${s0.data?.message ?? ""}`);
     log(`[정비 되돌리기] ${short(revertTo)} 버전 상태로 되돌리는 커밋을 만들어요.`);
-    const made = buildRevertCommit({ dir, target: revertTo, log });
+    const made = buildRevertCommit({ dir, target: revertTo, log, remoteName: mr });
     if (!made.ok) {
       log(`[정비 되돌리기] 하지 않았어요: ${made.reason}`);
       await sendDeployDone(ctx, threadId, false, `되돌리기를 하지 않았어요. 서버는 그대로예요.\n${made.reason}`);
@@ -610,7 +621,7 @@ async function deploy(d, ctx) {
     }
     commit = made.commit;
   } else {
-    if (git(["merge-base", "--is-ancestor", commit, "origin/main"]).status !== 0) {
+    if (git(["merge-base", "--is-ancestor", commit, `${mr}/main`]).status !== 0) {
       log(`[정비 배포] ${short(commit)} 는 GitHub main 에 없는 커밋이라 배포하지 않아요.`);
       const s = await post(ctx, { action: "deploy_start", threadId, commit });
       if (s.status === 200) await post(ctx, { action: "deploy_done", threadId, ok: false, output: "GitHub main 에 없는 커밋이라 배포하지 않았어요." });
@@ -642,22 +653,22 @@ async function deploy(d, ctx) {
   const full = String(output.buf ?? "").replace(/\x1b\[[0-9;]*m/g, "");
   const upToDate = /Everything up-to-date/.test(full);
   // 성공은 "컨테이너 교체 완료"(또는 바꿀 게 없음)가 보일 때. 실패 문구는 로그 전체에서 찾는다
-  const replaced = /Recreating developWeb \.\.\. done|developWeb is up-to-date|Creating developWeb \.\.\. done/.test(full);
+  const replaced = deploySuccessRe(dep.containerName).test(full);
   const failed = /Failed to compile|Type error|\[rejected\]|error: failed to push|ERROR: /i.test(full);
   let ok = output.code === 0 && !failed && (replaced || upToDate);
   // 배포하면 홈페이지 컨테이너가 바뀌므로, 다시 응답할 때까지 기다린 뒤 결과를 보낸다(바뀌는 중에 보내면 결과가 사라졌다)
-  const h = ok ? await waitHealthy() : { ok: false, sec: 0 };
+  const h = ok ? await waitHealthy(dep) : { ok: false, sec: 0 };
   if (ok && !h.ok) ok = false;
   const summary = upToDate
     ? "서버가 이미 이 커밋이라 바꿀 것이 없어요(Everything up-to-date)."
     : ok
-      ? `빌드 성공, 컨테이너 교체, 홈페이지 헬스체크 200(교체 후 ${h.sec}초).`
+      ? `빌드 성공, 컨테이너 교체, 홈페이지 헬스체크 ${dep.healthExpect.join("/")}(교체 후 ${h.sec}초).`
       : output.code !== 0
         ? `push 실패(종료 코드 ${output.code}).`
         : failed
           ? "서버 빌드 실패(기존 컨테이너가 그대로 돌고 있어요)."
           : replaced
-            ? `빌드·교체는 됐지만 홈페이지가 ${Math.round(HEALTH_WAIT_MS / 1000)}초 안에 200 을 주지 않아요.`
+            ? `빌드·교체는 됐지만 홈페이지가 ${Math.round(HEALTH_WAIT_MS / 1000)}초 안에 ${dep.healthExpect.join("/")} 을 주지 않아요.`
             : "배포 결과를 확인하지 못했어요(컨테이너 교체 표시가 없음).";
   const report = `${summary}\n\n--- 배포 로그 끝부분 ---\n${tail(full, ok ? 600 : 2500)}`;
   // 결과 보고는 받아들여질 때까지 다시 보낸다(최대 5분)
@@ -676,17 +687,18 @@ async function sendDeployDone(ctx, threadId, ok, output) {
   return sent;
 }
 
-// 홈페이지가 다시 200 을 줄 때까지 기다린다(브라우저 UA). 배포 직후 컨테이너가 바뀌는 동안은 502 가 난다.
+// 홈페이지가 다시 합격 응답(기본 200)을 줄 때까지 기다린다(브라우저 UA). 배포 직후 컨테이너가 바뀌는 동안은 502 가 난다.
 const HEALTH_WAIT_MS = 3 * 60_000;
-async function waitHealthy() {
+async function waitHealthy(dep = DEPLOY_DEFAULTS) {
   const start = Date.now();
   while (Date.now() - start < HEALTH_WAIT_MS) {
     try {
-      const r = await fetch("https://www.buyoungsilcoding.com/", {
+      const r = await fetch(dep.healthUrl, {
+        redirect: healthRedirect(dep.healthExpect),
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36" },
         signal: AbortSignal.timeout(15_000),
       });
-      if (r.status === 200) return { ok: true, sec: Math.round((Date.now() - start) / 1000) };
+      if (healthPassed(r.status, dep.healthExpect)) return { ok: true, sec: Math.round((Date.now() - start) / 1000) };
     } catch {
       /* 아직 바뀌는 중 */
     }

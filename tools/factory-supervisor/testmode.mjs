@@ -41,6 +41,7 @@ export function testModeProblems({ env, config, configPath, homedir, realHome, r
     workDir: config.workDir ?? "~/dev/factory",
     secretsFile: config.secretsFile ?? "~/dev/factory/secrets.env",
     selfdevDir: config.selfdevDir ?? "~/dev/factory/selfdev",
+    ...(config.maintDir ? { maintDir: config.maintDir } : {}),
     appKitDir: config.appKitDir ?? "~/dev/factory/app-kit",
     FACTORY_UPDATE_STATE: env.FACTORY_UPDATE_STATE || "~/dev/factory/supervisor-update.json",
     FACTORY_RESTART_STATE: env.FACTORY_RESTART_STATE || "~/dev/factory/supervisor-restart.json",

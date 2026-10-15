@@ -69,6 +69,7 @@ import { conductorBusy, runConductor } from "./conductor.mjs";
 import { planBusy, runPlanTurn } from "./planturn.mjs";
 import { decideStageResume, saveSession } from "./stageresume.mjs";
 import { createNovelRunner } from "./novelrun.mjs";
+import { maintDirOf, protectedMaintDirs } from "./deploycfg.mjs";
 import { LAB_SLUG, compareSnapshots, createLabGuard, deleteLabFolder, discoverRepos, labCodexOptions, labPrompt, prepareLab, snapshotRepos, uploadLabOutputs, writeLabClaudeSettings } from "./lab.mjs";
 
 // 시험 모드(FACTORY_TEST_MODE=1)인데 진짜 주소·토큰·상태 파일이 섞여 있으면 아무것도 하기 전에 거부한다(진짜 감독 보호)
@@ -101,6 +102,9 @@ const DEFAULTS = {
   allowedTools: "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
   model: "",
   selfdevDir: "~/dev/factory/selfdev", // 공장 정비 전용 체크아웃
+  maintDir: "", // 정비 작업 폴더. 비우면 selfdevDir (통합-분리 전환용: 정비 대상 체크아웃을 따로 둘 때)
+  maintPushRemote: "origin", // 정비 결과를 올리는 git 원격 이름
+  deploy: {}, // 서버 배포·정비 대상 설정(deploycfg.mjs 의 deploy.* 키). 비우면 기존 블로그(developWeb/www) 값
   memoryRemote: DEFAULT_MEMORY_REMOTE, // 작업 메모리(.factory/memory/) 푸시 주소. 서버2 전용(github.com 은 거부). {folder} 를 쓰면 폴더마다 저장소, 없으면 저장소 하나에 폴더 이름 브랜치. ""이면 로컬에만
   deployRemote: "serverpc:git-server/repo/developWeb.git", // 정비 [배포] 때 push 할 서버 배포 저장소(고정)
   toolkitDir: "", // 게임 툴킷(파이썬 도구) 폴더. 비우면 <workDir>/game-toolkit (도구 요청 중계의 toolkit.run)
@@ -344,12 +348,12 @@ function appPermissionSettings(job) {
   try {
     // 에이전트 정의가 있으면 거기서 만든다(예전 코드와 같은 결과인지는 tests/agentspec.test.mjs 가 비교). 없거나 거절됐으면 아래 예전 코드 그대로
     const spec = agentSpec(appSpecId(job));
-    if (spec) return writeAgentSettings(spec, { workDir: cfg.workDir, protectedDirs: [expand(cfg.selfdevDir || "~/dev/factory/selfdev"), path.join(cfg.workDir, "supervisor-src")] });
+    if (spec) return writeAgentSettings(spec, { workDir: cfg.workDir, protectedDirs: protectedMaintDirs(cfg, cfg.workDir) });
     const file = path.join(cfg.workDir, "app-claude-settings.json");
     // 권한 규칙의 절대 경로는 //경로. 윈도우 경로는 POSIX 꼴로(C:\Users\x → //c/Users/x)
     const abs = (p) => path.resolve(p).replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_, d) => d.toLowerCase()).replace(/^\/+/, "");
     const deny = [];
-    for (const d of [expand(cfg.selfdevDir || "~/dev/factory/selfdev"), path.join(cfg.workDir, "supervisor-src")]) {
+    for (const d of protectedMaintDirs(cfg, cfg.workDir)) {
       deny.push(`Edit(//${abs(d)}/**)`); // Edit 규칙이 Write 등 모든 파일 수정 도구를 막는다
     }
     const root = abs(cfg.workDir);
@@ -1007,13 +1011,13 @@ async function runLabUnlocked(job, lock, { dir, shared }) {
   let settings;
   if (job.aiEngine === "claude") {
     try {
-      settings = writeLabClaudeSettings({ workDir: cfg.workDir, dir, shared, jobId: job.id, extraProtected: [expand(cfg.selfdevDir || "~/dev/factory/selfdev"), path.join(cfg.workDir, "supervisor-src")] });
+      settings = writeLabClaudeSettings({ workDir: cfg.workDir, dir, shared, jobId: job.id, extraProtected: protectedMaintDirs(cfg, cfg.workDir) });
     } catch (e) {
       return failEarly(job, `쓰기 제한 설정을 만들지 못했어요: ${e.message}`);
     }
   }
   // (2) 사후 검사용 시작 전 상태
-  const repos = discoverRepos(cfg.workDir, [cfg.toolkitDir, cfg.appKitDir, expand(cfg.selfdevDir || "~/dev/factory/selfdev")]);
+  const repos = discoverRepos(cfg.workDir, [cfg.toolkitDir, cfg.appKitDir, ...protectedMaintDirs(cfg, cfg.workDir).slice(0, -1)]);
   const startedAtMs = Date.now();
   const before = snapshotRepos(repos);
   const st = {
@@ -2196,7 +2200,7 @@ let memoryLine = ""; // 작업 메모리 상태(폴더별 시각·크기·푸시
 let memorySentAt = 0;
 function memoryQuery() {
   try {
-    const dirs = new Set([path.resolve(expand(cfg.selfdevDir || "~/dev/factory/selfdev"))]);
+    const dirs = new Set([path.resolve(expand(cfg.selfdevDir || "~/dev/factory/selfdev")), maintDirOf(cfg)]);
     for (const e of fs.readdirSync(cfg.workDir, { withFileTypes: true })) if (e.isDirectory() && !e.name.startsWith(".")) dirs.add(path.join(cfg.workDir, e.name));
     const line = memoryReport([...dirs]);
     return line && (line !== memoryLine || Date.now() - memorySentAt > HOUR_MS) ? { memory: line } : {};
