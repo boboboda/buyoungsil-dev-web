@@ -134,7 +134,9 @@ function makeDb() {
 
 const DbNull = Symbol("DbNull");
 function loadStore(db) {
-  return loadTs("lib/novel/store.ts", { "@/lib/prisma": { __esModule: true, default: db }, "@/lib/novel/rules": rules, "@prisma/client": { Prisma: { DbNull } } });
+  const prismaDep = { __esModule: true, default: db };
+  const pub = loadTs("lib/novel/public.ts", { "@/lib/prisma": prismaDep, "@/lib/novel/rules": rules });
+  return loadTs("lib/novel/store.ts", { "@/lib/prisma": prismaDep, "@/lib/novel/rules": rules, "@/lib/novel/public": pub, "@prisma/client": { Prisma: { DbNull } } });
 }
 
 function loadRoutes(db, notified) {
@@ -417,4 +419,17 @@ test("공개 조건: 예약 전은 없음(404), 예약 시각이 지나면 보�
 
 test("본문은 빈 줄 기준 문단으로만 나뉘고 제어문자는 지운다(HTML 해석 없음)", () => {
   assert.deepEqual(rules.paragraphs("첫 줄\n둘째 줄\n\n\n<b>문단</b>\r\n\r\n끝\u0007"), ["첫 줄\n둘째 줄", "<b>문단</b>", "끝"]);
+});
+
+test("공개 읽기는 lib/novel/public.ts 로 분리: draft* 칸을 읽지 않고, store.ts 는 같은 함수를 다시 내보낸다", () => {
+  const pubSrc = fs.readFileSync(path.join(repo, "lib/novel/public.ts"), "utf8");
+  assert.doesNotMatch(pubSrc, /draft/i, "공개 읽기는 draft* 칸을 모른다");
+  assert.doesNotMatch(pubSrc, /lib\/novel\/store/, "공개 읽기는 store.ts 에 의존하지 않는다");
+  const storeSrc = fs.readFileSync(path.join(repo, "lib/novel/store.ts"), "utf8");
+  assert.match(storeSrc, /export \{ publicEpisode, publicWork, publicWorks \} from "@\/lib\/novel\/public"/);
+  for (const f of ["app/novel/page.tsx", "app/novel/[slug]/page.tsx", "app/novel/[slug]/[number]/page.tsx"]) {
+    const src = fs.readFileSync(path.join(repo, f), "utf8");
+    assert.match(src, /@\/lib\/novel\/public"/, f);
+    assert.doesNotMatch(src, /@\/lib\/novel\/store"/, f);
+  }
 });

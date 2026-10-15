@@ -472,7 +472,7 @@ test("워커 라우트는 작업 PC 토큰이 없으면 401, 관리자 라우트
     assert.match(src, /adminGate\(/, `${f}: 관리자 관문`);
   }
   // 공개 페이지는 새 컬럼(draft*)을 읽지 않는다
-  const store = fs.readFileSync(path.join(repo, "lib/novel/store.ts"), "utf8");
+  const store = fs.readFileSync(path.join(repo, "lib/novel/public.ts"), "utf8");
   assert.doesNotMatch(store, /draft(Body|Review|Verdict)/, "공개 조회(publicEpisode 등)는 draft 컬럼을 모른다");
   for (const f of ["app/novel/page.tsx", "app/novel/[slug]/page.tsx", "app/novel/[slug]/[number]/page.tsx"]) assert.doesNotMatch(fs.readFileSync(path.join(repo, f), "utf8"), /draft|NovelJob|NovelNote/, f);
 });

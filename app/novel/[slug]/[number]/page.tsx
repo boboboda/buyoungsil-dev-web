@@ -9,7 +9,7 @@ import ChapterTracker, {
   NextChapterLink,
 } from "@/components/novel/ChapterTracker";
 import { SLUG_RE, paragraphs } from "@/lib/novel/rules";
-import { publicEpisode } from "@/lib/novel/store";
+import { publicEpisode } from "@/lib/novel/public";
 
 export const dynamic = "force-dynamic";
 

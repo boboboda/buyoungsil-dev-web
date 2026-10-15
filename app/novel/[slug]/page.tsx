@@ -5,7 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { SLUG_RE } from "@/lib/novel/rules";
-import { publicWork } from "@/lib/novel/store";
+import { publicWork } from "@/lib/novel/public";
 
 export const dynamic = "force-dynamic";
 

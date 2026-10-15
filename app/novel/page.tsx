@@ -4,7 +4,7 @@ import { Metadata } from "next";
 import Link from "next/link";
 
 import { WORK_STATUS_LABELS, type WorkStatus } from "@/lib/novel/rules";
-import { publicWorks } from "@/lib/novel/store";
+import { publicWorks } from "@/lib/novel/public";
 
 // 예약 시각이 지나면 바로 보이도록 매 요청 새로 읽는다
 export const dynamic = "force-dynamic";
