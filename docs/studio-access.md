@@ -193,3 +193,17 @@ Studio 에서 소품을 눌러 "이상해요, 다시 요청"을 하거나 소품
 - `prisma/migrations/20261024090000_add_studio_access_keys` — 표 추가
 - `prisma/migrations/20261031090000_add_studio_request_logs` — 요청 감사 표 추가
 - 시험: `npm run test:studio-access`, `npm run test:studio-requests`
+
+## 실제 구조(서버1, 2026-10-15 확인)
+
+| 항목 | 위치 | 내용 |
+| --- | --- | --- |
+| Studio 사이트 파일 | 서버1 `/etc/nginx/sites-enabled/studio`(→ sites-available/studio) | `server_name studio.buyoungsilcoding.com`, 기본 사이트 파일(default)이 아니라 **따로 있는 파일** |
+| `auth_request /_studio_auth;` | 같은 파일 `location / {` (67줄) | 통과하면 `proxy_pass http://192.168.0.46:5400`(서버2 app-kit) |
+| `location = /_studio_auth` | 같은 파일 43줄 | `proxy_pass http://127.0.0.1:5000/api/studio-auth/verify` ← 블로그(5000) |
+| 요청 빈도 제한 | 서버1 `/etc/nginx/conf.d/studio-ratelimit.conf` | `limit_req_zone` 만(proxy_pass 없음) |
+| 서버2 | nginx 없음 | 컨테이너만(app-kit 5400 등) |
+
+기본 사이트 파일(default)에는 `auth_request`·`_studio_auth` 가 없다. 5000 → 5100(factory-web) 바꾸기는
+`serverctl nginx-set-directive proxy_pass http://127.0.0.1:5100/api/studio-auth/verify "= /_studio_auth" --file studio`
+(백업 → nginx -t → reload → 헬스체크 → studio 주소가 5xx 가 아닌지 확인, 실패하면 되돌림). 위치 찾기는 `serverctl nginx-find 'auth_request|_studio_auth' --host serverpc`.

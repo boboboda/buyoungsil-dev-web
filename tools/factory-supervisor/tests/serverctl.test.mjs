@@ -9,7 +9,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseOpts, siteConfig, workName } from "../serverctl.mjs";
+import { parseOpts, serverNames, siteConfig, workName } from "../serverctl.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCTL = path.resolve(HERE, "..", "serverctl.mjs");
@@ -131,7 +131,7 @@ test("원격 스크립트는 gzip+base64 로 보내고 길이가 윈도우 ssh �
   // 13.8KB(압축 안 함)에서 원격 셸이 잘린 명령으로 실패했고 4.8KB 는 됐다. 6KB 를 넘기면 스크립트를 나눠야 한다
   assert.ok(gzipSync(Buffer.from(script), { level: 9 }).toString("base64").length < 6000);
   // 앱 업데이트·웹 릴리스 스크립트는 따로 보낸다(REMOTE 가 한도에 가까워서). 각각 같은 한도 안
-  for (const name of ["REMOTE_APP", "REMOTE_WEB"]) {
+  for (const name of ["REMOTE_NGX", "REMOTE_APP", "REMOTE_WEB"]) {
     const part = new RegExp("const " + name + " = String\\.raw`([\\s\\S]*?)`;").exec(src)[1];
     assert.ok(gzipSync(Buffer.from(part), { level: 9 }).toString("base64").length < 6000, name);
   }
@@ -855,4 +855,171 @@ test("대상 사이트 설정: 기본은 developWeb·200, deploy 설정(factory 
     healthStatus = 200;
     fs.rmSync(ctx.root, { recursive: true, force: true });
   }
+});
+
+test("--file: 다른 nginx 사이트 파일(studio)도 같은 안전 경로로 고침 — 백업·적용·응답 확인·실패 시 되돌림, 기본 파일은 그대로", { skip }, async () => {
+  const ctx = setup();
+  let probeStatus = 401;
+  const probe = http.createServer((req, res) => {
+    res.statusCode = probeStatus;
+    res.end("x");
+  });
+  await new Promise((r) => probe.listen(0, "127.0.0.1", r));
+  const env = { SERVERCTL_PROBE_URL: `http://127.0.0.1:${probe.address().port}/` };
+  const STUDIO = `# 앱 스튜디오
+server {
+    listen 443 ssl;
+    server_name studio.example.com;
+    location /api/review-status {
+        proxy_pass http://192.168.0.46:5400;
+    }
+    location = /_studio_auth {
+        internal;
+        proxy_pass http://127.0.0.1:5000/api/studio-auth/verify;
+        proxy_set_header X-Studio-App "studio";
+    }
+    location / {
+        auth_request /_studio_auth;
+        proxy_pass http://192.168.0.46:5400;
+    }
+}
+server {
+    listen 80;
+    server_name studio.example.com;
+    return 301 https://$host$request_uri;
+}
+`;
+  const DEFAULT = "server {\n    listen 443 ssl;\n    server_name www.buyoungsilcoding.com buyoungsilcoding.com;\n    location / { proxy_pass http://localhost:5000; }\n}\n";
+  try {
+    fs.writeFileSync(`${ctx.ngx}/sites-enabled/studio`, STUDIO);
+    fs.writeFileSync(`${ctx.ngx}/sites-enabled/default`, DEFAULT);
+    const AUTH = ["nginx-set-directive", "proxy_pass", "http://127.0.0.1:5100/api/studio-auth/verify", "= /_studio_auth", "--file", "studio"];
+    // 보기
+    let r = await run(ctx, ["nginx-show", "--file", "studio"], env);
+    assert.equal(r.code, 0, r.out);
+    assert.equal(r.out.replace(/\r/g, ""), STUDIO);
+    // 없는 파일은 만들지 않고 멈춤
+    r = await run(ctx, ["nginx-show", "--file", "nope"], env);
+    assert.notEqual(r.code, 0);
+    r = await run(ctx, ["nginx-apply", path.join(ctx.root, "x.conf"), "--file", "nope"], env);
+    assert.notEqual(r.code, 0);
+    assert.ok(!fs.existsSync(`${ctx.ngx}/sites-enabled/nope`));
+    // 잘못된 인자
+    for (const bad of [
+      ["nginx-show", "--file", "../x"],
+      ["nginx-show", "--file", "a.bak-1"],
+      ["nginx-show", "--file", "a b"],
+      ["env-keys", "--file", "studio"],
+      ["nginx-set-directive", "proxy_pass", "http://127.0.0.1:5100/api/studio-auth/verify", "--file", "studio"], // location 없음
+      ["nginx-set-directive", "proxy_pass", "http://evil.example.com/x", "= /_studio_auth", "--file", "studio"],
+      ["nginx-set-directive", "proxy_pass", "http://127.0.0.1:5100/other", "= /_studio_auth", "--file", "studio"],
+    ]) {
+      r = await run(ctx, bad, env);
+      assert.notEqual(r.code, 0, bad.join(" ") + r.out);
+    }
+    assert.equal(read(`${ctx.ngx}/sites-enabled/studio`).replace(/\r/g, ""), STUDIO, "거절된 명령은 파일을 바꾸지 않는다");
+    // 5000 → 5100: _studio_auth 위치만 바뀜
+    r = await run(ctx, AUTH, env);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /\[studio\]/);
+    assert.match(r.out, /studio 사이트 응답 401/);
+    const after = read(`${ctx.ngx}/sites-enabled/studio`).replace(/\r/g, "");
+    assert.equal(after, STUDIO.replace("127.0.0.1:5000/api/studio-auth/verify", "127.0.0.1:5100/api/studio-auth/verify"));
+    assert.equal((after.match(/5400/g) ?? []).length, 2, "다른 proxy_pass 는 그대로");
+    assert.equal(read(`${ctx.ngx}/sites-enabled/default`), DEFAULT, "기본 사이트 파일은 그대로");
+    const backups = fs.readdirSync(`${ctx.home}/nginx-backups`).filter((n) => n.startsWith("studio.bak-"));
+    assert.equal(backups.length, 1);
+    assert.equal(read(`${ctx.home}/nginx-backups/${backups[0]}`).replace(/\r/g, ""), STUDIO);
+    assert.match(read(ctx.report), /nginx \[studio\] proxy_pass/);
+    // 새 주소가 5xx 로 답하면 백업으로 되돌림
+    probeStatus = 502;
+    r = await run(ctx, ["nginx-set-directive", "proxy_pass", "http://127.0.0.1:5200/api/studio-auth/verify", "= /_studio_auth", "--file", "studio"], env);
+    assert.equal(r.code, 4, r.out);
+    assert.match(r.out, /studio 사이트 502/);
+    assert.equal(read(`${ctx.ngx}/sites-enabled/studio`).replace(/\r/g, ""), after, "실패하면 직전 내용으로 복원");
+    probeStatus = 401;
+    // nginx -t 실패면 복원
+    r = await run(ctx, ["nginx-set-directive", "proxy_pass", "http://127.0.0.1:5300/api/studio-auth/verify", "= /_studio_auth", "--file", "studio"], { ...env, FAKE_NGINX_FAIL: "1" });
+    assert.equal(r.code, 3, r.out);
+    assert.equal(read(`${ctx.ngx}/sites-enabled/studio`).replace(/\r/g, ""), after);
+    // 통째 교체는 server_name 이 같아야 함
+    const other = path.join(ctx.root, "other.conf");
+    fs.writeFileSync(other, "server {\n    listen 443 ssl;\n    server_name evil.example.com;\n}\n");
+    r = await run(ctx, ["nginx-apply", other, "--file", "studio"], env);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /server_name/);
+    assert.equal(read(`${ctx.ngx}/sites-enabled/studio`).replace(/\r/g, ""), after);
+    // 백업 목록·복원(--file)
+    r = await run(ctx, ["backups", "--file", "studio"]);
+    assert.match(r.out, /\[nginx studio\]/);
+    assert.match(r.out, new RegExp(backups[0]));
+    const ts = /bak-(\d{8}-\d{6})/.exec(backups[0])[1];
+    r = await run(ctx, ["restore", ts, "--file", "studio"], env);
+    assert.equal(r.code, 0, r.out);
+    assert.equal(read(`${ctx.ngx}/sites-enabled/studio`).replace(/\r/g, ""), STUDIO, "처음 백업으로 복원");
+    assert.equal(read(`${ctx.ngx}/sites-enabled/default`), DEFAULT);
+    // 기본 파일 명령은 그대로(--file 없음)
+    r = await run(ctx, ["nginx-set-directive", "client_max_body_size", "50m"]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(read(`${ctx.ngx}/sites-enabled/default`), /client_max_body_size 50m;/);
+    assert.equal(read(`${ctx.ngx}/sites-enabled/studio`).replace(/\r/g, ""), STUDIO);
+    assert.ok(fs.readdirSync(`${ctx.home}/nginx-backups`).some((n) => n.startsWith("default.bak-")));
+  } finally {
+    probe.close();
+    healthStatus = 200;
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+test("nginx-find: nginx -T 출력에서 파일 경계와 일치 줄만, 비밀 파일·줄은 가림, 인자 형식 검사", { skip }, async () => {
+  const ctx = setup();
+  try {
+    const fake = path.join(ctx.bin, "fake-nginx-T");
+    fs.writeFileSync(
+      fake,
+      `#!/bin/bash
+if [ "$1" = -T ]; then
+  printf '%s\\n' '# configuration file /etc/nginx/sites-enabled/studio:' 'server {' '    server_name studio.example.com;' '    location = /_studio_auth {' '        proxy_pass http://127.0.0.1:5000/api/studio-auth/verify;' '    }' '}' \\
+    '# configuration file /etc/nginx/studio-proxy.secret.conf:' 'set $appkit_proxy_secret "TOPSECRETVALUE"; # proxy_pass' \\
+    '# configuration file /etc/nginx/sites-enabled/default:' 'location /api/studio-auth/ { proxy_pass http://localhost:5000; }' '    proxy_set_header X-Token "TOKENVALUE"; # studio-auth'
+  exit 0
+fi
+echo "nginx: configuration file test is successful"
+`,
+      { mode: 0o755 },
+    );
+    const env = { SERVERCTL_NGINX_BIN: fwd(fake) };
+    let r = await run(ctx, ["nginx-find", "studio-auth|proxy_pass", "--host", "serverpc2"], env);
+    assert.equal(r.code, 0, r.out);
+    const lines = r.out.replace(/\r/g, "").split("\n").filter(Boolean);
+    assert.deepEqual(lines, [
+      "/etc/nginx/sites-enabled/studio:4:         proxy_pass http://127.0.0.1:5000/api/studio-auth/verify;",
+      "/etc/nginx/sites-enabled/default:1: location /api/studio-auth/ { proxy_pass http://localhost:5000; }",
+    ]);
+    assert.ok(!r.out.includes("TOPSECRETVALUE") && !r.out.includes("TOKENVALUE"));
+    assert.equal(read(ctx.sshLog).split("\n").filter(Boolean).pop(), "serverpc2");
+    // 일치 없음
+    r = await run(ctx, ["nginx-find", "nothing-here"], env);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /일치하는 줄 없음/);
+    // 인자 형식
+    for (const bad of [["nginx-find"], ["nginx-find", "a b"], ["nginx-find", "x;rm"], ["nginx-find", "$(id)"], ["nginx-find", "a", "b"], ["nginx-find", "a", "--host", "evil.example.com"]]) {
+      r = await run(ctx, bad, env);
+      assert.notEqual(r.code, 0, bad.join(" ") + r.out);
+    }
+    // nginx -T 를 못 쓰면(빈 출력) grep 으로 대신하고 비밀 줄은 걸러냄
+    fs.writeFileSync(`${ctx.ngx}/sites-enabled/studio`, "server {\n    proxy_pass http://127.0.0.1:5000/api/studio-auth/verify;\n    set $x \"secret\"; # studio-auth\n}\n");
+    const empty = path.join(ctx.bin, "fake-nginx-empty");
+    fs.writeFileSync(empty, "#!/bin/bash\nexit 1\n", { mode: 0o755 });
+    r = await run(ctx, ["nginx-find", "studio-auth"], { SERVERCTL_NGINX_BIN: fwd(empty) });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /studio:2:.*5000\/api\/studio-auth\/verify/);
+    assert.ok(!/secret/.test(r.out));
+  } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+test("serverNames: server_name 주소들만(주석·_ 제외)", () => {
+  assert.deepEqual(serverNames("# server_name no.example.com;\nserver {\n    server_name a.example.com b.example.com; # x\n}\nserver {\n  server_name _;\n}\n"), ["a.example.com", "b.example.com"]);
 });

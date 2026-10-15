@@ -17,8 +17,13 @@
 //                                    폴더마다 백업(~/env-backups/<폴더>/), 권한 600, 하나라도 실패하면 모두 되돌림
 //   env-unset KEY
 //   nginx-show                       대상 사이트 설정 파일 내용
-//   nginx-set-directive NAME VALUE [LOCATION]   허용된 지시어만. LOCATION 이 없으면 https server 블록 바로 아래
+//   nginx-set-directive NAME VALUE [LOCATION]   허용된 지시어만. LOCATION 이 없으면 https server 블록 바로 아래.
+//                                    proxy_pass 는 LOCATION 필수, 값은 http://127.0.0.1:포트/api/studio-auth/verify 꼴만
 //   nginx-apply FILE                 통째 교체(검증 후)
+//   nginx-show·nginx-set-directive·nginx-apply·restore·backups 에 --file NAME: 기본 사이트(sites-enabled/default) 말고 다른 사이트 파일
+//                                    (예: studio)을 같은 안전 경로(백업 → nginx -t → reload → 헬스 → 실패 시 되돌림)로 고침.
+//                                    기본 파일이 아니면 server_name 이 현재 파일과 같아야 하고, 적용 뒤 그 파일의 첫 server_name 주소가 5xx 가 아니어야 함
+//   nginx-find PATTERN [--host H]    읽기 전용. sudo nginx -T 에서 파일 경계와 일치 줄만 "파일:줄: 내용"(secret·token·passw 줄과 키 파일은 가림)
 //   rebuild                          .env 반영용 재빌드(배포 훅과 같은 방식). 실패하면 .env·이미지 되돌림
 //   restore TIMESTAMP                백업으로 복원(nginx 면 검증·reload, .env 면 rebuild 필요)
 //   backups                          백업 목록
@@ -65,7 +70,7 @@ import { healthPassed, healthRedirect, resolveDeploy } from "./deploycfg.mjs";
 import { runServerSwitch } from "./serverswitch.mjs";
 
 // 정비 보호 훅(pcguard.mjs)도 이 목록으로 "신뢰된 serverctl 호출"을 가린다
-export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token", "server-switch"];
+export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "nginx-find", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token", "server-switch"];
 const HOST = "serverpc";
 const HOSTS = ["serverpc", "serverpc2"]; // 우리 서버 두 대만(serveraccess.mjs 의 SERVER_HOSTS 와 같게)
 // 시험 모드(FACTORY_TEST_MODE=1)에서만 가짜 ssh·가짜 홈페이지 주소를 쓴다. 진짜 실행에서는 환경변수로 바꿀 수 없다
@@ -81,7 +86,11 @@ const NGINX_DIRECTIVES = {
   proxy_send_timeout: /^\d{1,6}[smh]?$/,
   send_timeout: /^\d{1,5}[smh]?$/,
   keepalive_timeout: /^\d{1,5}[smh]?$/,
+  proxy_pass: /^http:\/\/127\.0\.0\.1:\d{4,5}\/api\/studio-auth\/verify$/, // Studio 의 auth_request 검증 주소만(LOCATION 필수)
 };
+const NGFILE_RE = /^[A-Za-z][A-Za-z0-9_-]{0,40}$/; // sites-enabled 파일 이름(--file)
+const FIND_RE = /^[A-Za-z0-9_.\/:@|-]{1,80}$/;
+let NGFILE = "default";
 const LOCATION_RE = /^(=\s|~\s|\^~\s)?\/[A-Za-z0-9_\-./]*$/;
 const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{0,40}$/; // 저장소·작업 폴더·nginx 사이트 이름
 const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/;
@@ -125,13 +134,11 @@ NGE=/etc/nginx; NGBIN=/usr/sbin/nginx
 # 시험(가짜 ssh)에서만 주는 경로. 진짜 서버에는 ssh 가 이 환경변수를 넘기지 않아 기본값을 쓴다
 [ -n "$(printenv SERVERCTL_NGINX_ETC)" ] && NGE=$(printenv SERVERCTL_NGINX_ETC)
 [ -n "$(printenv SERVERCTL_NGINX_BIN)" ] && NGBIN=$(printenv SERVERCTL_NGINX_BIN)
-ENVB="$HOME/env-backups/$SC_WORK"; NGF="$NGE/sites-enabled/default"; NGB="$HOME/nginx-backups"
+ENVB="$HOME/env-backups/$SC_WORK"; NGB="$HOME/nginx-backups"
 TS=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$ENVB" "$NGB"; chmod 700 "$HOME/env-backups" "$ENVB" "$NGB"; chmod 600 "$ENVB"/.env.local.bak-* "$NGB"/default.bak-* 2>/dev/null
 prune() { ls -1t "$1"/$2.bak-* 2>/dev/null | tail -n +21 | xargs -r rm -f; }
 env_backup() { B="$ENVB/.env.local.bak-$TS"; cp "$ENVF" "$B"; chmod 600 "$B"; prune "$ENVB" .env.local; echo "BACKUP $B"; }
-ng_backup() { B="$NGB/default.bak-$TS"; sudo -n cat "$NGF" > "$B"; chmod 600 "$B"; prune "$NGB" default; echo "BACKUP $B"; }
-ng_put() { sudo -n tee "$NGF" < "$1" > /dev/null; }
 ng_test() { OUT=$(sudo -n "$NGBIN" -t 2>&1); R=$?; echo "$OUT" | tail -3; return $R; }
 act() { echo "$(date '+%F %T') $*" >> "$HOME/serverctl-actions.log"; }
 dom_re() { printf %s "$1" | sed 's/\./\\./g'; }
@@ -197,20 +204,7 @@ case "$1" in
   env-restore)
     F="$ENVB/.env.local.bak-$2"; [ -f "$F" ] || { echo "NO_BACKUP"; exit 2; }
     env_backup; cat "$F" > "$ENVF"; echo "RESTORED $F" ;;
-  nginx-show) sudo -n cat "$NGF" ;;
-  nginx-apply)
-    ng_backup; N="$NGB/.new-$TS"; cat > "$N"; chmod 600 "$N"; ng_put "$N"; rm -f "$N"
-    if ! ng_test; then ng_put "$B"; echo "TEST_FAIL"; ng_test > /dev/null && echo "RESTORED $B"; exit 3; fi
-    if ! sudo -n systemctl reload nginx; then ng_put "$B"; sudo -n systemctl reload nginx; echo "RELOAD_FAIL RESTORED $B"; exit 4; fi
-    echo "APPLIED $B" ;;
-  nginx-restore)
-    F="$NGB/default.bak-$2"; [ -f "$F" ] || { echo "NO_BACKUP"; exit 2; }
-    ng_backup; ng_put "$F"
-    if ! ng_test; then ng_put "$B"; echo "TEST_FAIL"; exit 3; fi
-    sudo -n systemctl reload nginx && echo "RESTORED $F" ;;
-  backups)
-    echo "[.env.local]"; ls -1t "$ENVB"/.env.local.bak-* 2>/dev/null | head -20 | sed 's#.*/##'
-    echo "[nginx]"; ls -1t "$NGB"/default.bak-* 2>/dev/null | head -20 | sed 's#.*/##' ;;
+  backups) echo "[.env.local]"; ls -1t "$ENVB"/.env.local.bak-* 2>/dev/null | head -20 | sed 's#.*/##' ;;
   rebuild-start)
     cd "$WORK" || exit 2
     IMG=$(docker inspect "$SC_CONTAINER" --format '{{.Config.Image}}' | cut -d: -f1)
@@ -307,6 +301,40 @@ case "$1" in
     [ -f "$LF" ] && tail -n +$FROM "$LF" | tail -25 | sed 's/^/| /'
     docker ps --filter "name=^$CN\$" --format 'RUNNING {{.Names}} {{.Status}}' ;;
   *) echo "UNKNOWN"; exit 9 ;;
+esac
+`;
+
+// nginx 사이트 파일 보기·교체·복원·검색용 원격 스크립트(REMOTE 가 한도에 가까워 나눔). SC_NGFILE = sites-enabled 아래 파일 이름(기본 default)
+const REMOTE_NGX = String.raw`
+set -u
+NGE=/etc/nginx; NGBIN=/usr/sbin/nginx
+[ -n "$(printenv SERVERCTL_NGINX_ETC)" ] && NGE=$(printenv SERVERCTL_NGINX_ETC)
+[ -n "$(printenv SERVERCTL_NGINX_BIN)" ] && NGBIN=$(printenv SERVERCTL_NGINX_BIN)
+NF=$SC_NGFILE; [ -n "$NF" ] || NF=default; NGF="$NGE/sites-enabled/$NF"; NGB="$HOME/nginx-backups"; TS=$(date +%Y%m%d-%H%M%S)
+mkdir -p "$NGB"; chmod 700 "$NGB"; chmod 600 "$NGB"/*.bak-* 2>/dev/null
+ng_backup() { B="$NGB/$NF.bak-$TS"; sudo -n cat "$NGF" > "$B"; chmod 600 "$B"; ls -1t "$NGB"/$NF.bak-* 2>/dev/null | tail -n +21 | xargs -r rm -f; echo "BACKUP $B"; }
+ng_put() { sudo -n tee "$NGF" < "$1" > /dev/null; }
+ng_test() { OUT=$(sudo -n "$NGBIN" -t 2>&1); R=$?; echo "$OUT" | tail -3; return $R; }
+if [ "$1" = nginx-find ]; then
+  P="$2"; O=$(sudo -n "$NGBIN" -T 2>/dev/null) || O=""
+  if [ -n "$O" ]; then printf '%s\n' "$O" | P="$P" awk '/^# configuration file /{f=$4;sub(/:$/,"",f);L=0;next}{L++}tolower(f)~/(secret|key|passw)/{next}$0~ENVIRON["P"]&&tolower($0)!~/(secret|token|passw)/{print f":"L": "$0}' | head -200
+  else sudo -n grep -RnsE -- "$P" "$NGE/" | grep -viE 'secret|token|passw|privkey' | head -200; fi
+  exit 0
+fi
+[ -e "$NGF" ] || { echo "NO_FILE $NF"; exit 2; }
+case "$1" in
+  nginx-show) sudo -n cat "$NGF" ;;
+  nginx-apply)
+    ng_backup; N="$NGB/.new-$TS"; cat > "$N"; chmod 600 "$N"; ng_put "$N"; rm -f "$N"
+    if ! ng_test; then ng_put "$B"; echo "TEST_FAIL"; ng_test > /dev/null && echo "RESTORED $B"; exit 3; fi
+    if ! sudo -n systemctl reload nginx; then ng_put "$B"; sudo -n systemctl reload nginx; echo "RELOAD_FAIL RESTORED $B"; exit 4; fi
+    echo "APPLIED $B" ;;
+  nginx-restore)
+    F="$NGB/$NF.bak-$2"; [ -f "$F" ] || { echo "NO_BACKUP"; exit 2; }
+    ng_backup; ng_put "$F"
+    if ! ng_test; then ng_put "$B"; echo "TEST_FAIL"; exit 3; fi
+    sudo -n systemctl reload nginx && echo "RESTORED $F" ;;
+  nginx-backups) echo "[nginx $NF]"; ls -1t "$NGB"/$NF.bak-* 2>/dev/null | head -20 | sed 's#.*/##' ;;
 esac
 `;
 
@@ -426,13 +454,13 @@ esac
 // 시험 모드에서만 가짜 ssh(node 스크립트)를 쓴다
 const sshCmd = () => (TEST && process.env.SERVERCTL_SSH ? [process.execPath, [process.env.SERVERCTL_SSH]] : ["ssh", []]);
 function remote(args, input, host = DEFAULT_HOST) {
-  const script = /^(app-(update|health|restart)|env-restore-work)/.test(args[0]) ? REMOTE_APP : args[0] === "web-release" ? REMOTE_WEB : REMOTE;
+  const script = /^(app-(update|health|restart)|env-restore-work)/.test(args[0]) ? REMOTE_APP : args[0] === "web-release" ? REMOTE_WEB : /^nginx-(show|apply|restore|backups|find)$/.test(args[0]) ? REMOTE_NGX : REMOTE;
   if (!HOSTS.includes(host)) die(`대상 서버는 ${HOSTS.join("·")} 만이에요: ${host}`);
   // 윈도우 ssh 명령줄은 길면 잘린다(원격 셸이 "unmatched \"" 로 실패) → 스크립트를 gzip 한 뒤 base64 로 보낸다
   const b64 = gzipSync(Buffer.from(script.replace(/\r\n/g, "\n")), { level: 9 }).toString("base64");
   const quoted = args.map((a) => `'${String(a).replace(/'/g, "")}'`).join(" ");
   const [bin, pre] = sshCmd();
-  const r = spawnSync(bin, [...pre, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, `LC_ALL=C SC_WORK='${SITE.work}' SC_CONTAINER='${SITE.container}' bash -c "$(echo ${b64} | base64 -d | gunzip)" serverctl ${quoted}`], {
+  const r = spawnSync(bin, [...pre, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, `LC_ALL=C SC_WORK='${SITE.work}' SC_CONTAINER='${SITE.container}' SC_NGFILE='${NGFILE}' bash -c "$(echo ${b64} | base64 -d | gunzip)" serverctl ${quoted}`], {
     input: input ?? "",
     encoding: "utf8",
     timeout: 120_000,
@@ -568,8 +596,45 @@ export function setDirective(text, name, value, location) {
   return text.slice(0, open + 1) + `${nl}${indent}${name} ${value}; # serverctl` + text.slice(open + 1);
 }
 
-async function applyNginx(content, what) {
-  if (content.length > 200_000 || !/server\s*\{/.test(content) || !content.includes(SITE.nginxDomain)) die("nginx 설정 내용이 대상 사이트 설정으로 보이지 않아요.");
+// server_name 주소들(# 주석 줄은 제외). --file 로 다른 파일을 고칠 때 "같은 사이트 파일인지" 보는 데 쓴다
+export function serverNames(text) {
+  return [...String(text).matchAll(/^[ \t]*server_name[ \t]+([^;#]+);/gm)].flatMap((m) => m[1].trim().split(/\s+/)).filter((n) => n !== "_");
+}
+
+// --file 로 고친 사이트의 첫 server_name 주소가 reload 뒤에도 5xx 가 아닌지(Studio 는 키가 없으면 401 이 정상)
+async function siteProbe(content) {
+  const name = serverNames(content).find((n) => DOMAIN_RE.test(n));
+  const url = TEST ? process.env.SERVERCTL_PROBE_URL : name && `https://${name}/`;
+  if (!url) return { ok: true, detail: "생략" };
+  let last = "";
+  for (let i = 0; i < 4; i++) {
+    try {
+      const r = await fetch(url, { headers: { "User-Agent": UA }, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+      if (r.status < 500) return { ok: true, detail: String(r.status) };
+      last = String(r.status);
+    } catch (e) {
+      last = e.message;
+    }
+    if (i < 3) await new Promise((res) => setTimeout(res, TEST ? 50 : 5_000));
+  }
+  return { ok: false, detail: last };
+}
+
+async function applyNginx(content, what, curText) {
+  if (content.length > 200_000 || !/server\s*\{/.test(content)) die("nginx 설정 내용이 대상 사이트 설정으로 보이지 않아요.");
+  if (NGFILE === "default") {
+    if (!content.includes(SITE.nginxDomain)) die("nginx 설정 내용이 대상 사이트 설정으로 보이지 않아요.");
+  } else {
+    let cur = curText;
+    if (cur === undefined) {
+      const c = remote(["nginx-show"]);
+      if (c.code !== 0) die(c.out);
+      cur = c.stdout;
+    }
+    const names = serverNames(content);
+    if (!names.length || names.join(" ") !== serverNames(cur).join(" ")) die(`nginx 설정 내용의 server_name 이 ${NGFILE} 파일의 지금 것과 달라요.`);
+    what = `[${NGFILE}] ${what}`;
+  }
   const r = remote(["nginx-apply"], content.replace(/\r\n/g, "\n"));
   const b = backupOf(r.out);
   if (r.code !== 0) {
@@ -578,7 +643,13 @@ async function applyNginx(content, what) {
     await report(`nginx ${what}\n결과: ${res}\n백업: ${b}`);
     process.exit(3);
   }
-  const h = await health();
+  let h = await health();
+  let extra = "";
+  if (h.ok && NGFILE !== "default") {
+    const p = await siteProbe(content);
+    if (!p.ok) h = { ok: false, detail: `${NGFILE} 사이트 ${p.detail}` };
+    else extra = `, ${NGFILE} 사이트 응답 ${p.detail}`;
+  }
   if (!h.ok) {
     const back = remote(["nginx-restore", tsOf(b)]);
     const h2 = await health();
@@ -587,8 +658,8 @@ async function applyNginx(content, what) {
     await report(`nginx ${what}\n결과: ${res}\n백업: ${b}`);
     process.exit(4);
   }
-  say(`${what}: 적용됨(nginx -t 통과, reload, 헬스체크 200)\n백업: ${b}`);
-  await report(`nginx ${what}\n결과: nginx -t 통과, reload, 헬스체크 200\n백업: ${b}`);
+  say(`${what}: 적용됨(nginx -t 통과, reload, 헬스체크 200${extra})\n백업: ${b}`);
+  await report(`nginx ${what}\n결과: nginx -t 통과, reload, 헬스체크 200${extra}\n백업: ${b}`);
 }
 
 async function rebuild() {
@@ -1203,20 +1274,25 @@ async function serviceToken(args) {
 }
 
 // 블로그 계열 명령(env-keys·env-set KEY·env-unset·nginx-*·rebuild·restore·backups)의 --site·--host 읽기
-function legacyArgs(rest) {
+function legacyArgs(rest, cmd) {
   const { pos, opts } = parseOpts(rest, []);
-  for (const k of Object.keys(opts)) if (k !== "site" && k !== "host") die("알 수 없는 옵션이에요: --" + k);
+  for (const k of Object.keys(opts)) if (k !== "site" && k !== "host" && k !== "file") die("알 수 없는 옵션이에요: --" + k);
   if (opts.host !== undefined) DEFAULT_HOST = hostOpt(opts);
+  if (opts.file !== undefined) {
+    if (!/^(nginx-(show|set-directive|apply)|restore|backups)$/.test(cmd)) die("--file 은 nginx-show·nginx-set-directive·nginx-apply·restore·backups 에만 써요.");
+    if (!NGFILE_RE.test(opts.file) || /\.bak/.test(opts.file)) die("--file 은 sites-enabled 아래 사이트 파일 이름이에요(예: studio): " + opts.file);
+    NGFILE = opts.file;
+  }
   return { pos, site: opts.site };
 }
 
 async function main() {
   const [cmd, ...rawRest] = process.argv.slice(2);
-  const LEGACY = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups"];
+  const LEGACY = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "nginx-find", "rebuild", "restore", "backups"];
   let rest = rawRest;
   let site;
   if (LEGACY.includes(cmd) && !(cmd === "env-set" && rest.some((a) => /^--(gen|gen-shared|put)(=|$)/.test(a)))) {
-    const a = legacyArgs(rest);
+    const a = legacyArgs(rest, cmd);
     rest = a.pos;
     site = a.site;
   }
@@ -1242,6 +1318,7 @@ async function main() {
       const location = loc.join(" ").trim() || null;
       if (!NGINX_DIRECTIVES[name]) die(`허용된 지시어만 바꿀 수 있어요: ${Object.keys(NGINX_DIRECTIVES).join(", ")}`);
       if (!NGINX_DIRECTIVES[name].test(value ?? "")) die(`${name} 값 형식이 올바르지 않아요: ${value}`);
+      if (name === "proxy_pass" && !location) die("proxy_pass 는 LOCATION 을 꼭 줘요(예: \"= /_studio_auth\").");
       if (location && !LOCATION_RE.test(location)) die(`location 형식이 올바르지 않아요(예: /upload-api/ 또는 "= /api/factory/screenshot"): ${location}`);
       const cur = remote(["nginx-show"]);
       if (cur.code !== 0) die(cur.out);
@@ -1251,7 +1328,13 @@ async function main() {
       } catch (e) {
         die(e.message);
       }
-      return applyNginx(next, `${name} ${value}${location ? ` (location ${location})` : " (server)"}`);
+      return applyNginx(next, `${name} ${value}${location ? ` (location ${location})` : " (server)"}`, cur.stdout);
+    }
+    case "nginx-find": {
+      if (!FIND_RE.test(rest[0] ?? "") || rest.length !== 1) die("nginx-find PATTERN (영문·숫자·_ . / : @ | - 만, 80자 안, 정규식 ERE) [--host serverpc|serverpc2]");
+      const r = remote(["nginx-find", rest[0]]);
+      if (r.code !== 0) die(r.out || `nginx-find 실패(코드 ${r.code})`);
+      return say(r.out || "(일치하는 줄 없음)");
     }
     case "nginx-apply": {
       const file = rest[0];
@@ -1264,7 +1347,7 @@ async function main() {
       const ts = rest[0];
       if (!TS_RE.test(ts ?? "")) die("TIMESTAMP 는 YYYYMMDD-HHMMSS 형식이에요(backups 로 확인).");
       const list = remote(["backups"]).out;
-      if (list.includes(`default.bak-${ts}`)) {
+      if (remote(["nginx-backups"]).out.includes(`${NGFILE}.bak-${ts}`)) {
         const r = remote(["nginx-restore", ts]);
         const h = r.code === 0 ? await health() : { ok: false, detail: "복원 실패" };
         say(`nginx ${ts} 백업으로 복원: ${r.code === 0 ? "nginx -t 통과, reload" : r.out} / 헬스체크 ${h.ok ? "200" : h.detail}`);
@@ -1286,7 +1369,7 @@ async function main() {
       return die(`그 시각의 백업이 없어요: ${ts}`);
     }
     case "backups":
-      return say(remote(["backups"]).out);
+      return say(`${remote(["backups"]).out}\n${remote(["nginx-backups"]).out}`);
     case "site-init":
       return siteInit(rest);
     case "env-clone":
