@@ -180,6 +180,17 @@ node supervisor.mjs      # 끄려면 Ctrl+C
   - serverctl 의 env-keys·env-set KEY·env-unset·nginx-*·rebuild·restore·backups 는 `--site <작업 폴더 이름>`(작업 폴더·컨테이너·env 백업 폴더)과 `--host serverpc|serverpc2` 를 받아요(`--site` 가 `deploy.workName` 보다 먼저). `--site` 를 줘도 헬스체크 주소·합격 코드는 `deploy.*` 를 따르니 그 사이트용으로 맞춰 두세요. nginx 사이트 파일 이름(`sites-enabled/default`)은 아직 고정이에요(전환 단계에서).
   - `service-token` 의 키 보관함 주소는 `deploy` 가 아니라 감독 설정의 `serverUrl`(+ 감독 토큰)을 따라요. 전환 전에는 블로그, `serverUrl` 을 바꾼 뒤에는 새 홈페이지의 `/api/factory/service-token` 이에요.
 
+## 감독 홈페이지 주소 전환 안전장치 (`serverswitch.mjs`, 통합-분리 4-3)
+- 감독의 `serverUrl` 을 잘못 바꾸면 감독이 통제실과 끊겨 원격으로 되돌릴 수 없어서, 바꾸는 길을 하나로 좁히고 되돌림을 이 PC 안에서 판단하게 했어요. 이번 단계는 장치만 넣었고 실제 전환은 하지 않아요(4-4).
+- 명령(신뢰된 serverctl 사본, 정비 보호 훅 허용): `server-switch <https://새주소> [--dry-run]`, `server-switch --status`.
+  1. 새 주소로 시험 호출: 워커 토큰으로 `GET /api/factory/next?slots=0&hold=1&toolSlots=0` 200(hold=1 이라 일감·정비·1회성 신호를 가져가지 않음), 상태 토큰(`CLAUDE_STATUS_TOKEN`: 환경변수 또는 `~/.bashrc`)으로 `POST /api/claude-status`(PostToolUse 한 건, 세션 `server-switch-probe`) 200. 하나라도 틀리면 아무것도 바꾸지 않고 코드 5로 끝나요. `--dry-run` 은 여기까지만.
+  2. 통과하면 `~/dev/factory/switch-backups/<시각>/` 에 `supervisor.config.json` 과 `CLAUDE_STATUS_URL` 줄이 있는 셸 설정(`~/.bashrc` 등) 사본을 두고, 상태 파일(`supervisor-switch.json`, armed) → 설정의 `serverUrl` → `CLAUDE_STATUS_URL` 줄 순서로 새 주소를 써요. 쓰다 실패하면 백업으로 되돌려요. 토큰·키 값은 출력·로그·보고에 남기지 않아요.
+  3. 돌고 있는 감독이 상태 파일을 보고 스스로 재시작을 부탁해요(`restart.mjs`: 일감·정비가 끝나면 껐다 켜요. 실행기 밖이면 재시작하지 않으니 직접 껐다 켜야 해요).
+  4. 새 주소로 켜진 감독은 5분 시험을 시작해요(마감은 상태 파일에 남아 재시작해도 이어져요). 그 안에 새 주소로 `/api/factory/next` 또는 하트비트(`/api/factory/report`)가 한 번도 200 을 못 받으면, 서버 연결 없이 설정과 `CLAUDE_STATUS_URL` 줄을 이전 값으로 되돌리고 재시작해요(실행기 밖이면 이 프로세스의 주소만 바꿔 계속 돌아요). 200 이 오면 안전장치를 풀어요.
+  5. 되돌린 사실은 다음 대기열 확인의 `note` 로 홈페이지에 가고(`주소 전환 되돌림: … 연결 실패 → …`), 200 을 받으면 보고한 것으로 표시해요.
+- 실행기(`run-supervisor.sh`)는 `bash -l` 로 한 번만 환경변수를 읽고 재시작마다 같은 환경을 물려줘요. 그래서 감독이 시작할 때 셸 설정의 `CLAUDE_STATUS_URL` 줄이 환경변수와 다르면 그 값으로 자기 환경변수를 바꿔요(`refreshStatusUrlEnv`). 실행기 변경은 필요 없어요.
+- 시험 모드에서만: `FACTORY_SWITCH_STATE`(상태 파일 위치), `FACTORY_SWITCH_TRIAL_SEC`(시험 시간 초). 진짜 실행에서는 바꿀 수 없어요. 상태 파일·백업 폴더는 `pcguard.mjs` 가 정비의 수정을 막아요.
+
 ## 서버 접근 규칙 (`serveraccess.mjs`, `ssh-guard.mjs`)
 - 공장 AI 세션(정비·앱 new/revision·출시·실험)은 `~/.ssh/config` 의 우리 서버 두 대(`serverpc` 서버1, `serverpc2` 서버2)로만 ssh·scp·git 접속을 할 수 있어요. 다른 호스트, `-J`·`-F`·`ProxyCommand`·터널 옵션, sftp·rsync 는 막혀요.
 - 계속 막는 것: 서버에서 `rm -rf`(예외: `~/studio-upload/<이름>` 바로 아래 한 단계 폴더만, 목록은 serveraccess.mjs 의 RM_RF_ALLOWED_PARENTS)·`git-server` 아래 저장소 삭제/이름 변경, 강제 push(`--force`·`-f`·`--force-with-lease`·`+`refspec)·원격 브랜치 삭제·서버 저장소 `git reset --hard`, 배포 저장소(`git-server/repo/`)로 push, `docker compose down`·`docker rm`·prune·`systemctl stop/disable`·`reboot`·`shutdown`, nginx 설정 수정·`.env`·인증서/키·`~/.ssh`·crontab 수정. 표준입력으로 보낸 스크립트·eval·base64 디코드처럼 검사할 수 없는 원격 명령도 막아요.

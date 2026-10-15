@@ -45,6 +45,13 @@
 //                                    보관함 주소는 deploy 설정이 아니라 감독 설정의 serverUrl 을 따른다(그 홈페이지의 /api/factory/service-token). 전환 전에는 블로그, 전환 뒤에는 새 serverUrl.
 //                                    어느 단계든 실패하면 둘 다 되돌림(.env 백업 복원, 보관함 이전 값 복원 또는 삭제, 컨테이너 재시작). 값은 출력·로그·파일·인자에 남지 않음
 //
+// 감독 홈페이지 주소 전환(서버가 아니라 이 PC 의 감독 설정을 바꾼다. 자세한 건 serverswitch.mjs):
+//   server-switch <새 주소> [--dry-run]
+//                                    ① 새 주소로 시험 호출(워커 토큰으로 일감 확인 200, 상태 토큰으로 /api/claude-status 200) — 하나라도 틀리면 아무것도 안 바꿈
+//                                    ② 통과하면 supervisor.config.json·CLAUDE_STATUS_URL 줄(~/.bashrc 등)을 백업하고 새 주소로 쓴 뒤, 돌고 있는 감독이 일감이 끝나면 스스로 재시작
+//                                    ③ 재시작 뒤 5분 안에 새 주소로 일감 확인·하트비트가 한 번도 성공하지 못하면 감독이 이 PC 안에서 이전 주소로 되돌리고 재시작. --dry-run 은 ①만
+//   server-switch --status           전환 기록(준비·시험 중·되돌림) 보기
+//
 // 안전 절차: 바꾸기 전에 백업(작업 폴더 밖, 최근 20개) → 바꾸고 검증(nginx -t, reload, 헬스체크 / rebuild, 헬스체크)
 //           → 실패하면 자동 되돌림. 바꿀 때마다 정비 대화와 텔레그램에 "무엇을·백업·검증 결과"를 남긴다(값 제외).
 //           새 사이트 명령은 서버의 ~/serverctl-actions.log 에도 한 줄씩 남긴다(값 제외).
@@ -55,9 +62,10 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { healthPassed, healthRedirect, resolveDeploy } from "./deploycfg.mjs";
+import { runServerSwitch } from "./serverswitch.mjs";
 
 // 정비 보호 훅(pcguard.mjs)도 이 목록으로 "신뢰된 serverctl 호출"을 가린다
-export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token"];
+export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push", "app-update", "web-release", "service-token", "server-switch"];
 const HOST = "serverpc";
 const HOSTS = ["serverpc", "serverpc2"]; // 우리 서버 두 대만(serveraccess.mjs 의 SERVER_HOSTS 와 같게)
 // 시험 모드(FACTORY_TEST_MODE=1)에서만 가짜 ssh·가짜 홈페이지 주소를 쓴다. 진짜 실행에서는 환경변수로 바꿀 수 없다
@@ -1295,6 +1303,8 @@ async function main() {
       return webRelease(rest);
     case "service-token":
       return serviceToken(rest);
+    case "server-switch":
+      return runServerSwitch({ args: rest, configPath: CONFIG, test: TEST, say, die, report });
     default:
       die(`서브커맨드: ${SUBCOMMANDS.join(" | ")}`, 2);
   }

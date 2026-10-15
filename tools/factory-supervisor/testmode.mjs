@@ -46,6 +46,7 @@ export function testModeProblems({ env, config, configPath, homedir, realHome, r
     FACTORY_UPDATE_STATE: env.FACTORY_UPDATE_STATE || "~/dev/factory/supervisor-update.json",
     FACTORY_RESTART_STATE: env.FACTORY_RESTART_STATE || "~/dev/factory/supervisor-restart.json",
     FACTORY_PAUSE_STATE: env.FACTORY_PAUSE_STATE || "~/dev/factory/supervisor-paused.json",
+    FACTORY_SWITCH_STATE: env.FACTORY_SWITCH_STATE || "~/dev/factory/supervisor-switch.json",
     FACTORY_LAUNCHER_LOCK: env.FACTORY_LAUNCHER_LOCK || "~/dev/factory/run-supervisor.pid",
   };
   for (const [name, p] of Object.entries(paths)) {

@@ -41,6 +41,7 @@ import { runKeyTasks } from "./keyvault.mjs";
 import { runUploadTest } from "./uploadtest.mjs";
 import { refreshPathFromRegistry, toolLabel } from "./pcenv.mjs";
 import { maybeRestart, onRestartSignal, readRestartMark, restartPending, restartQuery } from "./restart.mjs";
+import { markSwitchReported, noteSwitchOk, refreshStatusUrlEnv, startSwitchGuard, switchReportNote, switchRestartWanted } from "./serverswitch.mjs";
 import { KEY_IGNORE, addIgnoreLines, keyFilesToCommit } from "./keyguard.mjs";
 import { checkStoreAssets, envSummary, playUploadAab, playUploadStore, sendStoreImages, storeEnv, storeEnvSection, storeReport, uploadReviewVideo } from "./store.mjs";
 import { safeEnv } from "./envfilter.mjs";
@@ -220,6 +221,8 @@ async function api(method, pathname, body, { timeoutMs = 60_000, requestId } = {
   } catch {
     /* 본문 없음·JSON 아님 */
   }
+  // 주소 전환 시험 중이면: 새 주소로 일감 확인·하트비트(보고)가 200 이면 연결 확인(serverswitch.mjs)
+  if (res.status === 200 && (pathname.startsWith("/api/factory/next") || pathname === "/api/factory/report")) noteSwitchOk();
   return { status: res.status, data, text: data ? "" : text.slice(0, 2000) };
 }
 
@@ -2277,6 +2280,7 @@ const novel = createNovelRunner({
 
 async function loop() {
   let delay = cfg.pollSec * 1000;
+  let switchAsked = false; // 주소 전환 재시작을 이미 부탁했는지
   while (!shuttingDown) {
     try {
       // 새 버전 확인(10분마다): 공장이 비었으면 바로, 일감이 돌면 새 커밋을 모았다가(묶기) 받는다. 받기로 하면 진행 중인 AI 를 안전한 지점에서 멈추고(저장) 받아 여기서 exit(0), 새 감독이 이어 준다
@@ -2284,12 +2288,20 @@ async function loop() {
     } catch (e) {
       log(`자동 업데이트 확인 중 오류: ${e.message}`);
     }
+    // 주소 전환(server-switch)이 준비됐으면 한 번 재시작을 부탁한다: 일감·정비가 끝나면 아래 maybeRestart 가 껐다 켠다(새 주소로)
+    if (!switchAsked && switchRestartWanted(cfg.serverUrl)) {
+      switchAsked = true;
+      log("홈페이지 주소 전환이 준비됐어요(server-switch). 일감이 끝나면 재시작해서 새 주소로 켜져요.");
+      onRestartSignal(log);
+    }
     // 통제실 [감독 재시작]: 일감·정비가 다 끝났으면 여기서 종료(실행기가 다시 띄움)
     if (maybeRestart({ busy: running.size > 0 || toolRunning.size > 0 || maintenanceBusy() || novel.busy(), shutdown, log })) break;
     try {
       const free = appLimit() - running.size - pendingApps(); // 이어 줄 일감 자리도 비워 둔다
       { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
+        const switchNote = switchReportNote(); // 주소 전환을 되돌렸으면 그 사실을 다음 연결 때 알린다(소식 칸 대신)
+        if (switchNote) info.note = switchNote;
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
         const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", plan: planBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery(), ...staleCopyQuery(), ...(outbox.size() > 0 ? { outbox: String(outbox.size()) } : {}), ...(deployRunning() ? { deploying: "1" } : {}), ...updateExtra() });
         const sentTools = aiTools;
@@ -2307,6 +2319,7 @@ async function loop() {
         );
         notePoll(r.status === 200); // 새 버전 건강 확인(200 이면 확인됨)
         if (r.status === 200) {
+          if (switchNote) markSwitchReported();
           startResumed(maintCtx()); // 업데이트로 멈췄던 일감을 같은 세션으로 이어 준다(연결이 확인된 뒤)
           delay = cfg.pollSec * 1000;
           if (aiTools === sentTools) aiTools = null; // 받았으니 다음 확인(1시간 뒤)까지 보내지 않는다
@@ -2456,6 +2469,13 @@ if (command === "init") {
     process.on("SIGTERM", shutdown);
     fs.mkdirSync(cfg.workDir, { recursive: true });
     readRestartMark(log); // [감독 재시작]으로 다시 켜진 것인지
+    // 홈페이지 주소 전환 안전장치: 새 주소로 켜진 거면 5분 시험을 시작하고, 연결이 안 되면 이전 주소로 되돌린다. 실행기가 쥔 옛 CLAUDE_STATUS_URL 도 새로 읽는다
+    try {
+      startSwitchGuard({ cfg, configPath: CONFIG_PATH, log, shutdown });
+      refreshStatusUrlEnv({ log });
+    } catch (e) {
+      log(`주소 전환 안전장치를 시작하지 못했어요: ${e.message}`);
+    }
     // 실행기·작업 스케줄러가 쥔 옛 PATH 대신 레지스트리 Path 를 다시 읽는다(그 뒤 설치한 ffmpeg 등). 자식 프로세스도 물려받는다
     const added = refreshPathFromRegistry();
     if (added.length) log(`PATH 에 레지스트리 폴더 ${added.length}개를 붙였어요: ${added.join("; ")}`);
