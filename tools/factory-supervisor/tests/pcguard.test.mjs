@@ -136,6 +136,8 @@ const SERVER_CALLS = [
   `node "${SCTL}" cert factory.buyoungsilcoding.com`,
   `node "${SCTL}" deploy-push C:/Users/x/dev/factory/factory-web prod serverpc:git-server/repo/factoryWeb.git`,
   `SERVERCTL_VALUE=x node ${SCTL} env-set FOO`,
+  `node "${SCTL}" env-set ~/git-server/work/developWeb ~/git-server/work/factoryWeb --gen-shared CONTROL_HANDOFF_SECRET --host serverpc`,
+  `node "${SCTL}" env-set ~/git-server/work/factoryWeb --gen CONTROL_SESSION_SECRET`,
 ];
 
 test("신뢰된 serverctl 호출 판정: 감독 실행 폴더 사본·정해진 서브커맨드·단일 명령만", () => {

@@ -221,6 +221,64 @@ test("env-clone: 서버 안에서만 복사, --set·--gen, 값은 출력하지 �
   }
 });
 
+test("env-set 여러 폴더: --gen-shared 는 같은 값, --gen 은 폴더별·이미 있으면 건너뜀, 값 출력 없음, 실패하면 모두 그대로", { skip }, async () => {
+  const ctx = setup();
+  try {
+    const dev = `${ctx.home}/git-server/work/developWeb/.env.local`;
+    const fac = `${ctx.home}/git-server/work/factoryWeb`;
+    fs.mkdirSync(fac, { recursive: true });
+    fs.writeFileSync(fac + "/.env.local", "A=1\nNEXTAUTH_SECRET=" + SECRET + "\n");
+    const devBefore = read(dev);
+    const facBefore = read(fac + "/.env.local");
+    const val = (p, k) => new RegExp("^" + k + "=(.*)$", "m").exec(read(p))?.[1];
+    let r = await run(ctx, ["env-set", "~/git-server/work/developWeb", "~/git-server/work/factoryWeb", "--gen-shared", "CONTROL_HANDOFF_SECRET"]);
+    assert.equal(r.code, 0, r.out);
+    const shared = val(dev, "CONTROL_HANDOFF_SECRET");
+    assert.match(shared, /^[0-9a-f]{64}$/);
+    assert.equal(val(fac + "/.env.local", "CONTROL_HANDOFF_SECRET"), shared, "두 폴더에 같은 값");
+    assert.ok(!r.out.includes(shared) && !read(ctx.report).includes(shared), "값은 출력·보고에 없다");
+    noSecret(ctx, r.out);
+    assert.match(r.out, /CONTROL_HANDOFF_SECRET → developWeb/);
+    assert.match(r.out, /developWeb=600, factoryWeb=600/);
+    assert.match(read(dev), new RegExp("^NEXTAUTH_SECRET=" + SECRET + "$", "m"), "NEXTAUTH_SECRET 그대로");
+    for (const n of ["developWeb", "factoryWeb"]) assert.ok(fs.readdirSync(`${ctx.home}/env-backups/${n}`).some((f) => f.startsWith(".env.local.bak-")), "백업 " + n);
+    // --gen: 없으면 만들고, 다시 실행하면 건너뜀
+    r = await run(ctx, ["env-set", "~/git-server/work/factoryWeb", "--gen", "CONTROL_SESSION_SECRET"]);
+    assert.equal(r.code, 0, r.out);
+    const sess = val(fac + "/.env.local", "CONTROL_SESSION_SECRET");
+    assert.match(sess, /^[0-9a-f]{64}$/);
+    assert.ok(!r.out.includes(sess));
+    r = await run(ctx, ["env-set", "~/git-server/work/factoryWeb", "--gen", "CONTROL_SESSION_SECRET"]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /건너뜀: CONTROL_SESSION_SECRET/);
+    assert.equal(val(fac + "/.env.local", "CONTROL_SESSION_SECRET"), sess, "이미 있으면 바꾸지 않는다");
+    // developWeb 을 바꿨으니 rebuild 실패 때 되돌릴 기준이 기록된다
+    assert.ok(JSON.parse(read(path.join(ctx.root, "state.json"))).envBaseline);
+    // 실패(폴더 하나 없음): 아무것도 안 바뀐다
+    const devNow = read(dev);
+    r = await run(ctx, ["env-set", "~/git-server/work/developWeb", "~/git-server/work/noSuchWeb", "--gen-shared", "OTHER_SECRET"]);
+    assert.notEqual(r.code, 0, r.out);
+    assert.equal(read(dev), devNow);
+    // 값 생성 실패: 모두 그대로, 임시 파일 없음
+    fs.writeFileSync(path.join(ctx.bin, "openssl"), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
+    r = await run(ctx, ["env-set", "developWeb", "factoryWeb", "--gen-shared", "OTHER_SECRET"]);
+    assert.notEqual(r.code, 0, r.out);
+    assert.match(r.out, /GEN_FAIL/);
+    assert.equal(read(dev), devNow);
+    assert.ok(!fs.readdirSync(fac).some((f) => f.includes("serverctl-")));
+    // 형식이 틀린 인자·보호 키는 서버에 가기 전에 거부
+    for (const bad of [["developWeb", "--gen", "lower"], ["developWeb", "--gen", "NEXTAUTH_SECRET"], ["developWeb", "--gen-shared", "AUTH_SECRET"], ["../../etc", "--gen", "X"], ["developWeb", "--host", "evil", "--gen", "X"], ["developWeb"]]) {
+      r = await run(ctx, ["env-set", ...bad]);
+      assert.notEqual(r.code, 0, bad.join(" ") + " " + r.out);
+    }
+    assert.equal(read(dev), devNow);
+    void devBefore;
+    void facBefore;
+  } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
 test("nginx-site: 새 파일·링크 → nginx -t → reload → 헬스체크, 있으면 멈춤, 실패하면 지움", { skip }, async () => {
   const ctx = setup();
   try {

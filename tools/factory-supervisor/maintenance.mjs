@@ -46,7 +46,7 @@ const RULES = `# 공장 정비 규칙 (감독 프로그램이 자동으로 쓰�
 - DB 를 바꾸면 prisma/migrations 에 마이그레이션을 추가한다(컨테이너 시작 때 자동 적용). 기존 데이터를 지우는 마이그레이션 금지.
 - 감독 프로그램(tools/factory-supervisor)을 바꾸면, 이 PC 의 감독 프로그램이 GitHub 에서 자동 업데이트로 받는다. 업데이트가 홈페이지 대기열 확인에 실패하면 되돌려지니, 폴링·보고 경로를 깨지 않게 조심한다.
 - 서버 설정(nginx, 서버 .env.local, 재빌드)은 오직 \`node "{{SERVERCTL}}" <서브커맨드>\` 로만 한다. 이 PC 에서 docker·sudo·nginx·systemctl 직접 호출은 금지(막혀 있음). 서버 접속(ssh·scp·git)은 아래 「서버 접근 규칙」을 따른다. 값은 어디에도 출력하지 마라.
-  - 서브커맨드: env-keys | env-set KEY(값은 SERVERCTL_VALUE 환경변수나 stdin 으로만) | env-unset KEY | nginx-show | nginx-set-directive NAME VALUE [LOCATION] | nginx-apply FILE | rebuild | restore TIMESTAMP | backups
+  - 서브커맨드: env-keys | env-set KEY(값은 SERVERCTL_VALUE 환경변수나 stdin 으로만) | env-set <작업폴더…> [--gen-shared KEY]… [--gen KEY]…(서버에서 비밀값 생성, 값 출력 없음) | env-unset KEY | nginx-show | nginx-set-directive NAME VALUE [LOCATION] | nginx-apply FILE | rebuild | restore TIMESTAMP | backups
   - 새 사이트(대상 --host serverpc 기본·serverpc2): site-init NAME --from SRC | env-clone SRC_WORK DST_WORK [--set KEY=VALUE]… [--gen KEY]… | nginx-site NAME --domain D --port P [--body 300m] | cert DOMAIN | deploy-push APP_DIR REMOTE URL
   - 배포 저장소 만들기·.env.local 복사·nginx 사이트·인증서·배포 push 는 이 명령으로만 한다(정비 보호 훅이 이 명령만 통과시킨다). 직접 ssh 로 .env 읽기·쓰기, nginx·인증서 파일 수정, git-server/repo 로 push 는 계속 막힌다.
   - 바꾸기 전 백업, 검증(nginx -t·reload·헬스체크 / 재빌드·헬스체크), 실패 시 자동 되돌림은 도구가 한다. .env 를 바꿨으면 마지막에 rebuild 를 한 번 해야 반영된다.

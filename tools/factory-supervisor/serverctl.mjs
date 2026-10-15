@@ -4,6 +4,10 @@
 //
 //   env-keys                         .env.local 의 키 이름만(값은 절대 출력하지 않음)
 //   env-set KEY                      값은 환경변수 SERVERCTL_VALUE 또는 stdin 으로만(명령줄·로그에 값 없음). 반영은 rebuild 로
+//   env-set <작업폴더…> [--gen-shared KEY]… [--gen KEY]… [--host H]
+//                                    비밀값을 서버 안에서 만들어 .env.local 에 넣음(값은 어디에도 출력 안 함, 결과는 변수 이름만).
+//                                    --gen-shared: 한 번 만든 같은 값을 나열한 모든 폴더에, --gen: 폴더마다 따로(이미 있으면 건너뜀).
+//                                    폴더마다 백업(~/env-backups/<폴더>/), 권한 600, 하나라도 실패하면 모두 되돌림
 //   env-unset KEY
 //   nginx-show                       대상 사이트 설정 파일 내용
 //   nginx-set-directive NAME VALUE [LOCATION]   허용된 지시어만. LOCATION 이 없으면 https server 블록 바로 아래
@@ -95,6 +99,45 @@ case "$1" in
     [ "$1" = env-set ] && [ $FOUND = 0 ] && printf '%s=%s\n' "$KEY" "$V" >> "$T"
     cat "$T" > "$ENVF"; rm -f "$T"; V=""
     if [ "$1" = env-set ]; then [ $FOUND = 1 ] && echo "CHANGED $KEY" || echo "ADDED $KEY"; else [ $FOUND = 1 ] && echo "REMOVED $KEY" || echo "ABSENT $KEY"; fi ;;
+  env-multi)
+    # 인자: 작업 폴더 이름들. 표준입력: "shared<TAB>KEY" / "gen<TAB>KEY" 줄. 전부 준비된 뒤에야 바꾸고, 하나라도 실패하면 되돌린다
+    shift; umask 077; PLAN=""; DONE_N=""
+    for N in "$@"; do [ -f "$HOME/git-server/work/$N/.env.local" ] || { echo "NO_ENV $N"; exit 2; }; done
+    while IFS=$'\t' read -r OP K; do
+      [ -z "$OP" ] && continue
+      V=""
+      if [ "$OP" = shared ]; then V=$(openssl rand -hex 32 2>/dev/null); [[ "$V" =~ ^[0-9a-f]{64}$ ]] || { V=""; PLAN=""; echo "GEN_FAIL $K"; exit 3; }; fi
+      PLAN="$PLAN$OP"$'\t'"$K"$'\t'"$V"$'\n'; V=""
+    done
+    cleanup() { for N in "$@"; do rm -f "$HOME/git-server/work/$N/.env.local.serverctl-$TS" "$HOME/git-server/work/$N/.env.local.serverctl-$TS.n"; done; }
+    for N in "$@"; do
+      D="$HOME/git-server/work/$N/.env.local"; EB="$HOME/env-backups/$N"; mkdir -p "$EB"; chmod 700 "$HOME/env-backups" "$EB"
+      B="$EB/.env.local.bak-$TS"; cp "$D" "$B" && chmod 600 "$B" || { cleanup "$@"; echo "BACKUP_FAIL $N"; exit 3; }
+      prune "$EB" .env.local; echo "BACKUP $B"
+      T="$D.serverctl-$TS"; cp "$D" "$T" && chmod 600 "$T" || { cleanup "$@"; echo "COPY_FAIL $N"; exit 3; }
+      [ -n "$(tail -c1 "$T")" ] && echo >> "$T"
+      while IFS=$'\t' read -r OP K V; do
+        [ -z "$OP" ] && continue
+        if [ "$OP" = gen ]; then
+          if grep -q "^$K=" "$T"; then echo "SKIP $N $K"; continue; fi
+          V=$(openssl rand -hex 32 2>/dev/null); [[ "$V" =~ ^[0-9a-f]{64}$ ]] || { V=""; PLAN=""; cleanup "$@"; echo "GEN_FAIL $K"; exit 3; }
+        fi
+        grep -v "^$K=" "$T" > "$T.n"; cat "$T.n" > "$T"; rm -f "$T.n"
+        printf '%s=%s\n' "$K" "$V" >> "$T"; V=""
+        echo "SET $OP $N $K"
+      done <<< "$PLAN"
+    done
+    for N in "$@"; do
+      D="$HOME/git-server/work/$N/.env.local"
+      if ! { mv -f "$D.serverctl-$TS" "$D" && chmod 600 "$D"; }; then
+        cleanup "$@"
+        for M in $DONE_N; do cat "$HOME/env-backups/$M/.env.local.bak-$TS" > "$HOME/git-server/work/$M/.env.local"; echo "RESTORED $M"; done
+        PLAN=""; echo "MOVE_FAIL $N"; exit 3
+      fi
+      DONE_N="$DONE_N $N"
+    done
+    PLAN=""; act "env-multi$(printf ' %s' "$@")"
+    for N in "$@"; do echo "MODE $N $(stat -c %a "$HOME/git-server/work/$N/.env.local")"; done ;;
   env-restore)
     F="$ENVB/.env.local.bak-$2"; [ -f "$F" ] || { echo "NO_BACKUP"; exit 2; }
     env_backup; cat "$F" > "$ENVF"; echo "RESTORED $F" ;;
@@ -454,7 +497,7 @@ export function parseOpts(args, multi = ["set", "gen"]) {
   const pos = [];
   const opts = Object.fromEntries(multi.map((k) => [k, []]));
   for (let i = 0; i < args.length; i++) {
-    const m = /^--([a-z]+)(?:=(.*))?$/.exec(args[i]);
+    const m = /^--([a-z][a-z-]*)(?:=(.*))?$/.exec(args[i]);
     if (!m) {
       pos.push(args[i]);
       continue;
@@ -720,6 +763,49 @@ async function deployPush(args) {
   if (!ok) process.exit(5);
 }
 
+// env-set <작업폴더…> --gen-shared KEY --gen KEY : 비밀값을 서버 안에서 만들어 넣는다(값은 이 PC 로 오지 않는다)
+async function envMulti(args) {
+  const { pos, opts } = parseOpts(args, ["gen", "gen-shared"]);
+  const host = hostOpt(opts);
+  if (!pos.length) die("env-set <작업폴더…> [--gen-shared KEY]… [--gen KEY]…");
+  if (!opts.gen.length && !opts["gen-shared"].length) die("--gen-shared 나 --gen 이 하나는 있어야 해요(값을 직접 넣는 건 env-set KEY 로).");
+  const dirs = pos.map(workName);
+  if (new Set(dirs).size !== dirs.length) die("같은 작업 폴더를 두 번 적었어요.");
+  const lines = [];
+  const names = [];
+  for (const [op, list] of [["shared", opts["gen-shared"]], ["gen", opts.gen]])
+    for (const k of list) {
+      if (!KEY_RE.test(k)) die("KEY 형식이 올바르지 않아요(영문 대문자·숫자·_): " + k);
+      if (/^(NEXTAUTH_SECRET|AUTH_SECRET)$/.test(k)) die(k + " 는 바꾸지 않아요(공장 키 암호화 기준).");
+      lines.push(op + "\t" + k);
+      names.push(k);
+    }
+  if (new Set(names).size !== names.length) die("같은 KEY 를 두 번 지정했어요.");
+  const r = remote(["env-multi", ...dirs], lines.join("\n") + "\n", host);
+  const backups = [...r.out.matchAll(/BACKUP (\S+)/g)].map((m) => m[1]);
+  const who = dirs.join(", ");
+  if (r.code !== 0) {
+    say2("env-set " + who + ": 실패(코드 " + r.code + "). 서버 .env.local 은 바뀌기 전 상태예요.", r.out);
+    await report("서버 비밀값 생성 " + who + " (" + host + ")\n결과: 실패, 되돌림" + (backups.length ? "\n백업: " + backups.join(", ") : ""));
+    process.exit(r.code || 1);
+  }
+  const set = [...r.out.matchAll(/^SET (shared|gen) (\S+) (\S+)$/gm)].map((m) => m[3] + " → " + m[2] + (m[1] === "shared" ? "(공통 값)" : "(폴더별 새 값)"));
+  const skip = [...r.out.matchAll(/^SKIP (\S+) (\S+)$/gm)].map((m) => m[2] + " → " + m[1] + "(이미 있어 건너뜀)");
+  const modes = [...r.out.matchAll(/^MODE (\S+) (\d+)$/gm)].map((m) => m[1] + "=" + m[2]);
+  // developWeb 을 바꿨으면 다음 rebuild 가 실패할 때 이 백업으로 되돌린다
+  const own = backups.find((b) => b.includes("/env-backups/developWeb/"));
+  if (own) {
+    const st = readState();
+    if (!st.envBaseline) {
+      st.envBaseline = tsOf(own);
+      writeState(st);
+    }
+  }
+  const body = "바꾼 변수: " + (set.join(", ") || "없음") + (skip.length ? "\n건너뜀: " + skip.join(", ") : "") + "\n권한: " + modes.join(", ") + "\n백업: " + backups.join(", ");
+  say("env-set " + who + " (" + host + "): 완료, 값은 서버에만 있고 출력하지 않았어요\n" + body + (own ? "\n서버(블로그)에 반영하려면 rebuild 가 필요해요." : ""));
+  await report("서버 비밀값 생성 " + who + " (" + host + ", 값은 서버 밖으로 나가지 않음)\n" + body);
+}
+
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
@@ -729,6 +815,8 @@ async function main() {
       return say(r.out.split("\n").filter((k) => KEY_RE.test(k) || /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).join("\n"));
     }
     case "env-set":
+      if (rest.some((a) => a.startsWith("--"))) return envMulti(rest);
+      return envChange(cmd, rest[0]);
     case "env-unset":
       return envChange(cmd, rest[0]);
     case "nginx-show": {
