@@ -124,6 +124,15 @@ test("인자 읽기: --옵션, 작업 폴더 이름, nginx 설정 본문", () =>
   assert.match(conf, /proxy_pass http:\/\/127\.0\.0\.1:5100;/);
 });
 
+test("원격 스크립트는 gzip+base64 로 보내고 길이가 윈도우 ssh 명령줄 한도 안", async () => {
+  const { gzipSync } = await import("node:zlib");
+  const src = read(SCTL);
+  const script = /const REMOTE = String\.raw`([\s\S]*?)`;/.exec(src)[1];
+  // 13.8KB(압축 안 함)에서 원격 셸이 잘린 명령으로 실패했고 4.8KB 는 됐다. 6KB 를 넘기면 스크립트를 나눠야 한다
+  assert.ok(gzipSync(Buffer.from(script), { level: 9 }).toString("base64").length < 6000);
+  assert.match(src, /base64 -d \| gunzip\)/);
+});
+
 test("site-init: 훅 이름 4곳 치환, clone, 이미 있으면 멈춤, 대상은 우리 서버만", { skip }, async () => {
   const ctx = setup();
   try {

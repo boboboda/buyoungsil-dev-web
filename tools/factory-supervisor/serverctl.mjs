@@ -29,6 +29,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 
 // 정비 보호 훅(pcguard.mjs)도 이 목록으로 "신뢰된 serverctl 호출"을 가린다
 export const SUBCOMMANDS = ["env-keys", "env-set", "env-unset", "nginx-show", "nginx-set-directive", "nginx-apply", "rebuild", "restore", "backups", "site-init", "env-clone", "nginx-site", "cert", "deploy-push"];
@@ -215,10 +216,11 @@ esac
 const sshCmd = () => (TEST && process.env.SERVERCTL_SSH ? [process.execPath, [process.env.SERVERCTL_SSH]] : ["ssh", []]);
 function remote(args, input, host = HOST) {
   if (!HOSTS.includes(host)) die(`대상 서버는 ${HOSTS.join("·")} 만이에요: ${host}`);
-  const b64 = Buffer.from(REMOTE.replace(/\r\n/g, "\n")).toString("base64");
+  // 윈도우 ssh 명령줄은 길면 잘린다(원격 셸이 "unmatched \"" 로 실패) → 스크립트를 gzip 한 뒤 base64 로 보낸다
+  const b64 = gzipSync(Buffer.from(REMOTE.replace(/\r\n/g, "\n")), { level: 9 }).toString("base64");
   const quoted = args.map((a) => `'${String(a).replace(/'/g, "")}'`).join(" ");
   const [bin, pre] = sshCmd();
-  const r = spawnSync(bin, [...pre, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, `LC_ALL=C bash -c "$(echo ${b64} | base64 -d)" serverctl ${quoted}`], {
+  const r = spawnSync(bin, [...pre, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, `LC_ALL=C bash -c "$(echo ${b64} | base64 -d | gunzip)" serverctl ${quoted}`], {
     input: input ?? "",
     encoding: "utf8",
     timeout: 120_000,
