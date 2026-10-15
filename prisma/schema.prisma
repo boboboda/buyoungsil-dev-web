@@ -1021,6 +1021,22 @@ model StudioAccessKey {
   @@map("studio_access_keys")
 }
 
+// 서버끼리 쓰는 연결 키(7-1b). 주인은 factory-web(마이그레이션도 여기서만). 블로그는 같은 모델만 두고 마이그레이션은 만들지 않는다.
+// 키 원문은 저장하지 않는다. hash = HMAC-SHA256(STUDIO_KEY_PEPPER 방식 비밀값, 키) hex. lib/connection-keys.ts
+model ControlConnectionKey {
+  id         String    @id @default(cuid())
+  label      String // 사람이 붙인 이름
+  prefix     String // 키 앞 8자(목록 표시용)
+  hash       String    @unique
+  scopes     String[]  @default([])
+  createdBy  String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@map("control_connection_keys")
+}
+
 // 통제실 '장비 상태': 서버1·서버2·메인PC 가 1분마다 보내는 최신 값(장비 하나에 1행). 숫자만(호스트 이름·IP·프로세스 없음)
 model DeviceStat {
   device     String   @id // server1 | server2 | main-pc

@@ -16,6 +16,7 @@
     "test:admin-cleanup": "node tests/admin-cleanup.test.mjs",
     "test:factory-ui": "node tests/factory-ui.test.mjs",
     "test:studio-access": "node tests/studio-access.test.mjs",
+    "test:connection-keys": "node tests/connection-keys.test.mjs",
     "test:studio-requests": "node tests/studio-requests.test.mjs",
     "test:ai-limits": "node tests/ai-limits.test.mjs",
     "test:admin-meters": "node tests/admin-meters.test.mjs",
