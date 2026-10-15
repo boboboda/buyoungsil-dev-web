@@ -260,6 +260,7 @@ export interface InboxLists {
   jobs: { id: string; appSlug: string; title: string; kindLabel: string; createdAt: Date | string }[];
   confirmations: { id: string; appSlug: string; title: string; reason: string; kind?: string }[];
   turns: { id: string; threadTitle: string; text: string }[];
+  planReviews?: { id: string; appSlug: string; title: string; status: string; plan: string | null; reason: string | null }[]; // 계획 먼저 승인(5-1): 계획 선택 대기(예전 목록에는 없음)
   deploys: { threadId: string; title: string; commit: string | null; inProgress: boolean; canDeploy?: boolean; queueLeft?: number }[];
 }
 
@@ -280,6 +281,8 @@ export function flattenInbox(lists: InboxLists, items: InboxItem[]): FlatInboxIt
 
   for (const c of lists.confirmations)
     out.push({ key: `cost:${c.id}`, tier: "approval", kind: "cost", title: c.title, appSlug: c.appSlug, detail: `비용 한도 초과로 확인을 기다려요. ${c.reason}`.trim(), how: "통제실 [현황] 할 일에서 [그대로 진행] 또는 [취소]" });
+  for (const p of lists.planReviews ?? [])
+    out.push({ key: `plan:${p.id}`, tier: "approval", kind: "plan_review", title: p.title, appSlug: p.appSlug, detail: p.status === "failed" ? `계획을 못 만들었어요: ${cut(p.reason ?? "", 120)}` : `작업 전 계획이 승인을 기다려요: ${cut(p.plan ?? "", 160)}`, how: "통제실 [현황] 할 일 또는 텔레그램에서 [이대로 진행]·[수정 지시]·[취소]" });
   for (const j of lists.jobs)
     out.push({ key: `job:${j.id}`, tier: "approval", kind: "job_approval", title: j.title, appSlug: j.appSlug, detail: `${j.kindLabel} 일감이 승인을 기다려요.`, how: "통제실 [현황] 할 일 또는 텔레그램에서 [승인]" });
   for (const t of lists.turns)

@@ -64,6 +64,8 @@ export async function POST(req: NextRequest) {
     action?: unknown;
     id?: unknown;
     aiModel?: unknown;
+    planFirst?: unknown; // 승인 때 '계획 먼저' 선택(true/false, 없으면 설정 기본값)
+    note?: unknown; // plan_revise: 수정 지시 말
   } | null;
   const action = (APPROVAL_ACTIONS as readonly string[]).includes(
     String(body?.action),
@@ -80,7 +82,11 @@ export async function POST(req: NextRequest) {
   const model = readModelChoice(body?.aiModel);
 
   if (!model.ok) return NextResponse.json({ message: model.message }, { status: 400 });
-  const r = await runApproval(action, id, "통제실", undefined, model.model);
+  const extra = {
+    ...(typeof body?.planFirst === "boolean" ? { planFirst: body.planFirst } : {}),
+    ...(typeof body?.note === "string" ? { note: body.note } : {}),
+  };
+  const r = Object.keys(extra).length ? await runApproval(action, id, "통제실", undefined, model.model, extra) : await runApproval(action, id, "통제실", undefined, model.model);
 
   return NextResponse.json(
     { ok: r.ok, message: r.message, ...(await overview()) },

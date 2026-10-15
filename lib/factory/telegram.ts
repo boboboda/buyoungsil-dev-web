@@ -167,6 +167,8 @@ ${cut(maskSecrets(job.failReason), 200) || "비용 한도를 넘었어요."}
       // 모델 고르기는 Claude Code 일감만(Codex 는 기본 승인만)
       if (job.aiEngine !== "codex") row.unshift({ text: "🧠 모델 골라 승인", callback_data: `ao:${job.id}` });
       row.unshift({ text: "✅ 승인(기본 모델)", callback_data: `a:${job.id}` });
+      // 계획 먼저 승인(5-1): 새 앱·수정 일감만. 승인하면 계획을 먼저 만들어 다시 알려 준다
+      if (job.kind === "new" || job.kind === "revision") row.splice(job.aiEngine !== "codex" ? 2 : 1, 0, { text: "📝 계획 먼저", callback_data: `ap:${job.id}` });
     }
 
     const sent = await tg("sendMessage", {
@@ -210,6 +212,30 @@ export async function notifyOnce(key: string, text: string, path = "/admin/facto
     console.error("[telegram] 알림 처리 실패");
 
     return false;
+  }
+}
+
+/**
+ * 계획 먼저 승인(5-1): 계획이 준비됐거나 못 만들었을 때 계획과 선택 단추를 보낸다(일감·회차마다 한 번). 절대 던지지 않는다.
+ * 단추: pg:<id> 이대로 진행, px:<id> 취소. [수정 지시]는 말을 적어야 해서 통제실 링크로 간다.
+ */
+export async function notifyPlanReady(jobId: string): Promise<void> {
+  try {
+    if (!telegramReady()) return;
+    const pf = await import("@/lib/factory/planFirst");
+    const v = (await pf.planReviews()).find((x) => x.id === jobId);
+
+    if (!v) return;
+    if (!(await claimNotice(`plan:${jobId}:${v.round}:${v.status}`))) return;
+    const row: Record<string, string>[] = [{ text: "✏️ 수정 지시(통제실)", url: `${publicUrl()}/admin/factory` }];
+
+    if (approveEnabled() && secret()) {
+      row.unshift({ text: "❌ 취소", callback_data: `px:${jobId}` });
+      row.unshift({ text: v.status === "failed" ? "▶️ 계획 없이 진행" : "✅ 이대로 진행", callback_data: `pg:${jobId}` });
+    }
+    await tg("sendMessage", { chat_id: chatId(), text: maskSecrets(pf.planNoticeText(v)).slice(0, 1800), reply_markup: { inline_keyboard: [row] } });
+  } catch {
+    console.error("[telegram] 계획 알림 처리 실패");
   }
 }
 
@@ -373,6 +399,31 @@ export async function handleUpdate(update: Update): Promise<void> {
 
   if (!approveEnabled()) {
     await answer("승인 버튼이 꺼져 있어요. 통제실에서 승인하세요.");
+
+    return;
+  }
+
+  // 계획 먼저 승인(5-1): pg:<일감 id> 이대로 진행, px:<일감 id> 취소, ap:<일감 id> 계획 먼저 승인
+  const pm = /^(pg|px|ap):([A-Za-z0-9_-]{1,40})$/.exec(cq.data ?? "");
+
+  if (pm && ID_RE.test(pm[2])) {
+    const age = Math.floor(Date.now() / 1000) - (cq.message?.date ?? 0);
+
+    if (!cq.message?.date || age > MAX_BUTTON_AGE_SEC) {
+      await answer("오래된 알림이라 처리할 수 없어요. 통제실에서 하세요.");
+
+      return;
+    }
+    const r = pm[1] === "ap" ? await runApproval("job_approve", pm[2], "텔레그램", undefined, null, { planFirst: true }) : await runApproval(pm[1] === "pg" ? "plan_go" : "plan_cancel", pm[2], "텔레그램");
+
+    await answer(r.message.slice(0, 190));
+    if ((r.ok || r.status === 409) && cq.message?.message_id !== undefined) {
+      await tg("editMessageReplyMarkup", {
+        chat_id: chatId(),
+        message_id: cq.message.message_id,
+        reply_markup: { inline_keyboard: [[{ text: "통제실 열기", url: `${publicUrl()}/admin/factory` }]] },
+      });
+    }
 
     return;
   }

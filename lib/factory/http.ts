@@ -58,10 +58,11 @@ export async function guardWorker(req: NextRequest): Promise<NextResponse | null
 // JSON 본문을 64KB 안에서 읽는다. 실패하면 응답을 돌려준다.
 export async function readJson(
   req: NextRequest,
+  maxBytes: number = MAX_JSON_BYTES, // 변경 내용(diff) 보고처럼 큰 본문은 호출하는 쪽이 올려 잡는다
 ): Promise<{ ok: true; body: unknown } | { ok: false; res: NextResponse }> {
   try {
     const text = await req.text();
-    if (new TextEncoder().encode(text).length > MAX_JSON_BYTES) {
+    if (new TextEncoder().encode(text).length > maxBytes) {
       return { ok: false, res: fail(413, "요청이 너무 큽니다.") };
     }
     return { ok: true, body: JSON.parse(text) };

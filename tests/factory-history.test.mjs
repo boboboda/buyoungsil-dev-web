@@ -231,7 +231,7 @@ test("API: 관리자만, 응답은 no-store, 잘못된 kind·cursor 는 400", as
 
 // ── 이력 패널 보기 ──
 const aiLib = loadTs("lib/factory/ai.ts");
-const view = loadTs("components/admin/factory/FactoryOverview.tsx", {
+const view = loadTs("components/admin/factory/FactoryOverview.tsx", { "./PlanReviewRow": { __esModule: true, default: () => null },
   "./fx": loadTs("components/admin/factory/fx.tsx"),
   "@/lib/factory/ai": aiLib,
   "./ClaudeModelSelect": loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib }),

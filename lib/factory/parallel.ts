@@ -35,6 +35,7 @@ export interface ClaimCandidate {
   approvedAt: Date | null;
   createdAt: Date;
   parallelGroup: string | null;
+  blocked?: boolean; // 계획 먼저 승인(5-1)에서 사람의 계획 선택을 기다리는 일감. 가져가지 않고, 같은 앱의 뒤 일감도 새치기하지 못하게 거기서 멈춘다
 }
 
 export interface RunningRow {
@@ -119,6 +120,7 @@ export function pickClaims(args: { approved: ClaimCandidate[]; running: RunningR
     let count = run.length;
 
     for (const c of ordered) {
+      if (c.blocked) break; // 계획 선택을 기다리는 일감: 가져가지 않고 뒤 일감도 막는다
       if (groupOf(c) !== group) break; // 다른 그룹이거나 그룹 없는 일감이 끼면 거기서 멈춘다(새치기 없음)
       if (group === null) {
         picks.push(c); // 그룹 없는 일감은 앱당 1개

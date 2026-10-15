@@ -43,6 +43,9 @@
 //   앱별 검사 명령: 통제실에서 그 앱에 검사 명령을 정했으면(lib/factory/appChecks.ts) 일감에 checkCommands: ["python -m unittest discover -s tests -q", ...] 가 붙는다. 감독 프로그램은 합치기·최종 점검 때 stack 기본 검사 뒤에 더 돌린다(없으면 기본만).
 //   묶음 중 일부만 승인된 상태(같은 묶음에 승인 대기 일감이 남음)면 그 묶음의 승인된 일감은 가져가지 않는다. 모두 승인되면 같이 내준다.
 //   승인 직후 대기: 같은 앱에 승인 대기 수정 일감이 또 있으면 방금 승인된(묶이지 않은) 수정 일감을 마지막 승인 뒤 approvalWaitSec 초(기본 60, 0~300, 0=기다리지 않음) 동안 가져가지 않는다(conductor 를 보내는 감독 프로그램만).
+//   계획 먼저 승인(5-1): 감독 프로그램이 plan=1(지금 계획을 만들 수 있음) 또는 plan=busy(만드는 중)를 보내면, 승인된 '계획 먼저' 일감 중 계획 차례인 것이 있을 때 응답에
+//   planTask: { jobId, appSlug, title, kind, stack, model, instruction, previousPlan, note, round } 가 한 번 붙는다(공장 전체 동시에 1개, 읽기 전용 AI 턴). 결과는 POST /api/factory/plan.
+//   계획 선택을 기다리는 일감은 가져가지 않고 같은 앱의 뒤 일감도 새치기하지 못한다. plan 을 보내지 않는 예전 감독 프로그램은 계획을 만들지 못하므로 계획 먼저 일감이 계획 대기에 머문다(통제실에서 계획 없이 진행 가능).
 //   만료된 running 을 먼저 정리하고, approved 중 우선순위 높은 순으로 최대 slots 개를 running 으로 바꿔 돌려준다.
 import { NextRequest, NextResponse } from "next/server";
 
@@ -225,6 +228,7 @@ export async function GET(req: NextRequest) {
     const claimed = [...claimedApps, ...claimedTools];
     const toolJobsInfo = await getToolSettings().then((s) => ({ concurrency: s.concurrency, autoApprove: s.autoApprove })).catch(() => undefined);
     const conductor = conductorParam === "1" && !drain ? await conductorTaskForNext(cs).catch(() => null) : null;
+    const planTask = param("plan", 8) === "1" && !drain ? await Promise.all([import("@/lib/factory/conductor"), import("@/lib/factory/planFirst")]).then(async ([c, p]) => p.planTaskForNext((await c.getConductorModel()).value)).catch(() => null) : null; // 계획 먼저 승인(5-1): 읽기 전용 계획 턴 하나
     // 일감마다 작업 규칙·첫 지시문을 붙인다. 못 만들면 붙이지 않는다(감독 프로그램이 기본값을 씀)
     const overrides = claimed.length ? await getRuleOverrides().catch(() => ({})) : {};
     const releases = await releaseJobExtras(claimed).catch(() => new Map<string, Record<string, unknown>>());
@@ -257,7 +261,7 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    return NextResponse.json({ jobs, autoUpdate, ...(conductor ? { conductor } : {}), ...(toolJobsInfo ? { toolJobs: toolJobsInfo } : {}), ...extra });
+    return NextResponse.json({ jobs, autoUpdate, ...(conductor ? { conductor } : {}), ...(planTask ? { planTask } : {}), ...(toolJobsInfo ? { toolJobs: toolJobsInfo } : {}), ...extra });
   } catch (error) {
     console.error("[factory] next 실패:", error);
     return fail(500, "처리에 실패했습니다.");

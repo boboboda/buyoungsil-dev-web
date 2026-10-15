@@ -42,6 +42,8 @@ export interface QueueItem {
   approvalWait: number;
   /** 묶음 안에 아직 승인 대기(pending)로 남은 다른 일감 수. 0보다 크면 이 묶음은 모두 승인될 때까지 시작하지 않는다 */
   groupPendingLeft: number;
+  /** 계획 먼저 승인(5-1): 계획 단계(requested·running·ready·failed·approved). 계획 먼저를 쓰지 않은 일감은 null */
+  planStatus: string | null;
 }
 
 export interface NumberOptions {
@@ -60,14 +62,14 @@ export function orderQueue<T extends QueueSortable & { status: string }>(rows: T
   return [...failed, ...running, ...approved, ...pending];
 }
 
-const SELECT = { id: true, appSlug: true, title: true, kind: true, status: true, priority: true, approvedAt: true, createdAt: true, parallelGroup: true, parallelInfo: true, failStage: true, parallelSource: true, conductorInfo: true } as const;
+const SELECT = { id: true, appSlug: true, title: true, kind: true, status: true, priority: true, approvedAt: true, createdAt: true, parallelGroup: true, parallelInfo: true, failStage: true, parallelSource: true, conductorInfo: true, planFirst: true, planStatus: true } as const;
 
 /** 대기열에 올릴 상태: 실행 중·승인됨·승인 대기, 그리고 최근 7일 안에 합치기 실패로 멈춘 병행 일감(관리자 확인이 필요해서) */
 const listWhere = () => ({
   OR: [{ status: { in: ["running", "approved", "pending"] } }, { status: "failed", failStage: MERGE_FAIL_STAGE, parallelGroup: { not: null }, finishedAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) } }],
 });
 
-type Row = QueueSortable & { id: string; title: string; kind: string; status: string; priority: number; parallelGroup?: string | null; parallelInfo?: unknown; failStage?: string | null; parallelSource?: string | null; conductorInfo?: unknown };
+type Row = QueueSortable & { id: string; title: string; kind: string; status: string; priority: number; parallelGroup?: string | null; parallelInfo?: unknown; failStage?: string | null; parallelSource?: string | null; conductorInfo?: unknown; planFirst?: boolean | null; planStatus?: string | null };
 
 /** 한 앱의 행들을 순서대로 번호 붙인다(순수 함수: 시험용). */
 export function numberQueue(rows: Row[], opts: NumberOptions = {}): QueueItem[] {
@@ -95,6 +97,7 @@ export function numberQueue(rows: Row[], opts: NumberOptions = {}): QueueItem[] 
     parallelSource: r.parallelSource ?? null,
     conductor: readConductorInfo(r.conductorInfo),
     approvalWait: r.status === "approved" && revision(r) && !r.parallelGroup ? wait : 0,
+    planStatus: r.planFirst ? (r.planStatus ?? null) : null,
     groupPendingLeft: r.status === "approved" && groupOf({ kind: r.kind, parallelGroup: r.parallelGroup ?? null }) ? pendingInGroup(r.parallelGroup) : 0,
   }));
 }

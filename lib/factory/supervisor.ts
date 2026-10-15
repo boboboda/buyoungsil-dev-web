@@ -42,7 +42,7 @@ export const SUPERVISOR_ACTIONS = ["status", "update_now", "restart", "pause", "
 export type SupervisorAction = (typeof SUPERVISOR_ACTIONS)[number];
 
 export async function supervisorSnapshot() {
-  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp, approvalWait, appChecks, conductor, updateBundle, loopGuard] = await Promise.all([
+  const [enabled, autoUpdate, autoDeploy, info, updateNowRequestedAt, restartRequestedAt, rt, last, running, approved, pending, defaultAiEngine, toolBroker, compactAfterJob, defaultClaudeModel, appSlots, parallelPerApp, approvalWait, appChecks, conductor, updateBundle, loopGuard, planFirstDefault] = await Promise.all([
     isSupervisorEnabled(),
     isAutoUpdateEnabled(),
     isAutoDeployEnabled(),
@@ -69,6 +69,7 @@ export async function supervisorSnapshot() {
     import("@/lib/factory/conductor").then((m) => m.conductorSnapshot()).catch(() => null), // 지휘자(C-2) 설정·최근 판단 기록
     getUpdateBundleMin(),
     getLoopGuard(),
+    import("@/lib/factory/planFirst").then((m) => m.getPlanFirstDefault()).catch(() => ({ value: false, isDefault: true })), // 계획 먼저 승인(5-1) 기본값
   ]);
   const lastSeen = last?.lastUsedAt ?? null;
   const restart = await restartStatus(rt, restartRequestedAt, lastSeen);
@@ -93,6 +94,7 @@ export async function supervisorSnapshot() {
     parallelPerAppDefault: parallelPerApp.isDefault,
     approvalWaitSec: approvalWait.value, // 승인 직후 다른 승인을 기다리는 시간(0~300초, 기본 60, 0 = 기다리지 않음)
     approvalWaitSecDefault: approvalWait.isDefault,
+    planFirstDefault: planFirstDefault.value, // 새 승인에서 '계획 먼저'가 기본으로 켜져 있나(기본 꺼짐 = 바로 시작)
     appChecks, // 앱별 합치기·최종 점검 검사 명령 { appSlug: ["명령", ...] } (비면 stack 기본 검사만)
     ...(conductor ? { conductor } : {}), // 지휘자(C-2) 설정·최근 판단 비용 기록
     commit: info?.commit ?? null,

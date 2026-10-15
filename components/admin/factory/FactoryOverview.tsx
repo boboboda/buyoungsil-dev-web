@@ -23,8 +23,9 @@ import {
 
 import { AI_LABELS, isAiEngine, isClaudeModel, type AiEngine, type TaskModel } from "@/lib/factory/ai";
 import type { InboxItem, InboxTier } from "@/lib/factory/inbox"; // 타입만(서버 코드는 화면에 싣지 않는다)
+import PlanReviewRow, { type PlanReview } from "./PlanReviewRow";
 
-type Action = "job_approve" | "maintenance_approve" | "deploy" | "deploy_now";
+type Action = "job_approve" | "maintenance_approve" | "deploy" | "deploy_now" | "plan_go" | "plan_revise" | "plan_cancel";
 
 // 할 일 우선순위(4-1): 막힘·실패 > 승인 > 정보. 화면 안에서 CSS order 로 줄 세운다(같은 단계는 들어온 순서 그대로)
 export const TIER_ORDER: Record<InboxTier, number> = { blocked: 0, approval: 1, info: 2 };
@@ -47,6 +48,9 @@ interface Overview {
       source: string | null;
       createdAt: string;
     }[];
+    // 계획 먼저 승인(5-1): 계획 선택을 기다리는 일감과 승인 화면의 '계획 먼저' 기본값(예전 서버에는 없다)
+    planReviews?: PlanReview[];
+    planFirstDefault?: boolean;
     // 도구 일감(2-3)이 PixelLab 비용 한도에 걸려 확인을 기다리는 것(예전 서버에는 없다)
     confirmations?: { id: string; appSlug: string; title: string; kind?: string; reason: string; source: string | null; at: string }[];
     // 4-1 새 항목: 막힘·다시 시작 필요·키 부족·묶음 승인·스튜디오 검수 대기·업데이트 상태(예전 서버에는 없다)
@@ -377,8 +381,10 @@ export default function FactoryOverview({
   // 승인 줄마다 고른 모델(없으면 '기본 설정 사용')
   const [models, setModels] = useState<Record<string, TaskModel>>({});
   const pickModel = useCallback((id: string) => (m: TaskModel) => setModels((cur) => (cur[id] === m ? cur : { ...cur, [id]: m })), []);
-  const act = async (action: Action, id: string, confirmText?: string) => {
-    if (confirmText && !window.confirm(confirmText)) return;
+  // 승인 때 일감별 '계획 먼저' 선택(건드리지 않은 일감은 서버가 설정 기본값을 쓴다)
+  const [planPicks, setPlanPicks] = useState<Record<string, boolean>>({});
+  const act = async (action: Action, id: string, confirmText?: string, more: { note?: string } = {}): Promise<boolean> => {
+    if (confirmText && !window.confirm(confirmText)) return false;
     setBusy(`${action}:${id}`);
     setNotice(null);
     const model = models[id];
@@ -387,17 +393,22 @@ export default function FactoryOverview({
       const res = await fetch("/api/admin/factory/overview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, id, ...(model && model !== "default" ? { aiModel: model } : {}) }),
+        body: JSON.stringify({ action, id, ...(model && model !== "default" ? { aiModel: model } : {}), ...(action === "job_approve" && id in planPicks ? { planFirst: planPicks[id] } : {}), ...(more.note !== undefined ? { note: more.note } : {}) }),
       });
       const d = (await res.json().catch(() => ({}))) as Overview;
 
       if (d.inbox) setData(d);
       else load();
       setNotice(d.message ?? (res.ok ? "처리했어요." : "처리하지 못했어요."));
+      setBusy(null);
+
+      return res.ok;
     } catch {
       setNotice("서버에 연결하지 못했어요.");
     }
     setBusy(null);
+
+    return false;
   };
 
   // 도구 일감 확인 대기: [그대로 진행]·[취소] (통제실 지시 동작과 같은 주소)
@@ -443,6 +454,7 @@ export default function FactoryOverview({
   const todo = inbox
     ? inbox.jobs.length +
       (inbox.confirmations?.length ?? 0) +
+      (inbox.planReviews?.length ?? 0) +
       inbox.turns.length +
       inbox.deploys.filter((d) => !d.inProgress && d.canDeploy !== false).length +
       extra.filter((i) => i.tier !== "info").length
@@ -469,7 +481,7 @@ export default function FactoryOverview({
           </div>
           {!inbox && <p className="text-sm text-default-500">읽는 중…</p>}
           {inbox &&
-            inbox.jobs.length + (inbox.confirmations?.length ?? 0) + inbox.turns.length + inbox.deploys.length + extra.length ===
+            inbox.jobs.length + (inbox.confirmations?.length ?? 0) + (inbox.planReviews?.length ?? 0) + inbox.turns.length + inbox.deploys.length + extra.length ===
               0 && (
               <p className="text-sm text-default-500">
                 기다리는 승인·배포가 없어요.
@@ -601,6 +613,17 @@ export default function FactoryOverview({
             </div>
           ))}
 
+          {inbox?.planReviews?.map((p) => (
+            <PlanReviewRow
+              key={`p-${p.id}`}
+              busy={!!busy}
+              order={TIER_ORDER.approval}
+              review={p}
+              onCancel={(id) => void act("plan_cancel", id, "이 일감을 취소할까요?")}
+              onGo={(id) => void act("plan_go", id)}
+              onRevise={(id, note) => act("plan_revise", id, undefined, { note })}
+            />
+          ))}
           {inbox?.confirmations?.map((c) => (
             <div
               key={`c-${c.id}`}
@@ -661,6 +684,17 @@ export default function FactoryOverview({
                     value={models[j.id] ?? "default"}
                     onChange={pickModel(j.id)}
                   />
+                )}
+                {(j.kind === "new" || j.kind === "revision") && (
+                  <label className="flex min-h-11 items-center gap-1 text-xs sm:min-h-0" data-plan-first-pick={j.id}>
+                    <input
+                      checked={planPicks[j.id] ?? inbox?.planFirstDefault === true}
+                      disabled={!!busy}
+                      type="checkbox"
+                      onChange={(e) => setPlanPicks((cur) => ({ ...cur, [j.id]: e.target.checked }))}
+                    />
+                    📝 계획 먼저
+                  </label>
                 )}
                 <Button
                   className="min-h-11 sm:min-h-0"

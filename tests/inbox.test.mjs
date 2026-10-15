@@ -372,7 +372,7 @@ test("get_inbox: 읽기 전용 도구로 목록에 있고, 우선순위순으로
 // ── 화면 ──
 const fx = loadTs("components/admin/factory/fx.tsx");
 const aiLib = loadTs("lib/factory/ai.ts");
-const view = loadTs("components/admin/factory/FactoryOverview.tsx", {
+const view = loadTs("components/admin/factory/FactoryOverview.tsx", { "./PlanReviewRow": { __esModule: true, default: () => null },
   "./fx": fx,
   "@/lib/factory/ai": aiLib,
   "./ClaudeModelSelect": loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib }),

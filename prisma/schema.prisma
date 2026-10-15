@@ -612,6 +612,12 @@ model FactoryJob {
   toolInput       Json? // 도구 일감(kind=tool) 입력: { count, subjects, extra, refArtIds, estimatedCost, confirmed } (lib/factory/toolJobs.ts). 키 값 없음
   toolResult      Json? // 도구 일감 결과: { cost, arts:[{url,subject,kind}], message, needsConfirmation }. 키 값 없음
   handoff         Json? // 인계 기록 마지막 항목(Claude Code ↔ Codex 공유 인계, 읽기 전용 표시용). lib/factory/handoff.ts 가 정리해서 저장. 비밀값·기획서·diff 없음
+  planFirst       Boolean   @default(false) // 계획 먼저 승인(5-1): true 면 작업자가 일하기 전에 읽기 전용 AI 가 계획을 내고 사람이 고른다
+  planStatus      String? // 계획 단계: requested(계획 만들 차례) | running(감독 프로그램이 만드는 중) | ready(사람 선택 대기) | failed(계획을 못 만듦) | approved(이대로 진행). NULL = 계획 단계 없음
+  planText        String?   @db.Text // 읽기 전용 AI 가 낸 계획(3~6줄). 승인하면 작업자 지시문 끝에 붙는다
+  planNote        String?   @db.Text // [수정 지시]로 사람이 적은 말(다음 계획에 반영)
+  planInfo        Json? // 계획 턴 정보: { model, ms, costUsd, tokens, at, rounds, startedAt, reason }. 비밀값 없음
+  diffInfo        Json? // 끝난 일감의 변경 내용: 파일 목록·줄 수·파일별 diff(한도·비밀 파일 숨김은 lib/factory/diffReport.ts)
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
   startedAt       DateTime?

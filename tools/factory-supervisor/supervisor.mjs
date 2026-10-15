@@ -47,6 +47,7 @@ import { safeEnv } from "./envfilter.mjs";
 import { agentSpec, cfgOf, envOf, writeSettings as writeAgentSettings } from "./agentrun.mjs";
 import { acquireWorkspace, advertisedEngines, recoverWorkspace, engineOf, ENGINE_LABELS, eventDecoder, handoffPrompt, makeHandoffEntry, recordLifecycle, redactAiText, saveHandoff, startAi, verifyWorkspace } from "./ai-runner.mjs";
 import { checksFromVerification, headOf } from "./handoff.mjs";
+import { collectDiff } from "./diffreport.mjs";
 import { brokerRules, brokerSettings, createBroker, TOOL_MODE_LABELS, toolkitSecretNames, writeArtRefs, writeCardFiles, writeProjectSettings } from "./toolbroker.mjs";
 import { findBash, reportProvisionNames, syncProvisions } from "./keyprovision.mjs";
 import { commandForLog, guardHookSettings, SERVER_ACCESS_RULES } from "./serveraccess.mjs";
@@ -65,6 +66,7 @@ import { acquireLock, clearLocks, clearWait, LOCK_LABELS, lockRules, readWait } 
 import { branchName, cleanupLeftovers, createWorktree, defaultBranch, currentBranch, dirtyCount, removeWorktree, savePatch, worktreePath } from "./worktree.mjs";
 import { MAX_REBASES, mergeJob } from "./merge.mjs";
 import { conductorBusy, runConductor } from "./conductor.mjs";
+import { planBusy, runPlanTurn } from "./planturn.mjs";
 import { LAB_SLUG, compareSnapshots, createLabGuard, deleteLabFolder, discoverRepos, labCodexOptions, labPrompt, prepareLab, snapshotRepos, uploadLabOutputs, writeLabClaudeSettings } from "./lab.mjs";
 
 // 시험 모드(FACTORY_TEST_MODE=1)인데 진짜 주소·토큰·상태 파일이 섞여 있으면 아무것도 하기 전에 거부한다(진짜 감독 보호)
@@ -733,6 +735,20 @@ async function finish(st, status, fields) {
       o.handoffEntry = makeHandoffEntry(st.home ?? st.dir, { ...o.handoff, engine: st.job.aiEngine, taskId: st.job.id, status: failed ? "failed" : "done", summary: st.handoffText ?? fields?.summary, failReason: failed ? reason : undefined, checks }, st.redact);
       fields = { ...fields, handoff: o.handoffEntry };
     } catch (e) { addLog(st, "warn", `인계 기록 만들기 실패: ${maskText(e.message)}`); }
+  }
+  // 변경 내용(diff) 보고(5-1): 끝난 일감의 시작 커밋..HEAD 범위. 키·비밀 파일은 내용 없이, 큰 파일·바이너리는 줄 수만. 실패해도 일감 결과는 그대로
+  if (status === "done" && st.dir !== cfg.workDir && !st.lab && !st.tool) {
+    try {
+      const report = collectDiff(st.home ?? st.dir, st.job.aiOutcome?.handoff?.startHead, { redact: st.redact });
+
+      // 본문이 커서 완료 보고(64KB 한도)에 싣지 않고 따로 먼저 보낸다. 같은 일감 줄에서 순서대로 나간다. 못 보내도 완료 보고는 그대로 한다
+      if (report && report.totalFiles > 0 && st.reportable) {
+        const body = { jobId: st.job.id, diff: report };
+        const r = await outbox.send({ kind: "diff", path: "/api/factory/diff", body, jobId: st.job.id, bytes: JSON.stringify(body).length, wait: true, maxWaitMs: 60_000 });
+
+        if (r.status !== 200 && !r.queued) addLog(st, "warn", `변경 내용 보내기 거절(${r.status})`);
+      }
+    } catch (e) { addLog(st, "warn", `변경 내용 만들기 실패: ${maskText(e.message)}`); }
   }
   // 키 파일 때문에 앱 폴더 커밋을 멈췄으면 통제실에 보이게(파일 이름만)
   if (st.job.keyBlocked?.length && !st.keyBlockedShown) {
@@ -1715,6 +1731,41 @@ async function runConductorTask(task) {
   }
 }
 
+// 계획 먼저 승인(5-1): 서버가 내준 계획 요청을 읽기 전용 AI 턴으로 처리하고 결과를 보낸다. 공장 전체 동시 실행 수에 세지 않고, 동시에 1개만 돈다.
+async function runPlanTask(task) {
+  const jobId = String(task?.jobId ?? "");
+  const slug = String(task?.appSlug ?? "");
+  const post = (body) => api("POST", "/api/factory/plan", { jobId, ...body }, { timeoutMs: 30_000 });
+
+  try {
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(jobId) || !/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(slug)) return;
+    const dir = path.join(cfg.workDir, slug);
+
+    // 앱 폴더에서 단독 일감이 돌고 있으면 읽기 전용 확인이 흔들린다: 계획하지 않고 차례만 돌려 둔다(다음 확인 때 다시 받음)
+    if ([...running.values()].some((s) => s.job.appSlug === slug && !s.job.worktree)) {
+      await post({ action: "skip" });
+
+      return;
+    }
+    log(`[${slug}] 계획 먼저 승인: 계획을 만들어요(모델 ${task.model}, ${task.round}번째).`);
+    // 병행 일감의 합치기가 HEAD 를 바꾸지 않도록 merge 잠금 안에서 돌린다
+    const res = await withBareLock(slug, "merge", "plan", () => runPlanTurn(task, dir, { claudeCmd: cfg.claudeCmd }));
+
+    if (res.ok) {
+      const r = await post({ ok: true, plan: maskText(res.plan), usage: res.usage, model: res.model });
+
+      log(`[${slug}] 계획 전달: ${r.data?.message ?? r.status}`);
+    } else {
+      const r = await post({ ok: false, reason: maskText(res.reason), usage: res.usage });
+
+      log(`[${slug}] 계획을 못 만들었어요(사람이 고름): ${res.reason} (보고 ${r.status})`);
+    }
+  } catch (e) {
+    log(`[${slug}] 계획 오류: ${e.message}`);
+    await post({ ok: false, reason: maskText(`계획 처리 중 오류: ${e.message}`) }).catch(() => {});
+  }
+}
+
 // 일감 상태(st) 없이 앱 단위 잠금만 얻어 fn 실행(지휘자·최종 점검용)
 async function withBareLock(app, name, owner, fn) {
   const lock = await acquireLock({ dir: lockDir(), app, name, owner });
@@ -2193,7 +2244,7 @@ async function loop() {
       { // 자리가 꽉 차도(또는 값을 줄여 넘쳐도) 확인은 계속한다: slots=0 으로 신호·설정(늘린 값)만 받는다
         const info = reportInfo(); // 현재 커밋·최근 업데이트 소식을 통제실에 보여 주려고 함께 보낸다
         // 실행 정보: 시작 시각·재시작으로 켜졌는지·재시작 대기(hold=1 이면 홈페이지가 아무것도 넘기지 않음)·실패 이유, ffmpeg·ffprobe 버전과 경로
-        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery(), ...staleCopyQuery(), ...(outbox.size() > 0 ? { outbox: String(outbox.size()) } : {}), ...(deployRunning() ? { deploying: "1" } : {}), ...updateExtra() });
+        const extra = new URLSearchParams({ ...restartQuery(), aiEngines: advertisedEngines(cfg).join(","), ffmpeg: toolLabel("ffmpeg"), ffprobe: toolLabel("ffprobe"), conductor: conductorBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", plan: planBusy() || updateWaiting() || deployWaiting() || restartPending() ? "busy" : "1", ...(aiTools ?? {}), ...memoryQuery(), ...staleCopyQuery(), ...(outbox.size() > 0 ? { outbox: String(outbox.size()) } : {}), ...(deployRunning() ? { deploying: "1" } : {}), ...updateExtra() });
         const sentTools = aiTools;
         const sentMemory = extra.get("memory");
         // 정비가 진행 중이어도 앱·실험 일감은 계속 받는다. 새 일감을 멈추는 건 위험한 순간을 앞둔 드레인뿐이다:
@@ -2287,6 +2338,7 @@ async function loop() {
             log(paused ? "일시 정지됨 (홈페이지)" : "다시 시작됨");
           }
           if (!paused && r.data?.conductor && !conductorBusy() && Array.isArray(r.data.conductor.jobs)) void runConductorTask(r.data.conductor); // 지휘자 판단(기다리지 않음)
+          if (!paused && r.data?.planTask && !planBusy()) void runPlanTask(r.data.planTask); // 계획 먼저 승인(5-1): 읽기 전용 계획 턴(기다리지 않음)
           // 도구 일감(kind=tool)은 앱 슬롯과 따로 센다: 서버가 toolSlots 만큼만 내준다
           const offeredAll = paused ? [] : r.data.jobs ?? [];
           for (const job of offeredAll.filter((j) => j.kind === "tool")) {

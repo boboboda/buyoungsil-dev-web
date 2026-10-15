@@ -13,6 +13,8 @@ import { AI_LABELS, isClaudeModel, type AiEngine, type TaskModel } from "@/lib/f
 import type { ToolRequestRecord } from "@/lib/factory/toolBroker";
 import type { HandoffEntry } from "@/lib/factory/handoff";
 import HandoffBox from "./HandoffBox";
+import DiffView from "./DiffView";
+import { PLAN_LABELS, type PlanStatus } from "@/lib/factory/planLabels";
 import JobSizeNotice from "./JobSizeNotice";
 
 type Status =
@@ -60,6 +62,10 @@ interface JobDetail extends JobRow {
   logs: { id: number; at: string; level: string; message: string }[];
   toolRequests?: ToolRequestRecord[] | null; // 도구 요청 중계 목록(예전 서버면 없음)
   handoff?: HandoffEntry | null; // 인계 기록 마지막 항목(예전 서버·예전 일감이면 없음)
+  diffInfo?: unknown; // 끝난 일감의 변경 내용(파일·줄 수·파일별 diff, 5-1. 예전 서버·일감이면 없음)
+  planFirst?: boolean; // 계획 먼저 승인(5-1)을 쓴 일감
+  planStatus?: string | null;
+  planText?: string | null;
 }
 
 // 실험(lab) 일감 결과(상세 API 의 lab). 파일 주소는 관리자 세션으로 열리는 상대 주소
@@ -470,6 +476,8 @@ function JobDetailView({
   }, [job.id, job.priority]);
   useEffect(() => { setAiEngine(job.aiEngine ?? "claude"); }, [job.id, job.aiEngine]);
   useEffect(() => { setAiModel(isClaudeModel(job.aiModel) ? job.aiModel : "default"); }, [job.id, job.aiModel]);
+  const [planFirstPick, setPlanFirstPick] = useState<boolean | null>(null); // 승인 때 '계획 먼저' 선택(건드리지 않으면 설정 기본값)
+  const canPlan = job.kind === "new" || job.kind === "revision";
   const modelBody = aiEngine === "claude" ? { aiModel: aiModel === "default" ? null : aiModel } : {};
 
   return (
@@ -508,6 +516,12 @@ function JobDetailView({
         {(job.status === "pending" || job.status === "failed") && (
           <ClaudeModelSelect disabled={busy} engine={aiEngine} label={job.status === "failed" ? "다시 시도할 모델" : "승인할 모델"} value={aiModel} onChange={setAiModel} />
         )}
+        {job.status === "pending" && canPlan && (
+          <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-0" data-plan-first-detail="">
+            <input checked={planFirstPick ?? false} disabled={busy} type="checkbox" onChange={(e) => setPlanFirstPick(e.target.checked)} />
+            📝 계획 먼저 승인 <span className="text-xs text-default-500">(체크하면 승인 뒤 계획을 먼저 보여 드려요. 건드리지 않으면 설정 기본값)</span>
+          </label>
+        )}
         {job.status === "pending" && <JobSizeNotice kind={job.kind} plan={job.planMarkdown} />}
         <div className="flex flex-wrap gap-2">
           {job.status === "pending" && (
@@ -516,7 +530,7 @@ function JobDetailView({
               color="primary"
               isDisabled={busy}
               size="sm"
-              onPress={() => onAct(job.id, { action: "approve", aiEngine, ...modelBody })}
+              onPress={() => onAct(job.id, { action: "approve", aiEngine, ...modelBody, ...(planFirstPick === null ? {} : { planFirst: planFirstPick }) })}
             >
               승인
             </Button>
@@ -639,6 +653,18 @@ function JobDetailView({
 
         {/* 실험 결과: 사후 검사·올라온 이미지/영상/report.md·올리지 못한 파일·[폴더 지우기] */}
         {job.kind === "lab" && lab && <LabResultBox busy={busy} job={job} lab={lab} onAct={onAct} />}
+
+        {/* 계획 먼저 승인(5-1): 계획 단계와 계획. 고르기는 [현황] 할 일·텔레그램에서 */}
+        {job.planFirst && (
+          <section className="rounded-lg border border-default-200 p-3 text-sm" data-plan-section="">
+            <b>📝 작업 계획</b> <span className="text-xs text-default-500">{PLAN_LABELS[job.planStatus as PlanStatus] ?? job.planStatus ?? ""}</span>
+            {job.planText ? <pre className="mt-2 whitespace-pre-wrap rounded bg-default-100 p-2 text-xs leading-relaxed">{job.planText}</pre> : <p className="mt-1 text-xs text-default-500">아직 계획이 없어요.</p>}
+            {(job.planStatus === "ready" || job.planStatus === "failed") && job.status === "approved" && <p className="mt-1 text-xs text-warning-700">[현황] 할 일에서 [이대로 진행]·[수정 지시]·[취소]를 골라 주세요.</p>}
+          </section>
+        )}
+
+        {/* 변경 내용(5-1): 파일 트리와 색칠된 diff. 큰 파일·바이너리는 요약만, 키·비밀 파일은 내용 숨김 */}
+        <DiffView value={job.diffInfo} />
 
         {/* 인계 기록(읽기 전용 접이식): 기록이 없는 예전 일감은 칸을 보이지 않는다 */}
         <HandoffBox entry={job.handoff} />

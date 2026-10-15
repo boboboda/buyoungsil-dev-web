@@ -140,6 +140,7 @@ export const FACTORY_TOOLS = [
     description:
       "지시 하나의 상세를 돌려줍니다: 상태, 완료 요약, 실패 이유, 최근 로그, 스크린샷 주소. includePlan=true 면 등록했던 기획서 본문도 같이 줘요. " +
       "도구 일감(kind=tool)이면 도구_결과(상태·비용·만든 그림 주소)도 같이 줘요. 실험(lab) 일감이면 실험_결과(올라온 이미지·mp4·report.md 파일 주소와 report.md 본문, 올리지 못한 파일 목록, 기존 저장소 변경 사후 검사)도 같이 줘요. " +
+      "끝난 일감이면 변경_내용(바뀐 파일 수·추가/삭제 줄 수·파일별 줄 수, 키·비밀 파일은 이름만)도 같이 줘요. 계획 먼저 승인을 쓴 일감이면 계획_단계(상태와 계획)도 줘요. " +
       "수정 지시를 쓰기 전에 원래 기획과 결과 요약을 확인할 때 쓰세요.",
     inputSchema: {
       type: "object",
@@ -1055,6 +1056,9 @@ async function getJob(args: Record<string, unknown>): Promise<ToolResult> {
   });
 
   if (!job) return text("없는 지시예요.", true);
+  // 변경 내용(5-1): 파일·줄 수 요약만(diff 본문은 통제실 일감 상세에서). 키·비밀 파일은 이름과 숨김 표시만. 계획 먼저 승인을 쓴 일감이면 계획 단계와 계획
+  const diff = job.diffInfo ? (await import("@/lib/factory/diffReport").catch(() => null))?.diffSummary(job.diffInfo) : null;
+  const labels = job.planFirst ? (await import("@/lib/factory/planLabels").catch(() => null))?.PLAN_LABELS : null;
 
   return json({
     id: job.id,
@@ -1080,6 +1084,8 @@ async function getJob(args: Record<string, unknown>): Promise<ToolResult> {
     ...(job.kind === LAB_KIND ? { 실험_결과: await labResultView(job.id, job.labResult, { signed: true }) } : {}),
     ...(job.kind === TOOL_KIND ? { 도구_결과: toolResultView(job.toolInput, job.toolResult, job.status, job.cardId) } : {}),
     ...(args.includePlan === true ? { planMarkdown: job.planMarkdown } : {}),
+    ...(diff ? { 변경_내용: diff } : {}),
+    ...(job.planFirst ? { 계획_단계: { 상태: (labels as Record<string, string> | null | undefined)?.[job.planStatus ?? ""] ?? job.planStatus, 계획: job.planText } } : {}),
   });
 }
 

@@ -12,6 +12,7 @@
 //       · status-mix(통제실 [현황] 상태 체계: '지금 진행 중' 띠 + [작업 진행] 보드: 진행 중 1·승인 필요 2·대기 3·최근 완료·실패)
 //       · app-slots(통제실 [설정] '동시에 만들 앱 수' 카드: 기본 3 · 지금 진행 중 2 / 최대 3, 값을 줄여 넘칠 때, + [현황] 띠에 3개 동시에)
 //       · model-approve(승인할 때 Claude Code 모델 고르기: [현황] 승인 줄의 모델 선택(Codex 일감은 숨김) + 이력 '모델: ○○' + [설정] 기본 모델)
+//       · plan-first(계획 먼저 승인 + 변경 내용: [현황] 할 일의 계획 승인 줄(계획 대기·계획 못 만듦)과 승인 줄의 '계획 먼저' 체크, 일감 상세의 변경 내용 파일 트리·색칠된 diff·큰 파일/비밀 파일 요약)
 // 실행: npm run preview:admin-ui            → tests/.out/admin-ui-{상태}.html
 //       npm run preview:admin-ui -- --shot  → + admin-ui-{상태}-{1440,1024,360}.png
 // API·DB·키는 쓰지 않는다. 결과 폴더(tests/.out)는 커밋하지 않는다.
@@ -61,13 +62,16 @@ const topBar = loadTs("components/admin/ui/AdminTopBar.tsx", {
 const statusBar = loadTs("components/admin/ui/AdminStatusBar.tsx", { "@/components/admin/ui/meters": meters, "@/lib/claude-status/fable": fableLib });
 const aiLib = loadTs("lib/factory/ai.ts");
 const modelSelect = loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib });
+const planRow = loadTs("components/admin/factory/PlanReviewRow.tsx");
+const diffLib = loadTs("lib/factory/diffReport.ts", { "@/lib/factory/mask": loadTs("lib/factory/mask.ts") });
+const diffView = loadTs("components/admin/factory/DiffView.tsx", { "@/lib/factory/diffReport": diffLib });
 const memoryReportLib = loadTs("lib/factory/memory-report.ts");
 const HandoffBox = loadTs("components/admin/factory/HandoffBox.tsx", { "@/lib/factory/memory-report": memoryReportLib }).default;
 const MemoryStatus = loadTs("components/admin/factory/MemoryStatus.tsx", { "@/lib/factory/memory-report": memoryReportLib }).default;
 const { TurnLogs } = loadTs("components/admin/factory/MaintenancePanel.tsx", { "./AiEngineSelect": () => null, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib, "./HandoffBox": { __esModule: true, default: () => null }, "@heroui/react": heroui });
 const slotsCard = loadTs("components/admin/factory/AppSlotsSettings.tsx");
 const settingsCard = loadTs("components/admin/factory/SettingsCard.tsx");
-const { HistoryPanelView, ActiveStrip, InboxItemRow, TIER_ORDER } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
+const { HistoryPanelView, ActiveStrip, InboxItemRow, TIER_ORDER } = loadTs("components/admin/factory/FactoryOverview.tsx", { "./PlanReviewRow": { __esModule: true, default: () => null }, "./fx": fx, "./ClaudeModelSelect": modelSelect, "@/lib/factory/ai": aiLib });
 const inboxLib = loadTs("lib/factory/inbox.ts", { "@/lib/prisma": {}, "@/lib/factory/cards": {}, "@/lib/factory/parallel": {}, "@/lib/factory/secretEntries": {}, "@/lib/factory/toolManifestDb": {}, "@/lib/factory/toolManifest": {}, "@/lib/factory/telegram": {}, "@/lib/factory/inboxNotice": {} });
 const { default: DefaultAiSettings } = loadTs("components/admin/factory/DefaultAiSettings.tsx", {
   "@/lib/factory/ai": aiLib,
@@ -305,6 +309,7 @@ const handoffPage = () =>
   ));
 // 승인할 때 모델 고르기: 앱 일감(opus 고름)·정비 지시(기본 설정 사용)·Codex 출시 일감(모델 칸 없음) + 일감 이력 + 설정 탭 기본 모델
 STATES["model-approve"] = { ...STATES.live, title: "승인 · 모델 고르기", model: true };
+STATES["plan-first"] = { ...STATES.live, title: "계획 먼저 승인 · 변경 내용", planFirst: true };
 // [현황] 할 일 넓히기(4-1): 막힘·키 부족·다시 시작 필요 > 승인(묶음·비용 한도·스튜디오 검수) > 정보(업데이트 일시 중지·묶는 중) + 보드의 일시 중지 표시
 STATES.inbox = { ...STATES.live, title: "[현황] 할 일 넓히기", inbox: true };
 function inboxPage() {
@@ -688,6 +693,7 @@ function page(state) {
     );
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
   if (st.model) return h(AdminLayout, null, modelApprove());
+  if (st.planFirst) return h(AdminLayout, null, planFirstPreview());
   if (st.inbox) return h(AdminLayout, null, inboxPage());
   if (st.maintLog) return h(AdminLayout, null, maintLogPage());
   if (st.handoff) return h(AdminLayout, null, handoffPage());
@@ -796,6 +802,66 @@ function page(state) {
   );
 }
 
+// 계획 먼저 승인(5-1): 할 일의 계획 승인 줄 2개(계획 대기 · 계획 못 만듦), 승인 줄의 '계획 먼저' 체크, 일감 상세의 변경 내용
+function planFirstPreview() {
+  const noop = () => {};
+  const review = (over) => ({ id: "j1", appSlug: "timer-app", title: "타이머 알림음 바꾸기", kind: "revision", status: "ready", round: 1, at: null, reason: null, plan: "", ...over });
+  const plan = "- 고칠 파일: lib/screens/timer_page.dart, lib/services/sound_service.dart, assets/sounds/ding.mp3(새 파일)\n- 순서: 소리 서비스 추가 → 타이머 종료 때 호출 → 설정 화면에 켜고 끄기\n- 위험: 무음 모드에서 소리가 안 나는지 확인 필요(iOS), 기존 알림 설정 저장 형식은 그대로 유지\n- 예상 시간: 약 12분";
+  const diffReport = {
+    from: "a".repeat(40),
+    to: "b".repeat(40),
+    totalFiles: 6,
+    totalAdd: 78,
+    totalDel: 9,
+    moreFiles: 0,
+    truncated: false,
+    files: [
+      { path: "lib/screens/timer_page.dart", status: "M", add: 12, del: 4, binary: false, diff: "@@ -41,7 +41,15 @@ class _TimerPageState extends State<TimerPage> {\n   void _onFinished() {\n-    HapticFeedback.heavyImpact();\n+    HapticFeedback.heavyImpact();\n+    if (settings.soundOn) {\n+      SoundService.instance.playDing();\n+    }\n     setState(() => _running = false);\n   }" },
+      { path: "lib/services/sound_service.dart", status: "A", add: 48, del: 0, binary: false, diff: "@@ -0,0 +1,6 @@\n+import 'package:audioplayers/audioplayers.dart';\n+\n+class SoundService {\n+  static final instance = SoundService._();\n+  SoundService._();\n+}" },
+      { path: "assets/sounds/ding.mp3", status: "A", add: 0, del: 0, binary: true, skipped: "binary" },
+      { path: "pubspec.lock", status: "M", add: 14, del: 5, binary: false, skipped: "large" },
+      { path: "android/key.properties", status: "M", add: 2, del: 0, binary: false, skipped: "secret" },
+      { path: "pubspec.yaml", status: "M", add: 2, del: 0, binary: false, diff: "@@ -22,3 +22,5 @@ dependencies:\n   flutter:\n     sdk: flutter\n+  audioplayers: ^6.0.0" },
+    ],
+  };
+
+  return h(
+    "div",
+    { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+    h(
+      "div",
+      { className: "fx-split-main" },
+      h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+      h(FactoryTabs, { active: "status" }),
+      h(
+        Card,
+        { className: "mb-6", "data-title": "todo · 승인·배포" },
+        h(
+          CardBody,
+          { className: "space-y-3" },
+          h("div", { className: "flex items-center gap-2 font-semibold" }, h(fx.StatusDot, { tone: "warn" }), "승인·배포 할 일", h("span", { className: "font-mono" }, "(4)")),
+          h(planRow.default, { review: review({ plan, round: 2 }), busy: false, order: 1, onGo: noop, onRevise: noop, onCancel: noop }),
+          h(planRow.default, { review: review({ id: "j2", appSlug: "memo-app", title: "메모 검색 추가", status: "failed", reason: "시간 초과(4분)" }), busy: false, order: 1, onGo: noop, onRevise: noop, onCancel: noop }),
+          h(
+            "div",
+            { className: "flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between" },
+            h("div", { className: "min-w-0 text-sm" }, h("div", { className: "flex flex-wrap items-center gap-2" }, h(heroui.Chip, { size: "sm", variant: "flat", color: "primary" }, "📱 수정"), h("span", { className: "font-medium" }, "다크 모드 색 고치기"), h("span", { className: "font-mono text-xs text-default-500" }, "weather · flutter"))),
+            h("div", { className: "flex flex-wrap items-center gap-2" }, h("label", { className: "flex min-h-11 items-center gap-1 text-xs sm:min-h-0" }, h("input", { type: "checkbox", defaultChecked: true, readOnly: true }), "📝 계획 먼저"), h(Button, { className: "min-h-11 sm:min-h-0", color: "primary", size: "sm" }, "승인")),
+          ),
+          h(
+            "div",
+            { className: "flex flex-col gap-2 rounded-lg border border-default-200 p-2 sm:flex-row sm:items-center sm:justify-between" },
+            h("div", { className: "min-w-0 text-sm" }, h("div", { className: "flex flex-wrap items-center gap-2" }, h(heroui.Chip, { size: "sm", variant: "flat", color: "primary" }, "📱 새 앱"), h("span", { className: "font-medium" }, "날씨 위젯"), h("span", { className: "font-mono text-xs text-default-500" }, "weather-widget · flutter"))),
+            h("div", { className: "flex flex-wrap items-center gap-2" }, h("label", { className: "flex min-h-11 items-center gap-1 text-xs sm:min-h-0" }, h("input", { type: "checkbox", readOnly: true }), "📝 계획 먼저"), h(Button, { className: "min-h-11 sm:min-h-0", color: "primary", size: "sm" }, "승인")),
+          ),
+        ),
+      ),
+      h("h2", { className: "fx-label mt-6 mb-3" }, "── 일감 상세: 변경 내용(파일 트리 · 색칠된 diff · 큰 파일/바이너리/비밀 파일은 요약만) ──"),
+      h(Card, null, h(CardBody, { className: "space-y-3" }, h(diffView.default, { value: diffReport, initial: "lib/screens/timer_page.dart" }))),
+    ),
+  );
+}
+
 // 승인 줄(FactoryOverview 의 할 일 줄과 같은 모양)에 실제 모델 선택 부품을 끼운다. Codex 일감은 부품이 스스로 숨는다
 function modelApprove() {
   const defaults = { model: "sonnet", engine: "claude" };
@@ -862,6 +928,8 @@ function modelApprove() {
 // ── CSS: 저장소 Tailwind 설정 + 관리자 CSS ──
 fs.mkdirSync(out, { recursive: true });
 const bodies = Object.fromEntries(Object.keys(STATES).map((k) => [k, renderToStaticMarkup(page(k))]));
+// 계획 먼저 견본은 변경 내용을 펼치고, 파일 하나를 골라 둔 모습으로 찍는다(펼침/선택은 상호작용이라 정적 그림에서는 직접 연다)
+bodies["plan-first"] = bodies["plan-first"].replace("<details class=\"rounded-lg border border-default-200 p-3 text-sm\" data-diff-view=\"\">", "<details open=\"\" class=\"rounded-lg border border-default-200 p-3 text-sm\" data-diff-view=\"\">");
 // 펼침 칸은 닫힌 채로 그려지니, 도구 상세 견본은 앞 두 개를 연다
 bodies.toolkit = bodies.toolkit.replace(/<details>/g, (m, i, all) => (all.slice(0, i).split("<details>").length <= 2 ? "<details open>" : m));
 // 인계 기록 견본은 앞의 두 칸만 펼쳐서 찍는다(세 번째는 접힌 기본 모습)

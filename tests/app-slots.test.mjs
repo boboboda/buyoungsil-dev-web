@@ -376,7 +376,7 @@ test("화면 연결: [설정] 탭에 카드, 감독 프로그램 카드에 '진�
 test("동시에 3개가 돌 때도 [현황] 띠에 3개 모두 보이고 '외 N개'는 안 나옴", () => {
   const fx = loadTs("components/admin/factory/fx.tsx");
   const aiLib = loadTs("lib/factory/ai.ts");
-  const overview = loadTs("components/admin/factory/FactoryOverview.tsx", {
+  const overview = loadTs("components/admin/factory/FactoryOverview.tsx", { "./PlanReviewRow": { __esModule: true, default: () => null },
     "./fx": fx,
     "@/lib/factory/ai": aiLib,
     "./ClaudeModelSelect": loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib }),

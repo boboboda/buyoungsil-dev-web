@@ -9,6 +9,7 @@ import type { GroupReport } from "@/lib/factory/parallel";
 import type { QueueItem } from "@/lib/factory/queue";
 
 const STATUS_TEXT: Record<string, string> = { running: "제작 중", approved: "승인됨", pending: "승인 대기", failed: "실패" };
+const PLAN_TEXT: Record<string, string> = { requested: "계획 만드는 중(대기)", running: "계획 만드는 중", ready: "계획 승인 대기", failed: "계획을 못 만듦" }; // 계획 먼저 승인(5-1). lib/factory/planLabels.ts 와 같은 글자
 const LOCK_TEXT: Record<string, string> = { build: "빌드", emulator: "에뮬레이터", port: "고정 포트", merge: "합치기" };
 const KIND_TEXT: Record<string, string> = { new: "새 앱", revision: "수정", release: "출시 준비" };
 const REFRESH_MS = 5_000;
@@ -16,9 +17,11 @@ const REFRESH_MS = 5_000;
 type Queues = Record<string, QueueItem[]>;
 
 /** 일감 카드에 붙일 병행 상태 이름들(시험·화면이 같이 쓴다). 합치기 실패가 가장 먼저 */
-export function parallelBadges(q: Pick<QueueItem, "status" | "parallelGroup" | "parallel" | "mergeFailed"> & Partial<Pick<QueueItem, "approvalWait" | "groupPendingLeft">>): string[] {
+export function parallelBadges(q: Pick<QueueItem, "status" | "parallelGroup" | "parallel" | "mergeFailed"> & Partial<Pick<QueueItem, "approvalWait" | "groupPendingLeft" | "planStatus">>): string[] {
   const out: string[] = [];
 
+  // 계획 먼저 승인(5-1): 계획을 만들거나 사람의 선택을 기다리는 동안은 시작하지 않는다(계획이 승인되면 평소 순서)
+  if (q.status === "approved" && q.planStatus && q.planStatus !== "approved") out.push(`📝 ${PLAN_TEXT[q.planStatus] ?? q.planStatus}`);
   if (q.mergeFailed) out.push("합치기 실패");
   if (q.parallelGroup) out.push(`같이 돌리기 ${q.parallelGroup}`);
   if (q.status === "approved" && (q.groupPendingLeft ?? 0) > 0) out.push(`묶음 승인 기다림 (${q.groupPendingLeft}개 남음)`);

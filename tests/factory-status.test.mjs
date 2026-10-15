@@ -25,7 +25,7 @@ function loadTs(relative, dependencies = {}) {
 
 const fx = loadTs("components/admin/factory/fx.tsx");
 const aiLib = loadTs("lib/factory/ai.ts");
-const view = loadTs("components/admin/factory/FactoryOverview.tsx", {
+const view = loadTs("components/admin/factory/FactoryOverview.tsx", { "./PlanReviewRow": { __esModule: true, default: () => null },
   "./fx": fx,
   "@/lib/factory/ai": aiLib,
   "./ClaudeModelSelect": loadTs("components/admin/factory/ClaudeModelSelect.tsx", { "@/lib/factory/ai": aiLib }),

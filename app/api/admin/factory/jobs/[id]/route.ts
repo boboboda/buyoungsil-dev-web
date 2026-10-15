@@ -57,7 +57,9 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   if (!model.ok) return NextResponse.json({ message: model.message }, { status: 400 });
   const result =
     (body as Record<string, unknown>).action === "approve"
-      ? await runApproval("job_approve", id, "통제실", body.aiEngine, model.model)
+      ? typeof body.planFirst === "boolean"
+        ? await runApproval("job_approve", id, "통제실", body.aiEngine, model.model, { planFirst: body.planFirst })
+        : await runApproval("job_approve", id, "통제실", body.aiEngine, model.model)
       : await adminAction(id, body as Record<string, unknown>);
 
   return NextResponse.json(

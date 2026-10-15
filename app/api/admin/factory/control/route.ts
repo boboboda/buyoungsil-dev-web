@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
     appSlots?: unknown;
     parallelPerApp?: unknown;
     approvalWaitSec?: unknown;
+    planFirstDefault?: unknown;
     updateBundleMin?: unknown;
     loopGuard?: unknown;
     appChecks?: unknown;
@@ -123,6 +124,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ...(await supervisorSnapshot()),
       message: `같은 앱에서 같이 돌릴 수를 ${n}개로 저장했어요. '같이 돌리기'로 묶은 수정 일감만 해당돼요. 이미 도는 일감은 끊지 않아요.`,
+    });
+  }
+
+  // 계획 먼저 승인(5-1) 기본값: { planFirstDefault: boolean }. 켜면 새로 승인하는 새 앱·수정 일감이 먼저 계획을 만들어 보여 준다(승인 때 일감별로 바꿀 수 있음). 기본 꺼짐
+  if (body && Object.hasOwn(body, "planFirstDefault")) {
+    if (typeof body.planFirstDefault !== "boolean") return NextResponse.json({ message: "planFirstDefault 는 true 또는 false 여야 해요." }, { status: 400 });
+    await (await import("@/lib/factory/planFirst")).setPlanFirstDefault(body.planFirstDefault);
+
+    return NextResponse.json({
+      ...(await supervisorSnapshot()),
+      message: body.planFirstDefault ? "승인한 새 앱·수정 일감이 먼저 계획을 만들어 보여 주도록 저장했어요(승인 때 일감별로 바꿀 수 있어요)." : "승인하면 바로 시작하도록 저장했어요(승인 때 일감별로 '계획 먼저'를 고를 수 있어요).",
     });
   }
 

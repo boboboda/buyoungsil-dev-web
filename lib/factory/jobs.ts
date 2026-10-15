@@ -147,13 +147,15 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
   const [approvedAll, running, pendingGrouped] = await Promise.all([
     prisma.factoryJob.findMany({
       where: { status: "approved", kind: { not: TOOL_KIND }, aiEngine: { in: [...engines] } }, // 도구 일감(tool)은 앱 슬롯과 따로 claimToolJobs 가 가져간다
-      select: { id: true, appSlug: true, kind: true, priority: true, approvedAt: true, createdAt: true, parallelGroup: true },
+      select: { id: true, appSlug: true, kind: true, priority: true, approvedAt: true, createdAt: true, parallelGroup: true, planFirst: true, planStatus: true },
     }),
     prisma.factoryJob.findMany({ where: { status: "running", kind: { not: TOOL_KIND } }, select: { appSlug: true, kind: true, parallelGroup: true } }),
     prisma.factoryJob.findMany({ where: { status: "pending", kind: PARALLEL_KIND, parallelGroup: { not: null } }, select: { appSlug: true, kind: true, parallelGroup: true } }),
   ]);
   // 묶음 중 일부만 승인된 상태에서는 그 묶음 일감을 가져가지 않는다(승인 대기 일감이 남아 있는 동안). 모두 승인되면 같이 내준다
-  const approved = withoutPartialGroups(approvedAll, pendingGrouped);
+  // 계획 먼저 승인(5-1): 계획 선택을 기다리는 일감은 가져가지 않고(blocked), 같은 앱의 뒤 일감도 새치기하지 못한다. 계획 모듈을 못 읽으면 예전처럼 둔다
+  const plans = await import("@/lib/factory/planFirst").catch(() => null);
+  const approved = withoutPartialGroups(approvedAll, pendingGrouped).map((a) => ({ ...a, blocked: plans ? plans.waitsForPlan(a) : false }));
   // 지휘자(C-2)가 같은 앱의 대기 일감 판단을 기다리는 동안, 또는 승인 직후 다른 승인을 기다리는 동안은 그 앱 일감을 가져가지 않는다(순서를 새치기하지 않도록 앱 전체 보류)
   const waiting = opts.holdApps?.size ? approved.filter((a) => !opts.holdApps!.has(a.appSlug)) : approved;
   const ids = pickClaims({ approved: waiting, running, slots, perApp: opts.perApp ?? DEFAULT_PER_APP });
@@ -171,6 +173,7 @@ export async function claimJobs(worker: string, slots: number, engines: readonly
   rows.sort((a, b) => b.priority - a.priority);
   await reassignParents(rows);
   await fillDefaultModel(rows);
+  await plans?.attachApprovedPlans(rows).catch(() => undefined); // 승인된 계획은 지시문 끝에 붙여 내려 준다(DB 의 기획서는 그대로)
 
   if (rows.length > 0) {
     await prisma.factoryJobLog.createMany({
@@ -499,12 +502,27 @@ export async function adminAction(id: string, body: Record<string, unknown>): Pr
 
   switch (body.action) {
     case "approve": {
+      // 계획 먼저 승인(5-1): body.planFirst(true/false)로 일감별 선택, 없으면 설정 기본값. 새 앱·수정 일감만(출시·실험·도구는 늘 바로 시작)
+      const target = await prisma.factoryJob.findUnique({ where: { id }, select: { kind: true } });
+      const pf = await import("@/lib/factory/planFirst").catch(() => null);
+      const plan = pf ? pf.approveData(target?.kind ?? "", body.planFirst, typeof body.planFirst === "boolean" ? false : (await pf.getPlanFirstDefault().catch(() => ({ value: false }))).value) : { planFirst: false, planStatus: null, planText: null, planNote: null, planInfo: null };
       const res = await prisma.factoryJob.updateMany({
         where: { id, status: "pending" },
-        data: { status: "approved", approvedAt: now, ...modelData, ...engineData },
+        data: { status: "approved", approvedAt: now, ...modelData, ...engineData, ...(plan.planFirst || target?.kind === "new" || target?.kind === "revision" ? { planFirst: plan.planFirst, planStatus: plan.planStatus, planText: plan.planText, planNote: plan.planNote, planInfo: plan.planInfo === null ? Prisma.DbNull : undefined } : {}) },
       });
       // 홈페이지 Project 는 여기서 만들지 않는다(출시 대상 앱만: 출시 패키지에 추가할 때 연결·생성)
-      return res.count > 0 ? done(choice.model ? `승인했어요(모델: ${choice.model}).` : "승인했어요.") : explainNoChange(id, "승인");
+      return res.count > 0 ? done(`${choice.model ? `승인했어요(모델: ${choice.model}).` : "승인했어요."}${plan.planFirst ? " 먼저 계획을 만들어 보여 드릴게요." : ""}`) : explainNoChange(id, "승인");
+    }
+
+    case "plan-go":
+    case "plan-revise": {
+      // 계획 먼저 승인(5-1): [이대로 진행] / [수정 지시](말을 적거나, 계획을 못 만든 경우엔 말 없이 다시 계획)
+      const pf = await import("@/lib/factory/planFirst").catch(() => null);
+
+      if (!pf) return refuse(500, "계획 승인을 처리하지 못했어요.");
+      const r = await pf.choosePlan(id, body.action === "plan-go" ? "go" : "revise", body.note);
+
+      return r.ok ? done(r.message) : refuse(r.status, r.message);
     }
 
     case "cancel": {

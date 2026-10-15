@@ -455,7 +455,7 @@ test("텔레그램: [🧠 모델 골라 승인] → 같은 알림의 버튼이 �
     assert.deepEqual(row.slice(0, 2).map((b) => b.callback_data), ["a:job1", "ao:job1"]);
     job = { ...job, aiEngine: "codex" };
     await tg.notifyJobEvent("job1", "pending");
-    assert.deepEqual(sent.at(-1).body.reply_markup.inline_keyboard[0].filter((b) => b.callback_data).map((b) => b.callback_data), ["a:job1"], "Codex 는 모델 버튼 없음");
+    assert.deepEqual(sent.at(-1).body.reply_markup.inline_keyboard[0].filter((b) => b.callback_data).map((b) => b.callback_data), ["a:job1", "ap:job1"], "Codex 는 모델 버튼 없음(계획 먼저 단추는 새 앱·수정이면 둘 다)");
 
     const now = Math.floor(Date.now() / 1000);
     const press = (data) => tg.handleUpdate({ callback_query: { id: "cq", from: { id: 42 }, data, message: { message_id: 7, date: now, chat: { id: 42 } } } });

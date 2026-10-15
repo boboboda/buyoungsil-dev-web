@@ -1,6 +1,7 @@
 // lib/factory/approvals.ts
 // 승인·배포의 단일 입구. 텔레그램 버튼(lib/factory/telegram.ts)과 통제실 버튼(app/api/admin/factory/overview)이 모두 이 함수를 부른다.
 // - 앱 일감(새 앱·수정·출시 준비) 승인: adminAction(approve) — pending → approved 조건부 갱신
+// - 계획 먼저 승인(5-1): plan_go(이대로 진행)·plan_revise(수정 지시, note 필요)·plan_cancel(취소) — 계획이 준비된 앱 일감에 대해
 // - 정비 지시 승인: approveTurn — awaiting_approval → queued 조건부 갱신
 // - 서버 [배포]: requestDeploy — 진행 중인 배포가 없고 정비 대기열이 비었을 때만(deploy_now 는 대기열이 남아도) 조건부 갱신
 // - 정비 대기열이 실패로 멈췄을 때: queue_skip(계속 진행)·queue_retry(재시도)·queue_clear(비우기). id 는 멈춘(실패한) 지시 id
@@ -13,6 +14,9 @@ import type { AiEngine, ClaudeModel } from "@/lib/factory/ai";
 
 export const APPROVAL_ACTIONS = [
   "job_approve",
+  "plan_go",
+  "plan_revise",
+  "plan_cancel",
   "maintenance_approve",
   "deploy",
   "deploy_now",
@@ -44,13 +48,14 @@ export async function runApproval(
   via: ApprovalVia,
   aiEngine?: AiEngine,
   aiModel: ClaudeModel | null = null, // 승인 때 고른 Claude Code 모델(null = 기본 설정 사용). Codex 일감이면 거부
+  extra: { planFirst?: boolean; note?: string } = {}, // 승인 때 '계획 먼저' 선택(없으면 설정 기본값), 수정 지시 말
 ): Promise<ApprovalResult> {
   if (!ID_RE.test(id))
     return { ok: false, status: 400, message: "id 가 올바르지 않아요." };
 
   switch (action) {
     case "job_approve": {
-      const r = await adminAction(id, { action: "approve", aiModel, ...(aiEngine ? { aiEngine } : {}) });
+      const r = await adminAction(id, { action: "approve", aiModel, ...(aiEngine ? { aiEngine } : {}), ...(typeof extra.planFirst === "boolean" ? { planFirst: extra.planFirst } : {}) });
 
       if (r.ok || r.status !== 409)
         return { ok: r.ok, status: r.status, message: r.message };
@@ -64,6 +69,13 @@ export async function runApproval(
         status: 409,
         message: `승인할 수 없어요: ${JOB_STATE[job?.status ?? ""] ?? r.message}.`,
       };
+    }
+    case "plan_go":
+    case "plan_revise":
+    case "plan_cancel": {
+      const r = await adminAction(id, action === "plan_cancel" ? { action: "cancel" } : { action: action === "plan_go" ? "plan-go" : "plan-revise", note: extra.note });
+
+      return { ok: r.ok, status: r.status, message: r.message };
     }
     case "maintenance_approve":
       return approveTurn(id, aiModel);
@@ -91,7 +103,7 @@ const excerpt = (v: string | null | undefined, max: number) => {
 
 /** 승인·배포를 기다리는 것들(통제실 맨 위 "할 일" 목록) */
 export async function approvalInbox() {
-  const [jobs, turns, bundle, confirmJobs] = await Promise.all([
+  const [jobs, turns, bundle, confirmJobs, plans, planDefault] = await Promise.all([
     prisma.factoryJob.findMany({
       where: { status: "pending" },
       orderBy: { createdAt: "asc" },
@@ -121,6 +133,9 @@ export async function approvalInbox() {
       take: 50,
       select: { id: true, appSlug: true, title: true, kind: true, failReason: true, source: true, updatedAt: true },
     }),
+    // 계획 먼저 승인(5-1): 계획이 준비돼(또는 못 만들어) 사람의 선택을 기다리는 일감
+    import("@/lib/factory/planFirst").then((m) => m.planReviews()).catch(() => []),
+    import("@/lib/factory/planFirst").then((m) => m.getPlanFirstDefault()).catch(() => ({ value: false })),
   ]);
   // 서버 배포는 정비 대기열 단위로 하나로 묶는다(배포 안 된 지시 목록 + 가장 최근 정비 커밋)
   const ip = bundle.inProgress;
@@ -144,6 +159,8 @@ export async function approvalInbox() {
 
   return {
     jobs: jobs.map((j) => ({ ...j, kindLabel: KIND_LABELS[j.kind] ?? j.kind })),
+    planReviews: plans,
+    planFirstDefault: planDefault.value,
     confirmations: confirmJobs.map((j) => ({ id: j.id, appSlug: j.appSlug, title: j.title, kind: j.kind, reason: excerpt(j.failReason, 300), source: j.source, at: j.updatedAt })),
     turns: turns.map((t) => ({
       id: t.id,
