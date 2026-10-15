@@ -28,7 +28,7 @@ import { commandEvents } from "./loopguard.mjs";
 import { createWorkCounter } from "./workrules.mjs";
 import { BACKGROUND_FAIL_REASON, RESUME_MESSAGE, backgroundFailure, resumeFailed } from "./pause.mjs";
 import { buildRevertCommit, migrationsChanged } from "./revert.mjs";
-import { DEFAULT_MAINT_REMOTE, DEPLOY_DEFAULTS, deploySuccessRe, healthPassed, healthRedirect, maintDirOf, maintRemoteOf, resolveDeploy } from "./deploycfg.mjs";
+import { DEFAULT_MAINT_REMOTE, DEPLOY_DEFAULTS, deploySuccessRe, healthPassed, healthRedirect, isSupervisorOnlyDir, maintDirOf, maintRemoteOf, resolveDeploy } from "./deploycfg.mjs";
 
 const IS_WIN = process.platform === "win32";
 const expand = (p) => (p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p);
@@ -45,9 +45,8 @@ const RULES = `# 공장 정비 규칙 (감독 프로그램이 자동으로 쓰�
 
 - 지시한 것만 고친다. 범위를 넓히지 말고, 모르는 건 합리적으로 가정해서 결과에 적는다. 사람에게 질문하지 않는다.
 - 작업 단위마다 main 에 커밋한다(한국어 메시지). **push 와 배포는 하지 마라**(claude-backup 포함). 감독 프로그램이 검사를 통과하면 GitHub 에 올리고, 서버 배포는 사람이 [배포] 버튼으로 한다.
-- 끝내기 전에 검사: \`npx tsc --noEmit -p .\` 오류 0개, \`node --check tools/factory-supervisor/*.mjs\`, 바꾼 부분은 가능하면 시험(가짜 서버·사본 등). 통과 못 하면 고쳐서 다시.
-- DB 를 바꾸면 prisma/migrations 에 마이그레이션을 추가한다(컨테이너 시작 때 자동 적용). 기존 데이터를 지우는 마이그레이션 금지.
-- 감독 프로그램(tools/factory-supervisor)을 바꾸면, 이 PC 의 감독 프로그램이 GitHub 에서 자동 업데이트로 받는다. 업데이트가 홈페이지 대기열 확인에 실패하면 되돌려지니, 폴링·보고 경로를 깨지 않게 조심한다.
+- 끝내기 전에 검사: {{CHECKS}} 바꾼 부분은 가능하면 시험(가짜 서버·사본 등). 통과 못 하면 고쳐서 다시.
+{{DBRULE}}- 감독 프로그램(tools/factory-supervisor)을 바꾸면, 이 PC 의 감독 프로그램이 GitHub 에서 자동 업데이트로 받는다. 업데이트가 홈페이지 대기열 확인에 실패하면 되돌려지니, 폴링·보고 경로를 깨지 않게 조심한다.
 - 서버 설정(nginx, 서버 .env.local, 재빌드)은 오직 \`node "{{SERVERCTL}}" <서브커맨드>\` 로만 한다. 이 PC 에서 docker·sudo·nginx·systemctl 직접 호출은 금지(막혀 있음). 서버 접속(ssh·scp·git)은 아래 「서버 접근 규칙」을 따른다. 값은 어디에도 출력하지 마라.
   - 서브커맨드: env-keys | env-set KEY(값은 SERVERCTL_VALUE 환경변수나 stdin 으로만) | env-set <작업폴더…> [--gen-shared KEY]… [--gen KEY]… [--put KEY(값은 SERVERCTL_VALUE/stdin)](서버에서 비밀값 생성, 값 출력 없음; .env.local 이 없는 폴더는 .env) | env-unset KEY | nginx-show | nginx-set-directive NAME VALUE [LOCATION] | nginx-apply FILE | rebuild | restore TIMESTAMP | backups
   - 새 사이트(대상 --host serverpc 기본·serverpc2): site-init NAME --from SRC | env-clone SRC_WORK DST_WORK [--set KEY=VALUE]… [--gen KEY]… | nginx-site NAME --domain D --port P [--body 300m] | cert DOMAIN | deploy-push APP_DIR REMOTE URL | app-update NAME [--probe PATH]… [--domain D](배포 훅 없는 앱: 최신 main 받아 compose 재빌드, 실패 시 되돌림) | web-release APP_DIR [--site NAME] [--domain D](정적 웹 /preview/ 빌드·nginx 설정 올리기, 실패 시 되돌림) | service-token NAME --env-key KEY --secret SERVICE_ADMIN_TOKEN_<앱> [--probe PATH]… [--domain D](서비스 관리자 토큰을 PC 메모리에서 만들어 서버 .env 와 홈페이지 키 보관함에 같이 넣고 컨테이너 재시작·401 확인, 실패 시 둘 다 되돌림) | server-switch <새 주소> [--dry-run](감독의 홈페이지 주소 전환: 새 주소로 시험 호출 후 설정 백업·변경, 재시작 뒤 5분 안에 연결 못 하면 감독이 자동으로 이전 주소로 되돌림. 사람이 시킬 때만, --dry-run 먼저) | server-switch --status
@@ -229,7 +228,8 @@ function prepare(dir, git, m, notes = [], mr = DEFAULT_MAINT_REMOTE, repoDescrip
     }
   }
   // 정비 규칙 파일(커밋되지 않게 로컬 제외 목록에)
-  fs.writeFileSync(path.join(dir, "CLAUDE.local.md"), RULES.replace(/\{\{SERVERCTL\}\}/g, SERVERCTL).replace(/\{\{REPO\}\}/g, () => repoDescription));
+  const supOnly = isSupervisorOnlyDir(dir);
+  fs.writeFileSync(path.join(dir, "CLAUDE.local.md"), RULES.replace(/\{\{CHECKS\}\}/g, () => (supOnly ? "`node --check tools/factory-supervisor/*.mjs` 통과(이 저장소엔 tsc·웹 앱 시험이 없다)." : "`npx tsc --noEmit -p .` 오류 0개, `node --check tools/factory-supervisor/*.mjs`,")).replace(/\{\{DBRULE\}\}/g, () => (supOnly ? "" : "- DB 를 바꾸면 prisma/migrations 에 마이그레이션을 추가한다(컨테이너 시작 때 자동 적용). 기존 데이터를 지우는 마이그레이션 금지."+"\n")).replace(/\{\{SERVERCTL\}\}/g, SERVERCTL).replace(/\{\{REPO\}\}/g, () => repoDescription));
   const ex = path.join(dir, ".git", "info", "exclude");
   const have = fs.existsSync(ex) ? fs.readFileSync(ex, "utf8") : "";
   if (!have.split(/\r?\n/).includes("CLAUDE.local.md")) fs.appendFileSync(ex, (have && !have.endsWith("\n") ? "\n" : "") + "CLAUDE.local.md\n");
@@ -246,6 +246,7 @@ function gate(dir, git, fromRef, workingTree = false) {
     const c = spawnSync(process.execPath, ["--check", path.join(dir, SUPERVISOR_DIR, f)], { encoding: "utf8", windowsHide: true });
     if (c.status !== 0) return `감독 프로그램 문법 검사 실패(${f}):\n${tail(c.stderr, 800)}`;
   }
+  if (isSupervisorOnlyDir(dir)) return null; // 감독 프로그램만 든 저장소: 문법 검사로 끝(웹 앱 검사 tsc·npm ci·prisma 없음)
   if (changed.includes("package-lock.json") || !fs.existsSync(path.join(dir, "node_modules"))) {
     const r = run("npm", ["ci", "--no-audit", "--no-fund", "--loglevel=error"], dir, 900_000);
     if (r.status !== 0) return `npm ci 실패:\n${tail(r.stderr || r.stdout, 800)}`;

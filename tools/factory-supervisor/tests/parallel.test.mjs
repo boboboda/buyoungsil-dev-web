@@ -163,6 +163,7 @@ test("감독 프로그램 업데이트: 일감이 돌면 받지 않고 대기(�
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(path.join(SUP, "update.mjs"), path.join(dir, "update.mjs"));
   fs.copyFileSync(path.join(SUP, "pause.mjs"), path.join(dir, "pause.mjs")); // update.mjs 가 묶기 판단을 pause.mjs 에서 가져온다(1-2 D-2)
+  fs.copyFileSync(path.join(SUP, "workrules.mjs"), path.join(dir, "workrules.mjs")); // pause.mjs 가 가져온다
   fs.writeFileSync(path.join(dir, "supervisor.mjs"), 'import "./update.mjs";\nexport const v = 1;\n');
   git(host, "checkout", "-q", "-b", "main");
   git(host, "add", "-A");
@@ -230,6 +231,7 @@ test("감독 프로그램 업데이트: 직접 요청한(지금 업데이트) �
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(path.join(SUP, "update.mjs"), path.join(dir, "update.mjs"));
   fs.copyFileSync(path.join(SUP, "pause.mjs"), path.join(dir, "pause.mjs")); // update.mjs 가 묶기 판단을 pause.mjs 에서 가져온다(1-2 D-2)
+  fs.copyFileSync(path.join(SUP, "workrules.mjs"), path.join(dir, "workrules.mjs")); // pause.mjs 가 가져온다
   fs.writeFileSync(path.join(dir, "supervisor.mjs"), 'import "./update.mjs";\nexport const v = 1;\n');
   git(host, "checkout", "-q", "-b", "main");
   git(host, "add", "-A");

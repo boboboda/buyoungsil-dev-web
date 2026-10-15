@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEPLOY_DEFAULTS, deploySuccessRe, healthPassed, healthRedirect, maintDirOf, maintRemoteOf, protectedMaintDirs, resolveDeploy } from "../deploycfg.mjs";
+import { DEPLOY_DEFAULTS, deploySuccessRe, healthPassed, healthRedirect, isSupervisorOnlyDir, maintDirOf, maintRemoteOf, protectedMaintDirs, resolveDeploy } from "../deploycfg.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const read = (f) => fs.readFileSync(path.join(HERE, "..", f), "utf8");
@@ -92,4 +92,15 @@ test("연결: 감독이 새 설정 키를 받고(기본값 포함), 정비 코�
   assert.doesNotMatch(sc, /fetch\(SITE_URL/);
   assert.match(sc, /service-token[\s\S]{0,40}/);
   assert.match(sc, /보관함 주소는 deploy 설정이 아니라 감독 설정의 serverUrl 을 따른다/);
+});
+
+test("정비 폴더에 tsconfig.json 이 없으면 감독 전용 저장소로 본다(검사는 node --check 만)", () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "supdir-"));
+  try {
+    assert.equal(isSupervisorOnlyDir(d), true);
+    fs.writeFileSync(path.join(d, "tsconfig.json"), "{}");
+    assert.equal(isSupervisorOnlyDir(d), false);
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
 });

@@ -8,6 +8,7 @@
 //   deploy.repoDescription 정비 규칙(CLAUDE.local.md)에 쓰는 저장소 설명                          기본 부영실 홈페이지 설명
 //   maintDir              정비 작업 폴더                                                       기본 selfdevDir
 //   maintPushRemote       정비 결과를 올리는 git 원격 이름                                      기본 origin
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -87,6 +88,11 @@ export function protectedMaintDirs(cfg, workDir) {
   const list = [self];
   if (path.resolve(maintDirOf(cfg)) !== path.resolve(self)) list.push(maintDirOf(cfg));
   return list.concat(path.join(workDir, "supervisor-src"));
+}
+
+// 정비 폴더가 감독 프로그램만 든 저장소인지(웹 앱의 tsconfig.json 이 없으면 그렇다). 그러면 정비 검사는 감독 문법 검사(node --check)만 하고 tsc·npm ci·prisma 는 건너뛴다.
+export function isSupervisorOnlyDir(dir) {
+  return !fs.existsSync(path.join(dir, "tsconfig.json"));
 }
 
 export function maintRemoteOf(cfg) {
