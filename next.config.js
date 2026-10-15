@@ -27,7 +27,6 @@ const nextConfig = {
   experimental: {
     optimizeCss: false,
     useLightningcss: false,
-    trustHost: true,  // 🔧 이거 추가!
   },
 };
 

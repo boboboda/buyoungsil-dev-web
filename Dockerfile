@@ -19,4 +19,4 @@ COPY ${ENV_FILE} .env
 RUN --mount=type=cache,target=/usr/src/web/.next/cache npm run build
 
 EXPOSE 5000
-CMD ["sh", "-c", "npx prisma migrate deploy && npm run start"]
+CMD ["npm", "run", "start"]

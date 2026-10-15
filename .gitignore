@@ -41,3 +41,7 @@ next-env.d.ts
 
 
 ####
+# env / npm 설정(추적 안 함)
+.env.*
+!.env.example
+.npmrc
