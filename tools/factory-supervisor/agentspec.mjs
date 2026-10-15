@@ -311,3 +311,104 @@ export function summarizeFlow(flow, agents) {
     })),
   };
 }
+
+// ───────── 실제 적용 권한(통제실 지도, 4-3) ─────────
+// 정의(agents/*.json)와 코드에 박힌 상한(CEILING)·훅을 합친 결과를 사람이 읽는 목록으로 만든다. 값은 없고 이름만 있다.
+// SERVER_HOSTS 는 serveraccess.mjs 의 같은 이름 목록과 같아야 한다(tests/factory-map.test.mjs 가 대조한다. 그 파일은 훅 경로를 계산해서 홈페이지 번들에는 못 넣는다).
+export const SERVER_HOSTS = ["serverpc", "serverpc2"];
+const ALWAYS_BLOCKED_TOOLS = ["NotebookEdit", "Task", "Agent", "MCP 도구"]; // 정의로 열 수 없는 도구(CEILING.tools 밖)
+const HOOK_TEXT = {
+  "ssh-guard": "ssh-guard: Bash 명령을 실행 전에 검사 — 서버 접근 규칙(서버1·서버2 밖 접속, 서버에서 지우기·강제 덮어쓰기·서비스 중단·설정/비밀 수정, 배포 저장소 push 차단)",
+  "maintenance-guard": "maintenance-guard: 정비 보호 규칙(감독 프로그램·키 파일·작업 스케줄러 보호, 서버 설정은 serverctl 만) + 서버 접근 규칙",
+};
+const TOKEN_TEXT = [
+  [/^edit:@protected\/\*\*$/, "정비·감독 폴더 등 보호 폴더 전체"],
+  [/^edit:@factory\/\*\.json$/, "공장 폴더의 설정 JSON"],
+  [/^edit:@factory\/\*\.sh$/, "공장 폴더의 실행기(.sh)"],
+  [/^edit:@factory\/secrets\.env\*?$/, "키 파일(secrets.env)"],
+  [/^edit:@entries$/, "공장 폴더 바로 아래 항목(실험 폴더 제외)"],
+  [/^read:@factory\/supervisor\.config\.json$/, "감독 프로그램 설정 파일(supervisor.config.json)"],
+  [/^read:@factory\/secrets\.env\*?$/, "키 파일(secrets.env)"],
+  [/^read:~\/\.ssh\/\*\*$/, "~/.ssh 아래 전부(접속 키)"],
+  [/^read:~\/\.aws\/\*\*$/, "~/.aws 아래 전부"],
+  [/^edit:@work\/\*\*$/, "이 일감의 작업 폴더 전체"],
+  [/^edit:@shared\/\*\*$/, "공용 폴더(lab/shared) 전체"],
+  [/^read:@factory\/\*\*$/, "공장 폴더 전체(읽기)"],
+];
+const tokenText = (t) => TOKEN_TEXT.find(([re]) => re.test(t))?.[1] ?? t;
+const WORKSPACE_TEXT = {
+  "app-folder": "앱 폴더(공장 폴더/<앱 이름>)",
+  "app-worktree": "앱 폴더의 병행 작업 사본(.worktrees/<일감>)",
+  "lab-folder": "실험 폴더(lab/<일감>)",
+  "tool-folder": "도구 일감 임시 폴더(tooljobs/<일감>)",
+  "maintenance-checkout": "정비 전용 체크아웃(main)",
+  none: "없음",
+};
+const uniq = (list) => [...new Set(list)];
+
+/**
+ * 정의 하나의 실제 적용 권한. 정의가 상한을 넘으면 이미 불러올 때 거절되므로, 여기서는 상한 밖 값을 한 번 더 걸러(방어) 사람이 읽는 글로 바꾼다.
+ * 반환: { id, label, engines, readOnly, workspace, tools, blockedTools, writes, noWrites, readBlocks, network, ssh, keys, hooks, envNames, envFilter, managedBy }
+ */
+export function effectivePermissions(spec) {
+  const ro = CEILING.readOnlyIds.includes(spec.id);
+  const allowed = spec.tools.allow.filter((t) => CEILING.tools.includes(t) && (!ro || CEILING.readOnlyTools.includes(t)));
+  const only = Array.isArray(spec.tools.only) ? spec.tools.only : null;
+  const tools = only ? allowed.filter((t) => only.includes(t)) : allowed;
+  const blockedTools = uniq([...(spec.tools.deny ?? []), ...(ro ? CEILING.readOnlyBlocked : []), ...CEILING.tools.filter((t) => !tools.includes(t)), ...ALWAYS_BLOCKED_TOOLS]);
+  const engines = spec.engine.allowed;
+  const usesClaude = engines.includes("claude");
+  const usesCodex = engines.includes("codex");
+  const hasBash = tools.includes("Bash");
+  const canWrite = tools.includes("Edit") || tools.includes("Write") || hasBash;
+  const p = spec.paths ?? {};
+  const managedBy = typeof p.managedBy === "string" ? p.managedBy : null;
+  const wsType = spec.workspace.type;
+  const wsText = WORKSPACE_TEXT[wsType] ?? wsType;
+  // 쓰기 경로: 읽기 전용이거나 쓰기 도구가 없으면 없음. 작업 공간 안은 쓸 수 있고, 정의가 연 경로를 더한다
+  const writes = [];
+  if (spec.engine.allowed.includes("none")) writes.push(`${wsText} — AI 없이 감독 프로그램이 직접 쓴다`);
+  else if (!ro && canWrite) {
+    writes.push(wsText + (wsType === "lab-folder" ? "" : " 안"));
+    for (const t of p.allow ?? []) if (t.startsWith("edit:")) writes.push(tokenText(t));
+    if (p.additionalDirectories?.includes("@shared") && !(p.allow ?? []).includes("edit:@shared/**")) writes.push("공용 폴더(lab/shared)");
+  }
+  const noWrites = uniq((p.deny ?? []).filter((t) => t.startsWith("edit:")).map(tokenText));
+  const readBlocks = uniq((p.deny ?? []).filter((t) => t.startsWith("read:")).map(tokenText));
+  if (managedBy) noWrites.push(`보호 경로는 정의가 아니라 코드(${managedBy})가 만든다`);
+  // 네트워크
+  const network = [];
+  if (spec.engine.allowed.includes("none")) network.push("AI 없음 — 감독 프로그램의 도구 실행(도구 방법이 네트워크를 쓰면 그 순간만)");
+  if (usesClaude) {
+    const web = tools.filter((t) => t === "WebFetch" || t === "WebSearch");
+    network.push(web.length ? `Claude: 인터넷 읽기 도구 ${web.join("·")}` : "Claude: 인터넷 도구 없음");
+    if (hasBash) network.push("Claude: Bash 명령은 훅 검사를 통과한 것만(ssh·scp·git 은 서버 두 대로만)");
+  }
+  if (usesCodex) network.push(spec.network?.codex === "on" ? "Codex: 인터넷 허용(실험만)" : "Codex: 인터넷 꺼짐(샌드박스)");
+  // 서버 접속
+  const ssh = [];
+  if (usesClaude && hasBash && spec.hooks.some((h) => h === "ssh-guard" || h === "maintenance-guard")) ssh.push(...SERVER_HOSTS.map((h) => `${h} (${h === "serverpc" ? "서버1" : "서버2"})`));
+  if (usesClaude && !hasBash && !spec.engine.allowed.includes("none")) ssh.push("없음 — Bash 도구가 없다");
+  if (usesCodex) ssh.push("Codex 일감은 ssh·scp 를 못 쓴다(막는 안내 스크립트가 PATH 앞에 놓인다)");
+  if (spec.engine.allowed.includes("none")) ssh.push("없음 — AI 가 없다");
+  return {
+    id: spec.id,
+    label: spec.label,
+    engines,
+    readOnly: ro,
+    workspace: wsText + (spec.workspace.root ? ` [${spec.workspace.root}/]` : ""),
+    tools,
+    blockedTools,
+    writes,
+    noWrites,
+    readBlocks,
+    network,
+    ssh,
+    keys: spec.keys.decision,
+    hooks: spec.hooks.map((h) => HOOK_TEXT[h] ?? h),
+    hookNames: [...spec.hooks],
+    envNames: Object.keys(spec.env?.set ?? {}),
+    envFilter: "키·토큰·비밀번호 모양 이름의 환경변수는 AI 에게 넘기지 않는다(상한, 끌 수 없음)",
+    managedBy,
+  };
+}

@@ -35,6 +35,7 @@
     "test:claude-model": "node tests/claude-model.test.mjs",
     "test:fable-usage": "node tests/fable-usage.test.mjs",
     "preview:admin-ui": "node tests/admin-ui-preview.mjs",
+    "test:factory-map": "node tests/factory-map.test.mjs",
     "test:agents": "node tools/factory-supervisor/tests/agentspec.test.mjs && node tests/agent-defs.test.mjs",
     "test": "node scripts/run-all-tests.mjs",
     "lint": "eslint --fix --color",

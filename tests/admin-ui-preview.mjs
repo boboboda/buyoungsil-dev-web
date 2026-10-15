@@ -607,6 +607,58 @@ const toolkitUsage = {
   "?": { total: 13, ok: 9, denied: 2, failed: 2 },
 };
 
+// 통제실 [지도](4-3): 실제 그래프 계산(buildFactoryMap)에 가짜 입력을 넣고, 실제 FactoryMap 화면(미리 받은 값으로)을 그린다
+const agentSpecMod = await import(pathToFileURL(path.join(repo, "tools/factory-supervisor/agentspec.mjs")).href);
+const agentsLibForMap = loadTs("lib/factory/agents.ts", { "../../tools/factory-supervisor/agentspec.mjs": agentSpecMod });
+const factoryMapLib = loadTs("lib/factory/factoryMap.ts");
+const blockDiagram = loadTs("components/studio/BlockDiagram.tsx");
+const { default: FactoryMapView } = loadTs("components/admin/factory/FactoryMap.tsx", { "@/components/studio/BlockDiagram": blockDiagram, "@/lib/factory/factoryMap": factoryMapLib });
+const mapAgents = agentsLibForMap.readAgentPerms(path.join(repo, "tools", "factory-supervisor", "agents"));
+const mapDev = (state, containers) => ({ state, receivedAt: now - MIN, cpuPct: 18, ramPct: 52, containers });
+const mapC = (name, state = "running", extra = {}) => ({ name, state, status: state === "running" ? "Up 3 days" : "Exited (1) 2 hours ago", restarts: 0, project: null, flags: [], ...extra });
+const mapRow = (o) => ({ appSlug: "x", folder: "x", hasFolder: true, isGit: true, stack: "flutter", branch: "main", remotes: [], remotesSource: "report", deployServer: null, deployMethod: null, domain: null, containerName: null, services: [], containersFound: null, notes: null, exportKind: null, exportPath: null, studioBatch: false, studioService: false, layoutConfig: null, warnings: [], ...o });
+const mapRemote = (host, p, purpose, name = "origin") => ({ name, host, path: p, purpose });
+const mapJob = (o) => ({ id: "j", appSlug: "x", title: "작업", kind: "revision", releaseKind: null, status: "done", phase: null, parallelGroup: null, aiEngine: "claude", requiredSecrets: [], createdAt: now - 5 * HOUR, startedAt: null, finishedAt: now - 4 * HOUR, ...o });
+const mapInput = {
+  now,
+  supervisor: { online: true, enabled: true, commit: "422f5fd5efdede39e9b73806593904a72c867098", commitSubject: "에이전트 블록 정의 추출(4-2)", startedAt: "2026-10-15T00:10:00Z", appSlots: 3, running: 2, approved: 1, pending: 1, pausedJobs: 0, deploying: false, staleCopies: [], workerName: "work-pc", lastSeenAt: now - 8_000 },
+  devices: { "main-pc": mapDev("ok", null), server1: mapDev("ok", [mapC("buyoungsil-web"), mapC("saessak-hub"), mapC("studio-api"), mapC("hub-redis"), mapC("old-demo", "exited")]), server2: mapDev("ok", [mapC("game-api"), mapC("git-mirror", "running", { restarts: 4 })]) },
+  links: {
+    rows: [
+      mapRow({ appSlug: "buyoungsil-web", remotes: [mapRemote("github.com", "boboboda/buyoungsil.git", "github"), mapRemote("serverpc", "git-server/repo/buyoungsil.git", "deploy", "deploy")], deployServer: "serverpc", containerName: "buyoungsil-web", domain: "buyoungsilcoding.com" }),
+      mapRow({ appSlug: "saessak-hub", remotes: [mapRemote("github.com", "boboboda/saessak.git", "github"), mapRemote("serverpc", "git-server/repo/saessak.git", "deploy", "deploy")], deployServer: "serverpc", containerName: "saessak-hub", services: ["hub-redis"], domain: "hub.buyoungsilcoding.com" }),
+      mapRow({ appSlug: "memo-app", remotes: [mapRemote("github.com", "boboboda/memo.git", "github")] }),
+      mapRow({ appSlug: "timer-app", remotes: [], warnings: [{ kind: "no-remote", text: "git 원격이 없어요" }] }),
+      mapRow({ appSlug: "game-api", remotes: [mapRemote("serverpc2", "git-server/repo/game-api.git", "deploy", "deploy")], deployServer: "serverpc2", containerName: "game-api", domain: "api.buyoungsilcoding.com" }),
+      mapRow({ appSlug: "legacy-blog", remotes: [mapRemote("github.com", "boboboda/blog.git", "github")], deployServer: "serverpc", containerName: "legacy-blog", domain: "blog.buyoungsilcoding.com", warnings: [{ kind: "no-container", text: "서버1 에서 컨테이너 legacy-blog 을(를) 못 찾았어요" }] }),
+    ],
+    reportAt: new Date(now - 2 * HOUR).toISOString(), reportStale: false, servers: { serverpc: "ok", serverpc2: "ok" },
+  },
+  serverNames: { serverpc: null, serverpc2: null },
+  agents: mapAgents.agents,
+  agentErrors: mapAgents.errors,
+  tools: [
+    { name: "pixel-art", label: "픽셀 아트", source: "file", version: 3, methods: [{ id: "pixellab", label: "PixelLab", secrets: [{ name: "PIXELLAB_API_KEY", ready: true }] }, { id: "local", label: "로컬 생성", secrets: [] }] },
+    { name: "sprite-slice", label: "스프라이트 쪼개기", source: "file", version: 1, methods: [{ id: "default", label: "기본", secrets: [] }] },
+    { name: "sfx", label: "효과음", source: "fallback", version: 1, methods: [{ id: "default", label: "기본", secrets: [{ name: "SFX_API_KEY", ready: false }] }] },
+  ],
+  cards: [
+    { id: "c1", appSlug: "saessak-hub", name: "캐릭터 도트", tool: "pixel-art", method: "pixellab", enabled: true, version: 4, warnings: [] },
+    { id: "c2", appSlug: "saessak-hub", name: "소품 쪼개기", tool: "sprite-slice", method: "", enabled: true, version: 2, warnings: [] },
+    { id: "c3", appSlug: "memo-app", name: "효과음", tool: "sfx", method: "default", enabled: false, version: 1, warnings: ["SFX_API_KEY 키 이름이 등록돼 있지 않아요."] },
+  ],
+  jobs: [
+    mapJob({ id: "j1", appSlug: "saessak-hub", title: "새싹 허브 소품 추가", status: "running", phase: "build", startedAt: now - 12 * MIN, finishedAt: null, requiredSecrets: ["PIXELLAB_API_KEY"] }),
+    mapJob({ id: "j2", appSlug: "memo-app", title: "메모 앱 다크 모드", status: "running", phase: "verify", kind: "revision", startedAt: now - 3 * MIN, finishedAt: null }),
+    mapJob({ id: "j3", appSlug: "timer-app", title: "타이머 알림음", status: "approved", finishedAt: null }),
+    mapJob({ id: "j4", appSlug: "saessak-hub", title: "새싹 허브 첫 화면", status: "done", kind: "new" }),
+    mapJob({ id: "j5", appSlug: "game-api", title: "점수 API 정리", status: "done" }),
+  ],
+  maintenance: { runningTitle: "4-3 통제실 지도 화면", needsDeploy: 1, deployingNow: false },
+};
+const mapGraph = factoryMapLib.buildFactoryMap(mapInput);
+STATES.map = { ...STATES.live, title: "통제실 지도", map: true };
+
 function page(state) {
   const st = STATES[state];
   // 실제 레이아웃에 실제 상단바·상태줄 '보기' 부품을 가짜 값으로 끼운다(훅 없이)
@@ -618,6 +670,22 @@ function page(state) {
     "@/components/admin/ui/AdminStatusBar": { __esModule: true, default: () => h(statusBar.AdminStatusBarView, { data: st.bar, now, error: st.barError ?? null }) },
   });
 
+  if (st.map)
+    return h(
+      AdminLayout,
+      null,
+      h(
+        "div",
+        { className: "fx-wide mx-auto w-full px-4 py-4 sm:py-8" },
+        h(
+          "div",
+          { className: "fx-split-main" },
+          h("h1", { className: "mb-4 flex items-center gap-2 text-2xl font-bold sm:text-3xl" }, h("span", { "aria-hidden": true, className: "fx-dot fx-run" }), "앱 공장 통제실"),
+          h(FactoryTabs, { active: "map" }),
+          h(FactoryMapView, { initial: { graph: mapGraph, asOf: now, reportAt: null, reportStale: false } }),
+        ),
+      ),
+    );
   if (st.users) return h(AdminLayout, null, h(MembersView, usersData[st.users]));
   if (st.model) return h(AdminLayout, null, modelApprove());
   if (st.inbox) return h(AdminLayout, null, inboxPage());
@@ -844,7 +912,7 @@ if (process.argv.includes("--shot")) {
         if (only && only !== k) continue;
         // 헤드리스 창은 최소 폭이 있어(약 500px) 360px 은 iframe 에 넣어 찍는다
         const mobile = path.join(out, `admin-ui-${k}-360.html`);
-        const [tall, tallMobile] = STATES[k].statusMix ? [4200, 7600] : STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : STATES[k].toolbox ? [2600, 5600] : STATES[k].devices ? [2400, 6200] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
+        const [tall, tallMobile] = STATES[k].map ? [2300, 3400] : STATES[k].statusMix ? [4200, 7600] : STATES[k].history ? [3600, 6400] : STATES[k].users === "many" ? [2000, 5200] : STATES[k].toolbox ? [2600, 5600] : STATES[k].devices ? [2400, 6200] : [2200, 3600]; // 이력 패널·카드 목록이 들어가 길다
         fs.writeFileSync(mobile, `<!doctype html><body style="margin:0;background:#333"><iframe src="${path.basename(file)}" width="360" height="${tallMobile}" style="border:0;display:block"></iframe></body>`);
         for (const [w, size, target] of [["1440", `1440,${tall}`, file], ["1024", `1024,${tall}`, file], ["360", `600,${tallMobile}`, mobile]]) {
           const png = path.join(out, `admin-ui-${k}-${w}.png`);

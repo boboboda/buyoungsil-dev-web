@@ -44,8 +44,11 @@ export const CONFIG_MENU = [
 
 // ───────── 블록 그림 ─────────
 
-export type BlockType = "project" | "card" | "tool" | "method";
+// 앞 4개는 스튜디오 [구성] 그림, 나머지는 통제실 지도(4-3, lib/factory/factoryMap.ts)가 같은 그림 방식을 다시 쓰려고 더한 것
+export type BlockType = "project" | "card" | "tool" | "method" | "machine" | "agent" | "app" | "remote" | "proxy" | "domain" | "container";
 export type Tone = "ok" | "warn" | "muted";
+// 지도의 상태 색(정상 / 작업 중 / 배포 대기 / 끊김·못 찾음 / 경고). [구성] 그림은 쓰지 않는다
+export type BlockStatus = "ok" | "busy" | "pending" | "down" | "warn";
 
 export interface BlockBadge {
   text: string;
@@ -64,11 +67,26 @@ export interface BlockNode {
   sub: string;
   badges: BlockBadge[];
   dim: boolean; // 꺼진 카드 등
+  status?: BlockStatus; // 지도 전용
+  statusText?: string; // 지도 전용: 상태 글자
+  live?: string | null; // 지도 전용: 진행 중 일감 한 줄
 }
 
 export interface BlockEdge {
   from: string;
   to: string;
+  kind?: string; // 지도 전용: 선 종류
+  inferred?: boolean; // 지도 전용: 점선(기록된 이름으로 이은 선)
+}
+
+// 지도 전용: 기계(메인 PC·서버)를 둘러싸는 상자
+export interface BlockFrame {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface BlockGraph {
@@ -76,6 +94,7 @@ export interface BlockGraph {
   edges: BlockEdge[];
   width: number;
   height: number;
+  frames?: BlockFrame[];
 }
 
 export interface GraphCard {

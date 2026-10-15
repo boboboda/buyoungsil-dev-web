@@ -14,6 +14,7 @@ import AppSlotsSettings, { ApprovalWaitSettings, ConductorSettings, ParallelPerA
 import DefaultAiSettings from "./DefaultAiSettings";
 import DevicePanel from "./DevicePanel";
 import FactoryControl from "./FactoryControl";
+import FactoryMap from "./FactoryMap";
 import FactoryOverview, { type HistoryTab } from "./FactoryOverview";
 import FactoryTabs from "./FactoryTabs";
 import { FACTORY_TABS, type FactoryTab } from "./consoleTabs";
@@ -49,6 +50,7 @@ const INTRO: Record<FactoryTab, string> = {
   jobs: "앱 일감 목록·상세, 완성된 앱 수정 지시",
   maint: "공장 정비: 정비 대화 목록, 지시 대기열, 지시별 진행 로그, 커밋·서버 배포 상태",
   supervisor: "내 PC 감독 프로그램: 연결·버전·자동 업데이트·재시작·일시 정지, 그리고 감독 로그(업데이트·재시작·장비 보고·오류)",
+  map: "지도: 메인 PC·서버1·서버2와 그 안의 에이전트·도구·카드·앱 폴더·git 원격·도메인·컨테이너가 어떻게 이어졌는지 선으로 보여 줘요. 블록을 누르면 실제로 적용된 권한·상태·최근 일감이 나와요(보기 전용).",
   studio: "스튜디오: 프로젝트(앱)를 게임/앱으로 나누고, 프로젝트마다 쓸 도구와 스튜디오 주소를 연결해 저장해요. 일감 보내기는 다음 단계예요.",
   release:
     "앱마다 배포 계정을 고르고 종류(첫 출시·스토어 자료 수정·프로젝트 업데이트)를 골라 승인하면, 스토어 문구·데이터 보안·콘텐츠 등급·체크리스트·개인정보처리방침 초안과 AAB 정보가 여기 모여요. 최초 업로드와 프로덕션 출시는 사람이 Play Console 에서 해요.",
@@ -130,6 +132,8 @@ export default async function FactoryConsole({
               <SupervisorLog />
             </div>
           )}
+
+          {tab === "map" && <FactoryMap />}
 
           {tab === "studio" && <StudioPanel />}
 

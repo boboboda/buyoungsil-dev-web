@@ -3,7 +3,7 @@
 // 서버는 정의를 고치지 않는다. 거절된 정의는 거절 이유와 함께 목록에 나온다(감독 프로그램은 그 종류를 예전 코드 그대로 돌린다).
 import path from "node:path";
 
-import { parseAgentDir, summarizeAgent, summarizeFlow } from "../../tools/factory-supervisor/agentspec.mjs";
+import { effectivePermissions, parseAgentDir, summarizeAgent, summarizeFlow } from "../../tools/factory-supervisor/agentspec.mjs";
 
 export interface AgentSummary {
   id: string;
@@ -51,5 +51,40 @@ export function readAgentsView(dir: string = AGENTS_DIR): AgentsView {
     return { agents, flows, errors: r.errors };
   } catch {
     return { agents: [], flows: [], errors: [{ file: "agents", message: "정의 폴더를 읽지 못했어요." }] };
+  }
+}
+
+// ───────── 실제 적용 권한(통제실 지도, 4-3) ─────────
+// 정의(agents/*.json)와 코드의 권한 상한·감독 훅을 합친 결과. 정의가 거절된 종류는 목록에 없고 errors 에 이유가 있다(그 종류는 예전 코드 그대로 돈다).
+export interface AgentPermView {
+  id: string;
+  label: string;
+  summary: string;
+  migrated: boolean;
+  engines: string[];
+  readOnly: boolean;
+  workspace: string;
+  tools: string[];
+  blockedTools: string[];
+  writes: string[];
+  noWrites: string[];
+  readBlocks: string[];
+  network: string[];
+  ssh: string[];
+  keys: string;
+  hooks: string[];
+  envNames: string[];
+  envFilter: string;
+  next: string[];
+}
+
+export function readAgentPerms(dir: string = AGENTS_DIR): { agents: AgentPermView[]; errors: { file: string; message: string }[] } {
+  try {
+    const r = parseAgentDir(dir);
+    const agents = [...r.agents.values()].map((s) => ({ ...(effectivePermissions(s) as Omit<AgentPermView, "summary" | "migrated" | "next">), summary: typeof s.summary === "string" ? s.summary : "", migrated: s.migrated === true, next: [...s.next] }) as AgentPermView);
+
+    return { agents, errors: r.errors };
+  } catch {
+    return { agents: [], errors: [{ file: "agents", message: "정의 폴더를 읽지 못했어요." }] };
   }
 }
