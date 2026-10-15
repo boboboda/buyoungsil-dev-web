@@ -10,6 +10,7 @@ import path from "node:path";
 import { pickArtOutputs, createArtRegistrar } from "./artregister.mjs";
 import { ADAPTERS, loadToolkitManifest, writeArtRefs, writeProjectSettings } from "./toolbroker.mjs";
 import { agentSpec } from "./agentrun.mjs";
+import { checkPickedRefs, pinnedFailureMessage } from "./refcheck.mjs";
 
 export const TOOLJOBS_DIR = "tooljobs";
 export const TOOLJOB_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
@@ -108,7 +109,7 @@ const stripCost = (ts) => {
 /**
  * 도구 일감 한 건을 실행한다. 던지지 않는다.
  * job: /next 가 준 일감({ id, appSlug, requiredSecrets, toolInput, card, projectToolSettings, approvedArts, pickedArts })
- * d: { workDir, toolkitDir, pythonCmd, secrets(이름→값, 전체), post(form) → { status, data }, log(level, message), redact(s), spawnImpl?, isStopped(), onChild(child|null), beat?() }
+ * d: { workDir, toolkitDir, pythonCmd, secrets(이름→값, 전체), post(form) → { status, data }, log(level, message), redact(s), spawnImpl?, fetchImpl?(참고 그림 점검용), isStopped(), onChild(child|null), beat?() }
  * 반환: { status: "done"|"failed"|"needs_confirmation", summary?, failReason?, toolResult, folder: "deleted"|"kept"|"none" }
  */
 export async function runToolJob(job, d) {
@@ -138,10 +139,16 @@ export async function runToolJob(job, d) {
     const declared = new Set(tool.args.map((a) => a.name));
     if (!declared.has("subject") || !declared.has("output_dir")) return result("failed", `${card.tool} 는 대상(subject)·결과 폴더(output_dir)를 받는 도구가 아니라 카드로 직접 실행할 수 없어요.`);
 
+    // 참고 그림 점검: 시작 전에 주소마다 접속해 본다. 고정된 기본 그림이 안 받아지면 일감을 실패로 끝내고(이유·고칠 곳을 적는다), 그 밖의 그림은 빼고 진행한다
+    const refCheck = await checkPickedRefs({ picked: job.pickedArts, pinnedUrl: typeof card.pinnedUrl === "string" ? card.pinnedUrl : null, fetchImpl: d.fetchImpl, log: (lv, m) => log(lv, redact(m)) });
+    if (refCheck.pinnedFailure) return result("failed", pinnedFailureMessage(refCheck.pinnedFailure));
+    const pickedArts = refCheck.keep;
+    const droppedNote = refCheck.dropped.length ? ` 참고 그림 ${refCheck.dropped.length}장은 받지 못해 빼고 진행했어요(${refCheck.dropped[0].host}: ${refCheck.dropped[0].reason}).` : "";
+
     dir = prepareToolJob(d.workDir, job.id);
     const settingsIn = input.confirmed ? stripCost(job.projectToolSettings) : job.projectToolSettings; // 사람이 비용 한도를 확인했으면 카드 설정의 비용 한도는 이번 실행에서 건너뛴다
     const settingsState = writeProjectSettings(dir, settingsIn, job.approvedArts, card.rules ?? null);
-    const refCount = writeArtRefs(dir, job.pickedArts, job.approvedArts);
+    const refCount = writeArtRefs(dir, pickedArts, job.approvedArts);
     log("info", `임시 폴더 준비: ${TOOLJOBS_DIR}/${job.id} · 카드 ${String(card.name ?? "").slice(0, 40)}(판 ${card.version}) · ${card.tool}${card.method ? ` · ${card.method}` : ""} · 설정 ${settingsState} · 참고 그림 ${refCount}장 먼저`);
     if (input.confirmed) log("info", "비용 한도를 사람이 확인한 일감이라 카드 설정의 비용 한도는 이번 실행에서 건너뛰어요.");
 
@@ -251,7 +258,7 @@ export async function runToolJob(job, d) {
     }
     if (!made) return result("failed", `만든 그림이 없어요: ${redactAll(lastFail || "도구 실행 결과가 없어요.")}`, { folder });
 
-    return result("done", `카드 '${String(card.name ?? "").slice(0, 40)}'(판 ${card.version})로 ${made}/${total}건 만들어 후보 ${arts.length}장을 올렸어요. 비용 PixelLab ${cost}회.${failures ? ` 실패 ${failures}건: ${redactAll(lastFail).slice(0, 200)}` : ""}${tail}`, { folder });
+    return result("done", `카드 '${String(card.name ?? "").slice(0, 40)}'(판 ${card.version})로 ${made}/${total}건 만들어 후보 ${arts.length}장을 올렸어요. 비용 PixelLab ${cost}회.${droppedNote}${failures ? ` 실패 ${failures}건: ${redactAll(lastFail).slice(0, 200)}` : ""}${tail}`, { folder });
   } catch (e) {
     return result("failed", `도구 일감 실행 중 오류: ${redact(e?.message ?? String(e)).slice(0, 300)}`, { folder: dir ? "kept" : "none" });
   }

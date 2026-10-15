@@ -100,6 +100,7 @@ function deps(f, over = {}) {
     },
     log: (level, m) => logs.push(`${level}: ${m}`),
     redact: (s) => s,
+    fetchImpl: async () => ({ status: 200, body: null }), // 참고 그림 점검(시작 전 접속)은 늘 성공하는 가짜
     isStopped: () => false,
     // 호출하는 순간의 폴더·환경·설정 파일을 기록한 뒤 진짜로 실행한다
     spawnImpl: (cmd, args, opts) => {
@@ -322,4 +323,53 @@ test("감독 프로그램 연결: 도구 슬롯은 앱 슬롯과 따로, 직접 
   assert.equal(/child_process/.test(job), false, "tooljob.mjs 는 직접 프로세스를 띄우지 않는다(중계 어댑터만)");
   assert.equal(/execSync|spawnSync|\brm\s+-rf/.test(code), false, "코드에 rm -rf·쉘 호출 없음");
   assert.ok(!/supervisor-src|selfdev/.test(code), "정비 폴더·감독 실행 폴더를 가리키지 않는다");
+});
+
+// ───────── 참고 그림 점검(스튜디오 ↔ 서비스 연결, 그림 자체 보관) ─────────
+
+const certExpired = () => Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("certificate has expired"), { code: "CERT_HAS_EXPIRED" }) });
+
+test("참고 그림 점검: 고정된 기본 그림이 인증서 만료로 안 받아지면 일감을 실패로 끝낸다(이유·고칠 곳, 임시 폴더·도구 실행 없음)", async (t) => {
+  const f = fixture(t);
+  const { d, spawned, forms } = deps(f, { fetchImpl: async (url) => { if (/pin\.png/.test(url)) throw certExpired(); return { status: 200, body: null }; } });
+  const j = job({ card: { ...job().card, pinnedUrl: "https://img.example/pin.png" } });
+  const out = await runToolJob(j, d);
+
+  assert.equal(out.status, "failed");
+  assert.match(out.failReason, /기본 그림 주소 접속 실패\(인증서 만료\)/);
+  assert.match(out.failReason, /img\.example/);
+  assert.match(out.failReason, /지금 복사/, "고칠 곳이 적혀 있다");
+  assert.equal(spawned.length, 0, "도구를 부르지 않았다");
+  assert.equal(forms.length, 0);
+  assert.equal(fs.existsSync(toolJobDirOf(f.workDir, j.id)), false, "임시 폴더도 만들지 않았다");
+  assert.equal(out.folder, "none");
+});
+
+test("참고 그림 점검: 고정이 아닌 그림이 안 받아지면 빼고 진행하고, 받아지는 그림은 그대로 쓴다", async (t) => {
+  const f = fixture(t);
+  const { d, spawned, logs } = deps(f, { fetchImpl: async (url) => { if (/bad\.png/.test(url)) throw certExpired(); return { status: 200, body: null }; } });
+  const j = job({ card: { ...job().card, pinnedUrl: "https://img.example/pin.png" }, pickedArts: [{ url: "https://img.example/pin.png", subject: "싹이", kind: "image-prop" }, { url: "https://old.example/bad.png", subject: "싹이", kind: "image-prop" }] });
+  const out = await runToolJob(j, d);
+
+  assert.equal(out.status, "done", JSON.stringify(out));
+  const refs = spawned[0].argv.join(" ");
+  assert.match(refs, /--refs=https:\/\/img\.example\/pin\.png(\s|$)/, "받아지는 고정 그림만 남는다");
+  assert.equal(/bad\.png/.test(refs), false, "안 받아지는 그림은 뺐다");
+  assert.ok(logs.some((l) => /받지 못해 빼고 진행/.test(l) && /old\.example/.test(l)));
+  assert.match(out.summary, /참고 그림 1장은 받지 못해 빼고 진행/);
+});
+
+test("참고 그림 점검 도구: 접속 실패 이유(인증서 만료·시간 초과·HTTP 오류)와 같은 주소는 한 번만 접속", async () => {
+  const { checkPickedRefs, refFailureReason, probeRef } = await import("../refcheck.mjs");
+
+  assert.equal(refFailureReason(certExpired()), "인증서 만료");
+  assert.equal(refFailureReason(Object.assign(new Error("x"), { name: "AbortError" })), "시간 초과");
+  assert.equal(refFailureReason(new TypeError("fetch failed")), "연결 실패");
+  assert.deepEqual(await probeRef("https://x.example/a.png", { fetchImpl: async () => ({ status: 404, body: null }) }), { ok: false, reason: "HTTP 404" });
+  let calls = 0;
+  const r = await checkPickedRefs({ picked: [{ url: "https://x.example/a.png", subject: "a", kind: "image-prop" }, { url: "https://x.example/a.png", subject: "a2", kind: "image-prop" }], pinnedUrl: null, fetchImpl: async () => (calls++, { status: 200, body: null }) });
+
+  assert.equal(calls, 1);
+  assert.equal(r.keep.length, 2);
+  assert.equal(r.pinnedFailure, null);
 });

@@ -158,15 +158,24 @@ test("일정 입력 검사와 서비스 일정 겹침 경고", () => {
 
 // ───────── 서비스 API 확인표·호출기 (가짜 서버) ─────────
 
-test("한 컷 확인표: 검수 대기 개수만 API 있음, 나머지는 서비스에 API 없음, 키 이름 규칙", () => {
+test("한 컷 확인표: 홈페이지가 부를 경로를 모두 채움(서비스에 없으면 404 → 서비스 API 없음), 키 이름 규칙", () => {
   const p = service.serviceProfileOf("one-tiny-frame");
   const has = Object.fromEntries(p.capabilities.map((c) => [c.key, !!c.api]));
 
-  assert.deepEqual(has, { "schedule-toggle": false, "run-now": false, "gen-log": false, "approve-candidate": false, "review-count": true, upload: false });
+  assert.deepEqual(has, { health: true, "pipeline-state": true, "schedule-toggle": true, "run-now": true, "gen-log": true, "approve-candidate": true, "review-count": true, upload: true });
+  const paths = Object.fromEntries(p.capabilities.map((c) => [c.key, `${c.api.method} ${c.api.path}`]));
+
+  assert.equal(paths["schedule-toggle"], "POST /api/admin/pipeline/auto");
+  assert.equal(paths["run-now"], "POST /api/admin/pipeline/run");
+  assert.equal(paths["gen-log"], "GET /api/admin/gen-log");
+  assert.equal(paths["approve-candidate"], "GET /api/admin/candidates");
+  assert.equal(paths.upload, "POST /api/admin/art-upload");
+  assert.equal(paths.health, "GET /api/admin/health");
+  assert.equal(p.capabilities.filter((c) => c.key !== "review-count").every((c) => c.api.auth === "admin"), true, "관리자 기능은 모두 서비스 관리자 키");
   assert.equal(p.server, "serverpc2");
   assert.equal(service.serviceAdminKeyName("one-tiny-frame"), "SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME");
   assert.equal(service.serviceProfileOf("nope"), null);
-  assert.equal(service.missingCapabilities(p).length, 5);
+  assert.equal(service.missingCapabilities(p).length, 0);
   assert.match(read("lib/factory/secretEntries.ts"), /SERVER_SECRET_PREFIXES = \["REVIEW_STATUS_TOKEN_", "SERVICE_ADMIN_TOKEN_"\]/);
 });
 
@@ -226,8 +235,11 @@ test("서비스 호출: API 없는 기능은 부르지 않고 'API 없음', 키 
     async ({ fetchImpl }) => {
       const deps = (mode, secret = SECRET) => ({ fetchImpl: (u, init) => fetchImpl(u, { ...init, headers: { ...init.headers, "x-mode": mode } }), readSecret: async () => secret });
 
-      for (const key of ["schedule-toggle", "run-now", "gen-log", "approve-candidate", "upload"]) assert.deepEqual(await service.callService(p, key, "https://hancut.example.com", deps("200")), { state: "no-api" }, key);
+      assert.deepEqual(await service.callService(p, "nope-key", "https://hancut.example.com", deps("200")), { state: "no-api" }, "확인표에 없는 기능은 부르지 않는다");
       assert.equal(hits, 0, "없는 API 는 서버를 부르지 않는다");
+      const gone = { fetchImpl: async () => ({ status: 404, text: async () => "" }), readSecret: async () => SECRET };
+
+      for (const key of ["schedule-toggle", "run-now", "gen-log", "approve-candidate", "upload", "health"]) assert.deepEqual(await service.callService(p, key, "https://hancut.example.com", gone), { state: "no-api" }, `${key}: 서비스가 404 면 서비스 API 없음`);
       assert.deepEqual(await service.callService(p, "review-count", "https://hancut.example.com", deps("200", null)), { state: "need-key", keyName: "REVIEW_STATUS_TOKEN_ONE_TINY_FRAME" });
       assert.equal(hits, 0, "키가 없으면 부르지 않는다");
       assert.equal((await service.callService(p, "review-count", "https://hancut.example.com", deps("401"))).reason, "인증 실패(키 확인)");
@@ -256,6 +268,7 @@ function makeDb(over = {}) {
   const db = {
     arts: [A("a1"), A("a2"), A("a3", { subject: "나무", cardId: "c2" }), A("a4", { status: "approved", decidedAt: new Date("2026-10-14T05:00:00Z"), decidedBy: "관리자" }), A("a5", { status: "approved", subject: "나무", cardId: "c2" }), A("o1", { appSlug: "other-app" })].map((a) => ({ ...a, createdAt: new Date(a.createdAt), decidedAt: a.decidedAt ? new Date(a.decidedAt) : null })),
     exports: [],
+    actions: [],
     schedules: [],
     conn: { exportKind: "folder", exportPath: "assets/sprites", studioBatch: true, studioService: true, domain: null },
     jobs: [],
@@ -275,6 +288,7 @@ function makeDb(over = {}) {
       findMany: async ({ where }) => db.exports.filter((e) => (!where.appSlug || e.appSlug === where.appSlug) && (!where.kind || e.kind === where.kind) && (!where.artId || where.artId.in.includes(e.artId)) && (!where.status || where.status.in.includes(e.status))),
       create: async ({ data }) => (db.exports.push({ ...data, jobId: data.jobId ?? null, note: data.note ?? "", createdAt: new Date("2026-10-15T01:00:00Z") }), data),
     },
+    factoryServiceAction: { create: async ({ data }) => (db.actions.push({ ...data, id: `act${db.actions.length + 1}`, createdAt: new Date("2026-10-15T02:00:00Z") }), data), findMany: async ({ where }) => db.actions.filter((a) => a.appSlug === where.appSlug).reverse() },
     factoryAppConnection: { findUnique: async () => db.conn },
     factoryApp: { findUnique: async () => db.appRow },
     factorySecretEntry: { findMany: async ({ where }) => db.secrets.filter((s) => where.name.in.includes(s)).map((name) => ({ name })) },
@@ -328,6 +342,7 @@ function loadOps(db, extra = {}) {
         },
       },
       "@/lib/studio/service": service,
+      "@/lib/factory/artCopy": { copyAfterApprove: async () => null, copyApprovedArts: async () => ({ total: 0, copied: 0, failed: 0, remaining: 0, firstError: "" }), isOnUploadServer: (u, base) => !!base && u.startsWith(base) },
     }),
   };
 }
@@ -437,10 +452,10 @@ test("내보내기 거절: 보낼 곳 미정·경로 없음·승인 그림 없�
   assert.equal((await loadOps(db).mod.exportArts("one-tiny-frame", Array.from({ length: 31 }, (_, i) => `a${i}`), "x")).status, 400, "한 번에 30장까지");
 });
 
-test("내보내기(서비스 업로드): 업로드 API 가 없으면 '서비스 업로드 미지원' 501, 그림마다 미지원 기록", async () => {
+test("내보내기(서비스 업로드): 서비스가 404 면 '서비스 업로드 미지원' 501 + 미지원 기록, 키 없으면 키 등록 필요, 성공이면 보냄 기록 + 서비스 동작 기록", async () => {
   const db = makeDb({ conn: { exportKind: "upload", exportPath: null, studioBatch: true, studioService: true, domain: null } });
   const { mod, calls } = loadOps(db);
-  const r = await mod.exportArts("one-tiny-frame", ["a4", "a5"], "관리자A");
+  const r = await mod.exportArts("one-tiny-frame", ["a4", "a5"], "관리자A", { serviceDeps: { readSecret: async () => SECRET, fetchImpl: async () => ({ status: 404, text: async () => "" }) } });
 
   assert.equal(r.ok, false);
   assert.equal(r.status, 501);
@@ -448,6 +463,20 @@ test("내보내기(서비스 업로드): 업로드 API 가 없으면 '서비스 
   assert.match(r.message, /docs\/studio-service-api\.md/);
   assert.equal(calls.revision.length, 0, "앱 폴더 일감은 만들지 않는다");
   assert.deepEqual(db.exports.map((e) => [e.artId, e.kind, e.status, e.note]), [["a4", "upload", "unsupported", "서비스 업로드 미지원"], ["a5", "upload", "unsupported", "서비스 업로드 미지원"]]);
+  const nokey = await mod.exportArts("one-tiny-frame", ["a4"], "관리자A", { serviceDeps: { readSecret: async () => null, fetchImpl: async () => assert.fail("키가 없으면 부르지 않는다") } });
+
+  assert.equal(nokey.ok, false);
+  assert.match(nokey.message, /키 등록 필요: SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME/);
+  let sent = null;
+  const ok = await mod.exportArts("one-tiny-frame", ["a4", "a5"], "관리자A", { serviceDeps: { readSecret: async () => SECRET, fetchImpl: async (u, init) => ((sent = { u, init }), { status: 200, text: async () => JSON.stringify({ saved: 2, skipped: [] }) }) } });
+
+  assert.equal(ok.ok, true, ok.message);
+  assert.equal(sent.u, "https://hancut.example.com/api/admin/art-upload");
+  assert.equal(sent.init.headers.Authorization, `Bearer ${SECRET}`, "서비스 관리자 키로 서버가 대신 부른다");
+  assert.deepEqual(JSON.parse(sent.init.body).items.map((i) => i.fileName), ["a4.png", "a5.png"]);
+  assert.equal(db.actions.at(-1).action, "upload", "누가 했는지 서비스 동작 기록");
+  assert.equal(db.actions.at(-1).who, "관리자A");
+  assert.equal(JSON.stringify(db.actions).includes(SECRET), false);
 });
 
 test("내보낸 기록 상태: 앱 수정 일감이 끝나면 보냄, 실패·취소면 실패, 진행 중이면 그대로", () => {
@@ -547,7 +576,8 @@ test("운영 자료: 그림·필터 선택지·보관함·사용 이력·내보�
     secrets: ["REVIEW_STATUS_TOKEN_ONE_TINY_FRAME"],
   });
   const { mod } = loadOps(db);
-  const data = await mod.readOpsData("one-tiny-frame", { serviceDeps: { readSecret: async () => SECRET, fetchImpl: async () => ({ status: 200, text: async () => JSON.stringify({ review: 4, held: 0, pending: 1 }) }) } });
+  const fetchImpl = async () => ({ status: 200, text: async () => JSON.stringify({ review: 4, held: 0, pending: 1 }) });
+  const data = await mod.readOpsData("one-tiny-frame", { uploadBase: "https://up.example.com", serviceDeps: { readSecret: async () => SECRET, fetchImpl }, healthDeps: { lookupImpl: async () => ["93.184.216.34"], tlsProbe: async () => ({ validTo: "2027-01-01T00:00:00.000Z", authorized: true, error: null }), keysReady: async () => new Set(["REVIEW_STATUS_TOKEN_ONE_TINY_FRAME"]), now: () => Date.parse("2026-10-15T00:00:00Z") } });
 
   assert.equal(data.arts.length, 5, "다른 프로젝트 그림은 없다");
   assert.deepEqual(data.archive.map((g) => [g.subject, g.arts.length]), [["나무", 1], ["싹이", 1]]);
@@ -555,14 +585,19 @@ test("운영 자료: 그림·필터 선택지·보관함·사용 이력·내보�
   assert.match(data.history.a4.map((e) => e.text).join("\n"), /앱 폴더로 내보냄 — 보냄/);
   assert.deepEqual(data.schedules.map((s) => [s.cardName, s.enabled, s.next]), [["싹이 단독 짤", false, "꺼짐"], ["소품 컷", false, "꺼짐"], ["꺼진 카드", false, "꺼짐"]], "기본은 모두 꺼짐");
   assert.match(data.overlap, /자체 생성 일정/);
-  assert.equal(data.uploadSupported, false);
+  assert.equal(data.uploadSupported, true, "업로드 경로가 확인표에 있다(서비스에 없으면 호출할 때 404 → 미지원)");
+  assert.equal(data.service.health.api.state, "ok", "health API 결과가 서비스 요약에 붙는다");
+  assert.deepEqual(data.copy, { enabled: true, needed: 2, failed: 0, outsideIds: ["a4", "a5"] }, "승인 그림 a4·a5 모두 업로드 서버 밖");
   assert.equal(data.service.reviewCount.review, 4);
   assert.deepEqual(data.service.adminKey, { name: "SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME", ready: false });
   assert.equal(data.service.capabilities.find((c) => c.key === "review-count").keyReady, true);
   assert.equal(JSON.stringify(data).includes(SECRET), false, "키 값은 자료에 없다");
   const off = await loadOps(makeDb({ conn: { exportKind: "folder", exportPath: "a", studioBatch: false, studioService: false, domain: null } })).mod.readOpsData("one-tiny-frame");
 
-  assert.equal(off.service, null, "서비스 운영이 꺼져 있으면 서비스는 읽지 않는다");
+  assert.equal(off.service, null, "서비스 운영이 꺼져 있고 관리자 열기도 아니면 서비스는 읽지 않는다");
+  const adminOpen = await loadOps(makeDb({ conn: { exportKind: "folder", exportPath: "a", studioBatch: false, studioService: false, domain: null } })).mod.readOpsData("one-tiny-frame", { includeService: true, uploadBase: "", serviceDeps: { readSecret: async () => null }, healthDeps: { lookupImpl: async () => [], keysReady: async () => new Set() } });
+
+  assert.equal(adminOpen.service?.appSlug, "one-tiny-frame", "관리자 세션이면 연결 설정의 스위치와 상관없이 서비스 운영을 연다");
   assert.equal(off.overlap, null);
   assert.equal(await mod.readOpsData("A"), null);
 });
@@ -647,6 +682,17 @@ const refresh = { n: 0 };
 const nav = { "next/link": { __esModule: true, default: Link }, "next/navigation": { useRouter: () => ({ refresh: () => refresh.n++, push() {} }) } };
 const OpsTab = load("components/studio/OpsTab.tsx", nav).default;
 
+const HEALTH = (over = {}) => ({
+  appSlug: "one-tiny-frame",
+  checkedAt: "2026-10-15T05:03:00.000Z",
+  base: "hancut.example.com",
+  domain: { state: "ok", ms: 120, status: 200, text: "응답함 200 (120ms)" },
+  cert: { state: "warn", validTo: "2026-10-25T00:00:00.000Z", daysLeft: 10, text: "인증서 만료일 2026-10-25 (남은 10일) — 갱신이 필요해요" },
+  keys: { review: { name: "REVIEW_STATUS_TOKEN_ONE_TINY_FRAME", ready: true }, admin: { name: "SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME", ready: false } },
+  api: { state: "no-api", text: "서비스 API 없음", info: {} },
+  ...over,
+});
+
 function viewData(over = {}) {
   const arts = [A("a1"), A("a2", { subject: "감자" }), A("a3", { status: "approved", cardId: "c2", decidedAt: "2026-10-14T05:00:00.000Z" }), A("a4", { status: "rejected", cardId: null })];
   const cardNames = new Map([["c1", "싹이 단독 짤"], ["c2", "소품 컷"]]);
@@ -664,7 +710,9 @@ function viewData(over = {}) {
     schedules: [{ cardId: "c1", cardName: "싹이 단독 짤", cardEnabled: true, enabled: false, hour: 9, count: 1, subjects: "", extra: "", lastRunKey: "", lastRunAt: null, lastJobId: null, lastMessage: "", next: "꺼짐", saved: false }],
     overlap: "서비스 서버에 자체 생성 일정이 있어요(매주 월요일 10:00).",
     uploadSupported: false,
-    service: service.buildServiceView({ profile: service.serviceProfileOf("one-tiny-frame"), base: "https://hancut.example.com", keysReady: new Set(["REVIEW_STATUS_TOKEN_ONE_TINY_FRAME"]), reviewCount: { state: "ok", review: 4, held: 1, pending: 2 } }),
+    service: service.buildServiceView({ profile: service.serviceProfileOf("one-tiny-frame"), base: "https://hancut.example.com", keysReady: new Set(["REVIEW_STATUS_TOKEN_ONE_TINY_FRAME"]), reviewCount: { state: "ok", review: 4, held: 1, pending: 2 }, health: HEALTH() }),
+    serviceActions: [],
+    copy: { enabled: true, needed: 0, failed: 0, outsideIds: [] },
     ...over,
   };
 }
@@ -744,22 +792,35 @@ test("생성 일정 화면: 카드마다 꺼짐 기본, 시각·장 수·대상 
   assert.equal(html(viewData({ overlap: null }), "schedule").includes("data-schedule-overlap"), false);
 });
 
-test("서비스 운영 화면: 확인표(있는 것만 '있음', 나머지 '서비스에 API 없음'), 검수 대기 숫자, 관리자 키 '키 등록 필요', 연결 못 한 기능 안내, 키 값 없음", () => {
+test("서비스 운영 화면: 연결 상태(도메인·인증서·키·API)·검수 대기 숫자·관리자 키 '키 등록 필요'·API 없으면 버튼 끔·키 값 없음", () => {
   const out = html(viewData(), "service");
 
-  assert.equal((out.match(/서비스에 API 없음/g) ?? []).length >= 5, true);
-  assert.equal((out.match(/API 있음/g) ?? []).length, 1);
-  assert.match(out, /검수 4장 · 보류 1장 · 그림 대기 2장/);
-  assert.match(out, /SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME<\/span>: <span class="fx-st fx-st-warn">키 등록 필요/);
-  assert.match(out, /단추를 만들지 않았어요/);
-  assert.match(out, /docs\/studio-service-api\.md/);
+  assert.match(out, /data-service-health="one-tiny-frame"/);
+  assert.match(out, /응답함/);
+  assert.match(out, /120ms/);
+  assert.match(out, /만료 임박 10일/, "14일 이하면 경고");
+  assert.match(out, /data-health-key="REVIEW_STATUS_TOKEN_ONE_TINY_FRAME"/);
+  assert.match(out, /data-health-key="SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME"/);
+  assert.match(out, /서비스 API 없음/);
+  assert.match(out, /GET \/api\/admin\/health/);
+  assert.match(out, /data-service-noapi/, "서비스에 API 가 없다는 안내");
+  assert.match(out, /서비스 집계: 검수 4장 · 보류 1장 · 그림 대기 2장/);
+  assert.match(out, /키 등록 필요 — 통제실 키 등록/);
   assert.match(out, /서버2\(serverpc2\)/);
   assert.match(out, /one-tiny-frame-api-1/);
   assert.equal(out.includes(SECRET), false);
-  assert.equal(/<button[^>]*>\s*(지금 실행|켜기|끄기|승인)/.test(out), false, "없는 API 의 단추는 없다");
-  const missingKey = html(viewData({ service: service.buildServiceView({ profile: service.serviceProfileOf("one-tiny-frame"), base: "https://hancut.example.com", keysReady: new Set(), reviewCount: { state: "unavailable", text: "키 등록 필요: REVIEW_STATUS_TOKEN_ONE_TINY_FRAME" } }) }), "service");
+  assert.match(out, /data-health-check/, "[지금 확인] 단추");
+  for (const w of ["schedule-on", "schedule-off", "run"]) assert.match(out, new RegExp(`data-service-write="${w}"[^>]*disabled`), `${w}: 서비스 API 없음이면 꺼짐`);
+  // 서비스 API 정상 + 키 등록 → 버튼이 켜진다(disabled 아님)
+  const ready = html(viewData({ service: service.buildServiceView({ profile: service.serviceProfileOf("one-tiny-frame"), base: "https://hancut.example.com", keysReady: new Set(["SERVICE_ADMIN_TOKEN_ONE_TINY_FRAME", "REVIEW_STATUS_TOKEN_ONE_TINY_FRAME"]), reviewCount: null, health: HEALTH({ api: { state: "ok", text: "정상 응답", info: { version: "1.2" } }, cert: { state: "expired", validTo: "2026-10-01T00:00:00.000Z", daysLeft: -14, text: "인증서 만료됨 (2026-10-01, 14일 지남)" } }) }) }), "service");
 
-  assert.match(missingKey, /키 등록 필요: REVIEW_STATUS_TOKEN_ONE_TINY_FRAME/);
+  assert.doesNotMatch(ready, /data-service-write="run"[^>]*disabled/);
+  assert.doesNotMatch(ready, /data-service-noapi/);
+  assert.match(ready, /fx-st-fail">만료됨/, "만료는 빨간색(실패 색)");
+  assert.match(ready, /version=1\.2/);
+  // 접근 키(읽기 전용): 쓰기 단추가 없다
+  assert.equal(/data-service-write=/.test(html(viewData(), "service", false)), false, "읽기 전용에는 쓰기 단추가 없다");
+  assert.equal(/data-health-check/.test(html(viewData(), "service", false)), false, "읽기 전용에는 [지금 확인]도 없다");
   assert.match(html(viewData({ service: null }), "service"), /서비스 정보가 없어요/);
 });
 
@@ -768,7 +829,7 @@ test("서비스 운영 화면: 확인표(있는 것만 '있음', 나머지 '서�
 test("연결: 운영 탭이 화면에 붙고, 일정 확인이 일감 가져가기 길목에 있고, 마이그레이션은 새 표만, 앱 폴더·nginx·서비스 DB 를 건드리는 코드가 없다", () => {
   const page = read("app/studio/[app]/page.tsx");
 
-  assert.match(page, /readOpsData\(app\)/);
+  assert.match(page, /readOpsData\(app, \{ includeService: adminService \}\)/);
   assert.match(page, /<OpsTab canEdit=\{viewer\.kind === "admin"\}/);
   assert.equal(/data-studio-pending="ops"/.test(page), false);
   assert.match(page, /art\?: string \| string\[\]/);

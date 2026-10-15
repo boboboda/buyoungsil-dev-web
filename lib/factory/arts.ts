@@ -42,6 +42,8 @@ export interface ArtRow {
   note: string;
   cardId?: string | null; // 이 그림을 만든 결과물 카드(2-2)
   cardVersion?: number | null; // 그때의 카드 판 번호
+  sourceUrl?: string; // 업로드 서버로 복사하기 전의 원래 주소(복사했을 때만)
+  copyError?: string; // 복사하지 못한 이유(성공하면 빈 글자)
 }
 
 /** 화면·API 로 나가는 모양(날짜는 ISO 글자) */
@@ -61,6 +63,8 @@ export interface ArtView {
   note: string;
   cardId: string | null;
   cardVersion: number | null;
+  sourceUrl: string;
+  copyError: string;
 }
 
 export interface ArtSummary {
@@ -76,7 +80,7 @@ export interface ArtDb {
     findMany(args: { where: { appSlug?: string; status?: string; id?: { in: string[] }; jobId?: string }; orderBy?: Record<string, "asc" | "desc">; take?: number }): Promise<ArtRow[]>;
     count(args: { where: { jobId: string } }): Promise<number>;
     create(args: { data: Omit<ArtRow, "id" | "createdAt" | "decidedBy" | "decidedAt" | "note"> & Partial<Pick<ArtRow, "decidedBy" | "decidedAt" | "note">> }): Promise<ArtRow>;
-    update(args: { where: { id: string }; data: Partial<Pick<ArtRow, "status" | "decidedBy" | "decidedAt" | "note">> }): Promise<ArtRow>;
+    update(args: { where: { id: string }; data: Partial<Pick<ArtRow, "status" | "decidedBy" | "decidedAt" | "note" | "url" | "sourceUrl" | "copyError">> }): Promise<ArtRow>;
   };
 }
 
@@ -140,6 +144,8 @@ export function toArtView(r: ArtRow): ArtView {
     note: r.note,
     cardId: r.cardId ?? null,
     cardVersion: r.cardVersion ?? null,
+    sourceUrl: r.sourceUrl ?? "",
+    copyError: r.copyError ?? "",
   };
 }
 

@@ -151,6 +151,7 @@ const nextRoute = loadTs("app/api/factory/next/route.ts", {
   "@/lib/factory/reviewVideo": { sweepReviewVideos: async () => {} },
   "@/lib/factory/uploadTest": { consumeUploadTest: async () => null },
   "@/lib/studio/opsData": { tickSchedules: async () => {} },
+  "@/lib/studio/serviceHealth": { tickServiceHealth: async () => {} },
   "@/lib/factory/maintenance": { maintenanceForNext: async () => ({}), maintenanceHold: async () => maintHold },
   "@/lib/factory/rules": { getRuleOverrides: async () => ({}), renderRules: () => ({}) },
   "@/lib/factory/settings": {

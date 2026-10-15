@@ -6,6 +6,8 @@ import Link from "next/link";
 import { readStudioProject, type StudioProjectData } from "@/lib/studio/data";
 import { parseStudioTab, STUDIO_TABS, visibleOpsMenu } from "@/lib/studio/dashboard";
 import { resolveViewer } from "@/lib/studio/pageAccess";
+import { serviceProfileOf } from "@/lib/studio/service";
+import { tickServiceHealth } from "@/lib/studio/serviceHealth";
 import { readMakeData, type MakeData } from "@/lib/studio/makeData";
 import { readLayoutData, type LayoutData } from "@/lib/studio/layoutData";
 import { readOpsData, tickSchedules, type OpsData } from "@/lib/studio/opsData";
@@ -50,7 +52,9 @@ export default async function StudioProjectPage({ params, searchParams }: { para
     );
   }
   const flags = { studioBatch: data.link?.studioBatch ?? false, studioService: data.link?.studioService ?? false };
-  const ops = visibleOpsMenu(flags);
+  // 권한 하나로: 관리자 세션이면 연결 설정의 스위치와 상관없이 서비스 운영을 연다(서비스 확인표가 있는 프로젝트). 접근 키 사용자는 스위치를 따른다
+  const adminService = viewer.kind === "admin" && !!serviceProfileOf(app);
+  const ops = visibleOpsMenu({ ...flags, studioService: flags.studioService || adminService });
   const sub = Array.isArray(search.sub) ? search.sub[0] : search.sub;
   let make: MakeData | null = null;
 
@@ -75,9 +79,12 @@ export default async function StudioProjectPage({ params, searchParams }: { para
   let opsData: OpsData | null = null;
 
   if (tab === "ops") {
-    if (viewer.kind === "admin") void tickSchedules(); // 열 때도 한 번 확인(1분에 한 번만)
+    if (viewer.kind === "admin") {
+      void tickSchedules(); // 열 때도 한 번 확인(1분에 한 번만)
+      void tickServiceHealth(); // 서비스 연결 상태(10분에 한 번만)
+    }
     try {
-      opsData = await readOpsData(app);
+      opsData = await readOpsData(app, { includeService: adminService });
     } catch (error) {
       console.error("[studio] 운영 자료 읽기 실패:", error instanceof Error ? error.name : "unknown");
     }

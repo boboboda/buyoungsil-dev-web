@@ -2,6 +2,7 @@
 // /studio/<앱> 의 [운영] 탭: 검수함 · 보관함 · 내보내기 · 생성 일정 · 서비스 운영(프로젝트 연결 설정에서 켜진 프로젝트만).
 // 자료는 서버가 props 로 준다(lib/studio/opsData.ts). 행동은 /api/studio/ops(관리자만)로 보낸다. 관리자가 아니면(접근 키) 읽기 전용: 단추·입력칸이 없다.
 // 앱 폴더는 직접 고치지 않는다(내보내기는 앱 수정 일감으로만). 서비스 키 값은 이 화면에 오지 않는다(이름과 등록 여부만).
+// 서비스 운영 화면은 components/studio/ServiceOps.tsx. 그림 자체 보관(업로드 서버로 복사)의 [지금 복사]·복사 상태는 아래 CopyBar·CopyChip.
 "use client";
 
 import { useRouter } from "next/navigation";
@@ -9,6 +10,7 @@ import { useMemo, useState } from "react";
 
 import { ART_STATUS_LABELS, type ArtView } from "@/lib/factory/arts";
 import ArtPicker from "@/components/studio/ArtPicker";
+import ServicePane from "@/components/studio/ServiceOps";
 import { PixelImg } from "@/components/studio/MakeTab";
 import { EXPORT_LIMIT, EXPORT_STATUS_LABELS, filterArts, OPS_BULK_LIMIT, SCHEDULE_LIMITS, scheduleError, type ExportRecord, type ReviewFilter } from "@/lib/studio/ops";
 import type { OpsData, OpsScheduleView } from "@/lib/studio/opsData";
@@ -62,6 +64,60 @@ function History({ data, art }: { data: OpsData; art: ArtView }) {
   );
 }
 
+// ───────── 그림 자체 보관 ─────────
+
+/** 승인 그림 중 업로드 서버 밖에 있는 것이 있으면 알리고 [지금 복사]. 복사하면 그림 주소가 복사본으로 바뀌고 원래 주소는 sourceUrl 로 남는다 */
+function CopyBar({ data, canEdit }: { data: OpsData; canEdit: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  if (!data.copy.enabled || (!data.copy.needed && !notice)) return null;
+  const run = async () => {
+    setBusy(true);
+    const r = await post({ appSlug: data.appSlug, action: "copy" });
+
+    setNotice(r.message);
+    router.refresh();
+    setBusy(false);
+  };
+
+  return (
+    <div className="fx-panel flex flex-wrap items-center gap-2 p-2 text-sm" data-copy-bar>
+      {data.copy.needed ? (
+        <span className={data.copy.failed ? "fx-warn" : ""}>
+          승인 그림 {data.copy.needed}장이 홈페이지 업로드 서버 밖(서비스 서버 등)에 있어요{data.copy.failed ? ` — 복사 실패 ${data.copy.failed}장` : ""}. 원래 서버가 막히면 일감이 실패할 수 있어요.
+        </span>
+      ) : null}
+      {canEdit && data.copy.needed ? (
+        <button className={BTN} data-copy-run disabled={busy} type="button" onClick={run}>
+          {busy ? "복사 중…" : "지금 복사"}
+        </button>
+      ) : null}
+      {notice ? (
+        <span className="text-xs" data-copy-notice role="status">
+          {notice}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** 그림 옆 복사 상태: 실패 이유 · 업로드 서버 밖 · 복사됨(원래 주소 보관) */
+function CopyChip({ data, art }: { data: OpsData; art: ArtView }) {
+  if (art.copyError) {
+    return (
+      <p className="fx-st fx-st-warn max-w-full whitespace-normal break-words text-xs" data-copy-state="failed" title={art.sourceUrl || art.url}>
+        복사 실패: {art.copyError}
+      </p>
+    );
+  }
+  if (art.status === "approved" && data.copy.outsideIds.includes(art.id)) return <p className="fx-st fx-st-info text-xs" data-copy-state="outside">업로드 서버 밖 — 복사 전</p>;
+  if (art.sourceUrl) return <p className="fx-st fx-st-ok text-xs" data-copy-state="copied" title={`원래 주소: ${art.sourceUrl}`}>자체 보관됨</p>;
+
+  return null;
+}
+
 // ───────── 검수함 ─────────
 
 function ReviewPane({ data, canEdit, focusArt }: { data: OpsData; canEdit: boolean; focusArt?: string }) {
@@ -102,6 +158,7 @@ function ReviewPane({ data, canEdit, focusArt }: { data: OpsData; canEdit: boole
 
   return (
     <div className="space-y-3" data-ops-pane="review">
+      <CopyBar canEdit={canEdit} data={data} />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-review-filters>
         <label className="text-xs fx-muted">
           상태
@@ -219,6 +276,7 @@ function ReviewPane({ data, canEdit, focusArt }: { data: OpsData; canEdit: boole
               {a.cardVersion ? ` 판 ${a.cardVersion}` : ""}
             </p>
             {data.cards.some((x) => x.defaultArtId === a.id) ? <p className="text-xs">★ 기본 그림</p> : null}
+            <CopyChip art={a} data={data} />
             <ExportChips list={data.exportsByArt[a.id] ?? []} />
             <details className="text-xs">
               <summary className="cursor-pointer fx-muted">사용 이력</summary>
@@ -241,6 +299,7 @@ function ArchivePane({ data }: { data: OpsData }) {
 
   return (
     <div className="space-y-3" data-ops-pane="archive">
+      <CopyBar canEdit={false} data={data} />
       {data.archive.map((g) => (
         <section key={g.subject} className="fx-panel space-y-2 p-3" data-archive-subject={g.subject}>
           <h3 className="text-sm font-bold">
@@ -263,6 +322,7 @@ function ArchivePane({ data }: { data: OpsData }) {
             사용 이력 — {openArt.subject} <span className="fx-muted font-normal">{kindLabel(openArt.kind)}</span>
           </h3>
           <History art={openArt} data={data} />
+          <CopyChip art={openArt} data={data} />
           <ExportChips list={data.exportsByArt[openArt.id] ?? []} />
         </section>
       ) : (
@@ -284,6 +344,7 @@ function ExportPane({ data, canEdit }: { data: OpsData; canEdit: boolean }) {
   const target = kind === "folder" ? `앱 폴더 경로 — ${data.link.exportPath ?? "(경로 없음)"}` : kind === "upload" ? "서비스 업로드" : "정해지지 않음";
   const toggle = (id: string) => setSel((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length >= EXPORT_LIMIT ? cur : [...cur, id]));
   const run = async () => {
+    if (kind === "upload" && !window.confirm(`승인 그림 ${sel.length}장을 서비스(${data.service?.name ?? "서비스"})로 보낼까요? 누가 언제 보냈는지 기록이 남아요.`)) return;
     setBusy(true);
     const r = await post({ appSlug: data.appSlug, action: "export", ids: sel });
 
@@ -436,87 +497,13 @@ function SchedulePane({ data, canEdit }: { data: OpsData; canEdit: boolean }) {
   );
 }
 
-// ───────── 서비스 운영 ─────────
-
-function ServicePane({ data }: { data: OpsData }) {
-  const router = useRouter();
-  const v = data.service;
-
-  if (!v) return <p className="fx-panel p-3 text-sm fx-muted">연결된 서비스 정보가 없어요(이 프로젝트는 서비스 API 확인표가 아직 없어요).</p>;
-  const missing = v.capabilities.filter((c) => !c.present);
-
-  return (
-    <div className="space-y-3" data-ops-pane="service">
-      <p className="fx-panel p-3 text-sm">
-        <b>{v.name}</b> · {v.server} · 컨테이너 {v.container} · 서비스 주소 {v.baseLabel || "(없음)"}
-        {v.baseProblem ? <span className="fx-st fx-st-warn ml-2 text-xs">{v.baseProblem}</span> : null}
-        <span className="block text-xs fx-muted">서비스 코드·문서를 읽어 확인한 날: {v.checkedAt}. 서비스 DB는 건드리지 않고 API로만 다뤄요.</span>
-      </p>
-      <p className="text-sm" data-service-key>
-        관리자 키 <span className="font-mono text-xs">{v.adminKey.name}</span>: {v.adminKey.ready ? <span className="fx-st fx-st-ok">등록됨</span> : <span className="fx-st fx-st-warn">키 등록 필요</span>}
-        <span className="ml-1 text-xs fx-muted">(값은 화면에 나오지 않아요. 통제실 키 등록에서 서버 보관 키로 등록해요)</span>
-      </p>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] text-left text-sm" data-service-table>
-          <thead>
-            <tr className="border-b border-default-300 text-xs fx-muted">
-              <th className="p-1">기능</th>
-              <th className="p-1">상태</th>
-              <th className="p-1">확인한 내용</th>
-            </tr>
-          </thead>
-          <tbody>
-            {v.capabilities.map((c) => (
-              <tr key={c.key} className="border-b border-default-200 align-top" data-service-cap={c.key}>
-                <td className="p-1 font-bold">{c.label}</td>
-                <td className="p-1">
-                  {c.present ? (
-                    <span className="fx-st fx-st-ok">API 있음</span>
-                  ) : (
-                    <span className="fx-st fx-st-warn">서비스에 API 없음</span>
-                  )}
-                  {c.api ? <span className="block font-mono text-xs fx-muted">{c.api}</span> : null}
-                  {c.keyName ? <span className="block text-xs fx-muted">{c.keyReady ? "키 등록됨" : `키 등록 필요: ${c.keyName}`}</span> : null}
-                </td>
-                <td className="p-1 text-xs fx-muted">{c.evidence}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {v.capabilities.some((c) => c.key === "review-count" && c.present) ? (
-        <section className="fx-panel space-y-2 p-3" data-service-review>
-          <h3 className="text-sm font-bold">검수 대기 (서비스 API에서 읽음)</h3>
-          {v.reviewCount?.state === "ok" ? (
-            <p className="text-sm">
-              검수 {v.reviewCount.review}장 · 보류 {v.reviewCount.held}장 · 그림 대기 {v.reviewCount.pending}장
-            </p>
-          ) : (
-            <p className="text-sm fx-muted">{v.reviewCount?.text ?? "확인하지 않았어요."}</p>
-          )}
-          <button className={BTN} type="button" onClick={() => router.refresh()}>
-            새로 확인
-          </button>
-        </section>
-      ) : null}
-      <section className="fx-panel space-y-1 p-3" data-service-missing>
-        <h3 className="text-sm font-bold">연결하지 못한 기능 ({missing.length})</h3>
-        <p className="text-xs fx-muted">
-          {missing.map((c) => c.label).join(" · ") || "없음"} — 단추를 만들지 않았어요. 한 컷 앱에 추가할 API 제안은 {v.proposal} 에 있어요. 실제 추가는 나중에 앱 일감으로 따로 해요.
-        </p>
-        {v.ownSchedule ? <p className="text-xs fx-muted">서비스 자체 일정: {v.ownSchedule}</p> : null}
-      </section>
-    </div>
-  );
-}
-
 // ───────── 탭 ─────────
 
 export default function OpsTab({ data, canEdit, sub, focusArt }: { data: OpsData; canEdit: boolean; sub: string; focusArt?: string }) {
   if (sub === "archive") return <ArchivePane data={data} />;
   if (sub === "export") return <ExportPane canEdit={canEdit} data={data} />;
   if (sub === "schedule") return <SchedulePane canEdit={canEdit} data={data} />;
-  if (sub === "service") return <ServicePane data={data} />;
+  if (sub === "service") return <ServicePane canEdit={canEdit} data={data} />;
 
   return <ReviewPane key={focusArt ?? "all"} canEdit={canEdit} data={data} focusArt={focusArt} />;
 }

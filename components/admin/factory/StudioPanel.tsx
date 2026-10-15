@@ -14,6 +14,9 @@ import { buildStudioApps, splitStudioApps, readStudioProjects, withDefaultShortc
 import { STUDIO_REQUEST_SOURCE } from "@/lib/studio/requests";
 import { readStudioOverview } from "@/lib/studio/data";
 import { shortDate } from "@/lib/studio/dashboard";
+import { serviceProfileOf } from "@/lib/studio/service";
+import { peekServiceHealth, type ServiceHealth } from "@/lib/studio/serviceHealth";
+import { ServiceStatusCell } from "@/components/studio/ServiceStatus";
 
 import StudioWorkbench, { type StudioSentJob, type StudioToolRow } from "./StudioWorkbench";
 
@@ -37,6 +40,8 @@ interface SummaryRow {
   pendingReview: number;
   lastGeneratedAt: string | null;
   oldStudioUrl: string | null;
+  hasService: boolean; // 서비스 확인표가 있는 프로젝트(예: 한 컷 서버)
+  serviceHealth: ServiceHealth | null; // 저장된 마지막 연결 상태(없으면 아직 확인 안 함)
 }
 
 /** 프로젝트별 요약 표: 새 스튜디오로 가는 링크와, 있으면 옛 스튜디오 바로가기 */
@@ -55,6 +60,7 @@ function StudioSummary({ rows }: { rows: SummaryRow[] }) {
               <th className="pr-3">카드</th>
               <th className="pr-3">검수 대기</th>
               <th className="pr-3">최근 생성</th>
+              <th className="pr-3">서비스 연결</th>
               <th>바로가기</th>
             </tr>
           </thead>
@@ -68,6 +74,7 @@ function StudioSummary({ rows }: { rows: SummaryRow[] }) {
                 <td className="pr-3">{r.cardCount}장</td>
                 <td className={`pr-3 ${r.pendingReview ? "fx-warn" : ""}`}>{r.pendingReview}장</td>
                 <td className="pr-3">{shortDate(r.lastGeneratedAt)}</td>
+                <td className="pr-3">{r.hasService ? <ServiceStatusCell appSlug={r.appSlug} health={r.serviceHealth} /> : <span className="fx-muted">-</span>}</td>
                 <td className="space-x-2">
                   <Link className="underline" data-studio-summary-open={r.appSlug} href={`/studio/${r.appSlug}`}>
                     새 스튜디오
@@ -113,7 +120,10 @@ export default async function StudioPanel() {
     const { products, toolApps } = splitStudioApps(buildStudioApps(jobs), readAppRoles(rolesRow?.value));
     const initial = withDefaultShortcuts(readStudioProjects(setting?.value), products.map((a) => a.appSlug));
     const overview = await readStudioOverview().catch(() => null);
-    const summary: SummaryRow[] = (overview?.rows ?? []).map((r) => ({ appSlug: r.appSlug, title: r.title, kindLabel: r.kindLabel, cardCount: r.cardCount, pendingReview: r.pendingReview, lastGeneratedAt: r.lastGeneratedAt, oldStudioUrl: initial[r.appSlug]?.studioUrl ?? null }));
+    const healths = new Map<string, ServiceHealth | null>();
+
+    for (const r of overview?.rows ?? []) if (serviceProfileOf(r.appSlug)) healths.set(r.appSlug, await peekServiceHealth(r.appSlug)); // 확인은 하지 않고 저장된 마지막 결과만(통제실을 느리게 하지 않는다)
+    const summary: SummaryRow[] = (overview?.rows ?? []).map((r) => ({ appSlug: r.appSlug, title: r.title, kindLabel: r.kindLabel, cardCount: r.cardCount, pendingReview: r.pendingReview, lastGeneratedAt: r.lastGeneratedAt, oldStudioUrl: initial[r.appSlug]?.studioUrl ?? null, hasService: healths.has(r.appSlug), serviceHealth: healths.get(r.appSlug) ?? null }));
 
     return (
       <>

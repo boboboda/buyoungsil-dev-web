@@ -14,6 +14,7 @@ import { readManifestTools } from "@/lib/factory/toolManifestDb";
 import { methodSecrets } from "@/lib/factory/toolManifest";
 import { notifyOnce } from "@/lib/factory/telegram";
 import { releaseNotices } from "@/lib/factory/inboxNotice";
+import { certAlertText, certNoticeKey, readCertAlerts } from "@/lib/studio/serviceHealth";
 
 export type InboxTier = "blocked" | "approval" | "info";
 export const TIER_RANK: Record<InboxTier, number> = { blocked: 0, approval: 1, info: 2 };
@@ -29,7 +30,7 @@ export interface InboxAction {
 
 export interface InboxItem {
   key: string; // 화면 key 이자 시험용 이름. 같은 할 일이면 늘 같다
-  kind: "stuck" | "resume" | "keys" | "group" | "update_paused" | "update_bundle" | "studio_review";
+  kind: "stuck" | "resume" | "keys" | "group" | "update_paused" | "update_bundle" | "studio_review" | "service_cert";
   tier: InboxTier;
   title: string;
   detail: string;
@@ -67,6 +68,8 @@ export interface InboxFacts {
   groupJobs: { id: string; appSlug: string; title: string; status: string; parallelGroup: string | null }[];
   /** 프로젝트별 스튜디오 검수 대기(후보 그림) 수 */
   studioReview: { appSlug: string; count: number }[];
+  /** 서비스 HTTPS 인증서가 7일 이하로 남았거나 만료된 것(스튜디오 서비스 연결 상태의 마지막 확인 결과) */
+  serviceCerts?: { appSlug: string; name: string; daysLeft: number; validTo: string }[];
   /** 감독 프로그램 상태(supervisorSnapshot 의 일부). 없으면 업데이트 항목은 만들지 않는다 */
   supervisor?: { online?: boolean; pausedJobs?: number; bundleLeftMin?: number | null; drainState?: string | null; drainJobs?: number | null } | null;
 }
@@ -155,6 +158,20 @@ export function buildInboxItems(f: InboxFacts): InboxItem[] {
     });
   }
 
+  // 4-2) 서비스 인증서 만료 임박·만료: 막힘(서버에서 인증서를 갱신해야 해요)
+  for (const c of [...(f.serviceCerts ?? [])].sort((a, b) => a.daysLeft - b.daysLeft).slice(0, MAX_PER_KIND)) {
+    items.push({
+      key: `servicecert:${c.appSlug}`,
+      kind: "service_cert",
+      tier: "blocked",
+      title: c.daysLeft < 0 ? `서비스 인증서 만료: ${c.name}` : `서비스 인증서 만료 임박: ${c.name} (${c.daysLeft}일)`,
+      detail: certAlertText(c.appSlug, c.name, c.daysLeft, c.validTo).replace(/^🔒\s*/, ""),
+      appSlug: c.appSlug,
+      actions: [{ id: "link", label: "서비스 운영 열기", href: `/studio/${encodeURIComponent(c.appSlug)}?tab=ops&sub=service` }],
+      noticeKey: certNoticeKey(c.appSlug, c.validTo),
+    });
+  }
+
   // 5) 업데이트로 일시 중지 / 업데이트 대기(묶는 중): 정보. 사람이 할 일은 없고 알려 주기만 한다
   const sup = f.supervisor;
 
@@ -199,7 +216,7 @@ export function sortInbox<T extends { tier: InboxTier }>(items: T[]): T[] {
 
 export async function readInboxItems(supervisor?: InboxFacts["supervisor"], now = Date.now()): Promise<InboxItem[]> {
   const since = new Date(now - RECENT_FAIL_DAYS * 24 * 3600 * 1000);
-  const [failedJobs, jobsWithKeys, groupJobs, studio, names, cardsWithKeys] = await Promise.all([
+  const [failedJobs, jobsWithKeys, groupJobs, studio, names, cardsWithKeys, serviceCerts] = await Promise.all([
     prisma.factoryJob.findMany({
       where: { status: "failed", failStage: { in: ["stuck", "resume"] }, updatedAt: { gte: since } },
       orderBy: { updatedAt: "desc" },
@@ -221,6 +238,7 @@ export async function readInboxItems(supervisor?: InboxFacts["supervisor"], now 
     prisma.factoryArt.groupBy({ by: ["appSlug"], where: { status: "candidate" }, _count: { _all: true } }),
     knownSecretNames().catch(() => [] as { name: string }[]),
     readCardsWithKeys(),
+    readCertAlerts().catch(() => []),
   ]);
 
   return buildInboxItems({
@@ -230,6 +248,7 @@ export async function readInboxItems(supervisor?: InboxFacts["supervisor"], now 
     registered: new Set(names.map((n) => n.name)),
     groupJobs,
     studioReview: studio.map((s) => ({ appSlug: s.appSlug, count: s._count._all })),
+    serviceCerts,
     supervisor,
   });
 }
@@ -323,12 +342,13 @@ export async function syncInboxNotices(opts: { force?: boolean; items?: InboxIte
 
     for (const it of items) {
       if (it.kind === "keys" && (await notifyOnce(it.noticeKey!, `🔑 키 부족\n${it.detail}`.slice(0, 600), "/admin/factory?tab=settings"))) sent.push(it.noticeKey!);
+      if (it.kind === "service_cert" && (await notifyOnce(it.noticeKey!, `🔒 ${it.title}\n${it.detail}`.slice(0, 600), it.actions[0]?.href ?? "/admin/factory"))) sent.push(it.noticeKey!);
       if (it.kind === "group" && (await notifyOnce(it.noticeKey!, `📦 묶음 승인 대기\n${it.title.replace("묶음 승인 대기: ", "")} — ${it.detail}\n통제실 [일감] 탭에서 [묶음 승인]을 눌러 주세요.`.slice(0, 600), "/admin/factory?tab=jobs"))) sent.push(it.noticeKey!);
     }
     // 끝난 할 일의 기록 정리: 지금도 남아 있는 것만 keep
     const keep = new Set([...items.map((i) => i.noticeKey).filter((k): k is string => !!k), ...confirmIds.map((id) => `job:${id}:cost`)]);
 
-    for (const prefix of ["keys:", "group:", "job:"]) await releaseNotices(prefix, keep);
+    for (const prefix of ["keys:", "group:", "job:", "servicecert:"]) await releaseNotices(prefix, keep);
   } catch {
     console.error("[inbox] 알림 정리 실패");
   }

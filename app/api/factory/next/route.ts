@@ -63,6 +63,7 @@ import { keyTasksForNext } from "@/lib/factory/keyVault";
 import { sweepReviewVideos } from "@/lib/factory/reviewVideo";
 import { consumeUploadTest } from "@/lib/factory/uploadTest";
 import { tickSchedules } from "@/lib/studio/opsData";
+import { tickServiceHealth } from "@/lib/studio/serviceHealth";
 import { maintenanceForNext } from "@/lib/factory/maintenance";
 import { getRuleOverrides, renderRules } from "@/lib/factory/rules";
 import { consumeRestart, consumeUpdateNow, getAppSlots, getApprovalWaitSec, getDefaultAiEngine, getLoopGuard, getParallelPerApp, getToolBrokerSettings, getUpdateBundleMin, isAutoUpdateEnabled, isCompactAfterJobEnabled, isSupervisorEnabled, saveSupervisorInfo } from "@/lib/factory/settings";
@@ -204,6 +205,7 @@ export async function GET(req: NextRequest) {
     };
 
     void notifyTestingDue(); // 비공개 테스트 완료 예정일 알림(10분에 한 번만 확인, 기다리지 않음)
+    void tickServiceHealth(); // 서비스 연결 상태(10분에 한 번만 확인, 인증서 만료 7일 이하면 텔레그램에 한 번, 기다리지 않음)
     void tickSchedules(); // 스튜디오 카드별 자동 생성 일정(1분에 한 번만 확인, 기다리지 않음, 실패해도 던지지 않음)
 
     if (!enabled) {

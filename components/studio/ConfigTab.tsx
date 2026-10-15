@@ -13,6 +13,7 @@ import type { StudioProjectData } from "@/lib/studio/data";
 import BlockDiagram from "@/components/studio/BlockDiagram";
 import CardEditor from "@/components/studio/CardEditor";
 import ConfigDetail from "@/components/studio/ConfigDetail";
+import ServiceStatusCard from "@/components/studio/ServiceStatus";
 
 export default function ConfigTab({ data, canEdit, initialSelected }: { data: StudioProjectData; canEdit: boolean; initialSelected?: string }) {
   const router = useRouter();
@@ -104,6 +105,14 @@ export default function ConfigTab({ data, canEdit, initialSelected }: { data: St
             </div>
           ))}
         </dl>
+        {data.service ? (
+          <div className="space-y-1" data-config-service>
+            <ServiceStatusCard appSlug={data.appSlug} canCheck={canEdit} health={data.service.health} title={`서비스 연결 상태 — ${data.service.name}`} />
+            <a className="text-xs underline" href={`/studio/${data.appSlug}?tab=ops&sub=service`}>
+              서비스 운영 열기 →
+            </a>
+          </div>
+        ) : null}
         {!canEdit ? <p className="text-xs fx-muted">접근 키로 열었어요. 읽기 전용이라 카드를 고칠 수 없어요(고치려면 관리자 로그인).</p> : null}
       </section>
 

@@ -10,6 +10,8 @@ import type { LinkRow } from "@/lib/factory/projectLinks";
 import { readManifestsView } from "@/lib/factory/toolManifestDb";
 import type { ManifestsView } from "@/lib/factory/toolManifest";
 import { buildStudioApps, readStudioProjects, splitStudioApps, STUDIO_KIND_LABELS, STUDIO_PROJECTS_KEY, withDefaultShortcuts } from "@/lib/factory/studioProjects";
+import { getServiceHealth, type ServiceHealth } from "@/lib/studio/serviceHealth";
+import { serviceProfileOf } from "@/lib/studio/service";
 import { blockId, sortOverview, summarizeUsage, summaryCost, USAGE_DAYS, type CardUsage, type OverviewRow } from "@/lib/studio/dashboard";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
@@ -92,6 +94,7 @@ export interface StudioProjectData {
   pendingReview: number;
   approvedArts: ApprovedArtLite[];
   studioUrl: string | null;
+  service?: { name: string; health: ServiceHealth | null } | null; // 이 프로젝트의 서비스(예: 한 컷 서버)와 연결 상태. 서비스 확인표가 없으면 null
 }
 
 /** [구성] 블록에 붙일 최근 7일 요약 줄. 통계를 못 읽어도 빈 값(그림은 그대로) */
@@ -131,6 +134,8 @@ export async function readStudioProject(appSlug: string, now = Date.now()): Prom
   ]);
 
   const weekLines = await studioWeekLines(appSlug, cards, manifest, now);
+  const profile = serviceProfileOf(appSlug);
+  const service = profile ? { name: profile.name, health: await getServiceHealth(appSlug).catch(() => null) } : null;
 
   return {
     appSlug,
@@ -145,5 +150,6 @@ export async function readStudioProject(appSlug: string, now = Date.now()): Prom
     pendingReview,
     approvedArts: approved.map((a) => ({ ...a, decidedAt: a.decidedAt ? a.decidedAt.toISOString() : null })),
     studioUrl: classes[appSlug]?.studioUrl ?? null,
+    service,
   };
 }

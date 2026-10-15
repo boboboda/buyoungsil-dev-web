@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/factory/admin";
 import { auth } from "@/lib/auth/get-sesstion";
 import { decideArt, listArts, setArtNote, type ArtDb } from "@/lib/factory/arts";
+import { copyAfterApprove } from "@/lib/factory/artCopy";
 import { getProjectToolSettings, type SettingsDb } from "@/lib/factory/projectToolSettingsDb";
 import prisma from "@/lib/prisma";
 
@@ -51,7 +52,9 @@ export async function POST(req: NextRequest) {
   const r = await decideArt(db, id, body?.action, await adminName());
 
   if (r.ok === false) return NextResponse.json({ message: r.message }, { status: r.status });
-  const label = r.art.status === "approved" ? "승인했어요. 이후 일감부터 자동 참고 그림으로 쓰여요." : r.art.status === "rejected" ? "반려했어요. 자동 참고에 쓰지 않아요." : "후보로 되돌렸어요.";
+  const copied = r.art.status === "approved" ? await copyAfterApprove(db, r.art.id) : null; // 그림 자체 보관: 업로드 서버 밖의 그림은 승인할 때 복사(실패해도 승인은 그대로)
+  const copyNote = copied && copied.ok === false ? ` (업로드 서버로 복사하지 못했어요: ${copied.reason})` : copied && copied.ok && !copied.already ? " (업로드 서버로 복사했어요)" : "";
+  const label = r.art.status === "approved" ? `승인했어요. 이후 일감부터 자동 참고 그림으로 쓰여요.${copyNote}` : r.art.status === "rejected" ? "반려했어요. 자동 참고에 쓰지 않아요." : "후보로 되돌렸어요.";
 
   return NextResponse.json({ message: `${r.art.subject}: ${label}`, art: r.art });
 }
