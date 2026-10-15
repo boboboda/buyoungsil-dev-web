@@ -102,7 +102,11 @@ test("정비 턴: 멈춤 → (다른 프로세스가) 같은 세션으로 이어
   assert.equal(second.posts.filter((p) => p.action === "start").length, 0, "서버에는 시작을 다시 알리지 않는다");
   const done = doneOf(second.posts);
   assert.equal(done.length, 1);
-  assert.equal(done[0].ok, true, `이어서 끝냈다: ${done[0].text}`);
+  // 커밋 없이 끝났는데 폴더에 변경이 남아 있으면 '완료'가 아니라 미완료(이어서 필요)로 보고하고, 파일은 숨기지 않고 그대로 둔다
+  assert.equal(done[0].ok, false, `커밋 안 된 변경이 남았으니 완료가 아니다: ${done[0].text}`);
+  assert.match(done[0].text, /미완료\(이어서 필요\)/);
+  assert.equal(git(s.selfdev, "stash", "list"), "", "stash 로 숨기지 않는다");
+  assert.match(git(s.selfdev, "status", "--porcelain"), /x.mjs/, "변경 파일이 폴더에 그대로 있다");
   assert.ok(second.logs.some((l) => /업데이트 뒤 이어서/.test(l)), second.logs.join("\n"));
 });
 

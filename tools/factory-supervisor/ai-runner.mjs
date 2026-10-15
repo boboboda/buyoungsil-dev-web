@@ -214,7 +214,7 @@ export function excludeHarnessState(dir) {
   if (r.status !== 0) throw new Error("Git 프로젝트에서 실행하세요.");
   const file = path.resolve(dir, r.stdout.trim());
   const have = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
-  const lines = [".factory/ai-state.json", ".factory/ai-state.json.*.tmp", ".factory/ai-events.jsonl", ".factory/ai-sessions.json", `.factory/${HANDOFF_FILE}`, `.factory/${HANDOFF_FILE}.*.tmp`, ".factory/memory/", ".factory/memory-status.json", ".factory/memory-status.json.*.tmp"];
+  const lines = [".factory/ai-state.json", ".factory/ai-state.json.*.tmp", ".factory/ai-events.jsonl", ".factory/ai-sessions.json", `.factory/${HANDOFF_FILE}`, `.factory/${HANDOFF_FILE}.*.tmp`, ".factory/memory/", ".factory/memory-status.json", ".factory/memory-status.json.*.tmp", ".factory/screenshots/"];
   const missing = lines.filter((line) => !have.split(/\r?\n/).includes(line));
   if (missing.length) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.appendFileSync(file, `\n${missing.join("\n")}\n`); }
 }

@@ -51,6 +51,7 @@ const RULES = `# 공장 정비 규칙 (감독 프로그램이 자동으로 쓰�
 - 하지 말 것: 키·토큰 값 출력, ~/dev/factory 의 다른 폴더(앱 폴더, supervisor-src, 설정·키 파일) 수정, 작업 스케줄러·PC 설정 변경, 백그라운드 프로세스 남기기.
 - **실행기(\`run-supervisor.sh\`, 작업 스케줄러) 변경은 정비에서 하지 않는다. 필요하면 바꿀 내용만 보고하고 멈춘다(사람이 로컬에서 적용).**
 - 실제로 돌고 있는 감독 프로그램을 건드리지 마라(훅이 막는다): 실행기 실행, 진짜 감독의 잠금·상태 파일(supervisor-src 아래, run-supervisor.pid, supervisor-update.json, serverctl-state.json 등) 수정·삭제, node·claude·codex 프로세스 종료(kill, taskkill, Stop-Process, pkill). 감독 프로그램 시험은 임시 폴더·임시 설정(FACTORY_CONFIG)·가짜 토큰·가짜 홈페이지 주소(127.0.0.1)로, \`FACTORY_TEST_MODE=1\` 을 주고 띄운다. 진짜 주소·토큰이 섞이면 감독이 시작을 거부한다.
+- **백그라운드로 명령을 띄우고 "알림이 오면 이어서"라며 턴을 끝내지 마라.** 이 환경에는 알림이 오지 않는다. 오래 걸리는 시험·빌드도 이 턴 안에서 끝까지 기다린다(foreground 대기 반복). 커밋하지 않은 변경을 남긴 채 끝내면 정비는 '미완료(이어서 필요)'로 처리되고 대기열이 멈춘다.
 - 마지막 응답은 한국어로 짧게: 바꾼 것, 커밋, 검사 결과, 서버 배포가 필요한지(서버 코드가 바뀌었는지), 사람이 할 일.
 
 ${SERVER_ACCESS_RULES}
@@ -493,10 +494,12 @@ async function runTurnUnlocked(m, ctx, lock, resume = null) {
     if (committed.status !== 0) { keepLocal(); return finish({ ok: false, text: `검사는 통과했지만 로컬 커밋에 실패했어요. 변경 파일은 보존돼요.\n${err(committed)}`, sessionId }); }
     precheckedHead = out(git(["rev-parse", "HEAD"]));
   }
-  const dirty = git(["status", "--porcelain", "--untracked-files=no"]).stdout.trim();
+  // 커밋 없이 끝났는데 폴더에 변경(새 파일 포함)이 남아 있으면 '완료'로 두지 않는다: 숨기지(stash) 않고 그대로 두고 미완료로 보고한다.
+  // 실패 처리라 대기열이 멈추고 통제실 할 일·텔레그램에 '막힘'으로 알려진다. 같은 정비 대화에 '이어서' 지시하면 그 파일 위에서 계속한다
+  const dirty = git(["status", "--porcelain"]).stdout.trim();
   if (dirty) {
-    git(["stash", "push", "-m", `정비 ${m.turnId} 커밋 안 된 변경`]);
-    notes.push(`커밋 안 된 변경이 있어서 올리지 않고 stash 로 보관했어요(정비 폴더 git stash list).`);
+    keepLocal();
+    return finish({ ok: false, text: [claudeText, "", `— 미완료(이어서 필요): 정비 폴더에 커밋하지 않은 변경이 남아 있어요. 올리지 않았고 파일은 그대로 보존했어요. 같은 정비 대화에 "이어서 마무리하고 커밋해 줘"라고 지시해 주세요.\n${tail(dirty, 500)}`].join("\n"), sessionId });
   }
 
   git(["fetch", "-q", "origin", "main"]);
